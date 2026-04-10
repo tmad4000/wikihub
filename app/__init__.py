@@ -31,6 +31,9 @@ def create_app(config_class="config.Config"):
     app.register_blueprint(api_bp, url_prefix="/api/v1")
     app.register_blueprint(wiki_bp)
 
+    from app.routes.agent_chat import agent_chat_bp
+    app.register_blueprint(agent_chat_bp, url_prefix="/api/v1")
+
     from app.git_backend import git_bp
     app.register_blueprint(git_bp)
 

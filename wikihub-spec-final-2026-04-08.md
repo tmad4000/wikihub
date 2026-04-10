@@ -323,6 +323,48 @@ From `agent-first-web-brief-2026-04.md` — all cheap, all shipping in v1:
 - **Google OAuth + local email/password** (locked 2026-04-09). Noos OAuth dropped entirely. Google OAuth covers the ML/Anthropic crowd; local email/password covers everyone else and agents.
 - Signup rate limit per IP (infra, not moderation) probably still in v1.
 
+## Curator Agent (inline AI sidebar) — added 2026-04-10
+
+An inline AI sidebar on every wiki page — inspired by Neal Stephenson's Librarian (Snow Crash) and the Curator (Ready Player One). A conversational agent that knows who you are, what page you're on, and can take direct actions on wiki content.
+
+### Architecture
+
+Uses the Claude API with file-system tools scoped to a temp working directory. Each conversation session:
+
+1. Creates a temp directory
+2. Clones the relevant wiki repo(s) from local bare repos
+3. Runs Claude API with streaming, providing tools: `read_file`, `write_file`, `list_files`, `search_content`, `wikihub_api`
+4. On file writes, auto-commits and pushes back to the bare repo (triggers post-receive hook for DB sync)
+5. Cleans up temp dir after 30 minutes of inactivity
+
+### API
+
+- **`POST /api/v1/agent/chat`** — SSE streaming endpoint
+  - Auth: Bearer token or Flask-Login session cookie
+  - Input: `{message, conversation_id?, context: {owner, wiki, page_path}}`
+  - Output: SSE stream of `{type: "text"|"tool_use"|"tool_result"|"done"|"error", ...}`
+  - First message creates session; subsequent messages with same `conversation_id` continue it
+
+### Frontend
+
+- Right-side slide-out panel (400px), toggle button in bottom-right corner
+- Chat input with Enter-to-send, auto-resizing textarea
+- Tool calls shown inline as collapsible `<details>` blocks
+- Styled to match WikiHub design system: warm blacks, amber accent, IBM Plex Mono
+- Panel header uses `[[curator]]` bracket motif
+- Desktop and mobile (full width on narrow screens)
+
+### Files
+
+- `app/routes/agent_chat.py` — SSE endpoint, session management, tool execution
+- `app/templates/reader.html` — panel HTML/CSS/JS (inline, not a partial)
+
+### Dependencies
+
+- `anthropic` Python SDK (>=0.86.0)
+- `ANTHROPIC_API_KEY` env var on server
+- `CURATOR_MODEL` env var (default: `claude-sonnet-4-20250514`)
+
 ## Page REST API (v1)
 
 - `POST /api/v1/wikis/:owner/:slug/pages` — create a page at a new path.
@@ -507,6 +549,14 @@ Each gets a one-off Python script to scrape/transform and produce a zip we uploa
 - **Infobox rendering from frontmatter (added 2026-04-10).** Render certain frontmatter keys as a Wikipedia-style infobox sidebar (photo, "known for", "current role"). Pure template work on existing frontmatter parsing. Inspired by Farzapedia person pages.
 - **Obsidian / markdown repo import (added 2026-04-10).** Discover and import Obsidian vaults and plain markdown repos. Convert `[[wikilinks]]` (already supported in renderer), preserve folder structure. Extends existing zip upload. Inspired by gbrain's import pipeline.
 - **Article type system (added 2026-04-10).** `type:` frontmatter key (person, book, place, artifact, assessment) with per-type rendering — person gets infobox, book gets cover, place gets map link. Builds on infobox feature. Inspired by Farzapedia's category system.
+
+- **File support roadmap: image embeds → file browser → Google Drive mode (added 2026-04-10, wikihub-291).** Progressive non-markdown file support. The spec already covers storing binaries in git repos and rendering `![[image.png]]` embeds, but there's no serving route (images 404) and the sidebar/UI is markdown-only. Five stages:
+  - *Stage 0 (bug fix):* Serve binaries from git repo — route to serve raw files via `git cat-file`, content-type detection. Prerequisite for embeds to render. Should be v1.
+  - *Stage 1 (core LLMWiki):* Image attachments — upload images alongside markdown, inline preview in editor, image gallery per page. LLM wikis need diagrams/charts/screenshots. This is table stakes.
+  - *Stage 2:* File browser — show all files in sidebar/tree, not just `.md`. File type icons. Non-markdown files visible but secondary.
+  - *Stage 3:* Non-markdown preview — inline PDF viewer, CSV table render, image lightbox. Reference material browsable alongside wiki pages.
+  - *Stage 4 (maybe separate product):* Google Drive mode — drag-drop any file type, bulk upload, full-text search across non-markdown files, folder-first browsing. **Key question:** this diverges from LLMWiki core. The Karpathy pattern is markdown knowledge bases maintained by LLMs — images support that, but a Google Drive clone is a different product.
+  - *Contrast with ListHub:* ListHub is deliberately text-only (flat markdown items, no binary). WikiHub already went further architecturally (git repos can hold anything), but the serving/browsing layer is markdown-only. The gap is between what git stores and what the UI shows.
 
 **v3:**
 - git-crypt escape hatch for encrypted personal wikis (see jacobcole.net/labs pattern)

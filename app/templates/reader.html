@@ -275,6 +275,133 @@
   border-radius: var(--radius-md); color: var(--text-secondary);
   font-size: 0.8125rem; line-height: 1.5;
 }
+/* --- Curator panel --- */
+.curator-toggle {
+  position: fixed; bottom: 24px; right: 24px; z-index: 100;
+  width: 48px; height: 48px; border-radius: 50%;
+  background: var(--accent); color: #0f0e0c; border: none;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s ease, transform 0.15s ease;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.4);
+}
+.curator-toggle:hover { background: var(--accent-hover); transform: scale(1.05); }
+.curator-toggle svg { width: 22px; height: 22px; }
+
+.curator-panel {
+  position: fixed; top: 56px; right: 0; bottom: 0; width: 400px;
+  background: var(--bg-surface); border-left: 1px solid var(--border-emphasis);
+  z-index: 200; display: flex; flex-direction: column;
+  transform: translateX(100%); transition: transform 0.25s ease;
+}
+.curator-panel.open { transform: translateX(0); }
+@media (max-width: 480px) { .curator-panel { width: 100%; } }
+
+.curator-overlay {
+  display: none; position: fixed; inset: 0; top: 56px;
+  background: rgba(0,0,0,0.4); z-index: 199;
+}
+.curator-overlay.open { display: block; }
+
+.curator-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; border-bottom: 1px solid var(--border-default);
+  flex-shrink: 0;
+}
+.curator-title {
+  font-family: var(--font-mono); font-size: 0.875rem; font-weight: 500;
+  color: var(--accent); letter-spacing: 0.02em;
+}
+.curator-close {
+  width: 28px; height: 28px; border: none; background: transparent;
+  color: var(--text-muted); cursor: pointer; border-radius: var(--radius-sm);
+  font-size: 1.25rem; display: flex; align-items: center; justify-content: center;
+}
+.curator-close:hover { color: var(--text-secondary); background: var(--accent-subtle); }
+
+.curator-messages {
+  flex: 1; overflow-y: auto; padding: 16px;
+  scrollbar-width: thin; scrollbar-color: var(--border-emphasis) transparent;
+}
+.curator-messages::-webkit-scrollbar { width: 4px; }
+.curator-messages::-webkit-scrollbar-thumb { background: var(--border-emphasis); border-radius: 2px; }
+
+.curator-message {
+  margin-bottom: 16px; font-size: 0.875rem; line-height: 1.65;
+  color: var(--text-secondary); word-wrap: break-word;
+}
+.curator-message.user {
+  background: var(--accent-muted); border: 1px solid rgba(212, 160, 74, 0.15);
+  border-radius: var(--radius-md); padding: 10px 14px; color: var(--text-primary);
+}
+.curator-message.assistant p { margin-bottom: 8px; }
+.curator-message.assistant p:last-child { margin-bottom: 0; }
+.curator-message.assistant strong { color: var(--text-primary); }
+.curator-message.assistant code {
+  font-family: var(--font-mono); font-size: 0.8rem;
+  background: var(--bg-elevated); padding: 1px 5px; border-radius: 3px;
+  border: 1px solid var(--border-default);
+}
+
+.curator-message .tool-call {
+  margin: 8px 0; font-size: 0.8rem;
+}
+.curator-message .tool-call summary {
+  cursor: pointer; color: var(--text-tertiary); padding: 4px 0;
+  font-family: var(--font-mono); font-size: 0.75rem;
+}
+.curator-message .tool-call summary:hover { color: var(--accent); }
+.curator-message .tool-call pre {
+  background: var(--bg-elevated); border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm); padding: 8px 10px; margin-top: 4px;
+  font-family: var(--font-mono); font-size: 0.7rem; line-height: 1.5;
+  overflow-x: auto; color: var(--text-tertiary); white-space: pre-wrap;
+  word-break: break-all;
+}
+.curator-message .tool-call pre.tool-result {
+  border-color: rgba(122, 158, 107, 0.2);
+  color: var(--color-public);
+}
+
+.curator-input-area {
+  flex-shrink: 0; padding: 12px 16px;
+  border-top: 1px solid var(--border-default);
+  display: flex; gap: 8px; align-items: flex-end;
+}
+#curator-input {
+  flex: 1; resize: none; border: 1px solid var(--control-border);
+  background: var(--control-bg); color: var(--text-primary);
+  font-family: var(--font-body); font-size: 0.875rem;
+  padding: 8px 12px; border-radius: var(--radius-sm);
+  line-height: 1.5; min-height: 38px; max-height: 120px;
+  outline: none;
+}
+#curator-input:focus { border-color: var(--border-accent); }
+#curator-input::placeholder { color: var(--text-muted); }
+#curator-send {
+  padding: 8px 16px; border: none; border-radius: var(--radius-sm);
+  background: var(--accent); color: #0f0e0c; font-weight: 600;
+  font-family: var(--font-body); font-size: 0.8125rem;
+  cursor: pointer; white-space: nowrap; min-height: 38px;
+}
+#curator-send:hover { background: var(--accent-hover); }
+#curator-send:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.curator-thinking {
+  display: inline-flex; align-items: center; gap: 6px;
+  color: var(--text-muted); font-size: 0.8rem; font-style: italic;
+  padding: 4px 0;
+}
+.curator-thinking .dots span {
+  display: inline-block; width: 4px; height: 4px;
+  background: var(--text-muted); border-radius: 50%;
+  animation: curatorDot 1.4s infinite ease-in-out;
+}
+.curator-thinking .dots span:nth-child(2) { animation-delay: 0.2s; }
+.curator-thinking .dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes curatorDot {
+  0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
+  40% { opacity: 1; transform: scale(1); }
+}
 {% endblock %}
 
 {% block body %}
@@ -595,6 +722,28 @@
   </aside>
   {% endif %}
 </div>
+
+<!-- Curator AI sidebar -->
+<button class="curator-toggle" onclick="toggleCurator()" title="Open Curator" aria-label="Open Curator">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+</button>
+<div class="curator-panel" id="curator-panel">
+  <div class="curator-header">
+    <span class="curator-title">[[curator]]</span>
+    <button onclick="toggleCurator()" class="curator-close" aria-label="Close Curator">&times;</button>
+  </div>
+  <div class="curator-messages" id="curator-messages">
+    <div class="curator-message assistant">
+      I'm the Curator. I can help you navigate, organize, and curate this wiki. What would you like to do?
+    </div>
+  </div>
+  <div class="curator-input-area">
+    <textarea id="curator-input" placeholder="Ask the Curator..." rows="1"></textarea>
+    <button onclick="sendCuratorMessage()" id="curator-send">Send</button>
+  </div>
+</div>
+<div class="curator-overlay" id="curator-overlay" onclick="toggleCurator()"></div>
+
 {% endblock %}
 
 {% block scripts %}
@@ -781,6 +930,166 @@ async function reindexWiki(btn) {
     else { btn.textContent = 'Failed'; setTimeout(() => { btn.textContent = origText; btn.disabled = false; }, 2000); }
   } catch (e) { btn.textContent = 'Error'; setTimeout(() => { btn.textContent = origText; btn.disabled = false; }, 2000); }
 }
+
+/* --- Curator panel --- */
+let curatorConversationId = null;
+
+function toggleCurator() {
+  const panel = document.getElementById('curator-panel');
+  const overlay = document.getElementById('curator-overlay');
+  const toggle = document.querySelector('.curator-toggle');
+  panel.classList.toggle('open');
+  overlay.classList.toggle('open');
+  if (panel.classList.contains('open')) {
+    document.getElementById('curator-input').focus();
+    if (toggle) toggle.style.display = 'none';
+  } else {
+    if (toggle) toggle.style.display = '';
+  }
+}
+
+async function sendCuratorMessage() {
+  const input = document.getElementById('curator-input');
+  const message = input.value.trim();
+  if (!message) return;
+
+  input.value = '';
+  input.style.height = 'auto';
+  curatorAppendMessage('user', message);
+
+  const msgDiv = curatorAppendMessage('assistant', '');
+  const sendBtn = document.getElementById('curator-send');
+  sendBtn.disabled = true;
+
+  try {
+    const response = await fetch('/api/v1/agent/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: message,
+        conversation_id: curatorConversationId,
+        context: {
+          owner: {{ owner.username | tojson }},
+          wiki: {{ wiki.slug | tojson }},
+          page_path: {{ page.path | tojson }}
+        }
+      })
+    });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      msgDiv.textContent = 'Error: ' + (err.message || response.statusText);
+      sendBtn.disabled = false;
+      return;
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let fullText = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        let data;
+        try { data = JSON.parse(line.slice(6)); } catch (e) { continue; }
+
+        if (data.conversation_id) {
+          curatorConversationId = data.conversation_id;
+        }
+
+        if (data.type === 'text') {
+          fullText += data.content;
+          msgDiv.innerHTML = curatorRenderMarkdown(fullText);
+          const msgs = document.getElementById('curator-messages');
+          msgs.scrollTop = msgs.scrollHeight;
+        } else if (data.type === 'tool_use' && data.input && Object.keys(data.input).length > 0) {
+          const toolDiv = document.createElement('div');
+          toolDiv.className = 'tool-call';
+          const inputStr = JSON.stringify(data.input, null, 2);
+          toolDiv.innerHTML = '<details><summary>\u{1f527} ' + curatorEscape(data.name) + '</summary><pre>' + curatorEscape(inputStr) + '</pre></details>';
+          msgDiv.appendChild(toolDiv);
+        } else if (data.type === 'tool_result') {
+          const lastTool = msgDiv.querySelector('.tool-call:last-child details');
+          if (lastTool) {
+            const resultPre = document.createElement('pre');
+            resultPre.className = 'tool-result';
+            const content = typeof data.content === 'string' ? data.content : JSON.stringify(data.content);
+            resultPre.textContent = content.length > 800 ? content.slice(0, 800) + '...' : content;
+            lastTool.appendChild(resultPre);
+          }
+        } else if (data.type === 'error') {
+          const errP = document.createElement('p');
+          errP.style.color = 'var(--color-private)';
+          errP.textContent = data.content;
+          msgDiv.appendChild(errP);
+        }
+      }
+    }
+  } catch (err) {
+    msgDiv.textContent = 'Error: ' + err.message;
+  } finally {
+    sendBtn.disabled = false;
+    document.getElementById('curator-input').focus();
+  }
+}
+
+function curatorAppendMessage(role, content) {
+  const messages = document.getElementById('curator-messages');
+  const div = document.createElement('div');
+  div.className = 'curator-message ' + role;
+  if (content) {
+    if (role === 'user') {
+      div.textContent = content;
+    } else {
+      div.innerHTML = curatorRenderMarkdown(content);
+    }
+  }
+  messages.appendChild(div);
+  messages.scrollTop = messages.scrollHeight;
+  return div;
+}
+
+function curatorEscape(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function curatorRenderMarkdown(text) {
+  return text
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" style="color:var(--accent)">$1</a>')
+    .replace(/\n\n/g, '</p><p>')
+    .replace(/\n/g, '<br>')
+    .replace(/^/, '<p>').replace(/$/, '</p>')
+    .replace(/<p><\/p>/g, '');
+}
+
+// Auto-resize textarea + Enter to send
+document.addEventListener('DOMContentLoaded', function() {
+  const input = document.getElementById('curator-input');
+  if (!input) return;
+  input.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendCuratorMessage();
+    }
+  });
+  input.addEventListener('input', function() {
+    this.style.height = 'auto';
+    this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+  });
+});
 </script>
 {% if link_graph and link_graph.nodes|length > 1 %}
 <script src="https://d3js.org/d3.v7.min.js"></script>
