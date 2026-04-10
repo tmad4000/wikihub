@@ -961,5 +961,21 @@
     </div>
   </footer>
 
+<script>
+document.querySelectorAll('[data-account-menu]').forEach(menu => {
+  const trigger = menu.querySelector('[data-account-trigger]');
+  if (!trigger) return;
+  trigger.addEventListener('click', (e) => {
+    e.preventDefault();
+    menu.classList.toggle('open');
+  });
+  document.addEventListener('click', (e) => {
+    if (!menu.contains(e.target)) menu.classList.remove('open');
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') menu.classList.remove('open');
+  });
+});
+</script>
 </body>
 </html>
