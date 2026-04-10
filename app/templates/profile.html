@@ -160,45 +160,28 @@
       </div>
     </div>
 
+    {% if personal_rendered_html %}
     <div class="profile-wiki">
-      <div class="section-header">
-        <div>
-          <h2 style="margin-bottom:0;">Personal Wiki</h2>
-          <div class="section-note">The person page and the personal wiki are the same thing.</div>
-        </div>
-        <div class="action-row">
-          {% if personal_wiki %}
-          <a href="/@{{ owner.username }}/{{ personal_wiki.slug }}" class="action-btn secondary">Open full wiki</a>
-          {% endif %}
-          {% if is_owner and personal_wiki %}
-          <a href="/@{{ owner.username }}/{{ personal_wiki.slug }}/new-folder" class="action-btn primary">New folder</a>
-          {% endif %}
-        </div>
-      </div>
       {% if private_band_warning %}
       <div class="private-band-warning">
         This page has sections visible only to editors; not a security boundary. Don’t use private bands for real secrets.
       </div>
       {% endif %}
-      {% if personal_rendered_html %}
       <article class="article">
         {{ personal_rendered_html | safe }}
       </article>
-      {% else %}
-      <div class="profile-empty">
-        {% if is_owner %}
-        Your profile page is empty. Add an <code>index.md</code> to your personal wiki to make it public.
-        {% endif %}
-      </div>
-      {% endif %}
     </div>
+    {% elif is_owner %}
+    <div class="profile-wiki">
+      <div class="profile-empty">
+        Your profile page is empty. Add an <code>index.md</code> to your <a href="/@{{ owner.username }}/{{ personal_wiki.slug }}" style="color:var(--accent);">personal wiki</a> to publish it here.
+      </div>
+    </div>
+    {% endif %}
 
     <div class="wiki-list">
       <div class="section-header">
-        <div>
-          <h2 style="margin-bottom:0;">Project Wikis</h2>
-          <div class="section-note">{{ 'All of your project wikis.' if is_owner else 'Only discoverable project wikis are listed here.' }}</div>
-        </div>
+        <h2 style="margin-bottom:0;">Wikis</h2>
         {% if current_user.is_authenticated and current_user.id == owner.id %}
         <a href="/new" class="action-btn primary">New wiki</a>
         {% endif %}
