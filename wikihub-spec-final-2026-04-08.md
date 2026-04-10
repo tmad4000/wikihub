@@ -311,6 +311,7 @@ From `agent-first-web-brief-2026-04.md` — all cheap, all shipping in v1:
   - **`DELETE /api/v1/keys/:id`** (Bearer auth): revoke a key.
   - An agent should never be permanently locked out — if it has a password, `/auth/token` always works. If it has an existing key, `/keys` creates a new one.
 - **Three web login methods** (updated 2026-04-10): Google OAuth, username+password, and API key paste. The login page has all three as equal options.
+- **Magic sign-in links (added 2026-04-10).** `POST /api/v1/auth/magic-link` (Bearer auth) returns a short-lived single-use browser login URL for that same account, e.g. `{"login_url": "https://wikihub.md/auth/magic/wl_...", "expires_at": "..."}`. Visiting the link establishes a normal web session and invalidates the token immediately. This is for the "my agent should just hand me a one-click sign-in link" workflow without exposing the API key itself.
 - `PATCH /api/v1/accounts/me` for programmatic rename (username, display_name, email independently). Username change -> old slug redirects for 90 days.
 - `POST /claim-email` for post-hoc email affiliation. Email is not identity; it's an optional attachment.
 - ~~Per-key scopes~~ — **cut from v1** (2026-04-09). Every API key is `read+write`. Add scopes when users ask for read-only keys.

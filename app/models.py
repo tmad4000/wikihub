@@ -129,6 +129,20 @@ class ApiKey(db.Model):
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
 
 
+class MagicLoginToken(db.Model):
+    __tablename__ = "magic_login_tokens"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    token_hash = db.Column(db.String(256), nullable=False, unique=True, index=True)
+    redirect_path = db.Column(db.String(512), nullable=False, default="/")
+    expires_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    used_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
+
+    user = db.relationship("User")
+
+
 class UsernameRedirect(db.Model):
     __tablename__ = "username_redirects"
 

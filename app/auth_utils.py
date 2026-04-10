@@ -32,8 +32,17 @@ def generate_api_key():
     return raw, key_hash, key_prefix
 
 
+def generate_magic_login_token():
+    raw = "wl_" + secrets.token_urlsafe(32)
+    return raw, hash_one_time_token(raw)
+
+
 def hash_api_key(raw_key):
     return hashlib.sha256(raw_key.encode()).hexdigest()
+
+
+def hash_one_time_token(raw_token):
+    return hashlib.sha256(raw_token.encode()).hexdigest()
 
 
 def get_current_user_from_request():

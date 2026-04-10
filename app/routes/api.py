@@ -3,12 +3,12 @@ import secrets
 import shutil
 from datetime import timedelta
 
-from flask import request, jsonify
+from flask import current_app, request, jsonify
 
 from app import db
-from app.models import User, ApiKey, UsernameRedirect, utcnow, Wiki
+from app.models import User, ApiKey, MagicLoginToken, UsernameRedirect, utcnow, Wiki
 from app.auth_utils import (
-    generate_api_key, hash_password, check_password, api_auth_required, get_current_user_from_request,
+    generate_api_key, generate_magic_login_token, hash_password, check_password, api_auth_required, get_current_user_from_request,
 )
 from app.git_backend import _repo_path
 from app.routes import api_bp
@@ -96,6 +96,44 @@ def get_token():
         "username": user.username,
         "api_key": raw_key,
     })
+
+
+def _sanitize_redirect_path(raw_path, fallback="/"):
+    target = (raw_path or "").strip()
+    if not target:
+        return fallback
+    if not target.startswith("/") or target.startswith("//"):
+        return fallback
+    return target
+
+
+@api_bp.route("/auth/magic-link", methods=["POST"])
+@api_auth_required
+def create_magic_link():
+    user = request.current_user
+    data = request.get_json(silent=True) or {}
+    redirect_path = _sanitize_redirect_path(
+        data.get("next"),
+        fallback=f"/@{user.username}",
+    )
+
+    raw_token, token_hash = generate_magic_login_token()
+    expires_at = utcnow() + timedelta(seconds=current_app.config["MAGIC_LOGIN_TTL_SECONDS"])
+    token = MagicLoginToken(
+        user_id=user.id,
+        token_hash=token_hash,
+        redirect_path=redirect_path,
+        expires_at=expires_at,
+    )
+    db.session.add(token)
+    db.session.commit()
+
+    base_url = current_app.config.get("BASE_URL", "").rstrip("/") or request.url_root.rstrip("/")
+    return jsonify({
+        "login_url": f"{base_url}/auth/magic/{raw_token}",
+        "expires_at": expires_at.isoformat(),
+        "next": redirect_path,
+    }), 201
 
 
 @api_bp.route("/accounts/me", methods=["GET"])

@@ -10,6 +10,7 @@ import os
 import shutil
 import sys
 import zipfile
+from urllib.parse import urlparse
 from sqlalchemy import text
 
 # ensure app is importable
@@ -42,6 +43,7 @@ def reset_database():
         "stars",
         "pages",
         "wikis",
+        "magic_login_tokens",
         "api_keys",
         "username_redirects",
         "audit_log",
@@ -196,6 +198,32 @@ def test_token_and_settings(client):
     assert r.status_code == 200
 
 
+def test_magic_link_login(client):
+    r = client.post("/api/v1/accounts", json={"username": "lazyagent"})
+    assert r.status_code == 201
+    api_key = r.get_json()["api_key"]
+    h = {"Authorization": f"Bearer {api_key}"}
+
+    r = client.post("/api/v1/auth/magic-link", json={"next": "/settings"}, headers=h)
+    assert r.status_code == 201
+    data = r.get_json()
+    assert "/auth/magic/" in data["login_url"]
+
+    magic_path = urlparse(data["login_url"]).path
+    browser = client.application.test_client()
+    r = browser.get(magic_path, follow_redirects=False)
+    assert r.status_code == 302
+    assert r.headers["Location"].endswith("/settings")
+
+    r = browser.get("/settings")
+    assert r.status_code == 200
+
+    other_browser = client.application.test_client()
+    r = other_browser.get(magic_path, follow_redirects=False)
+    assert r.status_code == 302
+    assert "/auth/login" in r.headers["Location"]
+
+
 def test_anonymous_public_edit(client, api_key):
     h = {"Authorization": f"Bearer {api_key}"}
     r = client.post("/api/v1/wikis/agent1/test-wiki/pages", json={
@@ -341,6 +369,7 @@ def run_all():
             ("zip upload", lambda: test_zip_upload(client, key)),
             ("agent surfaces", lambda: test_agent_surfaces(client)),
             ("token + settings", lambda: test_token_and_settings(client)),
+            ("magic link login", lambda: test_magic_link_login(client)),
             ("ACL permissions", lambda: test_acl_permissions(client, key)),
             ("anonymous public edit", lambda: test_anonymous_public_edit(client, key)),
             ("people directory + profiles", lambda: test_people_directory_and_profiles(client, key)),

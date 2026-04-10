@@ -6,8 +6,8 @@ from flask_login import login_user, logout_user, login_required
 from authlib.integrations.flask_client import OAuth
 
 from app import db
-from app.models import User, ApiKey
-from app.auth_utils import hash_password, check_password, hash_api_key
+from app.models import User, ApiKey, MagicLoginToken, utcnow
+from app.auth_utils import hash_password, check_password, hash_api_key, hash_one_time_token
 from app.routes import auth_bp
 from app.wiki_ops import ensure_personal_wiki
 
@@ -133,6 +133,29 @@ def signup():
 def logout():
     logout_user()
     return redirect(url_for("main.index"))
+
+
+@auth_bp.route("/magic/<token>")
+def magic_login(token):
+    token_hash = hash_one_time_token(token)
+    token_row = MagicLoginToken.query.filter_by(token_hash=token_hash).first()
+    if (
+        not token_row
+        or token_row.used_at is not None
+        or token_row.expires_at <= utcnow()
+    ):
+        flash("This magic sign-in link is invalid or expired.")
+        return redirect(url_for("auth.login")), 302
+
+    user = User.query.get(token_row.user_id)
+    if not user:
+        flash("This magic sign-in link is invalid.")
+        return redirect(url_for("auth.login")), 302
+
+    token_row.used_at = utcnow()
+    db.session.commit()
+    login_user(user)
+    return redirect(token_row.redirect_path or url_for("main.index"))
 
 
 # --- Google OAuth ---

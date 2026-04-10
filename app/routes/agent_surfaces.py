@@ -116,6 +116,20 @@ Response: `{"user_id": 1, "username": "your-name", "api_key": "wh_..."}`
 
 Save the API key — it's shown only once. Use as `Authorization: Bearer wh_...`.
 
+## one-click browser sign-in
+
+```
+POST /api/v1/auth/magic-link
+Authorization: Bearer wh_...
+Content-Type: application/json
+
+{"next": "/settings"}
+```
+
+Response: `{"login_url": "https://wikihub.md/auth/magic/wl_...", "expires_at": "..."}`
+
+The link is short-lived and single-use. Open it in a browser to establish a normal web session.
+
 ## create a wiki
 
 ```
