@@ -86,6 +86,8 @@ bd create            # create new issue
 
 when starting a batch of work, run `bd list` to see open issues. close beads as you fix them with `-r` explaining what was done.
 
+**ticket-first rule:** always create a beads ticket before implementing a feature or fix. close the ticket when done. this is the project's workflow — no exceptions.
+
 ## verification: agent-browser is mandatory
 
 **after making any UI or route change, verify it with `agent-browser` against the running dev server.** do not rely solely on e2e tests or curl. the user expects visual confirmation that the change works.
