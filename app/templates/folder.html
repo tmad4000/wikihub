@@ -160,7 +160,7 @@
           {% endif %}
           <span>{{ item.name }}</span>
         </div>
-        <span class="vis-pill {{ item.visibility }}">{{ item.visibility }}</span>
+        <span class="vis-pill {{ item.visibility }}">{{ item.visibility | replace('public-edit', 'Public Edit') | replace('unlisted-edit', 'Unlisted Edit') | replace('public', 'Public View') | replace('private', 'Private') | replace('unlisted', 'Unlisted') }}</span>
         <span class="contents-meta">{{ item.updated_at.strftime('%Y-%m-%d') if item.updated_at else '' }}</span>
       </a>
       {% else %}
