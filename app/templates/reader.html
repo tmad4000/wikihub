@@ -340,6 +340,19 @@
       {% endfor %}
     </div>
     {% endif %}
+    {% if sibling_wikis is defined and sibling_wikis %}
+    <div class="sidebar-section" style="margin-top: 16px; border-top: 1px solid var(--border-default); padding-top: 12px;">
+      <div class="sidebar-heading">{{ owner.display_name or owner.username }}'s Wikis</div>
+      {% for w in sibling_wikis %}
+      <a href="/@{{ owner.username }}/{{ w.slug }}" class="sidebar-item" style="padding-left: 12px;">
+        <span class="sidebar-icon">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+        </span>
+        {{ w.title or w.slug }}
+      </a>
+      {% endfor %}
+    </div>
+    {% endif %}
   </aside>
   <div class="sidebar-overlay" id="sidebar-overlay" onclick="toggleSidebar()"></div>
 
@@ -588,9 +601,15 @@ function applyFolderState() {
     const path = folder.dataset.folderPath;
     if (state[path] === false) {
       folder.classList.remove('open');
-    } else if (state[path] === true || folder.classList.contains('active')) {
+    } else if (state[path] === true || folder.classList.contains('open')) {
       folder.classList.add('open');
     }
+    // non-active folders with no localStorage state stay collapsed (server default)
+  });
+  // scroll active sidebar item into view
+  requestAnimationFrame(() => {
+    const active = document.querySelector('.sidebar-item.active');
+    if (active) active.scrollIntoView({ block: 'nearest', behavior: 'instant' });
   });
 }
 
