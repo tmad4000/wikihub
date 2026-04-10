@@ -161,6 +161,11 @@
 
     {% if personal_rendered_html %}
     <div class="profile-wiki">
+      {% if is_owner and personal_wiki %}
+      <div style="display:flex;justify-content:flex-end;margin-bottom:12px;">
+        <a href="/@{{ owner.username }}/{{ personal_wiki.slug }}/index/edit" class="action-btn secondary" style="font-size:0.75rem;padding:4px 12px;min-height:28px;">Edit profile</a>
+      </div>
+      {% endif %}
       {% if private_band_warning %}
       <div class="private-band-warning">
         This page has sections visible only to editors; not a security boundary. Don’t use private bands for real secrets.
