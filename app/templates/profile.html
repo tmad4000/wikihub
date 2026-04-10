@@ -124,7 +124,7 @@
   <aside class="profile-sidebar" {% if not (personal_wiki and sidebar_items) and not wikis %}style="display:none;"{% endif %}>
     {% if personal_wiki and sidebar_items %}
     <div class="sidebar-section">
-      <div class="sidebar-heading">Personal Wiki</div>
+      <a href="/@{{ owner.username }}" class="sidebar-heading" style="text-decoration:none;display:block;">{{ owner.display_name or owner.username }}</a>
       {{ render_sidebar(sidebar_items) }}
       {% if is_owner %}
       <a href="/@{{ owner.username }}/{{ personal_wiki.slug }}/new" class="sidebar-item" style="color:var(--accent);margin-top:8px;">New page</a>
