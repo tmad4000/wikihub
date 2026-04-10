@@ -1,4 +1,5 @@
 import os
+import click
 
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
@@ -35,6 +36,66 @@ def create_app(config_class="config.Config"):
     init_oauth(app)
 
     os.makedirs(app.config["REPOS_DIR"], exist_ok=True)
+
+    with app.app_context():
+        db.create_all()
+        from app.wiki_ops import ensure_official_wiki
+        ensure_official_wiki()
+        db.session.commit()
+
+    @app.cli.group("wikihub")
+    def wikihub_cli():
+        """wikihub maintenance commands."""
+
+    @wikihub_cli.command("reindex")
+    @click.argument("wiki_ref", required=False)
+    @click.option("--all", "all_wikis", is_flag=True, default=False)
+    def reindex_command(wiki_ref=None, all_wikis=False):
+        from app.models import User, Wiki
+        from app.wiki_ops import index_repo_pages
+
+        if all_wikis:
+            wikis = Wiki.query.all()
+        elif wiki_ref and "/" in wiki_ref:
+            owner_name, slug = wiki_ref.split("/", 1)
+            owner = User.query.filter_by(username=owner_name).first()
+            wikis = [Wiki.query.filter_by(owner_id=owner.id, slug=slug).first()] if owner else []
+        else:
+            raise click.ClickException("pass owner/slug or use --all")
+
+        for wiki in filter(None, wikis):
+            index_repo_pages(wiki.owner.username, wiki.slug, wiki, reset=True)
+            click.echo(f"reindexed {wiki.owner.username}/{wiki.slug}")
+        db.session.commit()
+
+    @wikihub_cli.command("verify")
+    @click.argument("wiki_ref")
+    def verify_command(wiki_ref):
+        from app.models import User, Wiki
+        from app.git_sync import list_files_in_repo
+
+        owner_name, slug = wiki_ref.split("/", 1)
+        owner = User.query.filter_by(username=owner_name).first()
+        wiki = Wiki.query.filter_by(owner_id=owner.id, slug=slug).first() if owner else None
+        if not wiki:
+            raise click.ClickException(f"unknown wiki {wiki_ref}")
+
+        repo_files = {path for path in list_files_in_repo(owner_name, slug) if path.endswith(".md")}
+        db_files = {page.path for page in wiki.pages}
+        missing_in_db = sorted(repo_files - db_files)
+        missing_in_repo = sorted(db_files - repo_files)
+        if not missing_in_db and not missing_in_repo:
+            click.echo("ok")
+            return
+        if missing_in_db:
+            click.echo("missing in db:")
+            for path in missing_in_db:
+                click.echo(f"  {path}")
+        if missing_in_repo:
+            click.echo("missing in repo:")
+            for path in missing_in_repo:
+                click.echo(f"  {path}")
+        raise SystemExit(1)
 
     from flask import jsonify, request as req
 

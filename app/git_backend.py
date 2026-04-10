@@ -23,9 +23,9 @@ import bcrypt
 from flask import Blueprint, request, Response, abort, current_app
 
 from app import db
-from app.models import User, ApiKey
+from app.models import User, ApiKey, UsernameRedirect, utcnow
 
-git_bp = Blueprint("git", __name__, url_prefix="/git")
+git_bp = Blueprint("git", __name__)
 
 HOOK_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "hooks")
 
@@ -67,6 +67,16 @@ def _check_basic_auth():
     if api_key:
         return user
 
+    return None
+
+
+def _resolve_username(username):
+    user = User.query.filter_by(username=username).first()
+    if user:
+        return user
+    redirect = UsernameRedirect.query.filter_by(old_username=username).first()
+    if redirect and redirect.expires_at > utcnow():
+        return User.query.get(redirect.user_id)
     return None
 
 
@@ -138,13 +148,13 @@ def _install_hook(repo_path, username, slug):
     hooks_dir = os.path.join(repo_path, "hooks")
     os.makedirs(hooks_dir, exist_ok=True)
 
-    hook_src = os.path.join(HOOK_DIR, "post-receive")
-    hook_dst = os.path.join(hooks_dir, "post-receive")
-
-    if os.path.isfile(hook_src):
-        shutil.copy2(hook_src, hook_dst)
-        st = os.stat(hook_dst)
-        os.chmod(hook_dst, st.st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    for hook_name in ("pre-receive", "post-receive"):
+        hook_src = os.path.join(HOOK_DIR, hook_name)
+        hook_dst = os.path.join(hooks_dir, hook_name)
+        if os.path.isfile(hook_src):
+            shutil.copy2(hook_src, hook_dst)
+            st = os.stat(hook_dst)
+            os.chmod(hook_dst, st.st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 
     config_path = os.path.join(hooks_dir, "wikihub.conf")
     base_url = current_app.config.get("BASE_URL", os.environ.get("BASE_URL", "http://localhost:5000"))
@@ -154,6 +164,7 @@ def _install_hook(repo_path, username, slug):
         f.write(f"WIKIHUB_SLUG={slug}\n")
         f.write(f"WIKIHUB_BASE_URL={base_url}\n")
         f.write(f"WIKIHUB_ADMIN_TOKEN={admin_token}\n")
+        f.write(f"WIKIHUB_APP_ROOT={os.path.dirname(os.path.dirname(os.path.abspath(__file__)))}\n")
 
 
 # --- Smart HTTP routes ---
@@ -166,6 +177,11 @@ def info_refs(username, slug):
     service = request.args.get("service", "")
     if service not in ("git-upload-pack", "git-receive-pack"):
         abort(400)
+
+    resolved_owner = _resolve_username(username)
+    if not resolved_owner:
+        abort(404)
+    username = resolved_owner.username
 
     user = _check_basic_auth()
     is_owner = user and user.username == username
@@ -215,6 +231,10 @@ def info_refs(username, slug):
 @git_bp.route("/@<username>/<slug>.git/git-upload-pack", methods=["POST"])
 def upload_pack(username, slug):
     """handle git clone / fetch / pull."""
+    resolved_owner = _resolve_username(username)
+    if not resolved_owner:
+        abort(404)
+    username = resolved_owner.username
     user = _check_basic_auth()
     is_owner = user and user.username == username
 
@@ -229,6 +249,10 @@ def upload_pack(username, slug):
 @git_bp.route("/@<username>/<slug>.git/git-receive-pack", methods=["POST"])
 def receive_pack(username, slug):
     """handle git push. owner only."""
+    resolved_owner = _resolve_username(username)
+    if not resolved_owner:
+        abort(404)
+    username = resolved_owner.username
     user = _check_basic_auth()
     if not user or user.username != username:
         return _require_auth_401()

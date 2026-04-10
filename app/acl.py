@@ -19,7 +19,7 @@ GRANT_RE = re.compile(r"^@([\w-]+):(read|edit)$")
 def parse_acl(text):
     """parse a .wikihub/acl file into a list of (pattern, directive) tuples.
     directives are either a visibility string or a grant like '@user:read'.
-    rules are returned in file order; resolution uses last-match-wins."""
+    rules are returned in file order; resolution uses most-specific-wins."""
     rules = []
     for line in text.splitlines():
         line = line.strip()
@@ -37,6 +37,25 @@ def parse_acl(text):
                 rules.append((pattern, directive))
             # unknown directives are logged as warnings but don't break the file
     return rules
+
+
+def validate_acl(text):
+    errors = []
+    for line_number, raw_line in enumerate(text.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split()
+        if len(parts) < 2:
+            errors.append(f"line {line_number}: ACL rule must include a pattern and at least one directive")
+            continue
+        for directive in parts[1:]:
+            directive_lower = directive.lower()
+            if directive_lower in VALID_VISIBILITIES:
+                continue
+            if directive.startswith("@") and not GRANT_RE.match(directive):
+                errors.append(f"line {line_number}: malformed grant '{directive}'")
+    return errors
 
 
 def _pattern_specificity(pattern):

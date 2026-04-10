@@ -1,75 +1,282 @@
 import os
+import subprocess
+from datetime import timezone
 from urllib.parse import quote
 
-from flask import render_template, abort, request, redirect, url_for, flash, Response
-from flask_login import current_user, login_required
+from flask import Response, abort, redirect, render_template, request, url_for
+from flask_login import current_user
 
 from app import db
-from app.models import User, Wiki, Page
-from app.git_sync import (
-    read_file_from_repo, list_files_in_repo,
-    sync_page_to_repo, regenerate_public_mirror,
-)
-from app.acl import parse_acl, can_read, can_write, resolve_visibility
+from app.acl import can_read, can_write, resolve_visibility
+from app.content_utils import has_private_bands, parse_markdown_document, set_visibility_in_content
+from app.git_sync import read_file_from_repo, list_files_in_repo, regenerate_public_mirror, sync_page_to_repo
+from app.models import Page, User, UsernameRedirect, Wiki, utcnow
 from app.renderer import render_page
 from app.routes import wiki_bp
+from app.wiki_ops import load_acl_rules, refresh_wikilinks_for_page, sync_wiki_counters, update_page_metadata
 
 
-def _load_acl_rules(username, slug):
-    acl_content = read_file_from_repo(username, slug, ".wikihub/acl")
-    if acl_content:
-        return parse_acl(acl_content)
-    return []
+def _resolve_owner(username):
+    owner = User.query.filter_by(username=username).first()
+    if owner:
+        return owner, None
+
+    redirect_row = UsernameRedirect.query.filter_by(old_username=username).first()
+    if redirect_row and redirect_row.expires_at > utcnow():
+        return redirect_row.user, redirect_row
+    return None, None
 
 
-def _build_sidebar(username, slug, current_path=None):
-    """build sidebar items from the repo's file tree."""
-    files = list_files_in_repo(username, slug)
-    items = []
-    for f in sorted(files):
-        if f.startswith(".wikihub/") or f.endswith(".gitkeep"):
+def _get_owner_and_wiki_or_404(username, slug):
+    owner, redirect_row = _resolve_owner(username)
+    if not owner:
+        abort(404)
+    wiki = Wiki.query.filter_by(owner_id=owner.id, slug=slug).first()
+    if not wiki:
+        abort(404)
+    return owner, wiki, redirect_row
+
+
+def _is_owner(wiki):
+    return current_user.is_authenticated and current_user.id == wiki.owner_id
+
+
+def _visible_files(username, slug, wiki, public=False):
+    files = list_files_in_repo(username, slug, public=public)
+    if not public:
+        return [path for path in files if not path.startswith(".wikihub/") and not path.endswith(".gitkeep")]
+
+    discoverable = {
+        page.path
+        for page in Page.query.filter_by(wiki_id=wiki.id).all()
+        if page.visibility in ("public", "public-edit")
+    }
+    return [
+        path
+        for path in files
+        if not path.startswith(".wikihub/")
+        and not path.endswith(".gitkeep")
+        and path in discoverable
+    ]
+
+
+def _folder_url(username, slug, folder_path):
+    clean = folder_path.strip("/")
+    if not clean:
+        return f"/@{username}/{slug}"
+    return f"/@{username}/{slug}/{quote(clean, safe='/')}/"
+
+
+def _page_url(username, slug, page_path):
+    return f"/@{username}/{slug}/{quote(page_path.replace('.md', ''), safe='/')}"
+
+
+def _build_sidebar_tree(username, slug, wiki, public=False, current_path=None):
+    root = {"children": {}}
+
+    for path in sorted(_visible_files(username, slug, wiki, public=public)):
+        parts = path.split("/")
+        cursor = root["children"]
+        for depth, part in enumerate(parts[:-1]):
+            folder_path = "/".join(parts[: depth + 1])
+            node = cursor.setdefault(
+                ("folder", folder_path),
+                {
+                    "kind": "folder",
+                    "name": part,
+                    "path": folder_path,
+                    "url": _folder_url(username, slug, folder_path),
+                    "active": current_path == folder_path,
+                    "children": {},
+                },
+            )
+            cursor = node["children"]
+
+        filename = parts[-1]
+        if filename in {"index.md", "README.md"} and len(parts) > 1:
             continue
-        depth = f.count("/")
-        label = f.rsplit("/", 1)[-1].replace(".md", "")
-        url = f"/@{username}/{slug}/{quote(f.replace('.md', ''), safe='/')}"
-        items.append({
-            "url": url,
-            "label": label,
-            "active": f == current_path,
-            "indent_class": f"indent-{depth}" if depth > 0 else "",
-        })
-    return items
+
+        cursor[("page", path)] = {
+            "kind": "page",
+            "name": filename.replace(".md", ""),
+            "path": path,
+            "url": _page_url(username, slug, path),
+            "active": current_path == path,
+            "children": {},
+        }
+
+    def normalize(children):
+        items = list(children.values())
+        for item in items:
+            if item["kind"] == "folder":
+                item["children"] = normalize(item["children"])
+                item["active"] = item["active"] or any(child["active"] for child in item["children"])
+        return sorted(items, key=lambda item: (item["kind"] != "folder", item["name"].lower()))
+
+    return normalize(root["children"])
+
+
+def _folder_listing(username, slug, wiki, folder_path="", public=False):
+    prefix = folder_path.strip("/")
+    files = _visible_files(username, slug, wiki, public=public)
+    pages_by_path = {page.path: page for page in Page.query.filter_by(wiki_id=wiki.id).all()}
+    seen = set()
+    items = []
+
+    for path in files:
+        if prefix:
+            if not path.startswith(prefix + "/"):
+                continue
+            relative = path[len(prefix) + 1 :]
+        else:
+            relative = path
+
+        if "/" in relative:
+            child = relative.split("/", 1)[0]
+            child_path = f"{prefix}/{child}".strip("/")
+            if child_path in seen:
+                continue
+            seen.add(child_path)
+            items.append(
+                {
+                    "kind": "folder",
+                    "name": child,
+                    "path": child_path,
+                    "url": _folder_url(username, slug, child_path),
+                    "visibility": resolve_visibility(child_path, load_acl_rules(username, slug)),
+                    "updated_at": None,
+                }
+            )
+            continue
+
+        if relative in {"index.md", "README.md"} and prefix:
+            continue
+
+        page = pages_by_path.get(path)
+        items.append(
+            {
+                "kind": "page",
+                "name": relative.replace(".md", ""),
+                "path": path,
+                "url": _page_url(username, slug, path),
+                "visibility": page.visibility if page else resolve_visibility(path, load_acl_rules(username, slug)),
+                "updated_at": page.updated_at if page else None,
+            }
+        )
+
+    return sorted(items, key=lambda item: (item["kind"] != "folder", item["name"].lower()))
+
+
+def _folder_index_content(username, slug, folder_path, public=False):
+    candidates = []
+    clean = folder_path.strip("/")
+    if clean:
+        candidates = [f"{clean}/index.md", f"{clean}/README.md"]
+    else:
+        candidates = ["index.md", "README.md"]
+
+    for candidate in candidates:
+        content = read_file_from_repo(username, slug, candidate, public=public)
+        if content is not None:
+            return candidate, content
+    return None, None
+
+
+def _git_history(username, slug, public=False, path=None, limit=50):
+    from app.git_backend import _repo_path
+
+    repo = _repo_path(username, slug, public=public)
+    if not os.path.isdir(repo):
+        return []
+
+    cmd = [
+        "git",
+        "-C",
+        repo,
+        "log",
+        "--format=%H%x1f%an%x1f%aI%x1f%s%x1e",
+        "--name-only",
+        f"--max-count={limit}",
+    ]
+    if path:
+        cmd += ["--", path]
+
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        return []
+
+    commits = []
+    for chunk in result.stdout.split("\x1e"):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        lines = [line for line in chunk.splitlines() if line.strip()]
+        sha, author, date, message = lines[0].split("\x1f")
+        commits.append(
+            {
+                "sha": sha,
+                "author": author,
+                "date": date,
+                "message": message,
+                "files_changed": lines[1:],
+            }
+        )
+    return commits
 
 
 @wiki_bp.route("/@<username>")
 def user_profile(username):
-    owner = User.query.filter_by(username=username).first()
+    owner, redirect_row = _resolve_owner(username)
     if not owner:
         abort(404)
+    if redirect_row:
+        return redirect(url_for("wiki.user_profile", username=owner.username), code=302)
 
+    personal_wiki = Wiki.query.filter_by(owner_id=owner.id, slug=owner.username).first()
     wikis = Wiki.query.filter_by(owner_id=owner.id).order_by(Wiki.updated_at.desc()).all()
+    for wiki in wikis:
+        sync_wiki_counters(wiki)
     total_stars = sum(w.star_count for w in wikis)
-    return render_template("profile.html", owner=owner, wikis=wikis, total_stars=total_stars)
+
+    personal_content = None
+    personal_rendered_html = None
+    personal_sidebar = []
+    private_band_warning = False
+
+    if personal_wiki:
+        use_public = not _is_owner(personal_wiki)
+        _, personal_content = _folder_index_content(owner.username, personal_wiki.slug, "", public=use_public)
+        if personal_content:
+            personal_rendered_html = render_page(personal_content, owner.username, personal_wiki.slug)
+            personal_sidebar = _build_sidebar_tree(owner.username, personal_wiki.slug, personal_wiki, public=use_public, current_path="index.md")
+            private_band_warning = not use_public and has_private_bands(personal_content)
+
+    other_wikis = [wiki for wiki in wikis if wiki.slug != owner.username]
+    return render_template(
+        "profile.html",
+        owner=owner,
+        wikis=other_wikis,
+        total_stars=total_stars,
+        personal_wiki=personal_wiki,
+        personal_rendered_html=personal_rendered_html,
+        private_band_warning=private_band_warning,
+        sidebar_items=personal_sidebar,
+    )
 
 
 @wiki_bp.route("/@<username>/<slug>.zip")
 def wiki_zip(username, slug):
-    """ZIP download — git archive. owner gets full repo, others get public mirror."""
-    import subprocess
-    owner = User.query.filter_by(username=username).first_or_404()
-    wiki = Wiki.query.filter_by(owner_id=owner.id, slug=slug).first_or_404()
+    owner, wiki, redirect_row = _get_owner_and_wiki_or_404(username, slug)
+    if redirect_row:
+        return redirect(url_for("wiki.wiki_zip", username=owner.username, slug=slug), code=302)
 
-    is_owner = current_user.is_authenticated and current_user.id == wiki.owner_id
     from app.git_backend import _repo_path
-    repo = _repo_path(username, slug, public=not is_owner)
 
+    repo = _repo_path(owner.username, wiki.slug, public=not _is_owner(wiki))
     if not os.path.isdir(repo):
         abort(404)
 
-    proc = subprocess.run(
-        ["git", "archive", "--format=zip", "HEAD"],
-        cwd=repo, capture_output=True,
-    )
+    proc = subprocess.run(["git", "archive", "--format=zip", "HEAD"], cwd=repo, capture_output=True)
     if proc.returncode != 0:
         abort(500)
 
@@ -82,185 +289,219 @@ def wiki_zip(username, slug):
 
 @wiki_bp.route("/@<username>/<slug>")
 def wiki_index(username, slug):
-    owner = User.query.filter_by(username=username).first()
-    if not owner:
-        abort(404)
-    wiki = Wiki.query.filter_by(owner_id=owner.id, slug=slug).first()
-    if not wiki:
-        abort(404)
+    owner, wiki, redirect_row = _get_owner_and_wiki_or_404(username, slug)
+    if redirect_row:
+        return redirect(url_for("wiki.wiki_index", username=owner.username, slug=slug), code=302)
 
-    # try to render index.md or README.md
-    for index_path in ("index.md", "README.md"):
-        content = read_file_from_repo(username, slug, index_path)
-        if content:
-            page = Page.query.filter_by(wiki_id=wiki.id, path=index_path).first()
-            if not page:
-                page = type("Page", (), {"path": index_path, "title": wiki.title, "visibility": "public"})()
+    use_public = not _is_owner(wiki)
+    page_path, content = _folder_index_content(owner.username, wiki.slug, "", public=use_public)
+    if content is None:
+        return render_template(
+            "folder.html",
+            owner=owner,
+            wiki=wiki,
+            items=_folder_listing(owner.username, wiki.slug, wiki, "", public=use_public),
+            sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=use_public),
+            folder_path="",
+            rendered_html=None,
+            breadcrumb=[],
+        )
 
-            rendered = render_page(content, username, slug)
-            sidebar_items = _build_sidebar(username, slug, index_path)
-            return render_template("reader.html",
-                owner=owner, wiki=wiki, page=page,
-                rendered_html=rendered, sidebar_items=sidebar_items)
+    page = Page.query.filter_by(wiki_id=wiki.id, path=page_path).first()
+    if page is None:
+        page = type("Page", (), {"path": page_path, "title": wiki.title, "visibility": "private", "updated_at": wiki.updated_at})()
 
-    # no index — show file listing
-    sidebar_items = _build_sidebar(username, slug)
-    return render_template("folder.html", owner=owner, wiki=wiki, items=sidebar_items)
+    return render_template(
+        "reader.html",
+        owner=owner,
+        wiki=wiki,
+        page=page,
+        rendered_html=render_page(content, owner.username, wiki.slug),
+        sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=use_public, current_path=page_path),
+        private_band_warning=not use_public and has_private_bands(content),
+        json_ld_author=owner.display_name or owner.username,
+    )
 
 
-@wiki_bp.route("/@<username>/<slug>/<path:page_path>")
+@wiki_bp.route("/@<username>/<slug>/tag/<tag_name>")
+def wiki_tag_index(username, slug, tag_name):
+    owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
+    pages = (
+        Page.query.filter_by(wiki_id=wiki.id)
+        .filter(Page.frontmatter_json["tags"].astext.contains(tag_name))
+        .order_by(Page.title.asc())
+        .all()
+    )
+    return render_template("folder.html", owner=owner, wiki=wiki, items=[
+        {
+            "kind": "page",
+            "name": page.title or page.path,
+            "path": page.path,
+            "url": _page_url(owner.username, wiki.slug, page.path),
+            "visibility": page.visibility,
+            "updated_at": page.updated_at,
+        }
+        for page in pages
+    ], sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=not _is_owner(wiki)), folder_path=f"tag:{tag_name}", rendered_html=None, breadcrumb=[("Tags", None), (tag_name, None)])
+
+
+@wiki_bp.route("/@<username>/<slug>/history")
+def wiki_history(username, slug):
+    owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
+    commits = _git_history(owner.username, wiki.slug, public=not _is_owner(wiki))
+    return render_template("folder.html", owner=owner, wiki=wiki, items=[], sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=not _is_owner(wiki)), folder_path="history", rendered_html=None, breadcrumb=[("History", None)], history_commits=commits)
+
+
+@wiki_bp.route("/@<username>/<slug>/<path:folder_path>/history")
+def page_history(username, slug, folder_path):
+    owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
+    path = folder_path if folder_path.endswith(".md") else f"{folder_path}.md"
+    commits = _git_history(owner.username, wiki.slug, public=not _is_owner(wiki), path=path)
+    return render_template("folder.html", owner=owner, wiki=wiki, items=[], sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=not _is_owner(wiki), current_path=path), folder_path=f"{path} history", rendered_html=None, breadcrumb=[("History", None)], history_commits=commits)
+
+
+@wiki_bp.route("/@<username>/<slug>/<path:page_path>", strict_slashes=False)
 def wiki_page(username, slug, page_path):
-    owner = User.query.filter_by(username=username).first()
-    if not owner:
-        abort(404)
-    wiki = Wiki.query.filter_by(owner_id=owner.id, slug=slug).first()
-    if not wiki:
-        abort(404)
+    owner, wiki, redirect_row = _get_owner_and_wiki_or_404(username, slug)
+    if redirect_row:
+        return redirect(url_for("wiki.wiki_page", username=owner.username, slug=slug, page_path=page_path), code=302)
 
-    # content negotiation: Accept: text/markdown -> raw markdown
-    accept = request.headers.get("Accept", "")
-    wants_markdown = "text/markdown" in accept
+    if request.path.endswith("/"):
+        use_public = not _is_owner(wiki)
+        content_path, content = _folder_index_content(owner.username, wiki.slug, page_path, public=use_public)
+        breadcrumb = []
+        running = []
+        for segment in page_path.strip("/").split("/"):
+            if not segment:
+                continue
+            running.append(segment)
+            breadcrumb.append((segment, _folder_url(owner.username, wiki.slug, "/".join(running))))
+        return render_template(
+            "folder.html",
+            owner=owner,
+            wiki=wiki,
+            items=_folder_listing(owner.username, wiki.slug, wiki, page_path, public=use_public),
+            sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=use_public, current_path=page_path.strip("/")),
+            folder_path=page_path.strip("/"),
+            rendered_html=render_page(content, owner.username, wiki.slug) if content else None,
+            breadcrumb=breadcrumb,
+            private_band_warning=bool(content and not use_public and has_private_bands(content)),
+        )
 
-    # find the page (try with .md extension)
-    file_path = page_path
-    if not file_path.endswith(".md"):
-        file_path = file_path + ".md"
-
+    file_path = page_path if page_path.endswith(".md") else page_path + ".md"
     page = Page.query.filter_by(wiki_id=wiki.id, path=file_path).first()
-    is_owner = current_user.is_authenticated and current_user.id == wiki.owner_id
-
-    # check permissions
-    acl_rules = _load_acl_rules(username, slug)
+    acl_rules = load_acl_rules(owner.username, wiki.slug)
     user_name = current_user.username if current_user.is_authenticated else None
+    is_owner = _is_owner(wiki)
 
-    if page and not is_owner:
-        if not can_read(page.path, acl_rules, user_name, page.visibility):
-            return render_template("permission_error.html", owner=owner, wiki=wiki), 403
+    if page and not is_owner and not can_read(page.path, acl_rules, user_name, page.visibility):
+        return render_template("permission_error.html", owner=owner, wiki=wiki), 403
 
-    # read content
-    if page and page.visibility == "private" and page.private_content:
-        content = page.private_content
-    else:
-        content = read_file_from_repo(username, slug, file_path, public=not is_owner)
-
-    if not content:
+    use_public = not is_owner and (page.visibility if page else "public") != "private"
+    content = read_file_from_repo(owner.username, wiki.slug, file_path, public=use_public)
+    if content is None and page and page.visibility == "private" and current_user.is_authenticated:
+        content = read_file_from_repo(owner.username, wiki.slug, file_path, public=False)
+    if content is None:
         abort(404)
 
-    # raw markdown response
+    wants_markdown = "text/markdown" in request.headers.get("Accept", "")
     if wants_markdown or page_path.endswith(".md"):
-        from flask import Response
         return Response(
             content,
             content_type="text/markdown; charset=utf-8",
             headers={
                 "Vary": "Accept",
-                "Link": f'</@{username}/{slug}/{quote(page_path.replace(".md", ""), safe="/")}>; rel="alternate"; type="text/html"',
+                "Link": f'</@{owner.username}/{wiki.slug}/{quote(page_path.replace(".md", ""), safe="/")}>; rel="alternate"; type="text/html"',
             },
         )
 
     if not page:
-        page = type("Page", (), {
-            "path": file_path, "title": file_path.replace(".md", "").rsplit("/", 1)[-1],
-            "visibility": resolve_visibility(file_path, acl_rules),
-        })()
+        page = type("Page", (), {"path": file_path, "title": os.path.basename(file_path).replace(".md", ""), "visibility": resolve_visibility(file_path, acl_rules), "updated_at": wiki.updated_at})()
 
-    rendered = render_page(content, username, slug)
-    sidebar_items = _build_sidebar(username, slug, file_path)
-
-    return render_template("reader.html",
-        owner=owner, wiki=wiki, page=page,
-        rendered_html=rendered, sidebar_items=sidebar_items,
+    return render_template(
+        "reader.html",
+        owner=owner,
+        wiki=wiki,
+        page=page,
+        rendered_html=render_page(content, owner.username, wiki.slug),
+        sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=use_public, current_path=file_path),
+        private_band_warning=not use_public and has_private_bands(content),
+        json_ld_author=owner.display_name or owner.username,
     ), 200, {
         "Vary": "Accept",
-        "Link": f'</@{username}/{slug}/{quote(page_path, safe="/")}.md>; rel="alternate"; type="text/markdown"',
+        "Link": f'</@{owner.username}/{wiki.slug}/{quote(page_path, safe="/")}.md>; rel="alternate"; type="text/markdown"',
     }
 
 
 @wiki_bp.route("/@<username>/<slug>/<path:page_path>/edit", methods=["GET", "POST"])
-@login_required
 def edit_page(username, slug, page_path):
-    owner = User.query.filter_by(username=username).first_or_404()
-    wiki = Wiki.query.filter_by(owner_id=owner.id, slug=slug).first_or_404()
-
+    owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
     file_path = page_path if page_path.endswith(".md") else page_path + ".md"
     page = Page.query.filter_by(wiki_id=wiki.id, path=file_path).first()
-    is_owner = current_user.id == wiki.owner_id
+    acl_rules = load_acl_rules(owner.username, wiki.slug)
+    is_owner = _is_owner(wiki)
+    username_for_acl = current_user.username if current_user.is_authenticated else None
 
-    acl_rules = _load_acl_rules(username, slug)
-    if not is_owner and not can_write(file_path, acl_rules, current_user.username):
+    if not is_owner and not can_write(file_path, acl_rules, username_for_acl, page.visibility if page else None):
         return render_template("permission_error.html", owner=owner, wiki=wiki), 403
 
     if request.method == "POST":
         content = request.form.get("content", "")
-        visibility = request.form.get("visibility", "private")
+        visibility = request.form.get("visibility", page.visibility if page else resolve_visibility(file_path, acl_rules))
+        if is_owner:
+            content = set_visibility_in_content(content, visibility)
+        elif page:
+            content = set_visibility_in_content(content, page.visibility)
+
+        frontmatter, _ = parse_markdown_document(content)
+        page_visibility = frontmatter.get("visibility") or resolve_visibility(file_path, acl_rules)
 
         if not page:
-            page = Page(wiki_id=wiki.id, path=file_path, author=current_user.username)
+            page = Page(wiki_id=wiki.id, path=file_path)
             db.session.add(page)
 
-        page.visibility = visibility
-        page.author = current_user.username
-
-        # extract frontmatter for metadata
-        import hashlib, os
-        fm = {}
-        body = content
-        if content.startswith("---"):
-            parts = content.split("---", 2)
-            if len(parts) >= 3:
-                for line in parts[1].strip().split("\n"):
-                    if ":" in line:
-                        k, v = line.split(":", 1)
-                        fm[k.strip().lower()] = v.strip()
-                body = parts[2].strip()
-
-        page.title = fm.get("title", os.path.splitext(os.path.basename(file_path))[0])
-        page.frontmatter_json = fm
-        page.content_hash = hashlib.sha256(content.encode()).hexdigest()
-        page.excerpt = body[:200].replace("\n", " ").strip()
-        page.search_vector = db.func.to_tsvector("english", f"{page.title or ''} {body}")
-
-        if visibility == "private":
-            page.private_content = content
-        else:
-            page.private_content = None
-            sync_page_to_repo(username, slug, file_path, content)
-
+        page.visibility = page_visibility
+        page.author = current_user.username if current_user.is_authenticated else None
+        update_page_metadata(page, content, frontmatter)
+        db.session.flush()
+        refresh_wikilinks_for_page(page, content)
+        author_name = current_user.username if current_user.is_authenticated else "anonymous"
+        author_email = f"{author_name}@wikihub" if current_user.is_authenticated else "anon@wikihub"
+        sync_page_to_repo(owner.username, wiki.slug, file_path, content, message=f"Update {file_path}", author_name=author_name, author_email=author_email)
+        regenerate_public_mirror(owner.username, wiki.slug, acl_rules)
         db.session.commit()
-        regenerate_public_mirror(username, slug, acl_rules)
+        return redirect(url_for("wiki.wiki_page", username=owner.username, slug=wiki.slug, page_path=page_path))
 
-        return redirect(url_for("wiki.wiki_page", username=username, slug=slug, page_path=page_path))
-
-    # GET: load existing content
-    if page and page.private_content:
-        content = page.private_content
-    else:
-        content = read_file_from_repo(username, slug, file_path) or ""
-
+    content = read_file_from_repo(owner.username, wiki.slug, file_path, public=False) or ""
     visibility = page.visibility if page else resolve_visibility(file_path, acl_rules)
 
-    return render_template("editor.html",
-        owner=owner, wiki=wiki, page_path=file_path,
-        content=content, visibility=visibility)
+    return render_template(
+        "editor.html",
+        owner=owner,
+        wiki=wiki,
+        page_path=file_path,
+        content=content,
+        visibility=visibility,
+    )
 
 
 @wiki_bp.route("/@<username>/<slug>/new", methods=["GET", "POST"])
-@login_required
 def new_page(username, slug):
-    owner = User.query.filter_by(username=username).first_or_404()
-    wiki = Wiki.query.filter_by(owner_id=owner.id, slug=slug).first_or_404()
+    owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
 
     if request.method == "POST":
         page_path = request.form.get("path", "").strip()
         if not page_path.endswith(".md"):
             page_path += ".md"
-        # redirect to edit with the new path
-        return redirect(url_for("wiki.edit_page",
-            username=username, slug=slug, page_path=page_path.replace(".md", "")))
+        return redirect(url_for("wiki.edit_page", username=owner.username, slug=wiki.slug, page_path=page_path.replace(".md", "")))
 
-    acl_rules = _load_acl_rules(username, slug)
+    acl_rules = load_acl_rules(owner.username, wiki.slug)
     default_vis = resolve_visibility("wiki/new-page.md", acl_rules)
-
-    return render_template("editor.html",
-        owner=owner, wiki=wiki, page_path="wiki/new-page.md",
-        content="", visibility=default_vis)
+    return render_template(
+        "editor.html",
+        owner=owner,
+        wiki=wiki,
+        page_path="wiki/new-page.md",
+        content="",
+        visibility=default_vis,
+    )

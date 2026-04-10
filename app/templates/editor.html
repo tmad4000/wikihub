@@ -169,5 +169,26 @@ function updateLineCount() {
 }
 ta.addEventListener('input', updateLineCount);
 updateLineCount();
+
+if (navigator.modelContext && typeof navigator.modelContext.registerTool === 'function') {
+  navigator.modelContext.registerTool({
+    name: 'save_wikihub_page',
+    description: 'Save the current wikihub page using the logged-in browser session.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        content: {type: 'string'},
+        visibility: {type: 'string'}
+      },
+      required: ['content']
+    },
+    handler: async ({content, visibility}) => {
+      document.getElementById('editor-textarea').value = content;
+      if (visibility) setVisibility(visibility);
+      document.getElementById('editor-form').requestSubmit();
+      return {status: 'submitted'};
+    }
+  });
+}
 </script>
 {% endblock %}

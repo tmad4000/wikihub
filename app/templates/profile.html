@@ -26,6 +26,17 @@
 }
 @media (min-width: 640px) { .wiki-list { padding: 0 24px 64px; } }
 .wiki-list h2 { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 12px; }
+.profile-wiki {
+  max-width: 800px; margin: 24px auto 0; padding: 0 16px;
+}
+@media (min-width: 640px) { .profile-wiki { padding: 0 24px; } }
+.private-band-warning {
+  margin-bottom: 20px; padding: 12px 14px;
+  border: 1px solid rgba(212, 160, 74, 0.2);
+  background: rgba(212, 160, 74, 0.08);
+  border-radius: var(--radius-md); color: var(--text-secondary);
+  font-size: 0.8125rem; line-height: 1.5;
+}
 
 .wiki-card {
   display: block; background: var(--bg-surface); border: 1px solid var(--border-default);
@@ -52,9 +63,26 @@
   </div>
 </div>
 
+{% if personal_wiki and personal_rendered_html %}
+<div class="profile-wiki">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+    <h2 style="margin-bottom:0;">Profile Wiki</h2>
+    <a href="/@{{ owner.username }}/{{ personal_wiki.slug }}" style="font-size:0.8125rem;color:var(--accent);text-decoration:none;">Open wiki</a>
+  </div>
+  {% if private_band_warning %}
+  <div class="private-band-warning">
+    This page has sections visible only to editors; not a security boundary. Don’t use private bands for real secrets.
+  </div>
+  {% endif %}
+  <article class="article">
+    {{ personal_rendered_html | safe }}
+  </article>
+</div>
+{% endif %}
+
 <div class="wiki-list">
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-    <h2 style="margin-bottom:0;">Wikis</h2>
+    <h2 style="margin-bottom:0;">Other Wikis</h2>
     {% if current_user.is_authenticated and current_user.id == owner.id %}
     <a href="/new" style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;min-height:36px;background:var(--accent);color:#0f0e0c;border-radius:var(--radius-sm);font-size:0.8125rem;font-weight:600;text-decoration:none;">New wiki</a>
     {% endif %}

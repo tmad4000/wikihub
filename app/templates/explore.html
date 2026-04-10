@@ -39,10 +39,29 @@
   <h1>Explore</h1>
   <p class="subtitle">Knowledge bases published by the community.</p>
 
-  {% if featured %}
-  <div class="section-label">Featured</div>
+  {% if editorial %}
+  <div class="section-label">Editorial Picks</div>
   <div class="wiki-grid featured">
-    {% for wiki in featured %}
+    {% for wiki in editorial %}
+    <a href="/@{{ wiki.owner.username }}/{{ wiki.slug }}" class="wiki-card">
+      <div class="wiki-card-owner">@{{ wiki.owner.username }}</div>
+      <div class="wiki-card-title">{{ wiki.title or wiki.slug }}</div>
+      {% if wiki.description %}
+      <div class="wiki-card-desc">{{ wiki.description }}</div>
+      {% endif %}
+      <div class="wiki-card-meta">
+        <span class="star">&#9733; {{ wiki.star_count }}</span>
+        <span>{{ wiki.fork_count }} forks</span>
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if popular %}
+  <div class="section-label">Popular</div>
+  <div class="wiki-grid">
+    {% for wiki in popular %}
     <a href="/@{{ wiki.owner.username }}/{{ wiki.slug }}" class="wiki-card">
       <div class="wiki-card-owner">@{{ wiki.owner.username }}</div>
       <div class="wiki-card-title">{{ wiki.title or wiki.slug }}</div>

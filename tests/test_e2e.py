@@ -10,6 +10,7 @@ import os
 import shutil
 import sys
 import zipfile
+from sqlalchemy import text
 
 # ensure app is importable
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -26,11 +27,32 @@ def setup():
     app = create_app()
     with app.app_context():
         db.create_all()
+        reset_database()
     return app
 
 
 def teardown():
     shutil.rmtree("/tmp/wikihub-test-repos", ignore_errors=True)
+
+
+def reset_database():
+    for table in [
+        "wikilinks",
+        "forks",
+        "stars",
+        "pages",
+        "wikis",
+        "api_keys",
+        "username_redirects",
+        "audit_log",
+        "sessions",
+        "users",
+    ]:
+        try:
+            db.session.execute(text(f'TRUNCATE TABLE "{table}" RESTART IDENTITY CASCADE'))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
 
 
 def test_agent_account_creation(client):
@@ -45,6 +67,10 @@ def test_agent_account_creation(client):
     r = client.get("/api/v1/accounts/me", headers={"Authorization": f"Bearer {data['api_key']}"})
     assert r.status_code == 200
     assert r.get_json()["username"] == "agent1"
+
+    # personal wiki is auto-created and exposed at /@username
+    r = client.get("/@agent1")
+    assert r.status_code == 200
     return data["api_key"]
 
 
@@ -68,6 +94,11 @@ def test_wiki_lifecycle(client, api_key):
     r = client.get("/api/v1/wikis/agent1/test-wiki/pages/wiki/hello.md", headers=h)
     assert r.status_code == 200
     assert "Hello" in r.get_json()["title"]
+
+    # API content negotiation
+    r = client.get("/api/v1/wikis/agent1/test-wiki/pages/wiki/hello.md", headers={**h, "Accept": "text/markdown"})
+    assert r.status_code == 200
+    assert "text/markdown" in r.content_type
 
     # read via web (HTML)
     r = client.get("/@agent1/test-wiki/wiki/hello")
@@ -144,9 +175,44 @@ def test_zip_upload(client, api_key):
 
 def test_agent_surfaces(client):
     """all agent discovery endpoints respond"""
-    for url in ["/llms.txt", "/AGENTS.md", "/agents", "/.well-known/mcp/server-card.json", "/.well-known/wikihub.json"]:
+    for url in ["/llms.txt", "/AGENTS.md", "/agents", "/.well-known/mcp/server-card.json", "/.well-known/wikihub.json", "/mcp"]:
         r = client.get(url)
         assert r.status_code == 200, f"{url} returned {r.status_code}"
+
+
+def test_token_and_settings(client):
+    r = client.post("/auth/signup", data={"username": "webuser", "password": "testpass123"}, follow_redirects=False)
+    assert r.status_code == 302
+
+    r = client.post("/api/v1/auth/token", json={"username": "webuser", "password": "testpass123"})
+    assert r.status_code == 200
+    token = r.get_json()["api_key"]
+    assert token.startswith("wh_")
+
+    r = client.post("/auth/login", data={"api_key": token}, follow_redirects=False)
+    assert r.status_code == 302
+
+    r = client.get("/settings")
+    assert r.status_code == 200
+
+
+def test_anonymous_public_edit(client, api_key):
+    h = {"Authorization": f"Bearer {api_key}"}
+    r = client.post("/api/v1/wikis/agent1/test-wiki/pages", json={
+        "path": "wiki/open.md",
+        "content": "---\ntitle: Open\nvisibility: public-edit\n---\n\nOpen edit page.",
+        "visibility": "public-edit",
+    }, headers=h)
+    assert r.status_code == 201
+
+    r = client.put("/api/v1/wikis/agent1/test-wiki/pages/wiki/open.md", json={
+        "content": "# Open\n\nEdited anonymously.",
+    })
+    assert r.status_code == 200
+
+    r = client.get("/api/v1/wikis/agent1/test-wiki/pages/wiki/open.md")
+    assert r.status_code == 200
+    assert "Edited anonymously" in r.get_json()["content"]
 
 
 def test_acl_permissions(client, api_key):
@@ -189,7 +255,9 @@ def run_all():
             ("social (star + fork)", lambda: test_social(client, key)),
             ("zip upload", lambda: test_zip_upload(client, key)),
             ("agent surfaces", lambda: test_agent_surfaces(client)),
+            ("token + settings", lambda: test_token_and_settings(client)),
             ("ACL permissions", lambda: test_acl_permissions(client, key)),
+            ("anonymous public edit", lambda: test_anonymous_public_edit(client, key)),
         ]
 
         passed = 1  # account creation already passed
@@ -209,10 +277,7 @@ def run_all():
         print(f"\n{passed} passed, {failed} failed")
 
         # cleanup DB
-        from app.models import Star, Fork, Wikilink, Page, Wiki, ApiKey, User
-        for m in [Star, Fork, Wikilink, Page, Wiki, ApiKey, User]:
-            m.query.delete()
-        db.session.commit()
+        reset_database()
 
     teardown()
     return 1 if failed else 0

@@ -17,6 +17,16 @@
   font-size: 0.6875rem; font-weight: 600; text-transform: uppercase;
   letter-spacing: 0.06em; color: var(--text-muted); padding: 6px 12px; margin-bottom: 2px;
 }
+.sidebar-folder-row { display: flex; align-items: center; gap: 4px; }
+.sidebar-folder-toggle {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; border: none; background: transparent;
+  color: var(--text-muted); cursor: pointer; padding: 0;
+}
+.sidebar-folder-toggle svg { transition: transform 0.15s ease; }
+.sidebar-folder.open > .sidebar-folder-row .sidebar-folder-toggle svg { transform: rotate(90deg); }
+.sidebar-children { display: none; }
+.sidebar-folder.open > .sidebar-children { display: block; }
 .sidebar-item {
   display: flex; align-items: center; gap: 8px;
   padding: 5px 12px; border-radius: var(--radius-sm);
@@ -134,21 +144,50 @@
 .action-btn.primary:hover { background: var(--accent-hover); }
 .action-btn .count { font-family: var(--font-mono); font-size: 0.75rem; }
 .actions-spacer { flex: 1; }
+.private-band-warning {
+  margin-bottom: 20px; padding: 12px 14px;
+  border: 1px solid rgba(212, 160, 74, 0.2);
+  background: rgba(212, 160, 74, 0.08);
+  border-radius: var(--radius-md); color: var(--text-secondary);
+  font-size: 0.8125rem; line-height: 1.5;
+}
 {% endblock %}
 
 {% block body %}
+{% macro render_sidebar(items, level=0) %}
+  {% for item in items %}
+    {% if item.kind == 'folder' %}
+    <div class="sidebar-folder {{ 'open' if item.active else '' }}" data-folder-path="{{ item.path }}">
+      <div class="sidebar-folder-row">
+        <button type="button" class="sidebar-folder-toggle" onclick="toggleFolder('{{ item.path }}')">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
+        </button>
+        <a href="{{ item.url }}" class="sidebar-item {{ 'active' if item.active else '' }} indent-{{ level }}">
+          <span class="sidebar-icon">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h5l2 2h11v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>
+          </span>
+          {{ item.name }}
+        </a>
+      </div>
+      <div class="sidebar-children">
+        {{ render_sidebar(item.children, level + 1) }}
+      </div>
+    </div>
+    {% else %}
+    <a href="{{ item.url }}" class="sidebar-item {{ 'active' if item.active else '' }} indent-{{ level }}">
+      <span class="sidebar-icon">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      </span>
+      {{ item.name }}
+    </a>
+    {% endif %}
+  {% endfor %}
+{% endmacro %}
 <div class="reader-layout">
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-section">
       <div class="sidebar-heading">Pages</div>
-      {% for item in sidebar_items %}
-      <a href="{{ item.url }}" class="sidebar-item {{ 'active' if item.active else '' }} {{ item.indent_class }}">
-        <span class="sidebar-icon">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-        </span>
-        {{ item.label }}
-      </a>
-      {% endfor %}
+      {{ render_sidebar(sidebar_items) }}
       {% if current_user.is_authenticated and current_user.id == wiki.owner_id %}
       <a href="/@{{ owner.username }}/{{ wiki.slug }}/new" class="sidebar-item" style="color:var(--accent);margin-top:8px;">
         <span class="sidebar-icon" style="color:var(--accent);">
@@ -207,6 +246,12 @@
       {% endif %}
     </div>
 
+    {% if private_band_warning %}
+    <div class="private-band-warning">
+      This page has sections visible only to editors; not a security boundary. Don’t use private bands for real secrets.
+    </div>
+    {% endif %}
+
     <article class="article">
       {{ rendered_html | safe }}
     </article>
@@ -216,9 +261,44 @@
 
 {% block scripts %}
 <script>
+const folderStorageKey = 'wikihub-sidebar-folders';
+
 function toggleSidebar() {
   document.getElementById('sidebar').classList.toggle('open');
   document.getElementById('sidebar-overlay').classList.toggle('open');
+}
+
+function loadFolders() {
+  try {
+    return JSON.parse(localStorage.getItem(folderStorageKey) || '{}');
+  } catch (e) {
+    return {};
+  }
+}
+
+function saveFolders(state) {
+  localStorage.setItem(folderStorageKey, JSON.stringify(state));
+}
+
+function applyFolderState() {
+  const state = loadFolders();
+  document.querySelectorAll('.sidebar-folder').forEach(folder => {
+    const path = folder.dataset.folderPath;
+    if (state[path] === false) {
+      folder.classList.remove('open');
+    } else if (state[path] === true || folder.classList.contains('active')) {
+      folder.classList.add('open');
+    }
+  });
+}
+
+function toggleFolder(path) {
+  const folder = document.querySelector(`.sidebar-folder[data-folder-path="${CSS.escape(path)}"]`);
+  if (!folder) return;
+  folder.classList.toggle('open');
+  const state = loadFolders();
+  state[path] = folder.classList.contains('open');
+  saveFolders(state);
 }
 
 function starWiki() {
@@ -231,5 +311,20 @@ function forkWiki() {
     .then(r => r.json())
     .then(d => { if (d.web_url) location.href = d.web_url; else alert(d.message || 'Fork failed'); });
 }
+
+applyFolderState();
 </script>
+{% if page and json_ld_author %}
+<script type="application/ld+json">
+{{ {
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "headline": page.title or page.path,
+  "author": {"@type": "Person", "name": json_ld_author},
+  "datePublished": (page.created_at.isoformat() if page.created_at else wiki.created_at.isoformat()),
+  "dateModified": (page.updated_at.isoformat() if page.updated_at else wiki.updated_at.isoformat()),
+  "license": "https://wikihub.md/terms"
+}|tojson }}
+</script>
+{% endif %}
 {% endblock %}

@@ -40,8 +40,6 @@ def get_current_user_from_request():
     """extract user from Bearer token, API key, or session.
     returns User or None."""
     from flask_login import current_user
-    if current_user.is_authenticated:
-        return current_user
 
     # try Bearer token
     auth_header = request.headers.get("Authorization", "")
@@ -60,6 +58,9 @@ def get_current_user_from_request():
                 api_key.agent_version = agent_version
             db.session.commit()
             return User.query.get(api_key.user_id)
+
+    if current_user.is_authenticated:
+        return current_user
 
     return None
 

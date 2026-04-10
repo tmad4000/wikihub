@@ -1,13 +1,20 @@
+from collections import defaultdict, deque
+from time import time
+
 from flask import render_template, redirect, url_for, flash, request, session
 from flask_login import login_user, logout_user, login_required
 from authlib.integrations.flask_client import OAuth
 
 from app import db
-from app.models import User
-from app.auth_utils import hash_password, check_password
+from app.models import User, ApiKey
+from app.auth_utils import hash_password, check_password, hash_api_key
 from app.routes import auth_bp
+from app.wiki_ops import ensure_personal_wiki
 
 oauth = OAuth()
+_SIGNUP_WINDOW_SECONDS = 3600
+_SIGNUP_MAX_PER_IP = 10
+_signup_attempts = defaultdict(deque)
 
 
 def init_oauth(app):
@@ -27,7 +34,24 @@ def login():
     if request.method == "POST":
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
+        api_key = request.form.get("api_key", "").strip()
 
+        # API key login — paste your key, no username/password needed
+        if api_key:
+            key_hash = hash_api_key(api_key)
+            key_row = ApiKey.query.filter_by(key_hash=key_hash).first()
+            if not key_row:
+                flash("Invalid API key")
+                return render_template("auth/login.html"), 401
+            user = User.query.get(key_row.user_id)
+            if not user:
+                flash("Invalid API key")
+                return render_template("auth/login.html"), 401
+            login_user(user)
+            next_page = request.args.get("next", url_for("main.index"))
+            return redirect(next_page)
+
+        # Username + password login
         user = User.query.filter_by(username=username).first()
         if not user or not user.password_hash or not check_password(password, user.password_hash):
             flash("Invalid username or password")
@@ -43,6 +67,14 @@ def login():
 @auth_bp.route("/signup", methods=["GET", "POST"])
 def signup():
     if request.method == "POST":
+        ip = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
+        attempts = _signup_attempts[ip]
+        now = time()
+        while attempts and now - attempts[0] > _SIGNUP_WINDOW_SECONDS:
+            attempts.popleft()
+        if len(attempts) >= _SIGNUP_MAX_PER_IP:
+            return render_template("auth/signup.html"), 429
+
         username = request.form.get("username", "").strip().lower()
         email = request.form.get("email", "").strip() or None
         password = request.form.get("password", "")
@@ -69,7 +101,10 @@ def signup():
             password_hash=hash_password(password),
         )
         db.session.add(user)
+        db.session.flush()
+        ensure_personal_wiki(user)
         db.session.commit()
+        attempts.append(now)
 
         login_user(user)
         return redirect(url_for("wiki.user_profile", username=user.username))
@@ -135,6 +170,8 @@ def google_callback():
             google_id=google_id,
         )
         db.session.add(user)
+        db.session.flush()
+        ensure_personal_wiki(user)
         db.session.commit()
 
     login_user(user)

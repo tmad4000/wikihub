@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Settings — wikihub{% endblock %}
+{% block content %}
+<div style="max-width: 640px; margin: 0 auto; padding: 32px 16px;">
+  <h1 style="font-size: 1.5rem; font-weight: 700; margin-bottom: 24px;">Settings</h1>
+
+  <section style="margin-bottom: 32px;">
+    <h2 style="font-size: 1rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 16px;">Account</h2>
+    <div style="background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: 6px; padding: 16px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+        <span style="color: var(--text-tertiary); font-size: 0.8125rem;">Username</span>
+        <span style="font-family: var(--font-mono); font-size: 0.875rem;">{{ current_user.username }}</span>
+      </div>
+      {% if current_user.email %}
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+        <span style="color: var(--text-tertiary); font-size: 0.8125rem;">Email</span>
+        <span style="font-size: 0.875rem;">{{ current_user.email }}</span>
+      </div>
+      {% endif %}
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <span style="color: var(--text-tertiary); font-size: 0.8125rem;">Member since</span>
+        <span style="font-size: 0.875rem;">{{ current_user.created_at.strftime('%b %d, %Y') }}</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+      <h2 style="font-size: 1rem; font-weight: 600; color: var(--text-secondary); margin: 0;">API Keys</h2>
+      <button id="generate-key-btn" style="background: var(--accent); color: #0f0e0c; border: none; border-radius: 4px; padding: 8px 16px; font-size: 0.8125rem; font-weight: 600; cursor: pointer; font-family: var(--font-body);">Generate new key</button>
+    </div>
+
+    <div id="new-key-banner" style="display: none; background: rgba(122, 158, 107, 0.1); border: 1px solid rgba(122, 158, 107, 0.3); border-radius: 6px; padding: 12px 16px; margin-bottom: 16px;">
+      <div style="font-size: 0.8125rem; color: var(--color-public); font-weight: 600; margin-bottom: 6px;">New API key created — copy it now</div>
+      <div style="display: flex; gap: 8px; align-items: center;">
+        <code id="new-key-value" style="flex: 1; background: var(--bg-base); padding: 8px 10px; border-radius: 4px; font-size: 0.8125rem; color: var(--text-primary); word-break: break-all;"></code>
+        <button onclick="navigator.clipboard.writeText(document.getElementById('new-key-value').textContent)" style="background: var(--bg-elevated); border: 1px solid var(--border-emphasis); border-radius: 4px; padding: 8px 12px; color: var(--text-secondary); font-size: 0.75rem; cursor: pointer; white-space: nowrap; font-family: var(--font-body);">Copy</button>
+      </div>
+    </div>
+
+    <div id="keys-list" style="background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: 6px; overflow: hidden;">
+      {% for key in api_keys %}
+      <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; {% if not loop.last %}border-bottom: 1px solid var(--border-default);{% endif %}">
+        <div>
+          <code style="font-size: 0.875rem; color: var(--text-primary);">{{ key.key_prefix }}...</code>
+          {% if key.label %}<span style="color: var(--text-tertiary); font-size: 0.75rem; margin-left: 8px;">{{ key.label }}</span>{% endif %}
+          {% if key.agent_name %}<span style="color: var(--accent); font-size: 0.75rem; margin-left: 8px;">{{ key.agent_name }}</span>{% endif %}
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <span style="color: var(--text-muted); font-size: 0.75rem;">{{ key.created_at.strftime('%b %d') }}</span>
+          <button onclick="deleteKey({{ key.id }}, this)" style="background: none; border: none; color: var(--color-private); font-size: 0.75rem; cursor: pointer; font-family: var(--font-body);">Revoke</button>
+        </div>
+      </div>
+      {% endfor %}
+      {% if not api_keys %}
+      <div style="padding: 16px; color: var(--text-muted); text-align: center; font-size: 0.875rem;">No API keys yet. Generate one to use the API.</div>
+      {% endif %}
+    </div>
+  </section>
+</div>
+
+<script>
+document.getElementById('generate-key-btn').addEventListener('click', async () => {
+  const resp = await fetch('/api/v1/keys', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({label: 'Generated from settings'})});
+  if (resp.ok) {
+    const data = await resp.json();
+    document.getElementById('new-key-value').textContent = data.key;
+    document.getElementById('new-key-banner').style.display = 'block';
+    setTimeout(() => location.reload(), 5000);
+  }
+});
+
+async function deleteKey(id, btn) {
+  if (!confirm('Revoke this key? Any agent using it will lose access.')) return;
+  const resp = await fetch('/api/v1/keys/' + id, {method: 'DELETE'});
+  if (resp.ok) btn.closest('div[style*="display: flex"]').parentElement.remove();
+}
+</script>
+{% endblock %}

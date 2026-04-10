@@ -12,9 +12,12 @@ pipeline: markdown-it-py with plugins for:
 """
 
 import re
+
 from markdown_it import MarkdownIt
 from mdit_py_plugins.footnote import footnote_plugin
 from mdit_py_plugins.dollarmath import dollarmath_plugin
+
+from app.content_utils import parse_markdown_document
 
 
 def _wikilink_plugin(md):
@@ -137,6 +140,43 @@ def _external_link_plugin(md):
     md.renderer.rules["link_open"] = link_open
 
 
+def _figure_image_plugin(md):
+    original_paragraph_open = md.renderer.rules.get("paragraph_open")
+    original_paragraph_close = md.renderer.rules.get("paragraph_close")
+
+    def paragraph_open(tokens, idx, options, env):
+        if idx + 2 < len(tokens) and tokens[idx + 1].type == "inline":
+            children = tokens[idx + 1].children or []
+            if children and all(child.type == "image" for child in children):
+                return "<figure>\n"
+        if original_paragraph_open:
+            return original_paragraph_open(tokens, idx, options, env)
+        return md.renderer.renderToken(tokens, idx, options, env)
+
+    def paragraph_close(tokens, idx, options, env):
+        if idx > 0 and tokens[idx - 1].type == "inline":
+            children = tokens[idx - 1].children or []
+            if children and all(child.type == "image" for child in children):
+                return "</figure>\n"
+        if original_paragraph_close:
+            return original_paragraph_close(tokens, idx, options, env)
+        return md.renderer.renderToken(tokens, idx, options, env)
+
+    md.renderer.rules["paragraph_open"] = paragraph_open
+    md.renderer.rules["paragraph_close"] = paragraph_close
+
+
+def _highlight_fence_plugin(md):
+    def fence_renderer(tokens, idx, options, env):
+        token = tokens[idx]
+        info = (token.info or "").strip().split()[0]
+        lang_class = f" language-{info}" if info else ""
+        content = md.utils.escapeHtml(token.content)
+        return f'<pre><code class="hljs{lang_class}">{content}</code></pre>\n'
+
+    md.renderer.rules["fence"] = fence_renderer
+
+
 def create_renderer():
     """create a configured markdown-it renderer."""
     md = MarkdownIt("commonmark", {"html": True, "typographer": True})
@@ -147,6 +187,8 @@ def create_renderer():
     _wikilink_plugin(md)
     _obsidian_embed_plugin(md)
     _external_link_plugin(md)
+    _figure_image_plugin(md)
+    _highlight_fence_plugin(md)
 
     return md
 
@@ -163,12 +205,8 @@ def get_renderer():
 
 def _strip_frontmatter(content):
     """strip YAML frontmatter (--- delimited) from markdown content."""
-    if not content.startswith("---"):
-        return content
-    parts = content.split("---", 2)
-    if len(parts) >= 3:
-        return parts[2]
-    return content
+    _, body = parse_markdown_document(content)
+    return body
 
 
 def render_markdown(content, resolve_wikilinks=None):
@@ -200,6 +238,20 @@ def render_markdown(content, resolve_wikilinks=None):
 
 def render_page(content, wiki_owner=None, wiki_slug=None):
     """render a wiki page with wikilink resolution."""
+    from app.models import Page, User, Wiki
+
+    known_pages = {}
+    title_aliases = {}
+    if wiki_owner and wiki_slug:
+        pages = (
+            Page.query.join(Wiki, Page.wiki_id == Wiki.id)
+            .join(User, Wiki.owner_id == User.id)
+            .filter(User.username == wiki_owner, Wiki.slug == wiki_slug)
+            .all()
+        )
+        known_pages = {page.path: page for page in pages}
+        for page in pages:
+            title_aliases[page.title] = page
 
     def resolver(target):
         # simple path-based resolution
@@ -208,7 +260,7 @@ def render_page(content, wiki_owner=None, wiki_slug=None):
             target_clean += ".md"
         from urllib.parse import quote
         url = f"/@{wiki_owner}/{wiki_slug}/{quote(target_clean.replace('.md', ''), safe='/')}" if wiki_owner else f"#{target}"
-        # TODO: check if page exists in DB for resolved/unresolved styling
-        return url, True
+        matched = known_pages.get(target_clean) or known_pages.get(target) or title_aliases.get(target)
+        return url, matched is not None
 
     return render_markdown(content, resolve_wikilinks=resolver if wiki_owner else None)

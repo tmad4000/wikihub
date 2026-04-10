@@ -65,10 +65,18 @@
 
   <form method="POST">
     <label for="username">Username</label>
-    <input type="text" id="username" name="username" required>
+    <input type="text" id="username" name="username">
     <label for="password">Password</label>
-    <input type="password" id="password" name="password" required>
+    <input type="password" id="password" name="password">
     <button type="submit" class="btn btn-primary">Sign in</button>
+  </form>
+
+  <div class="divider">or</div>
+
+  <form method="POST">
+    <label for="api_key">API Key</label>
+    <input type="text" id="api_key" name="api_key" placeholder="wh_..." style="font-family: var(--font-mono); font-size: 0.8125rem;">
+    <button type="submit" class="btn btn-primary" style="background: transparent; border: 1px solid var(--border-emphasis); color: var(--text-secondary);">Sign in with API key</button>
   </form>
 
   <div class="footer">Don't have an account? <a href="{{ url_for('auth.signup') }}">Sign up</a></div>

@@ -1,9 +1,9 @@
 """
 DB -> git sync for wikihub.
 
-writes page content from the database to the authoritative bare repo
-using git plumbing (no working tree). does NOT fire hooks — this is
-the critical invariant that prevents two-way-sync loops.
+writes page content to the authoritative bare repo using git plumbing
+(no working tree). does NOT fire hooks — this is the critical invariant
+that prevents two-way-sync loops.
 
 also handles public mirror regeneration: force-updates the public repo
 to a single commit containing only public files with private bands stripped.
@@ -12,11 +12,14 @@ ported from listhub's git_sync.py with multi-wiki path generalization.
 """
 
 import os
-import re
+import json
 import subprocess
 import tempfile
+from datetime import datetime, timezone
 
 from flask import current_app
+
+from app.content_utils import parse_markdown_document, strip_private_bands
 
 
 _AUTHOR_ENV = {
@@ -81,100 +84,96 @@ def _head_tree(repo_path):
         return None
 
 
-def sync_page_to_repo(username, slug, file_path, content):
-    """incremental sync: write a single page to the authoritative repo.
-    call after creating or updating a page via the web/API."""
+def apply_repo_changes(username, slug, changes, message, author_name="wikihub", author_email="sync@wikihub"):
+    """apply one or more file writes/deletes to the authoritative repo in a single commit."""
     repo = _repo_path(username, slug)
     if not os.path.isdir(repo):
-        return
+        return False
 
     head = _head_commit(repo)
     idx = tempfile.mktemp(prefix="wikihub-sync-", suffix=".idx")
     env = {"GIT_INDEX_FILE": idx}
+    author_env = {
+        "GIT_AUTHOR_NAME": author_name,
+        "GIT_AUTHOR_EMAIL": author_email,
+        "GIT_COMMITTER_NAME": author_name,
+        "GIT_COMMITTER_EMAIL": author_email,
+    }
 
     try:
         if head:
             _git(repo, "read-tree", "HEAD", env=env)
 
-        blob = _git_bytes(
-            repo, "hash-object", "-w", "--stdin",
-            input=content.encode("utf-8"), env=env,
-        ).strip().decode()
+        for change in changes:
+            action = change["action"]
+            path = change["path"]
+            if action == "delete":
+                _git(
+                    repo,
+                    "update-index",
+                    "--index-info",
+                    env=env,
+                    input=f"0 {'0'*40}\t{path}\n",
+                )
+                continue
 
-        _git(repo, "update-index", "--add", "--cacheinfo",
-             "100644", blob, file_path, env=env)
+            content = change["content"]
+            if isinstance(content, str):
+                content_bytes = content.encode("utf-8")
+            else:
+                content_bytes = content
+
+            blob = _git_bytes(
+                repo, "hash-object", "-w", "--stdin",
+                input=content_bytes, env=env,
+            ).strip().decode()
+            _git(repo, "update-index", "--add", "--cacheinfo", "100644", blob, path, env=env)
 
         new_tree = _git(repo, "write-tree", env=env)
         old_tree = _head_tree(repo) if head else None
         if new_tree == old_tree:
-            return
+            return False
 
-        commit_args = ["commit-tree", new_tree, "-m", f"Update {file_path}"]
+        commit_args = ["commit-tree", new_tree, "-m", message]
         if head:
             commit_args[2:2] = ["-p", head]
 
-        new_commit = _git(repo, *commit_args, env={**env, **_AUTHOR_ENV})
+        new_commit = _git(repo, *commit_args, env={**env, **author_env})
         _git(repo, "update-ref", "refs/heads/main", new_commit)
+        return True
     finally:
         if os.path.exists(idx):
             os.unlink(idx)
+
+
+def sync_page_to_repo(username, slug, file_path, content, message=None, author_name="wikihub", author_email="sync@wikihub"):
+    """write a single file to the authoritative repo."""
+    return apply_repo_changes(
+        username,
+        slug,
+        [{"action": "write", "path": file_path, "content": content}],
+        message or f"Update {file_path}",
+        author_name=author_name,
+        author_email=author_email,
+    )
+
+
+def append_event_to_repo(username, slug, event_type, **payload):
+    timestamp = datetime.now(timezone.utc).isoformat()
+    event = {"type": event_type, "timestamp": timestamp, **payload}
+    current = read_file_from_repo(username, slug, ".wikihub/events.jsonl", public=False) or ""
+    next_content = current + json.dumps(event, sort_keys=True) + "\n"
+    sync_page_to_repo(username, slug, ".wikihub/events.jsonl", next_content, message=f"Log {event_type}")
 
 
 def remove_page_from_repo(username, slug, file_path):
     """remove a single file from the authoritative repo."""
-    repo = _repo_path(username, slug)
-    if not os.path.isdir(repo):
-        return
-
-    head = _head_commit(repo)
-    if not head:
-        return
-
-    idx = tempfile.mktemp(prefix="wikihub-sync-", suffix=".idx")
-    env = {"GIT_INDEX_FILE": idx}
-
-    try:
-        _git(repo, "read-tree", "HEAD", env=env)
-        _git(repo, "update-index", "--index-info", env=env,
-             input=f"0 {'0'*40}\t{file_path}\n")
-
-        new_tree = _git(repo, "write-tree", env=env)
-        old_tree = _head_tree(repo)
-        if new_tree == old_tree:
-            return
-
-        new_commit = _git(
-            repo, "commit-tree", new_tree, "-p", head,
-            "-m", f"Remove {file_path}",
-            env={**env, **_AUTHOR_ENV},
-        )
-        _git(repo, "update-ref", "refs/heads/main", new_commit)
-    finally:
-        if os.path.exists(idx):
-            os.unlink(idx)
-
-
-# --- private band stripping ---
-
-PRIVATE_OPEN = re.compile(r"<!--\s*private\s*-->", re.IGNORECASE)
-PRIVATE_CLOSE = re.compile(r"<!--\s*/private\s*-->", re.IGNORECASE)
-
-
-def strip_private_bands(content):
-    """strip <!-- private -->...<!-- /private --> bands from markdown content.
-    unclosed bands fail closed (everything after the opener is private)."""
-    result = []
-    in_private = False
-    for line in content.split("\n"):
-        if not in_private and PRIVATE_OPEN.search(line):
-            in_private = True
-            continue
-        if in_private and PRIVATE_CLOSE.search(line):
-            in_private = False
-            continue
-        if not in_private:
-            result.append(line)
-    return "\n".join(result)
+    return apply_repo_changes(
+        username,
+        slug,
+        [{"action": "delete", "path": file_path}],
+        f"Remove {file_path}",
+    )
 
 
 def regenerate_public_mirror(username, slug, acl_rules=None):
@@ -216,15 +215,10 @@ def regenerate_public_mirror(username, slug, acl_rules=None):
             content_bytes = _git_bytes(auth_repo, "cat-file", "blob", f"HEAD:{filepath}")
             content = content_bytes.decode("utf-8", errors="replace")
 
-            # extract frontmatter visibility (wins over ACL per spec)
             fm_vis = None
-            if filepath.endswith(".md") and content.startswith("---"):
-                parts = content.split("---", 2)
-                if len(parts) >= 3:
-                    for line in parts[1].strip().split("\n"):
-                        if line.strip().lower().startswith("visibility:"):
-                            fm_vis = line.split(":", 1)[1].strip().lower()
-                            break
+            if filepath.endswith(".md"):
+                frontmatter, _ = parse_markdown_document(content)
+                fm_vis = frontmatter.get("visibility")
 
             # check visibility: frontmatter > ACL > default (private)
             vis = resolve_visibility(filepath, acl_rules or [], fm_vis)
@@ -320,12 +314,8 @@ def scaffold_wiki(username, slug):
 
     try:
         for fpath, content in files.items():
-            blob = _git_bytes(
-                repo, "hash-object", "-w", "--stdin",
-                input=content.encode("utf-8"), env=env,
-            ).strip().decode()
-            _git(repo, "update-index", "--add", "--cacheinfo",
-                 "100644", blob, fpath, env=env)
+            blob = _git_bytes(repo, "hash-object", "-w", "--stdin", input=content.encode("utf-8"), env=env).strip().decode()
+            _git(repo, "update-index", "--add", "--cacheinfo", "100644", blob, fpath, env=env)
 
         tree = _git(repo, "write-tree", env=env)
         commit = _git(
