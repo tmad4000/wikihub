@@ -125,13 +125,14 @@
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <a href="/@{{ owner.username }}/{{ wiki.slug }}/new" style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;min-height:36px;background:var(--accent);color:#0f0e0c;border-radius:var(--radius-sm);font-size:0.8125rem;font-weight:600;text-decoration:none;">New page</a>
         <a href="/@{{ owner.username }}/{{ wiki.slug }}/new-folder{% if folder_path %}?parent={{ folder_path | urlencode }}{% endif %}" style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;min-height:36px;border:1px solid var(--border-emphasis);color:var(--text-secondary);border-radius:var(--radius-sm);font-size:0.8125rem;font-weight:600;text-decoration:none;">New folder</a>
+        <button onclick="reindexWiki(this)" style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;min-height:36px;border:1px solid var(--border-emphasis);color:var(--text-secondary);border-radius:var(--radius-sm);font-size:0.8125rem;font-weight:600;background:transparent;cursor:pointer;">Reindex</button>
       </div>
       {% endif %}
     </div>
 
     {% if private_band_warning %}
     <div class="private-band-warning">
-      This page has sections visible only to editors; not a security boundary. Don’t use private bands for real secrets.
+      This page has sections visible only to editors; not a security boundary. Don't use private bands for real secrets.
     </div>
     {% endif %}
 
@@ -208,5 +209,20 @@ document.querySelectorAll('.sidebar-folder').forEach(folder => {
   if (state[path] === false) folder.classList.remove('open');
   if (state[path] === true) folder.classList.add('open');
 });
+
+document.addEventListener('click', () => {
+  document.querySelectorAll('.download-menu.open').forEach(m => m.classList.remove('open'));
+});
+
+async function reindexWiki(btn) {
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Reindexing…';
+  try {
+    const resp = await fetch('/@{{ owner.username }}/{{ wiki.slug }}/reindex', {method: 'POST'});
+    if (resp.ok) { btn.textContent = 'Done ✓'; setTimeout(() => location.reload(), 800); }
+    else { btn.textContent = 'Failed'; setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 2000); }
+  } catch (e) { btn.textContent = 'Error'; setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 2000); }
+}
 </script>
 {% endblock %}

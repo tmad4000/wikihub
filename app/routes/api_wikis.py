@@ -661,6 +661,106 @@ def set_page_visibility(owner, slug, page_path):
     return jsonify({"path": page.path, "visibility": page.visibility})
 
 
+@api_bp.route("/wikis/<owner>/<slug>/bulk-visibility", methods=["POST"])
+@api_auth_required
+def bulk_visibility(owner, slug):
+    """change visibility for multiple pages at once."""
+    owner_user, wiki, err = _get_wiki_or_404(owner, slug)
+    if err:
+        return err
+    if request.current_user.id != wiki.owner_id:
+        return {"error": "forbidden", "message": "Only the owner can change visibility"}, 403
+
+    data = request.get_json(silent=True) or {}
+    paths = data.get("paths", [])
+    visibility = data.get("visibility")
+    if not paths or not visibility:
+        return {"error": "bad_request", "message": "paths and visibility are required"}, 400
+
+    # expand folder prefixes into page paths
+    expanded = set()
+    for p in paths:
+        if p.endswith("/"):
+            for page in Page.query.filter_by(wiki_id=wiki.id).filter(Page.path.startswith(p)).all():
+                expanded.add(page.path)
+        else:
+            expanded.add(p)
+
+    acl_rules = load_acl_rules(owner_user.username, wiki.slug)
+    repo_changes = []
+    updated = []
+
+    for page_path in expanded:
+        page = Page.query.filter_by(wiki_id=wiki.id, path=page_path).first()
+        if not page:
+            continue
+        content = read_file_from_repo(owner_user.username, wiki.slug, page.path, public=False) or ""
+        content = set_visibility_in_content(content, visibility)
+        frontmatter, _ = parse_markdown_document(content)
+        page.visibility = frontmatter.get("visibility") or visibility
+        update_page_metadata(page, content, frontmatter)
+        refresh_wikilinks_for_page(page, content)
+        repo_changes.append({"action": "write", "path": page.path, "content": content})
+        updated.append(page.path)
+
+    if repo_changes:
+        apply_repo_changes(owner_user.username, wiki.slug, repo_changes,
+                           f"Bulk set visibility to {visibility} for {len(updated)} pages")
+        append_event_to_repo(owner_user.username, wiki.slug, "bulk.visibility",
+                             visibility=visibility, count=len(updated),
+                             actor=request.current_user.username)
+        regenerate_public_mirror(owner_user.username, wiki.slug, acl_rules)
+        db.session.commit()
+
+    return jsonify({"updated": updated, "visibility": visibility})
+
+
+@api_bp.route("/wikis/<owner>/<slug>/bulk-delete", methods=["POST"])
+@api_auth_required
+def bulk_delete(owner, slug):
+    """delete multiple pages (supports folder prefixes)."""
+    owner_user, wiki, err = _get_wiki_or_404(owner, slug)
+    if err:
+        return err
+    if request.current_user.id != wiki.owner_id:
+        return {"error": "forbidden", "message": "Only the owner can delete pages"}, 403
+
+    data = request.get_json(silent=True) or {}
+    paths = data.get("paths", [])
+    if not paths:
+        return {"error": "bad_request", "message": "paths is required"}, 400
+
+    # expand folder prefixes into page paths
+    expanded = set()
+    for p in paths:
+        if p.endswith("/"):
+            for page in Page.query.filter_by(wiki_id=wiki.id).filter(Page.path.startswith(p)).all():
+                expanded.add(page.path)
+        else:
+            expanded.add(p)
+
+    repo_changes = []
+    deleted = []
+    for page_path in expanded:
+        page = Page.query.filter_by(wiki_id=wiki.id, path=page_path).first()
+        if not page:
+            continue
+        repo_changes.append({"action": "delete", "path": page.path})
+        deleted.append(page.path)
+        db.session.delete(page)
+
+    if repo_changes:
+        apply_repo_changes(owner_user.username, wiki.slug, repo_changes,
+                           f"Bulk delete {len(deleted)} pages")
+        append_event_to_repo(owner_user.username, wiki.slug, "bulk.delete",
+                             count=len(deleted), actor=request.current_user.username)
+        acl_rules = load_acl_rules(owner_user.username, wiki.slug)
+        regenerate_public_mirror(owner_user.username, wiki.slug, acl_rules)
+        db.session.commit()
+
+    return jsonify({"deleted": deleted})
+
+
 @api_bp.route("/wikis/<owner>/<slug>/pages/<path:page_path>/share", methods=["POST"])
 @api_auth_required
 def share_page(owner, slug, page_path):

@@ -2,7 +2,7 @@
 {% block title %}{{ page.title or page.path }} — {{ wiki.title or wiki.slug }} — wikihub{% endblock %}
 
 {% block extra_css %}
-.reader-layout { display: flex; min-height: calc(100vh - 56px); }
+.reader-layout { display: flex; min-height: calc(100vh - 56px); position: relative; z-index: 1; }
 
 .thin-scroll { scrollbar-width: thin; scrollbar-color: transparent transparent; }
 .thin-scroll:hover { scrollbar-color: var(--border-emphasis) transparent; }
@@ -103,6 +103,10 @@
 .vis-badge.public { color: var(--color-public); background: rgba(122, 158, 107, 0.1); border: 1px solid rgba(122, 158, 107, 0.2); }
 .vis-badge.private { color: var(--color-private); background: rgba(196, 92, 60, 0.1); border: 1px solid rgba(196, 92, 60, 0.2); }
 .vis-badge.unlisted { color: var(--color-unlisted); background: rgba(184, 173, 158, 0.1); border: 1px solid rgba(184, 173, 158, 0.2); }
+.vis-pill { font-size: 0.7rem; padding: 3px 8px; border-radius: var(--radius-sm); border: 1px solid var(--border-emphasis); color: var(--text-secondary); }
+.vis-pill.public, .vis-pill.public-edit { color: var(--color-public); border-color: rgba(122, 158, 107, 0.2); }
+.vis-pill.private { color: var(--color-private); border-color: rgba(196, 92, 60, 0.2); }
+.vis-pill.unlisted, .vis-pill.unlisted-edit { color: var(--color-unlisted); border-color: rgba(184, 173, 158, 0.2); }
 .vis-badge.public-edit { color: var(--accent); background: rgba(212, 160, 74, 0.1); border: 1px solid rgba(212, 160, 74, 0.2); }
 .vis-badge.unlisted-edit { color: var(--accent); background: rgba(212, 160, 74, 0.1); border: 1px solid rgba(212, 160, 74, 0.2); }
 
@@ -393,6 +397,12 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
         Delete
       </button>
+      {% if management_items is defined and management_items is not none %}
+      <button class="action-btn" id="manage-toggle" onclick="toggleManage()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+        Manage
+      </button>
+      {% endif %}
       {% elif page.visibility in ('public-edit', 'unlisted-edit') %}
       <a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ page.path.replace('.md', '') }}/edit" class="action-btn">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
@@ -424,6 +434,51 @@
     </div>
     {% endif %}
 
+    {% if management_items is defined and management_items is not none %}
+    <div id="manage-panel" style="display:none;margin-bottom:24px;">
+      <div style="border:1px solid var(--border-default);border-radius:var(--radius-md);overflow:hidden;">
+        {% for item in management_items %}
+        <div style="display:grid;grid-template-columns:24px minmax(0,1fr) auto auto auto;gap:12px;align-items:center;padding:10px 14px;{{ 'border-bottom:1px solid var(--border-default);' if not loop.last else '' }}font-size:0.8125rem;">
+          <input type="checkbox" class="mgmt-check" style="width:16px;height:16px;accent-color:var(--accent);cursor:pointer;margin:0;" onclick="syncMgmt(this)" data-path="{{ item.path }}{{ '/' if item.kind == 'folder' else '' }}">
+          <a href="{{ item.url }}" style="display:flex;align-items:center;gap:8px;color:var(--text-primary);text-decoration:none;min-width:0;">
+            {% if item.kind == 'folder' %}
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h5l2 2h11v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>
+            {% else %}
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            {% endif %}
+            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ item.name }}</span>
+          </a>
+          <span class="vis-pill {{ item.visibility }}" style="font-size:0.7rem;padding:2px 6px;">{{ item.visibility | replace('public-edit', 'Public Edit') | replace('unlisted-edit', 'Unlisted Edit') | replace('public', 'Public View') | replace('private', 'Private') | replace('unlisted', 'Unlisted') }}</span>
+          <span style="font-size:0.7rem;color:var(--text-muted);font-family:var(--font-mono);">{{ item.updated_at.strftime('%Y-%m-%d') if item.updated_at else '' }}</span>
+          <button style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border:none;background:transparent;color:var(--text-muted);cursor:pointer;border-radius:var(--radius-sm);" title="Delete" onclick="deleteMgmtItem('{{ item.path }}{{ '/' if item.kind == 'folder' else '' }}', '{{ item.name }}', '{{ item.kind }}')">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          </button>
+        </div>
+        {% else %}
+        <div style="padding:14px;color:var(--text-tertiary);font-size:0.8125rem;">No pages yet.</div>
+        {% endfor %}
+      </div>
+      <div id="mgmt-bar" style="display:none;margin-top:10px;align-items:center;gap:10px;padding:8px 14px;background:var(--bg-surface);border:1px solid var(--border-default);border-radius:var(--radius-md);font-size:0.8125rem;">
+        <span id="mgmt-count" style="color:var(--accent);font-weight:600;font-family:var(--font-mono);">0</span>
+        <span style="color:var(--text-secondary);">selected</span>
+        <select id="mgmt-vis-select" style="background:var(--bg-surface);color:var(--text-primary);border:1px solid var(--border-emphasis);border-radius:var(--radius-sm);padding:3px 8px;font-size:0.8125rem;font-family:var(--font-body);">
+          <option value="public">Public View</option>
+          <option value="public-edit">Public Edit</option>
+          <option value="unlisted">Unlisted</option>
+          <option value="unlisted-edit">Unlisted Edit</option>
+          <option value="private">Private</option>
+        </select>
+        <button style="padding:4px 10px;border-radius:var(--radius-sm);font-size:0.8125rem;font-weight:600;border:none;cursor:pointer;background:var(--accent);color:#0f0e0c;font-family:var(--font-body);" onclick="mgmtBulkVis()">Set visibility</button>
+        <button style="padding:4px 10px;border-radius:var(--radius-sm);font-size:0.8125rem;font-weight:600;border:1px solid rgba(196,92,60,0.3);cursor:pointer;background:rgba(196,92,60,0.1);color:var(--color-private);font-family:var(--font-body);" onclick="mgmtBulkDel()">Delete</button>
+      </div>
+      {% if wiki.slug != owner.username %}
+      <div style="margin-top:12px;text-align:right;">
+        <button style="font-size:0.75rem;padding:4px 10px;border-radius:var(--radius-sm);border:1px solid rgba(196,92,60,0.3);background:rgba(196,92,60,0.1);color:var(--color-private);cursor:pointer;font-family:var(--font-body);font-weight:600;" onclick="deleteWiki()">Delete wiki</button>
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
     {% if toc and toc|length >= 3 %}
     <nav class="toc-block inline-toc">
       <div class="toc-title">Contents</div>
@@ -452,6 +507,7 @@
       </ul>
     </nav>
     {% endif %}
+
   </main>
 
   {% if (toc and toc|length >= 3) or backlinks or (link_graph and link_graph.nodes|length > 1) %}
@@ -577,6 +633,43 @@ function deleteWiki() {
   if (!confirm('Are you sure? Click OK to permanently delete this wiki.')) return;
   fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}', {method: 'DELETE'})
     .then(r => { if (r.ok) location.href = '/@{{ owner.username }}'; else r.json().then(d => alert(d.message || 'Delete failed')); });
+}
+
+function toggleManage() {
+  var panel = document.getElementById('manage-panel');
+  var btn = document.getElementById('manage-toggle');
+  if (!panel) return;
+  var show = panel.style.display === 'none';
+  panel.style.display = show ? 'block' : 'none';
+  if (btn) btn.classList.toggle('primary', show);
+}
+
+var mgmtSelected = new Set();
+function syncMgmt(cb) {
+  if (cb.checked) mgmtSelected.add(cb.dataset.path);
+  else mgmtSelected.delete(cb.dataset.path);
+  var bar = document.getElementById('mgmt-bar');
+  var cnt = document.getElementById('mgmt-count');
+  if (bar) { bar.style.display = mgmtSelected.size > 0 ? 'flex' : 'none'; cnt.textContent = mgmtSelected.size; }
+}
+async function mgmtBulkVis() {
+  var vis = document.getElementById('mgmt-vis-select').value;
+  var paths = Array.from(mgmtSelected);
+  if (!confirm('Set ' + paths.length + ' item(s) to "' + vis + '"?')) return;
+  var r = await fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}/bulk-visibility', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({paths:paths,visibility:vis})});
+  if (r.ok) location.reload(); else alert('Failed');
+}
+async function mgmtBulkDel() {
+  var paths = Array.from(mgmtSelected);
+  if (!confirm('Delete ' + paths.length + ' item(s)? This cannot be undone.')) return;
+  var r = await fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}/bulk-delete', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({paths:paths})});
+  if (r.ok) location.reload(); else alert('Failed');
+}
+async function deleteMgmtItem(path, name, kind) {
+  var label = kind === 'folder' ? 'folder "' + name + '" and all contents' : '"' + name + '"';
+  if (!confirm('Delete ' + label + '? This cannot be undone.')) return;
+  var r = await fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}/bulk-delete', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({paths:[path]})});
+  if (r.ok) location.reload(); else alert('Failed');
 }
 
 applyFolderState();

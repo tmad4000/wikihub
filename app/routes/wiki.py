@@ -3,7 +3,7 @@ import subprocess
 from datetime import timezone
 from urllib.parse import quote
 
-from flask import Response, abort, redirect, render_template, request, url_for
+from flask import Response, abort, jsonify, redirect, render_template, request, url_for
 from flask_login import current_user
 
 from app import db
@@ -14,7 +14,7 @@ from app.git_sync import read_file_from_repo, list_files_in_repo, regenerate_pub
 from app.models import Page, User, UsernameRedirect, Wiki, Wikilink, utcnow
 from app.renderer import extract_toc, render_page
 from app.routes import wiki_bp
-from app.wiki_ops import load_acl_rules, refresh_wikilinks_for_page, sync_wiki_counters, update_page_metadata
+from app.wiki_ops import index_repo_pages, load_acl_rules, refresh_wikilinks_for_page, sync_wiki_counters, update_page_metadata
 
 
 def _recently_updated_pages(wiki, limit=8, public_only=False):
@@ -476,6 +476,7 @@ def wiki_index(username, slug):
         page = type("Page", (), {"path": page_path, "title": wiki.title, "visibility": "private", "updated_at": wiki.updated_at})()
 
     rendered_html = render_page(content, owner.username, wiki.slug)
+    management_items = _folder_listing(owner.username, wiki.slug, wiki, "", public=False) if _is_owner(wiki) else None
     return render_template(
         "reader.html",
         owner=owner,
@@ -490,6 +491,7 @@ def wiki_index(username, slug):
         sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=use_public, current_path=page_path),
         private_band_warning=not use_public and has_private_bands(content),
         json_ld_author=owner.display_name or owner.username,
+        management_items=management_items,
     )
 
 
@@ -835,3 +837,28 @@ def new_folder(username, slug):
         default_visibility=resolve_visibility(default_target, acl_rules),
         error=None,
     )
+
+
+@wiki_bp.route("/@<username>/<slug>/reindex", methods=["POST"])
+def reindex_wiki(username, slug):
+    owner = User.query.filter_by(username=username).first_or_404()
+    wiki = Wiki.query.filter_by(owner_id=owner.id, slug=slug).first_or_404()
+    if not current_user.is_authenticated or current_user.id != owner.id:
+        abort(403)
+    index_repo_pages(username, slug, wiki, reset=True)
+    regenerate_public_mirror(username, slug, load_acl_rules(username, slug))
+    db.session.commit()
+    return jsonify(ok=True, reindexed=1)
+
+
+@wiki_bp.route("/@<username>/reindex", methods=["POST"])
+def reindex_all_wikis(username):
+    owner = User.query.filter_by(username=username).first_or_404()
+    if not current_user.is_authenticated or current_user.id != owner.id:
+        abort(403)
+    wikis = Wiki.query.filter_by(owner_id=owner.id).all()
+    for wiki in wikis:
+        index_repo_pages(username, wiki.slug, wiki, reset=True)
+        regenerate_public_mirror(username, wiki.slug, load_acl_rules(username, wiki.slug))
+    db.session.commit()
+    return jsonify(ok=True, reindexed=len(wikis))

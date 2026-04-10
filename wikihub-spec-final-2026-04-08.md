@@ -335,7 +335,9 @@ From `agent-first-web-brief-2026-04.md` — all cheap, all shipping in v1:
 - `POST /api/v1/wikis` — create a wiki. Body: `{slug, title?, description?}`. Returns `201 {id, owner, slug, title, clone_url, web_url}`. Initializes bare repo with Karpathy skeleton.
 - `GET /api/v1/wikis/:owner/:slug` — wiki metadata (title, description, star_count, fork_count, page_count, created_at, updated_at).
 - `PATCH /api/v1/wikis/:owner/:slug` — update wiki metadata (title, description).
-- `DELETE /api/v1/wikis/:owner/:slug` — delete wiki and both repos. Requires owner auth.
+- `DELETE /api/v1/wikis/:owner/:slug` — delete wiki and both repos. Requires owner auth. Web UI surfaces this in the download/actions menu on the wiki root folder view (with double-confirm).
+- `POST /api/v1/wikis/:owner/:slug/bulk-visibility` — batch-set visibility for multiple pages/folders. Body: `{paths: ["wiki/page.md", "folder/"], visibility: "public"}`. Folder prefixes (trailing `/`) expand to all pages under that prefix. Returns `{updated: [...], visibility}`. Commits all changes in a single git commit.
+- `POST /api/v1/wikis/:owner/:slug/bulk-delete` — batch-delete multiple pages/folders. Body: `{paths: ["wiki/page.md", "folder/"]}`. Folder prefixes expand to all pages under that prefix. Returns `{deleted: [...]}`. Single git commit.
 - `POST /api/v1/wikis/:owner/:slug/fork` — fork a wiki into caller's namespace.
 - `POST /api/v1/wikis/:owner/:slug/star` / `DELETE /api/v1/wikis/:owner/:slug/star` — star/unstar.
 
