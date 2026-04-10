@@ -272,17 +272,32 @@ def render_page(content, wiki_owner=None, wiki_slug=None):
             .all()
         )
         known_pages = {page.path: page for page in pages}
+        basename_pages = {}
         for page in pages:
             title_aliases[page.title] = page
+            # basename lookup: "page-name" and "page-name.md" both resolve
+            bname = page.path.rsplit("/", 1)[-1]
+            basename_pages.setdefault(bname, page)
+            if bname.endswith(".md"):
+                basename_pages.setdefault(bname[:-3], page)
 
     def resolver(target):
-        # simple path-based resolution
         target_clean = target.strip("/")
         if not target_clean.endswith(".md"):
             target_clean += ".md"
         from urllib.parse import quote
-        url = f"/@{wiki_owner}/{wiki_slug}/{quote(target_clean.replace('.md', ''), safe='/')}" if wiki_owner else f"#{target}"
-        matched = known_pages.get(target_clean) or known_pages.get(target) or title_aliases.get(target)
+        # try: exact path → raw target → basename → title
+        matched = (
+            known_pages.get(target_clean)
+            or known_pages.get(target)
+            or basename_pages.get(target_clean)
+            or basename_pages.get(target.strip("/"))
+            or title_aliases.get(target)
+        )
+        if matched:
+            url = f"/@{wiki_owner}/{wiki_slug}/{quote(matched.path.replace('.md', ''), safe='/')}"
+        else:
+            url = f"/@{wiki_owner}/{wiki_slug}/{quote(target_clean.replace('.md', ''), safe='/')}" if wiki_owner else f"#{target}"
         return url, matched is not None
 
     return render_markdown(content, resolve_wikilinks=resolver if wiki_owner else None)
