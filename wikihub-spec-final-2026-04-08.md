@@ -564,7 +564,15 @@ All prior open questions resolved as of 2026-04-10. No open spec questions remai
 
 ### "For Agents" nav link — added 2026-04-10
 
-The top nav bar includes a prominent **"For Agents"** link (amber, monospace, always visible to all users) that points to `/agents`. This makes the agent-first nature of wikihub immediately obvious to every visitor. The `/agents` page documents all agent integration surfaces: MCP endpoint, REST API, content negotiation, llms.txt, git clone, and one-call registration.
+The top nav bar includes a prominent **"For Agents"** link (amber, monospace, always visible to all users) that points to `/agents`. This makes the agent-first nature of wikihub immediately obvious to every visitor. The `/agents` page documents all agent integration surfaces: MCP endpoint, REST API, content negotiation, llms.txt, git clone, and one-call registration. This link appears on **all pages including the landing page** — nav is consistent site-wide.
+
+### Explore = people + wikis (no separate People page) — added 2026-04-10
+
+The `/explore` page shows people first, then wikis — there is no separate `/people` nav link. One page, two sections. The Explore page already had a people section with an "All people" link; making `/people` a separate top-level nav item was redundant clutter. The nav is now: **Explore | For Agents | [user/auth]**.
+
+### Official @wikihub account — added 2026-04-10
+
+The `@wikihub` account is the platform's official identity. Name stays as `@wikihub` — clean, obvious, matches the platform (like `@github` on GitHub). The `@wikihub/wiki` wiki is the canonical docs/showcase site. Content should include: getting started guide, API reference, example wiki structures, curated showcase of good wikis, and changelog. The account is auto-created on app startup (`ensure_official_wiki()`).
 
 ### Test login buttons
 

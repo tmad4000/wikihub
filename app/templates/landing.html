@@ -820,6 +820,7 @@
       </button>
       <div class="nav-actions">
         <a href="/explore" class="btn btn-ghost">Explore</a>
+        <a href="/agents" class="btn btn-ghost" style="color:var(--accent);font-family:var(--font-mono);font-size:0.8125rem;">For Agents</a>
         {% if current_user and current_user.is_authenticated %}
         <a href="/@{{ current_user.username }}" class="btn btn-ghost">@{{ current_user.username }}</a>
         <a href="/new" class="btn btn-primary">New wiki</a>

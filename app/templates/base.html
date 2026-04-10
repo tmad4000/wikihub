@@ -137,14 +137,12 @@ a:hover { text-decoration: underline; }
   <div class="nav-spacer"></div>
   {% if current_user and current_user.is_authenticated %}
     <a href="/explore" class="nav-link">Explore</a>
-    <a href="/people" class="nav-link">People</a>
     <a href="/agents" class="nav-link nav-agents">For Agents</a>
     <a href="/@{{ current_user.username }}" class="nav-avatar">{{ current_user.username[0]|upper }}</a>
     <a href="/settings" class="nav-link" style="font-size: 0.75rem;">Settings</a>
     <a href="/auth/logout" class="nav-link" style="font-size: 0.75rem;">Logout</a>
   {% else %}
     <a href="/explore" class="nav-link">Explore</a>
-    <a href="/people" class="nav-link">People</a>
     <a href="/agents" class="nav-link nav-agents">For Agents</a>
     <a href="/auth/login" class="nav-link">Sign in</a>
   {% endif %}
