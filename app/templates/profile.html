@@ -54,10 +54,52 @@
 .wiki-list {
   max-width: 860px; margin: 28px auto 0;
 }
-.wiki-list h2, .profile-wiki h2 { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 12px; }
+.wiki-list h2, .profile-wiki > h2 { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 12px; }
 .profile-wiki {
   max-width: 860px; margin: 28px auto 0;
 }
+.profile-wiki .article { max-width: none; }
+.profile-wiki .article h1 {
+  font-size: 2.25rem; font-weight: 700; letter-spacing: -0.03em;
+  margin-bottom: 8px; line-height: 1.2;
+}
+.profile-wiki .article h2 {
+  font-size: 1.375rem; font-weight: 700; letter-spacing: -0.01em;
+  margin-top: 40px; margin-bottom: 16px;
+  padding-bottom: 8px; border-bottom: 1px solid var(--border-default);
+  text-transform: none; color: var(--text-primary);
+}
+.profile-wiki .article h3 { font-size: 1.125rem; font-weight: 600; margin-top: 28px; margin-bottom: 10px; }
+.profile-wiki .article p { color: var(--text-secondary); line-height: 1.75; margin-bottom: 18px; font-size: 0.9375rem; }
+.profile-wiki .article ul, .profile-wiki .article ol { color: var(--text-secondary); padding-left: 24px; margin-bottom: 18px; line-height: 1.75; font-size: 0.9375rem; }
+.profile-wiki .article li { margin-bottom: 6px; }
+.profile-wiki .article blockquote {
+  border-left: 3px solid var(--border-accent); padding: 4px 16px;
+  color: var(--text-tertiary); margin-bottom: 18px; font-style: italic;
+}
+.profile-wiki .article code {
+  font-family: var(--font-mono); font-size: 0.8125rem;
+  background: var(--bg-elevated); padding: 2px 7px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border-default);
+}
+.profile-wiki .article pre {
+  background: var(--bg-surface); border: 1px solid var(--border-default);
+  border-radius: var(--radius-md); padding: 18px; margin-bottom: 20px;
+  overflow-x: auto;
+}
+.profile-wiki .article pre code { background: none; border: none; padding: 0; font-size: 0.8125rem; line-height: 1.65; }
+.profile-wiki .article img { max-width: 100%; border-radius: var(--radius-sm); margin-bottom: 18px; }
+.profile-wiki .article table { width: 100%; border-collapse: collapse; margin-bottom: 18px; font-size: 0.875rem; overflow-x: auto; display: block; }
+.profile-wiki .article th, .profile-wiki .article td { padding: 10px 14px; border: 1px solid var(--border-default); text-align: left; }
+.profile-wiki .article th { background: var(--bg-surface); color: var(--text-secondary); font-weight: 600; }
+.profile-wiki .article td { color: var(--text-secondary); }
+.profile-wiki .article hr { border: none; border-top: 1px solid var(--border-default); margin: 36px 0; }
+.profile-wiki .article .wikilink { color: var(--color-wikilink); text-decoration: none; }
+.profile-wiki .article .wikilink:hover { text-decoration: underline; }
+.profile-wiki .article .wikilink-broken { color: var(--color-wikilink-broken); text-decoration: none; border-bottom: 1px dashed var(--color-wikilink-broken); }
+.profile-wiki .article .external-link::after { content: ' ↗'; font-size: 0.7em; opacity: 0.7; }
+.profile-wiki .article .external-link { color: var(--color-external); }
+.profile-wiki .article strong { color: var(--text-primary); }
 .private-band-warning {
   margin-bottom: 20px; padding: 12px 14px;
   border: 1px solid rgba(212, 160, 74, 0.2);
