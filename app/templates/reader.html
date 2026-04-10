@@ -86,6 +86,24 @@
 .toc-level-3 { padding-left: 16px; }
 .toc-level-4 { padding-left: 32px; }
 
+.backlinks-block {
+  max-width: 720px; margin-top: 48px; padding: 16px 20px;
+  border: 1px solid var(--border-default); border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+.backlinks-title {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 0.8125rem; font-weight: 600; color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+.backlinks-title svg { color: var(--text-muted); }
+.backlinks-list { list-style: none; padding: 0; margin: 0; }
+.backlinks-list li { margin-bottom: 3px; }
+.backlinks-list a {
+  color: var(--color-wikilink); text-decoration: none; font-size: 0.8125rem;
+}
+.backlinks-list a:hover { text-decoration: underline; }
+
 .article { max-width: 720px; }
 .article h1 {
   font-size: 2.25rem; font-weight: 700; letter-spacing: -0.03em;
@@ -250,6 +268,17 @@
       </a>
       {% endif %}
     </div>
+    {% if recently_updated %}
+    <div class="sidebar-section" style="border-top:1px solid var(--border-default);padding-top:12px;">
+      <div class="sidebar-heading">Recently updated</div>
+      {% for rp in recently_updated[:6] %}
+      <a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ rp.path.replace('.md', '') }}" class="sidebar-item" title="{{ rp.updated_at.strftime('%Y-%m-%d') if rp.updated_at else '' }}">
+        <span class="sidebar-icon" style="color:var(--text-muted);font-size:0.6875rem;font-family:var(--font-mono);min-width:38px;">{{ rp.updated_at.strftime('%m/%d') if rp.updated_at else '' }}</span>
+        {{ rp.title or rp.path.replace('.md', '').split('/')[-1] }}
+      </a>
+      {% endfor %}
+    </div>
+    {% endif %}
   </aside>
   <div class="sidebar-overlay" id="sidebar-overlay" onclick="toggleSidebar()"></div>
 
@@ -348,6 +377,20 @@
     <article class="article">
       {{ rendered_html | safe }}
     </article>
+
+    {% if backlinks %}
+    <nav class="backlinks-block">
+      <div class="backlinks-title">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 1 1 0 10h-2"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+        What links here
+      </div>
+      <ul class="backlinks-list">
+        {% for bl in backlinks %}
+        <li><a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ bl.path.replace('.md', '') }}">{{ bl.title or bl.path.replace('.md', '') }}</a></li>
+        {% endfor %}
+      </ul>
+    </nav>
+    {% endif %}
   </main>
 </div>
 {% endblock %}

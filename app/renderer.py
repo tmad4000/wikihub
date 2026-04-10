@@ -205,7 +205,7 @@ def create_renderer():
 
     footnote_plugin(md)
     dollarmath_plugin(md, double_inline=True)
-    anchors_plugin(md, permalink=False, slug_func=_heading_slug)
+    anchors_plugin(md, permalink=False, max_level=4, slug_func=_heading_slug)
     _wikilink_plugin(md)
     _obsidian_embed_plugin(md)
     _external_link_plugin(md)

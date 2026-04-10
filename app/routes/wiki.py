@@ -11,10 +11,32 @@ from app.acl import can_read, can_write, resolve_visibility
 from app.content_utils import has_private_bands, parse_markdown_document, set_visibility_in_content
 from app.discovery import discoverable_page_for_wiki, visible_wikis_for_owner
 from app.git_sync import read_file_from_repo, list_files_in_repo, regenerate_public_mirror, remove_page_from_repo, sync_page_to_repo
-from app.models import Page, User, UsernameRedirect, Wiki, utcnow
+from app.models import Page, User, UsernameRedirect, Wiki, Wikilink, utcnow
 from app.renderer import extract_toc, render_page
 from app.routes import wiki_bp
 from app.wiki_ops import load_acl_rules, refresh_wikilinks_for_page, sync_wiki_counters, update_page_metadata
+
+
+def _recently_updated_pages(wiki, limit=8, public_only=False):
+    """get the most recently updated pages for a wiki."""
+    query = Page.query.filter_by(wiki_id=wiki.id)
+    if public_only:
+        query = query.filter(Page.visibility.in_(('public', 'public-edit')))
+    return query.order_by(Page.updated_at.desc()).limit(limit).all()
+
+
+def _get_backlinks(page):
+    """get pages that link to this page via wikilinks."""
+    if not page or not hasattr(page, 'id') or not page.id:
+        return []
+    links = (
+        Wikilink.query
+        .filter_by(target_page_id=page.id)
+        .join(Page, Wikilink.source_page_id == Page.id)
+        .add_entity(Page)
+        .all()
+    )
+    return [source_page for _, source_page in links]
 
 
 def _resolve_owner(username):
@@ -351,6 +373,7 @@ def wiki_index(username, slug):
         return redirect(url_for("wiki.user_profile", username=owner.username), code=302)
 
     use_public = not _is_owner(wiki)
+    recently_updated = _recently_updated_pages(wiki, public_only=use_public)
     page_path, content = _folder_index_content(owner.username, wiki.slug, "", public=use_public)
     if content is None:
         return render_template(
@@ -362,6 +385,7 @@ def wiki_index(username, slug):
             folder_path="",
             rendered_html=None,
             breadcrumb=[],
+            recently_updated=recently_updated,
         )
 
     page = Page.query.filter_by(wiki_id=wiki.id, path=page_path).first()
@@ -376,6 +400,8 @@ def wiki_index(username, slug):
         page=page,
         rendered_html=rendered_html,
         toc=extract_toc(rendered_html),
+        backlinks=_get_backlinks(page),
+        recently_updated=recently_updated,
         sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=use_public, current_path=page_path),
         private_band_warning=not use_public and has_private_bands(content),
         json_ld_author=owner.display_name or owner.username,
@@ -485,6 +511,8 @@ def wiki_page(username, slug, page_path):
         page=page,
         rendered_html=rendered_html,
         toc=extract_toc(rendered_html),
+        backlinks=_get_backlinks(page),
+        recently_updated=_recently_updated_pages(wiki, public_only=not is_owner),
         sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=use_public, current_path=file_path),
         private_band_warning=not use_public and has_private_bands(content),
         json_ld_author=owner.display_name or owner.username,
