@@ -71,6 +71,53 @@ def _get_link_graph(page, wiki):
     return {"nodes": list(nodes.values()), "links": links}
 
 
+def _get_full_graph(wiki):
+    """get full wikilink graph for an entire wiki."""
+    pages = Page.query.filter_by(wiki_id=wiki.id).all()
+    owner = db.session.get(User, wiki.owner_id)
+
+    # build node map, skip index.md from being a hub (still a node, just filter its links)
+    nodes = {}
+    index_ids = set()
+    for p in pages:
+        url = f"/@{owner.username}/{wiki.slug}/{p.path.replace('.md', '')}"
+        dir_path = p.path.rsplit("/", 1)[0] if "/" in p.path else ""
+        nodes[p.id] = {
+            "id": p.id,
+            "title": p.title or p.path.replace(".md", "").rsplit("/", 1)[-1],
+            "url": url,
+            "dir": dir_path,
+        }
+        if p.path in ("index.md", "README.md") or p.path.endswith("/index.md"):
+            index_ids.add(p.id)
+
+    page_ids = [p.id for p in pages]
+    all_links = Wikilink.query.filter(
+        Wikilink.source_page_id.in_(page_ids),
+        Wikilink.target_page_id.isnot(None),
+    ).all()
+
+    # filter out links from index pages (they link to everything, create noise)
+    links = []
+    for wl in all_links:
+        if wl.source_page_id in index_ids:
+            continue
+        if wl.target_page_id in nodes:
+            links.append({"source": wl.source_page_id, "target": wl.target_page_id})
+
+    # count links per node
+    link_count = {}
+    for l in links:
+        link_count[l["source"]] = link_count.get(l["source"], 0) + 1
+        link_count[l["target"]] = link_count.get(l["target"], 0) + 1
+
+    # only include nodes that have at least 1 link (skip orphans for cleaner graph)
+    connected_ids = set(link_count.keys())
+    filtered_nodes = [n for n in nodes.values() if n["id"] in connected_ids]
+
+    return {"nodes": filtered_nodes, "links": links}
+
+
 def _resolve_owner(username):
     owner = User.query.filter_by(username=username).first()
     if owner:
@@ -433,7 +480,8 @@ def wiki_index(username, slug):
         rendered_html=rendered_html,
         toc=extract_toc(rendered_html),
         backlinks=_get_backlinks(page),
-        link_graph=_get_link_graph(page, wiki),
+        link_graph=_get_full_graph(wiki),
+        full_graph_url=f"/@{owner.username}/{wiki.slug}/graph",
         recently_updated=recently_updated,
         sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=use_public, current_path=page_path),
         private_band_warning=not use_public and has_private_bands(content),
@@ -449,6 +497,26 @@ def page_graph_json(username, slug, page_path):
     page = Page.query.filter_by(wiki_id=wiki.id, path=file_path).first()
     from flask import jsonify
     return jsonify(_get_link_graph(page, wiki))
+
+
+@wiki_bp.route("/@<username>/<slug>/graph.json")
+def wiki_graph_json(username, slug):
+    """return full wikilink graph for a wiki as JSON."""
+    owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
+    from flask import jsonify
+    return jsonify(_get_full_graph(wiki))
+
+
+@wiki_bp.route("/@<username>/<slug>/graph")
+def wiki_graph(username, slug):
+    """full-screen interactive graph view."""
+    owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
+    return render_template(
+        "graph.html",
+        owner=owner,
+        wiki=wiki,
+        graph_data=_get_full_graph(wiki),
+    )
 
 
 @wiki_bp.route("/@<username>/<slug>/tag/<tag_name>")

@@ -478,7 +478,10 @@
 
       {% if link_graph and link_graph.nodes|length > 1 %}
       <div class="graph-block">
-        <div class="graph-title">Links</div>
+        <div class="graph-title" style="display:flex;align-items:center;justify-content:space-between;">
+          Links
+          {% if full_graph_url %}<a href="{{ full_graph_url }}" style="font-size:0.6875rem;color:var(--accent);text-decoration:none;text-transform:none;letter-spacing:0;font-weight:400;">full graph →</a>{% endif %}
+        </div>
         <div id="link-graph"></div>
       </div>
       {% endif %}
