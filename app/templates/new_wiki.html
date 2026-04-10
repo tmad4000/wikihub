@@ -110,14 +110,29 @@ function updateFileList(files) {
 }
 
 form.addEventListener('submit', (ev) => {
-  if (!droppedFiles) return;
+  const btn = form.querySelector('button[type="submit"]');
+  if (!droppedFiles) {
+    btn.classList.add('btn-loading');
+    btn.textContent = '';
+    const sp = document.createElement('span');
+    sp.className = 'wh-spinner';
+    btn.appendChild(sp);
+    btn.appendChild(document.createTextNode('Creating wiki...'));
+    return;
+  }
   ev.preventDefault();
+  btn.classList.add('btn-loading');
+  btn.textContent = '';
+  const sp2 = document.createElement('span');
+  sp2.className = 'wh-spinner';
+  btn.appendChild(sp2);
+  btn.appendChild(document.createTextNode('Creating wiki...'));
   const fd = new FormData(form);
   fd.delete('files');
   for (const f of droppedFiles) fd.append('files', f);
   fetch(form.action || window.location.href, { method: 'POST', body: fd, redirect: 'follow' })
     .then(r => { if (r.redirected) { window.location.href = r.url; } else { window.location.reload(); } })
-    .catch(err => alert('Upload failed: ' + err.message));
+    .catch(err => { btn.classList.remove('btn-loading'); btn.textContent = 'Create wiki'; alert('Upload failed: ' + err.message); });
 });
 </script>
 {% endblock %}

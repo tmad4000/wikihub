@@ -225,6 +225,10 @@ a:hover { text-decoration: underline; }
 .search-create { display: block; padding: 12px 20px; color: var(--accent); font-size: 0.875rem; text-decoration: none; font-weight: 500; }
 .search-create:hover { background: var(--accent-subtle); text-decoration: none; }
 
+@keyframes wh-spin { to { transform: rotate(360deg); } }
+.wh-spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border-emphasis); border-top-color: var(--accent); border-radius: 50%; animation: wh-spin 0.6s linear infinite; vertical-align: middle; margin-right: 6px; }
+.btn-loading { pointer-events: none; opacity: 0.7; }
+
 {% block extra_css %}{% endblock %}
 </style>
 {% block head %}{% endblock %}

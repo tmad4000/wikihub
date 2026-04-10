@@ -283,6 +283,9 @@
       color: var(--text-muted);
     }
 
+    @keyframes wh-spin { to { transform: rotate(360deg); } }
+    .wh-spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border-emphasis); border-top-color: var(--accent); border-radius: 50%; animation: wh-spin 0.6s linear infinite; vertical-align: middle; margin-right: 6px; }
+
     /* code block */
     .agent-code {
       background: var(--bg-base);
@@ -988,7 +991,13 @@ if (heroZone) {
 
     const names = Array.from(files).map(f => f.name);
     const slug = names[0].replace(/\.zip$|\.md$/i, '').replace(/[^a-z0-9-_]/gi, '-').toLowerCase();
-    heroStatus.textContent = names.join(', ') + ' — creating wiki...';
+    heroStatus.textContent = '';
+    const spinner = document.createElement('span');
+    spinner.className = 'wh-spinner';
+    heroStatus.appendChild(spinner);
+    heroStatus.appendChild(document.createTextNode(names.join(', ') + ' — creating wiki...'));
+    heroZone.style.pointerEvents = 'none';
+    heroZone.style.opacity = '0.7';
 
     const fd = new FormData();
     fd.append('slug', slug);
@@ -996,10 +1005,13 @@ if (heroZone) {
     fd.append('description', '');
     for (const f of files) fd.append('files', f);
 
+    function resetHeroZone() { heroZone.style.pointerEvents = ''; heroZone.style.opacity = ''; }
+
     function handleUploadResponse(r) {
       if (r.redirected && !r.url.includes('/auth/login')) {
         window.location.href = r.url;
       } else {
+        resetHeroZone();
         heroStatus.textContent = 'Sign in to create your wiki — your files will be waiting for you.';
         sessionStorage.setItem('wikihub_pending_upload', JSON.stringify(names));
         setTimeout(() => { window.location.href = '/auth/login?next=/new'; }, 1500);
@@ -1008,7 +1020,7 @@ if (heroZone) {
 
     fetch('/new', { method: 'POST', body: fd, redirect: 'follow' })
       .then(handleUploadResponse)
-      .catch(err => { heroStatus.textContent = 'Upload failed: ' + err.message; });
+      .catch(err => { resetHeroZone(); heroStatus.textContent = 'Upload failed: ' + err.message; });
   });
 
   heroZone.addEventListener('click', () => heroFileInput.click());
@@ -1017,7 +1029,13 @@ if (heroZone) {
     const files = heroFileInput.files;
     const names = Array.from(files).map(f => f.name);
     const slug = names[0].replace(/\.zip$|\.md$/i, '').replace(/[^a-z0-9-_]/gi, '-').toLowerCase();
-    heroStatus.textContent = names.join(', ') + ' — creating wiki...';
+    heroStatus.textContent = '';
+    const sp = document.createElement('span');
+    sp.className = 'wh-spinner';
+    heroStatus.appendChild(sp);
+    heroStatus.appendChild(document.createTextNode(names.join(', ') + ' — creating wiki...'));
+    heroZone.style.pointerEvents = 'none';
+    heroZone.style.opacity = '0.7';
 
     const fd = new FormData();
     fd.append('slug', slug);
@@ -1027,7 +1045,7 @@ if (heroZone) {
 
     fetch('/new', { method: 'POST', body: fd, redirect: 'follow' })
       .then(handleUploadResponse)
-      .catch(err => { heroStatus.textContent = 'Upload failed: ' + err.message; });
+      .catch(err => { resetHeroZone(); heroStatus.textContent = 'Upload failed: ' + err.message; });
   });
 }
 

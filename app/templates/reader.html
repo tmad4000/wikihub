@@ -151,7 +151,7 @@
   font-size: 0.8125rem; font-weight: 600; color: var(--text-secondary);
   margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.04em;
 }
-#link-graph { width: 100%; height: 180px; }
+#link-graph { width: 100%; height: 280px; }
 #link-graph svg { width: 100%; height: 100%; }
 
 .article [id] { scroll-margin-top: 72px; }
@@ -614,29 +614,47 @@ document.addEventListener('click', function(e) {
   const data = {{ link_graph | tojson }};
   if (!data.nodes.length) return;
 
-  const width = container.clientWidth || 208;
-  const height = 180;
+  const width = container.clientWidth || 240;
+  const height = 280;
+
+  // directory-based coloring
+  const dirColors = ['#d4a04a', '#7a9e6b', '#c45c3c', '#6b9ec4', '#b8ad9e', '#9e6bc4', '#c4946b'];
+  const dirMap = new Map();
+  let dirIdx = 0;
+  function dirColor(url) {
+    if (!url) return dirColors[0];
+    const parts = url.split('/').filter(Boolean);
+    const dir = parts.length > 3 ? parts[3] : '_root';
+    if (!dirMap.has(dir)) dirMap.set(dir, dirColors[dirIdx++ % dirColors.length]);
+    return dirMap.get(dir);
+  }
+
+  // count links per node for sizing
+  const linkCount = new Map();
+  data.links.forEach(l => {
+    linkCount.set(l.source, (linkCount.get(l.source) || 0) + 1);
+    linkCount.set(l.target, (linkCount.get(l.target) || 0) + 1);
+  });
 
   const svg = d3.select(container).append('svg')
     .attr('viewBox', `0 0 ${width} ${height}`);
 
   const nodeMap = new Map(data.nodes.map(n => [n.id, n]));
-
   const links = data.links.filter(l => nodeMap.has(l.source) && nodeMap.has(l.target));
 
   const sim = d3.forceSimulation(data.nodes)
-    .force('link', d3.forceLink(links).id(d => d.id).distance(50))
-    .force('charge', d3.forceManyBody().strength(-80))
+    .force('link', d3.forceLink(links).id(d => d.id).distance(60))
+    .force('charge', d3.forceManyBody().strength(-100))
     .force('center', d3.forceCenter(width / 2, height / 2))
-    .force('collision', d3.forceCollide(20));
+    .force('collision', d3.forceCollide(25));
 
   const link = svg.append('g')
     .selectAll('line')
     .data(links)
     .join('line')
-    .attr('stroke', 'var(--border-emphasis)')
-    .attr('stroke-width', 1)
-    .attr('stroke-opacity', 0.5);
+    .attr('stroke', '#6b6560')
+    .attr('stroke-width', 1.5)
+    .attr('stroke-opacity', 0.7);
 
   const node = svg.append('g')
     .selectAll('g')
@@ -646,17 +664,22 @@ document.addEventListener('click', function(e) {
     .on('click', (e, d) => { if (d.url) window.location.href = d.url; });
 
   node.append('circle')
-    .attr('r', d => d.current ? 6 : 4)
-    .attr('fill', d => d.current ? 'var(--accent)' : 'var(--text-muted)')
-    .attr('stroke', d => d.current ? 'var(--accent)' : 'none')
+    .attr('r', d => {
+      const lc = linkCount.get(d.id) || 0;
+      const base = d.current ? 7 : 4;
+      return base + Math.min(lc * 1.5, 8);
+    })
+    .attr('fill', d => d.current ? '#d4a04a' : dirColor(d.url))
+    .attr('fill-opacity', d => d.current ? 1 : 0.8)
+    .attr('stroke', d => d.current ? '#d4a04a' : 'none')
     .attr('stroke-width', 2)
-    .attr('stroke-opacity', 0.3);
+    .attr('stroke-opacity', 0.4);
 
   node.append('text')
-    .text(d => d.title.length > 16 ? d.title.slice(0, 15) + '…' : d.title)
-    .attr('font-size', '9px')
-    .attr('fill', d => d.current ? 'var(--text-primary)' : 'var(--text-tertiary)')
-    .attr('dx', 8)
+    .text(d => d.title)
+    .attr('font-size', '10px')
+    .attr('fill', d => d.current ? '#e8e0d4' : '#8a8480')
+    .attr('dx', d => { const lc = linkCount.get(d.id) || 0; return (d.current ? 7 : 4) + Math.min(lc * 1.5, 8) + 4; })
     .attr('dy', 3)
     .style('pointer-events', 'none');
 

@@ -208,5 +208,15 @@ if (navigator.modelContext && typeof navigator.modelContext.registerTool === 'fu
     }
   });
 }
+
+document.getElementById('editor-form').addEventListener('submit', function() {
+  var btn = this.querySelector('.btn-save');
+  btn.classList.add('btn-loading');
+  btn.textContent = '';
+  var sp = document.createElement('span');
+  sp.className = 'wh-spinner';
+  btn.appendChild(sp);
+  btn.appendChild(document.createTextNode('Saving...'));
+});
 </script>
 {% endblock %}
