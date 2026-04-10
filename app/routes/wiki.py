@@ -339,7 +339,7 @@ def _git_history(username, slug, public=False, path=None, limit=50):
     return commits
 
 
-@wiki_bp.route("/@<username>")
+@wiki_bp.route("/@<username>", strict_slashes=False)
 def user_profile(username):
     owner, redirect_row = _resolve_owner(username)
     if not owner:
@@ -445,7 +445,7 @@ def wiki_zip(username, slug):
     )
 
 
-@wiki_bp.route("/@<username>/<slug>")
+@wiki_bp.route("/@<username>/<slug>", strict_slashes=False)
 def wiki_index(username, slug):
     owner, wiki, redirect_row = _get_owner_and_wiki_or_404(username, slug)
     if redirect_row:

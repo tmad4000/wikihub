@@ -101,7 +101,28 @@ def create_app(config_class="config.Config"):
                 click.echo(f"  {path}")
         raise SystemExit(1)
 
-    from flask import jsonify, request as req
+    from flask import jsonify, request as req, render_template
+
+    @app.errorhandler(404)
+    def not_found(e):
+        if req.path.startswith("/api/"):
+            return jsonify({"error": "not_found", "message": "The requested resource was not found"}), 404
+        return render_template("error.html", code=404, title="Page not found",
+                               message="The page you're looking for doesn't exist or has been moved."), 404
+
+    @app.errorhandler(403)
+    def forbidden(e):
+        if req.path.startswith("/api/"):
+            return jsonify({"error": "forbidden", "message": "You don't have permission to access this resource"}), 403
+        return render_template("error.html", code=403, title="Access denied",
+                               message="You don't have permission to access this page."), 403
+
+    @app.errorhandler(500)
+    def internal_error(e):
+        if req.path.startswith("/api/"):
+            return jsonify({"error": "internal_error", "message": "Something went wrong"}), 500
+        return render_template("error.html", code=500, title="Something went wrong",
+                               message="An unexpected error occurred. Try again later."), 500
 
     @app.errorhandler(413)
     def too_large(e):
@@ -115,6 +136,7 @@ def create_app(config_class="config.Config"):
     def rate_limited(e):
         if req.path.startswith("/api/"):
             return jsonify({"error": "rate_limited", "message": "Too many requests"}), 429
-        return "Too many requests. Try again later.", 429
+        return render_template("error.html", code=429, title="Too many requests",
+                               message="You're sending requests too fast. Try again in a moment."), 429
 
     return app
