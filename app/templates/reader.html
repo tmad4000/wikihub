@@ -151,6 +151,22 @@
 }
 .action-btn-mini:hover { color: var(--text-secondary); background: var(--accent-subtle); }
 .action-btn-mini svg { width: 14px; height: 14px; }
+.download-menu { position: relative; display: inline-flex; }
+.download-dropdown {
+  display: none; position: absolute; top: 100%; right: 0; margin-top: 4px;
+  min-width: 160px; padding: 4px; border-radius: var(--radius-md);
+  border: 1px solid var(--border-emphasis); background: rgba(25, 23, 20, 0.98);
+  backdrop-filter: blur(12px); z-index: 50;
+}
+.download-menu:hover .download-dropdown,
+.download-menu:focus-within .download-dropdown { display: block; }
+.download-option {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+  border-radius: var(--radius-sm); color: var(--text-secondary);
+  font-size: 0.8125rem; text-decoration: none; border: none;
+  background: transparent; cursor: pointer; width: 100%; font-family: var(--font-body);
+}
+.download-option:hover { background: var(--accent-subtle); color: var(--text-primary); text-decoration: none; }
 .actions-spacer { flex: 1; }
 .private-band-warning {
   margin-bottom: 20px; padding: 12px 14px;
@@ -239,12 +255,21 @@
 
       <div class="actions-spacer"></div>
 
-      <a href="/@{{ owner.username }}/{{ wiki.slug }}.zip" class="action-btn-mini" title="Download ZIP">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-      </a>
-      <button class="action-btn-mini" title="Copy clone URL" onclick="navigator.clipboard.writeText('{{ request.host_url.rstrip('/') }}/@{{ owner.username }}/{{ wiki.slug }}.git').then(()=>{this.querySelector('svg').style.color='var(--color-public)';setTimeout(()=>this.querySelector('svg').style.color='',1500)})">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-      </button>
+      <div class="download-menu">
+        <button class="action-btn-mini" title="Download / Clone">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        </button>
+        <div class="download-dropdown">
+          <a href="/@{{ owner.username }}/{{ wiki.slug }}.zip" class="download-option">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Download ZIP
+          </a>
+          <button class="download-option" onclick="navigator.clipboard.writeText('{{ request.host_url.rstrip('/') }}/@{{ owner.username }}/{{ wiki.slug }}.git').then(()=>{this.textContent='Copied!';setTimeout(()=>this.innerHTML='<svg width=14 height=14 viewBox=&quot;0 0 24 24&quot; fill=none stroke=currentColor stroke-width=2 stroke-linecap=round stroke-linejoin=round><path d=&quot;M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71&quot;/><path d=&quot;M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71&quot;/></svg> Copy clone URL',1500)})">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+            Copy clone URL
+          </button>
+        </div>
+      </div>
 
       {% if current_user.is_authenticated and current_user.id == wiki.owner_id %}
       <a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ page.path.replace('.md', '') }}/edit" class="action-btn">

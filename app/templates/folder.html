@@ -20,6 +20,9 @@
 .breadcrumb { font-size: 0.8125rem; color: var(--text-tertiary); margin-bottom: 16px; font-family: var(--font-mono); }
 .breadcrumb a { color: var(--text-tertiary); }
 .folder-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
+.download-menu:hover .download-dropdown,
+.download-menu:focus-within .download-dropdown { display: block !important; }
+.download-dropdown a:hover, .download-dropdown button:hover { background: var(--accent-subtle); color: var(--text-primary); }
 .folder-title { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.02em; }
 .folder-copy { max-width: 760px; margin-bottom: 28px; }
 .folder-copy .article { max-width: 760px; }
@@ -92,13 +95,20 @@
 
     <div class="folder-header">
       <div class="folder-title">{{ folder_path or wiki.title or wiki.slug }}</div>
-      <div style="display:flex;align-items:center;gap:4px;">
-        <a href="/@{{ owner.username }}/{{ wiki.slug }}.zip" style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;color:var(--text-muted);border-radius:var(--radius-sm);" title="Download ZIP">
+      <div class="download-menu" style="position:relative;display:inline-flex;">
+        <button style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;color:var(--text-muted);border:none;background:transparent;cursor:pointer;border-radius:var(--radius-sm);" title="Download / Clone">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        </a>
-        <button style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;color:var(--text-muted);border:none;background:transparent;cursor:pointer;border-radius:var(--radius-sm);" title="Copy clone URL" onclick="navigator.clipboard.writeText('{{ request.host_url.rstrip('/') }}/@{{ owner.username }}/{{ wiki.slug }}.git').then(()=>{this.querySelector('svg').style.color='var(--color-public)';setTimeout(()=>this.querySelector('svg').style.color='',1500)})">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
         </button>
+        <div class="download-dropdown" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:160px;padding:4px;border-radius:var(--radius-md);border:1px solid var(--border-emphasis);background:rgba(25,23,20,0.98);backdrop-filter:blur(12px);z-index:50;">
+          <a href="/@{{ owner.username }}/{{ wiki.slug }}.zip" style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:var(--radius-sm);color:var(--text-secondary);font-size:0.8125rem;text-decoration:none;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Download ZIP
+          </a>
+          <button style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:var(--radius-sm);color:var(--text-secondary);font-size:0.8125rem;border:none;background:transparent;cursor:pointer;width:100%;font-family:var(--font-body);" onclick="navigator.clipboard.writeText('{{ request.host_url.rstrip('/') }}/@{{ owner.username }}/{{ wiki.slug }}.git').then(()=>{this.textContent='Copied!';setTimeout(()=>this.textContent='Copy clone URL',1500)})">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+            Copy clone URL
+          </button>
+        </div>
       </div>
       {% if current_user.is_authenticated and current_user.id == wiki.owner_id %}
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
