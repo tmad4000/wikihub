@@ -133,9 +133,9 @@
     min-width: 40px;
     flex-shrink: 0;
     white-space: nowrap;
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    gap: 2px;
+    gap: 3px;
   }
   .vis-option .vis-opt-text {
     flex: 1;
@@ -417,7 +417,7 @@
 
       <div class="vis-options">
         <button class="vis-option opt-private">
-          <span class="vis-opt-icon">&#128274;</span>
+          <span class="vis-opt-icon"><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
           <div class="vis-opt-text">
             <div class="vis-opt-label">Private</div>
             <div class="vis-opt-desc">Only you can see this page</div>
@@ -426,7 +426,7 @@
         </button>
 
         <button class="vis-option opt-public-read selected">
-          <span class="vis-opt-icon">&#127760;</span>
+          <span class="vis-opt-icon"><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span>
           <div class="vis-opt-text">
             <div class="vis-opt-label">Public (read)</div>
             <div class="vis-opt-desc">Anyone can read, only you can edit</div>
@@ -435,7 +435,7 @@
         </button>
 
         <button class="vis-option opt-public-edit">
-          <span class="vis-opt-icon">&#127760; &#9998;</span>
+          <span class="vis-opt-icon"><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></span>
           <div class="vis-opt-text">
             <div class="vis-opt-label">Public (edit)</div>
             <div class="vis-opt-desc">Anyone can read and edit, no account required</div>
@@ -444,7 +444,7 @@
         </button>
 
         <button class="vis-option opt-unlisted-read">
-          <span class="vis-opt-icon">&#128065;</span>
+          <span class="vis-opt-icon"><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></span>
           <div class="vis-opt-text">
             <div class="vis-opt-label">Unlisted (read)</div>
             <div class="vis-opt-desc">Accessible by URL, not discoverable</div>
@@ -453,7 +453,7 @@
         </button>
 
         <button class="vis-option opt-unlisted-edit">
-          <span class="vis-opt-icon">&#128065; &#9998;</span>
+          <span class="vis-opt-icon"><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></span>
           <div class="vis-opt-text">
             <div class="vis-opt-label">Unlisted (edit)</div>
             <div class="vis-opt-desc">Anyone with URL can read and edit</div>
@@ -511,7 +511,7 @@
       <button class="toolbar-btn">Preview</button>
       <button class="toolbar-btn">History</button>
       <div class="toolbar-dropdown-wrapper">
-        <button class="toolbar-btn vis-trigger">&#127760; Public (read) &#9662;</button>
+        <button class="toolbar-btn vis-trigger"><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg> Public (read) <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
         <div class="toolbar-dropdown">
           <div class="vis-panel">
             <div class="vis-panel-header">
@@ -521,7 +521,7 @@
 
             <div class="vis-options">
               <button class="vis-option opt-private">
-                <span class="vis-opt-icon">&#128274;</span>
+                <span class="vis-opt-icon"><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
                 <div class="vis-opt-text">
                   <div class="vis-opt-label">Private</div>
                   <div class="vis-opt-desc">Only you can see this page</div>
@@ -530,7 +530,7 @@
               </button>
 
               <button class="vis-option opt-public-read selected">
-                <span class="vis-opt-icon">&#127760;</span>
+                <span class="vis-opt-icon"><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span>
                 <div class="vis-opt-text">
                   <div class="vis-opt-label">Public (read)</div>
                   <div class="vis-opt-desc">Anyone can read, only you can edit</div>
@@ -539,7 +539,7 @@
               </button>
 
               <button class="vis-option opt-public-edit">
-                <span class="vis-opt-icon">&#127760; &#9998;</span>
+                <span class="vis-opt-icon"><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></span>
                 <div class="vis-opt-text">
                   <div class="vis-opt-label">Public (edit)</div>
                   <div class="vis-opt-desc">Anyone can read and edit, no account required</div>
@@ -548,7 +548,7 @@
               </button>
 
               <button class="vis-option opt-unlisted-read">
-                <span class="vis-opt-icon">&#128065;</span>
+                <span class="vis-opt-icon"><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></span>
                 <div class="vis-opt-text">
                   <div class="vis-opt-label">Unlisted (read)</div>
                   <div class="vis-opt-desc">Accessible by URL, not discoverable</div>
@@ -557,7 +557,7 @@
               </button>
 
               <button class="vis-option opt-unlisted-edit">
-                <span class="vis-opt-icon">&#128065; &#9998;</span>
+                <span class="vis-opt-icon"><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></span>
                 <div class="vis-opt-text">
                   <div class="vis-opt-label">Unlisted (edit)</div>
                   <div class="vis-opt-desc">Anyone with URL can read and edit</div>

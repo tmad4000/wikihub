@@ -375,9 +375,10 @@
   }
 
   .badge-icon {
-    font-size: 0.8125rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
     line-height: 1;
-    white-space: nowrap;
   }
 
   .badge-public {
@@ -502,7 +503,7 @@
   <div class="wiki-card">
     <div class="wiki-card-header">
       <a href="#" class="wiki-card-title">deep-learning-notes</a>
-      <span class="badge badge-public"><span class="badge-icon">🌐</span> Public</span>
+      <span class="badge badge-public"><span class="badge-icon"><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span> Public</span>
     </div>
     <p class="wiki-card-desc">Comprehensive notes on transformer architectures, attention mechanisms, and training dynamics. Covers papers from 2017-2026 with runnable code snippets and KaTeX derivations.</p>
     <div class="wiki-card-footer">
@@ -522,7 +523,7 @@
   <div class="wiki-card">
     <div class="wiki-card-header">
       <a href="#" class="wiki-card-title">personal-crm</a>
-      <span class="badge badge-private"><span class="badge-icon">🔒</span> Private</span>
+      <span class="badge badge-private"><span class="badge-icon"><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span> Private</span>
     </div>
     <p class="wiki-card-desc">Relationship tracker and meeting notes. Integrates with calendar and email for automated context when catching up with contacts.</p>
     <div class="wiki-card-footer">
@@ -542,7 +543,7 @@
   <div class="wiki-card">
     <div class="wiki-card-header">
       <a href="#" class="wiki-card-title">effective-altruism-reading-list</a>
-      <span class="badge badge-public-edit"><span class="badge-icon">🌐 ✏️</span> Public (edit)</span>
+      <span class="badge badge-public-edit"><span class="badge-icon"><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></span> Public (edit)</span>
     </div>
     <p class="wiki-card-desc">Curated reading list for effective altruism concepts, cause prioritization, and career advice. Community contributions welcome — anyone can add or annotate entries.</p>
     <div class="wiki-card-footer">
@@ -562,7 +563,7 @@
   <div class="wiki-card">
     <div class="wiki-card-header">
       <a href="#" class="wiki-card-title">rsi-recovery-protocol</a>
-      <span class="badge badge-unlisted"><span class="badge-icon">👁</span> Unlisted</span>
+      <span class="badge badge-unlisted"><span class="badge-icon"><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></span> Unlisted</span>
     </div>
     <p class="wiki-card-desc">Personal RSI recovery notes — exercises, ergonomic setup, pain tracking, and what worked. Shared by link with a few friends.</p>
     <div class="wiki-card-footer">
@@ -582,7 +583,7 @@
   <div class="wiki-card">
     <div class="wiki-card-header">
       <a href="#" class="wiki-card-title">labs-research-log</a>
-      <span class="badge badge-unlisted-edit"><span class="badge-icon">👁 ✏️</span> Unlisted (edit)</span>
+      <span class="badge badge-unlisted-edit"><span class="badge-icon"><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></span> Unlisted (edit)</span>
     </div>
     <p class="wiki-card-desc">Shared research log for the labs team. Experiment notes, benchmark results, and weekly syncs. Collaborators edit directly.</p>
     <div class="wiki-card-footer">

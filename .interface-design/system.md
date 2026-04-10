@@ -128,11 +128,13 @@ Not GitHub. Not Notion. This is a knowledge publishing tool for people who live 
 - Active page: left accent border `--border-accent`, bg `--accent-subtle`
 
 ### Visibility badges
-- Public: `--color-public` text + border, icon 🌐
-- Private: `--color-private` text + border, icon 🔒
-- Unlisted: `--color-unlisted` text + border, icon 👁
-- Edit variants: show both icons side by side (🌐 ✏️ or 👁 ✏️)
+All icons are inline SVGs (Lucide-style, 14x14, stroke="currentColor"), never emoji.
+- Public: `--color-public` text + border, **globe** SVG
+- Private: `--color-private` text + border, **lock** SVG
+- Unlisted: `--color-unlisted` text + border, **link/chain** SVG (NOT eye — "accessible by URL only")
+- Edit variants: base icon + **pencil** SVG side by side (globe + pencil, link + pencil)
 - Pill shape: `--radius-sm` padding, subtle bg tint of the semantic color
+- Icon containers: `display: inline-flex; align-items: center; gap: 3px;`
 
 ### Wikilinks
 - Resolved: `--color-wikilink` (amber), no underline, underline on hover
