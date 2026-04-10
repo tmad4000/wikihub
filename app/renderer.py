@@ -169,7 +169,8 @@ def _figure_image_plugin(md):
 def _highlight_fence_plugin(md):
     def fence_renderer(tokens, idx, options, env):
         token = tokens[idx]
-        info = (token.info or "").strip().split()[0]
+        parts = (token.info or "").strip().split()
+        info = parts[0] if parts else ""
         lang_class = f" language-{info}" if info else ""
         content = md.utils.escapeHtml(token.content)
         return f'<pre><code class="hljs{lang_class}">{content}</code></pre>\n'
