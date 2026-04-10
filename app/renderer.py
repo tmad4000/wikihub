@@ -206,7 +206,8 @@ def render_page(content, wiki_owner=None, wiki_slug=None):
         target_clean = target.strip("/")
         if not target_clean.endswith(".md"):
             target_clean += ".md"
-        url = f"/@{wiki_owner}/{wiki_slug}/{target_clean.replace('.md', '')}" if wiki_owner else f"#{target}"
+        from urllib.parse import quote
+        url = f"/@{wiki_owner}/{wiki_slug}/{quote(target_clean.replace('.md', ''), safe='/')}" if wiki_owner else f"#{target}"
         # TODO: check if page exists in DB for resolved/unresolved styling
         return url, True
 

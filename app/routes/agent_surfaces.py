@@ -72,7 +72,8 @@ def llms_full_txt():
         if wiki_key != current_wiki:
             lines.append(f"\n## @{wiki_key}")
             current_wiki = wiki_key
-        url = f"/@{wiki_key}/{p.path.replace('.md', '')}"
+        from urllib.parse import quote
+        url = f"/@{wiki_key}/{quote(p.path.replace('.md', ''), safe='/')}"
         lines.append(f"- [{p.title or p.path}]({url})")
 
     return Response("\n".join(lines), content_type="text/plain; charset=utf-8")

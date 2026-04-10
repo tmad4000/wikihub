@@ -1,4 +1,5 @@
 import os
+from urllib.parse import quote
 
 from flask import render_template, abort, request, redirect, url_for, flash, Response
 from flask_login import current_user, login_required
@@ -30,7 +31,7 @@ def _build_sidebar(username, slug, current_path=None):
             continue
         depth = f.count("/")
         label = f.rsplit("/", 1)[-1].replace(".md", "")
-        url = f"/@{username}/{slug}/{f.replace('.md', '')}"
+        url = f"/@{username}/{slug}/{quote(f.replace('.md', ''), safe='/')}"
         items.append({
             "url": url,
             "label": label,
@@ -153,7 +154,7 @@ def wiki_page(username, slug, page_path):
             content_type="text/markdown; charset=utf-8",
             headers={
                 "Vary": "Accept",
-                "Link": f'</@{username}/{slug}/{page_path.replace(".md", "")}>; rel="alternate"; type="text/html"',
+                "Link": f'</@{username}/{slug}/{quote(page_path.replace(".md", ""), safe="/")}>; rel="alternate"; type="text/html"',
             },
         )
 
@@ -171,7 +172,7 @@ def wiki_page(username, slug, page_path):
         rendered_html=rendered, sidebar_items=sidebar_items,
     ), 200, {
         "Vary": "Accept",
-        "Link": f'</@{username}/{slug}/{page_path}.md>; rel="alternate"; type="text/markdown"',
+        "Link": f'</@{username}/{slug}/{quote(page_path, safe="/")}.md>; rel="alternate"; type="text/markdown"',
     }
 
 

@@ -18,6 +18,7 @@ GET    /api/v1/search                              search
 
 import hashlib
 import os
+from urllib.parse import quote
 
 from flask import request, jsonify
 
@@ -368,7 +369,7 @@ def create_page(owner, slug):
         "path": page.path,
         "title": page.title,
         "visibility": page.visibility,
-        "url": f"/@{owner}/{slug}/{path.replace('.md', '')}",
+        "url": f"/@{owner}/{slug}/{quote(path.replace('.md', ''), safe='/')}",
     }), 201
 
 
