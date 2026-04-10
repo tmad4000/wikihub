@@ -378,19 +378,32 @@ def _git_diff(username, slug, sha, public=False, path=None):
     if not os.path.isdir(repo):
         return None
 
-    cmd = ["git", "-C", repo, "diff", f"{sha}~1", sha, "--no-color"]
+    # verify the sha exists in this repo
+    verify = subprocess.run(
+        ["git", "-C", repo, "cat-file", "-t", sha],
+        capture_output=True, text=True, check=False,
+    )
+    if verify.returncode != 0:
+        return None
+
+    # check if this commit has a parent
+    parent_check = subprocess.run(
+        ["git", "-C", repo, "rev-parse", "--verify", f"{sha}~1"],
+        capture_output=True, text=True, check=False,
+    )
+
+    if parent_check.returncode == 0:
+        cmd = ["git", "-C", repo, "diff", f"{sha}~1", sha, "--no-color"]
+    else:
+        # first commit — diff against empty tree
+        cmd = ["git", "-C", repo, "diff", "--no-color", "4b825dc642cb6eb9a060e54bf899d69f82cf0178", sha]
+
     if path:
         cmd += ["--", path]
 
     result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if result.returncode != 0:
-        # first commit has no parent — use diff against empty tree
-        cmd = ["git", "-C", repo, "diff", "--no-color", "4b825dc642cb6eb9a060e54bf899d69f82cf0178", sha]
-        if path:
-            cmd += ["--", path]
-        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        if result.returncode != 0:
-            return None
+        return None
 
     return result.stdout
 
