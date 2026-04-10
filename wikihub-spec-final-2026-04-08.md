@@ -358,7 +358,7 @@ Every error response returns a JSON body: `{"error": "forbidden", "message": "Yo
 
 - **`git push`** — user has wiki locally, adds wikihub remote, pushes. Post-receive parses and syncs to Postgres.
 - **Folder / zip upload** — web drag-drop. Server unpacks, commits with "Initial import from upload" message, runs through the same post-receive path.
-- **Scaffold a blank wiki** — "Create wiki" button seeds the three-layer Karpathy skeleton (`schema.md`, `index.md`, `log.md`, `raw/`, `wiki/`, `.wikihub/acl` with private-default header) and one initial commit.
+- **Scaffold a blank wiki** — "Create wiki" button seeds the three-layer Karpathy skeleton (`schema.md`, `index.md`, `log.md`, `raw/`, `wiki/`, `.wikihub/acl` with private-default header) and one initial commit. Two templates: `structured` (default — compiled truth + timeline + ingest/query/lint operations, based on Karpathy's LLM Wiki pattern) and `freeform` (minimal, just frontmatter + wikilinks). The API defaults to `structured` so agents get the opinionated schema out of the box.
 
 **v2 deferred:** paste-unstructured-text -> LLM, URL/repo connect, omni-convert (PDF/DOCX/txt/video -> markdown), HTML/Google Sites importer, SFTP (session-batched commits + SSH key endpoint — the encrypted, usable version of FTP; plain FTP killed).
 

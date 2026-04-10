@@ -102,7 +102,7 @@ def sync_wiki_counters(wiki):
     wiki.fork_count = Fork.query.filter_by(source_wiki_id=wiki.id).count()
 
 
-def create_wiki_for_user(user, slug, title=None, description="", scaffold=True):
+def create_wiki_for_user(user, slug, title=None, description="", scaffold=True, template="structured"):
     wiki = Wiki(
         owner_id=user.id,
         slug=slug,
@@ -114,7 +114,7 @@ def create_wiki_for_user(user, slug, title=None, description="", scaffold=True):
 
     init_wiki_repo(user.username, slug)
     if scaffold:
-        scaffold_wiki(user.username, slug)
+        scaffold_wiki(user.username, slug, template=template)
         index_repo_pages(user.username, slug, wiki, reset=True)
         regenerate_public_mirror(user.username, slug, load_acl_rules(user.username, slug))
 

@@ -106,12 +106,17 @@ def create_wiki():
     if wiki_count >= current_app.config["MAX_WIKIS_PER_USER"]:
         return {"error": "too_many", "message": f"You've reached the limit of {current_app.config['MAX_WIKIS_PER_USER']} wikis"}, 429
 
+    template = data.get("template", "structured")
+    if template not in ("freeform", "structured"):
+        template = "structured"
+
     wiki = create_wiki_for_user(
         user,
         slug=slug,
         title=data.get("title", slug),
         description=data.get("description", ""),
         scaffold=True,
+        template=template,
     )
     db.session.commit()
     append_event_to_repo(user.username, wiki.slug, "wiki.create", actor=user.username)

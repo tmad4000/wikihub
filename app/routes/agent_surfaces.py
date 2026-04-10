@@ -137,8 +137,10 @@ POST /api/v1/wikis
 Authorization: Bearer wh_...
 Content-Type: application/json
 
-{"slug": "my-wiki", "title": "My Wiki"}
+{"slug": "my-wiki", "title": "My Wiki", "template": "structured"}
 ```
+
+templates: "structured" (default, recommended — compiled truth + timeline + wikilinks) or "freeform" (minimal).
 
 ## add a page
 

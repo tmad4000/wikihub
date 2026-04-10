@@ -58,7 +58,7 @@ don't add unit tests for individual functions. if something breaks, add an e2e t
 
 - **Live URL:** https://wikihub.globalbr.ai
 - **Server:** AWS Lightsail instance `wikihub-dev` (54.145.123.7)
-- **SSH:** `ssh wikihub-dev` (config in `~/.ssh/config`)
+- **SSH:** `ssh -i ~/.ssh/wikihub-dev-key ubuntu@54.145.123.7`
 - **Code on server:** `/opt/wikihub-app`
 - **DB:** PostgreSQL `wikihub` database (local to server)
 - **Process:** gunicorn on port 5100, managed by systemd (`wikihub.service`)
@@ -67,7 +67,7 @@ don't add unit tests for individual functions. if something breaks, add an e2e t
 
 **Deploy:**
 ```bash
-ssh wikihub-dev 'cd /opt/wikihub-app && git pull && sudo systemctl restart wikihub'
+ssh -i ~/.ssh/wikihub-dev-key ubuntu@54.145.123.7 'cd /opt/wikihub-app && git pull && sudo systemctl restart wikihub'
 ```
 
 **Secrets** are in `/opt/wikihub-app/.env` on the server (not in repo). Collaborator access keys are in `wikihub-dev-access/` (gitignored).
