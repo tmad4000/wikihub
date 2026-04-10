@@ -455,7 +455,7 @@
     <button class="copy-btn" onclick="navigator.clipboard.writeText(this.parentElement.querySelector('.pe-content').textContent)">copy</button>
     <div class="plain-english-label">Paste this into your agent</div>
     <div class="pe-content">
-      <p><strong>Step 1:</strong> Create an account by sending a POST request to <code>https://wikihub.md/api/v1/accounts</code> with JSON body <code>{"username": "pick-a-name"}</code>. You can also include <code>"email"</code>. No password needed for API-only accounts.</p>
+      <p><strong>Step 1:</strong> Create an account by sending a POST request to <code>https://wikihub.md/api/v1/accounts</code> with JSON body <code>{"username": "pick-a-name"}</code>. If you know the user's name, use it as the username (e.g. <code>"username": "harrison"</code>). You can also include <code>"email"</code>. No password needed for API-only accounts.</p>
       <p><strong>Step 2:</strong> The response includes an <code>"api_key"</code> field (starts with <code>wh_</code>). Save this key immediately — it cannot be retrieved again.</p>
       <p><strong>Step 3:</strong> Use the key as <code>Authorization: Bearer wh_...</code> on all subsequent API calls.</p>
       <p><strong>Step 4:</strong> Create a wiki: POST to <code>/api/v1/wikis</code> with <code>{"slug": "my-wiki"}</code>.</p>
