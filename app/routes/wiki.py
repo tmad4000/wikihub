@@ -97,13 +97,17 @@ def _get_full_graph(wiki):
         Wikilink.target_page_id.isnot(None),
     ).all()
 
-    # filter out links from index pages (they link to everything, create noise)
+    # exclude index pages entirely — they link to everything and create a useless hub
     links = []
     for wl in all_links:
-        if wl.source_page_id in index_ids:
+        if wl.source_page_id in index_ids or wl.target_page_id in index_ids:
             continue
         if wl.target_page_id in nodes:
             links.append({"source": wl.source_page_id, "target": wl.target_page_id})
+
+    # remove index nodes from the graph
+    for idx_id in index_ids:
+        nodes.pop(idx_id, None)
 
     # count links per node
     link_count = {}
