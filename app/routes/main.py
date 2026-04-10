@@ -16,7 +16,7 @@ def index():
 def explore():
     editorial = (
         Wiki.query.join(User, Wiki.owner_id == User.id)
-        .filter(User.username == "wikihub", Wiki.slug == "wiki")
+        .filter(User.username == "wikihub", Wiki.slug == "wikihub")
         .all()
     )
     popular = Wiki.query.filter(Wiki.star_count > 0).order_by(Wiki.star_count.desc()).limit(6).all()
