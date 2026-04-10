@@ -52,6 +52,13 @@ textarea { resize: vertical; min-height: 80px; }
     <label for="description">Description (optional)</label>
     <textarea id="description" name="description" placeholder="What's this wiki about?"></textarea>
 
+    <label for="template">Template</label>
+    <select id="template" name="template" style="width:100%;background:var(--control-bg);border:1px solid var(--control-border);border-radius:var(--radius-sm);color:var(--text-primary);font-family:var(--font-body);font-size:0.9375rem;padding:10px 12px;margin-bottom:16px;outline:none;">
+      <option value="freeform">Freeform — minimal structure, just frontmatter + wikilinks</option>
+      <option value="structured" selected>Structured — compiled truth + timeline, source tracking, connection rules</option>
+      <option value="research">Research — courses, topics, conversations, reflections</option>
+    </select>
+
     <div class="drop-zone" id="drop-zone" onclick="document.getElementById('files').click()">
       <div class="drop-zone-text"><strong>Drop files here</strong> or click to browse</div>
       <div class="drop-zone-hint">.md files, folders, or a .zip — or leave empty for a blank wiki</div>

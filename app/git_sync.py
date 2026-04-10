@@ -279,8 +279,99 @@ def list_files_in_repo(username, slug, public=False):
         return []
 
 
-def scaffold_wiki(username, slug):
-    """create the initial Karpathy skeleton commit in a wiki repo.
+SCHEMA_TEMPLATES = {
+    "freeform": (
+        "# schema\n\n"
+        "this wiki has no imposed structure. pages are markdown files with optional YAML frontmatter.\n\n"
+        "## frontmatter\n\n"
+        "```yaml\n"
+        "---\n"
+        "title: Page Title\n"
+        "visibility: public | private | unlisted\n"
+        "tags: [topic1, topic2]\n"
+        "---\n"
+        "```\n\n"
+        "## wikilinks\n\n"
+        "link pages with `[[page-name]]` or `[[page-name|Display Text]]`. "
+        "links resolve by filename — `[[linear-algebra]]` finds `wiki/courses/linear-algebra.md`.\n"
+    ),
+    "structured": (
+        "# schema\n\n"
+        "this wiki uses the compiled-truth pattern: synthesis on top, evidence trail on the bottom.\n\n"
+        "## page format\n\n"
+        "every page has two layers:\n"
+        "- **compiled truth** (above the `---` divider): current best understanding, rewritten freely when evidence changes\n"
+        "- **timeline** (below the `---` divider): append-only evidence trail with dates, never edited after writing\n\n"
+        "## frontmatter\n\n"
+        "```yaml\n"
+        "---\n"
+        "title: Page Title\n"
+        "type: topic | person | project | idea | source-summary\n"
+        "visibility: public\n"
+        "tags: [area1, area2]\n"
+        "sources: [raw/meeting-2026-04-10.md, raw/article-link.md]\n"
+        "---\n"
+        "```\n\n"
+        "## wikilinks\n\n"
+        "weave links naturally into prose: `[[mark-khrapko|Mark]] mentored him on [[hiring|hiring philosophy]]`.\n"
+        "link on first mention only. don't create 'see also' sections — if it's not worth mentioning in prose, it's not a connection.\n\n"
+        "## connections are everything\n\n"
+        "**inline wikilinks are the most important thing you do.** they are what makes the wiki a knowledge graph "
+        "instead of a folder of notes. every page you write or update should link to related pages.\n\n"
+        "rules:\n"
+        "- weave links into prose naturally — no 'see also' sections\n"
+        "- link on first mention only per section\n"
+        "- use display text: `[[hiring-philosophy|hiring philosophy]]` not `[[hiring-philosophy]]`\n"
+        "- cross-category links are the most valuable (person↔topic, course↔idea, experience↔reflection)\n"
+        "- every page should have at least 2 outbound links\n"
+        "- conservative: better to miss a link than create a wrong one\n\n"
+        "## ingestion workflow\n\n"
+        "when processing a new source:\n"
+        "1. read source → identify entities (people, topics, projects)\n"
+        "2. for each entity: check if wiki page exists\n"
+        "3. if exists: update compiled truth, append timeline entry with date and source\n"
+        "4. if new: create page with compiled truth + first timeline entry\n"
+        "5. **add inline wikilinks to related pages as you write** — this is the critical step\n"
+        "6. update index.md with new page if needed\n\n"
+        "## source tracking\n\n"
+        "every fact should be traceable. use `sources:` frontmatter to list which raw files contributed to a page. "
+        "timeline entries should cite their source: `**2026-04-10** (from meeting-notes.md): key insight here`\n"
+    ),
+    "research": (
+        "# schema\n\n"
+        "research wiki with courses, topics, conversations, and reflections.\n\n"
+        "## page types\n\n"
+        "- `type: course` — academic course notes. frontmatter: `code`, `term`, `instructor`\n"
+        "- `type: topic` — concept or subject area. synthesis of what you know\n"
+        "- `type: conversation` — notes from a specific discussion. frontmatter: `participants`, `date`\n"
+        "- `type: reflection` — personal thinking on a theme\n"
+        "- `type: source-summary` — summary of a book, paper, or article. frontmatter: `author`, `url`\n\n"
+        "## page format\n\n"
+        "use compiled truth (synthesis on top) + timeline (evidence below `---`) for topics and people. "
+        "conversations and source-summaries are naturally chronological.\n\n"
+        "## wikilinks\n\n"
+        "cross-section connections are the most valuable:\n"
+        "- person ↔ topic: what did they teach you?\n"
+        "- course ↔ topic: academic material linked to personal exploration\n"
+        "- experience ↔ reflection: what happened linked to what was learned\n\n"
+        "use `[[slug|Display Text]]` and link on first mention only.\n\n"
+        "## frontmatter\n\n"
+        "```yaml\n"
+        "---\n"
+        "title: Linear Algebra I\n"
+        "type: course\n"
+        "code: MATH530A\n"
+        "term: Fall 2024\n"
+        "tags: [math, linear-algebra]\n"
+        "visibility: public\n"
+        "---\n"
+        "```\n"
+    ),
+}
+
+
+def scaffold_wiki(username, slug, template="freeform"):
+    """create the initial skeleton commit in a wiki repo.
     creates: schema.md, index.md, log.md, raw/.gitkeep, wiki/.gitkeep, .wikihub/acl"""
     repo = _repo_path(username, slug)
     if not os.path.isdir(repo):
@@ -306,7 +397,7 @@ def scaffold_wiki(username, slug):
             "* private\n"
         ),
         "index.md": f"# {slug}\n\nwelcome to your wiki.\n",
-        "schema.md": "# schema\n\ndescribe the structure of your knowledge base here.\n",
+        "schema.md": SCHEMA_TEMPLATES.get(template, SCHEMA_TEMPLATES["freeform"]),
         "log.md": "# log\n\nchronological updates and decisions.\n",
         "raw/.gitkeep": "",
         "wiki/.gitkeep": "",

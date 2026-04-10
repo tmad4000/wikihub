@@ -57,7 +57,8 @@ def create_wiki_web():
                 flash(str(e))
                 return render_template("new_wiki.html"), 413
         else:
-            scaffold_wiki(current_user.username, slug)
+            template = request.form.get("template", "structured")
+            scaffold_wiki(current_user.username, slug, template=template)
             _index_repo_pages(current_user.username, slug, wiki.id)
 
         acl_rules = load_acl_rules(current_user.username, slug)
