@@ -67,6 +67,25 @@
 .vis-badge.public-edit { color: var(--accent); background: rgba(212, 160, 74, 0.1); border: 1px solid rgba(212, 160, 74, 0.2); }
 .vis-badge.unlisted-edit { color: var(--accent); background: rgba(212, 160, 74, 0.1); border: 1px solid rgba(212, 160, 74, 0.2); }
 
+.toc-block {
+  max-width: 720px; margin-bottom: 28px; padding: 16px 20px;
+  border: 1px solid var(--border-default); border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+.toc-title {
+  font-size: 0.8125rem; font-weight: 600; color: var(--text-secondary);
+  margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+}
+.toc-list { list-style: none; padding: 0; margin: 0; counter-reset: toc-counter; }
+.toc-item { margin-bottom: 4px; }
+.toc-item a {
+  color: var(--text-tertiary); text-decoration: none; font-size: 0.8125rem;
+  line-height: 1.6; display: block; padding: 1px 0;
+}
+.toc-item a:hover { color: var(--accent); }
+.toc-level-3 { padding-left: 16px; }
+.toc-level-4 { padding-left: 32px; }
+
 .article { max-width: 720px; }
 .article h1 {
   font-size: 2.25rem; font-weight: 700; letter-spacing: -0.03em;
