@@ -562,6 +562,10 @@ All prior open questions resolved as of 2026-04-10. No open spec questions remai
 
 ## Developer experience / testing — added 2026-04-10
 
+### "For Agents" nav link — added 2026-04-10
+
+The top nav bar includes a prominent **"For Agents"** link (amber, monospace, always visible to all users) that points to `/agents`. This makes the agent-first nature of wikihub immediately obvious to every visitor. The `/agents` page documents all agent integration surfaces: MCP endpoint, REST API, content negotiation, llms.txt, git clone, and one-call registration.
+
 ### Test login buttons
 
 The login page shows one-click "Login as alice" / "Login as bob" buttons when the `TESTING_LOGIN=1` environment variable is set. These buttons:

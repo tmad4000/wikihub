@@ -69,6 +69,8 @@ a:hover { text-decoration: underline; }
 .nav-spacer { flex: 1; }
 .nav-link { color: var(--text-tertiary); font-size: 0.875rem; text-decoration: none; }
 .nav-link:hover { color: var(--text-primary); text-decoration: none; }
+.nav-agents { color: var(--accent); font-weight: 500; font-family: var(--font-mono); font-size: 0.8125rem; }
+.nav-agents:hover { color: var(--accent-hover); }
 .nav-avatar {
   width: 32px; height: 32px; border-radius: 50%;
   background: var(--accent-muted); border: 1px solid var(--border-accent);
@@ -136,12 +138,14 @@ a:hover { text-decoration: underline; }
   {% if current_user and current_user.is_authenticated %}
     <a href="/explore" class="nav-link">Explore</a>
     <a href="/people" class="nav-link">People</a>
+    <a href="/agents" class="nav-link nav-agents">For Agents</a>
     <a href="/@{{ current_user.username }}" class="nav-avatar">{{ current_user.username[0]|upper }}</a>
     <a href="/settings" class="nav-link" style="font-size: 0.75rem;">Settings</a>
     <a href="/auth/logout" class="nav-link" style="font-size: 0.75rem;">Logout</a>
   {% else %}
     <a href="/explore" class="nav-link">Explore</a>
     <a href="/people" class="nav-link">People</a>
+    <a href="/agents" class="nav-link nav-agents">For Agents</a>
     <a href="/auth/login" class="nav-link">Sign in</a>
   {% endif %}
 </nav>

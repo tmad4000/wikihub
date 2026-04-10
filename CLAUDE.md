@@ -57,6 +57,24 @@ don't add unit tests for individual functions. if something breaks, add an e2e t
 - **frontmatter visibility wins over ACL file** (most specific wins).
 - **API keys start with `wh_`**, SHA-256 hashed in DB, shown once on creation.
 
+## deployment
+
+- **Live URL:** https://wikihub.globalbr.ai
+- **Server:** AWS Lightsail instance `wikihub-dev` (54.145.123.7)
+- **SSH:** `ssh wikihub-dev` (config in `~/.ssh/config`)
+- **Code on server:** `/opt/wikihub-app`
+- **DB:** PostgreSQL `wikihub` database (local to server)
+- **Process:** gunicorn on port 5100, managed by systemd (`wikihub.service`)
+- **Reverse proxy:** nginx on server, Cloudflare DNS in front (proxied, handles SSL)
+- **ListHub also on same box:** `/opt/listhub-app` at https://listhub2.globalbr.ai
+
+**Deploy:**
+```bash
+ssh wikihub-dev 'cd /opt/wikihub-app && git pull && sudo systemctl restart wikihub'
+```
+
+**Secrets** are in `/opt/wikihub-app/.env` on the server (not in repo). Collaborator access keys are in `wikihub-dev-access/` (gitignored).
+
 ## design system
 
 obsidian + amber. see `.interface-design/system.md` for tokens. key points:
