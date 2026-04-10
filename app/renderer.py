@@ -139,7 +139,7 @@ def _external_link_plugin(md):
 
 def create_renderer():
     """create a configured markdown-it renderer."""
-    md = MarkdownIt("commonmark", {"html": True, "typographer": True})
+    md = MarkdownIt("commonmark", {"html": False, "typographer": True})
     md.enable(["table", "strikethrough"])
 
     footnote_plugin(md)
