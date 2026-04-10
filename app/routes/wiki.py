@@ -11,7 +11,7 @@ from app.acl import can_read, can_write, resolve_visibility
 from app.content_utils import has_private_bands, parse_markdown_document, set_visibility_in_content
 from app.discovery import discoverable_page_for_wiki, visible_wikis_for_owner
 from app.git_backend import _repo_path
-from app.git_sync import read_file_from_repo, list_files_in_repo, regenerate_public_mirror, remove_page_from_repo, sync_page_to_repo
+from app.git_sync import read_file_from_repo, read_file_bytes_from_repo, list_files_in_repo, regenerate_public_mirror, remove_page_from_repo, sync_page_to_repo
 from app.models import Page, User, UsernameRedirect, Wiki, Wikilink, utcnow
 from app.renderer import extract_toc, render_page
 from app.routes import wiki_bp
@@ -394,18 +394,17 @@ def _git_diff(username, slug, sha, public=False, path=None):
 
     if parent_check.returncode == 0:
         cmd = ["git", "-C", repo, "diff", f"{sha}~1", sha, "--no-color"]
-    else:
-        # first commit — diff against empty tree
-        cmd = ["git", "-C", repo, "diff", "--no-color", "4b825dc642cb6eb9a060e54bf899d69f82cf0178", sha]
+        if path:
+            cmd += ["--", path]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        return result.stdout if result.returncode == 0 else None
 
+    # first commit / no parent — use diff-tree --root which works in bare repos
+    cmd = ["git", "-C", repo, "diff-tree", "-p", "--no-color", "--root", sha]
     if path:
         cmd += ["--", path]
-
     result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    if result.returncode != 0:
-        return None
-
-    return result.stdout
+    return result.stdout if result.returncode == 0 else None
 
 
 @wiki_bp.route("/@<username>", strict_slashes=False)
@@ -695,6 +694,31 @@ def wiki_page(username, slug, page_path):
         return redirect(url_for("wiki.wiki_page", username=owner.username, slug=slug, page_path=page_path), code=302)
 
     siblings = _sibling_wikis(owner, wiki)
+
+    # serve non-markdown files (images, PDFs, etc.) as raw binary
+    _MARKDOWN_EXTS = {".md", ".markdown", ".mdown", ".mkd"}
+    ext = os.path.splitext(page_path)[1].lower()
+    if ext and ext not in _MARKDOWN_EXTS and not request.path.endswith("/"):
+        import mimetypes
+        is_owner = _is_owner(wiki)
+        acl_rules = load_acl_rules(owner.username, wiki.slug)
+        user_name = current_user.username if current_user.is_authenticated else None
+        # check ACL: use the file's directory ACL (binary files don't have Page rows)
+        file_vis = resolve_visibility(page_path, acl_rules)
+        if not is_owner and not can_read(page_path, acl_rules, user_name, file_vis):
+            abort(404)
+        use_public = not is_owner
+        data = read_file_bytes_from_repo(owner.username, wiki.slug, page_path, public=use_public)
+        if data is None and is_owner:
+            data = read_file_bytes_from_repo(owner.username, wiki.slug, page_path, public=False)
+        if data is None:
+            abort(404)
+        content_type = mimetypes.guess_type(page_path)[0] or "application/octet-stream"
+        headers = {"Cache-Control": "public, max-age=3600"}
+        if content_type == "application/pdf":
+            headers["Content-Disposition"] = f'inline; filename="{os.path.basename(page_path)}"'
+        return Response(data, content_type=content_type, headers=headers)
+
     if request.path.endswith("/"):
         use_public = not _is_owner(wiki)
         content_path, content = _folder_index_content(owner.username, wiki.slug, page_path, public=use_public)
