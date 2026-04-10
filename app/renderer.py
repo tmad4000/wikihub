@@ -21,16 +21,10 @@ from mdit_py_plugins.anchors import anchors_plugin
 from app.content_utils import parse_markdown_document
 
 
-def _heading_slug(title, _used_slugs):
+def _heading_slug(title):
     """generate a URL-friendly slug from heading text."""
     slug = re.sub(r'[^\w\s-]', '', title.lower()).strip()
     slug = re.sub(r'[-\s]+', '-', slug)
-    if slug in _used_slugs:
-        n = 2
-        while f"{slug}-{n}" in _used_slugs:
-            n += 1
-        slug = f"{slug}-{n}"
-    _used_slugs.add(slug)
     return slug
 
 
