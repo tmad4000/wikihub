@@ -1,6 +1,7 @@
 import hashlib
 import os
 import shutil
+from datetime import date, datetime
 
 from app import db
 from app.acl import parse_acl, resolve_visibility
@@ -10,19 +11,36 @@ from app.git_sync import list_files_in_repo, read_file_from_repo, regenerate_pub
 from app.models import Page, Wikilink, Wiki, Star, Fork, User
 
 
+def _sanitize_for_json(obj):
+    """convert non-JSON-serializable types (date, datetime) to strings."""
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_for_json(v) for v in obj]
+    if isinstance(obj, (date, datetime)):
+        return obj.isoformat()
+    return obj
+
+
 def load_acl_rules(username, slug):
     acl_content = read_file_from_repo(username, slug, ".wikihub/acl")
     return parse_acl(acl_content) if acl_content else []
 
 
 def update_page_metadata(page, content, frontmatter=None):
-    if frontmatter is None:
-        frontmatter, body = parse_markdown_document(content)
-    else:
-        _, body = parse_markdown_document(content)
+    try:
+        if frontmatter is None:
+            frontmatter, body = parse_markdown_document(content)
+        else:
+            _, body = parse_markdown_document(content)
+    except Exception:
+        frontmatter = frontmatter or {}
+        body = content
 
     page.title = frontmatter.get("title", os.path.splitext(os.path.basename(page.path))[0])
-    page.frontmatter_json = frontmatter
+    if isinstance(page.title, (date, datetime)):
+        page.title = str(page.title)
+    page.frontmatter_json = _sanitize_for_json(frontmatter)
     page.content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
     page.excerpt = body[:200].replace("\n", " ").strip() if body else ""
     page.search_vector = db.func.to_tsvector("english", f"{page.title or ''} {body or ''}")

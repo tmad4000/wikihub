@@ -113,9 +113,22 @@ def _process_zip(username, slug, wiki_id, zip_file):
     except zipfile.BadZipFile:
         raise ValueError("Uploaded file is not a valid zip archive")
     with zf_obj as zf:
-        entries = [i for i in zf.infolist() if not i.is_dir()
-                   and not i.filename.startswith("__MACOSX/")
-                   and not i.filename.startswith(".")]
+        def _skip(name):
+            parts = name.split("/")
+            return any(p.startswith(".") for p in parts) or name.startswith("__MACOSX/")
+        entries = [i for i in zf.infolist() if not i.is_dir() and not _skip(i.filename)]
+
+        # strip common top-level directory wrapper (e.g. notes/ wrapping everything)
+        if entries:
+            prefixes = set()
+            for e in entries:
+                first = e.filename.split("/", 1)[0]
+                prefixes.add(first)
+            if len(prefixes) == 1 and all("/" in e.filename for e in entries):
+                prefix = prefixes.pop() + "/"
+                for e in entries:
+                    e.filename = e.filename[len(prefix):]
+                entries = [e for e in entries if e.filename]  # drop empty after strip
 
         if len(entries) > max_files:
             raise ValueError(f"Zip contains {len(entries)} files, max is {max_files}")
@@ -127,7 +140,6 @@ def _process_zip(username, slug, wiki_id, zip_file):
             raise ValueError(f"Files too large (2MB max): {names}{more}")
 
         for info in entries:
-
             filepath = info.filename
             content = zf.read(info)
             try:
@@ -144,7 +156,10 @@ def _process_zip(username, slug, wiki_id, zip_file):
 def _index_page(wiki_id, path, content, username, slug):
     """create a Page row from content."""
     acl_rules = load_acl_rules(username, slug)
-    frontmatter, _ = parse_markdown_document(content)
+    try:
+        frontmatter, _ = parse_markdown_document(content)
+    except Exception:
+        frontmatter = {}
     page = Page.query.filter_by(wiki_id=wiki_id, path=path).first()
     if not page:
         page = Page(wiki_id=wiki_id, path=path)

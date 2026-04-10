@@ -34,12 +34,15 @@ def parse_markdown_document(content):
     body = content
 
     if content.startswith("---"):
-        post = frontmatter.loads(content)
-        metadata = {
-            str(key).strip().lower(): _normalize_frontmatter_value(str(key).strip().lower(), value)
-            for key, value in post.metadata.items()
-        }
-        body = post.content.lstrip("\n")
+        try:
+            post = frontmatter.loads(content)
+            metadata = {
+                str(key).strip().lower(): _normalize_frontmatter_value(str(key).strip().lower(), value)
+                for key, value in post.metadata.items()
+            }
+            body = post.content.lstrip("\n")
+        except Exception:
+            pass  # malformed frontmatter — treat entire content as body
 
     return metadata, body
 

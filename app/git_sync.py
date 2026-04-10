@@ -212,7 +212,10 @@ def regenerate_public_mirror(username, slug, acl_rules=None):
                 continue
 
             # read file content from authoritative repo
-            content_bytes = _git_bytes(auth_repo, "cat-file", "blob", f"HEAD:{filepath}")
+            try:
+                content_bytes = _git_bytes(auth_repo, "cat-file", "blob", f"HEAD:{filepath}")
+            except subprocess.CalledProcessError:
+                continue  # skip files git can't read (encoding issues, etc)
             content = content_bytes.decode("utf-8", errors="replace")
 
             fm_vis = None
