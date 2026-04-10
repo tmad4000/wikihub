@@ -142,7 +142,20 @@ Content-Type: application/json
 
 templates: "structured" (default, recommended — compiled truth + timeline + wikilinks) or "freeform" (minimal).
 
+## read the schema
+
+after creating a wiki, read schema.md to learn the conventions:
+
+```
+GET /api/v1/wikis/your-name/my-wiki/pages/schema.md
+Authorization: Bearer wh_...
+```
+
+schema.md describes the three-layer architecture (raw/ → wiki/ → schema.md), page format (compiled truth + timeline), wikilink conventions, and the ingest/query/lint workflow. follow it.
+
 ## add a page
+
+put source documents in `raw/`, compiled wiki pages in `wiki/`.
 
 ```
 POST /api/v1/wikis/your-name/my-wiki/pages

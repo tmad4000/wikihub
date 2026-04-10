@@ -76,11 +76,16 @@ Step 4: Create a wiki: POST /api/v1/wikis with {"slug": "my-wiki"}.
         The default template is "structured" (compiled truth + timeline pattern).
         Pass "template": "freeform" for minimal structure.
 
-Step 5: Add pages: POST /api/v1/wikis/USERNAME/my-wiki/pages
+Step 5: Read your wiki's schema: GET /api/v1/wikis/USERNAME/my-wiki/pages/schema.md
+        The schema.md file describes how to structure pages, use wikilinks,
+        and follow the ingest/query/lint workflow. Follow its conventions.
+
+Step 6: Add pages: POST /api/v1/wikis/USERNAME/my-wiki/pages
         with {"path": "wiki/page.md", "content": "# Title\n\nContent.",
               "visibility": "public"}.
+        Put source documents in raw/, compiled wiki pages in wiki/.
 
-Step 6: Your wiki is live at {{ request.host_url }}@USERNAME/my-wiki</pre></div>
+Step 7: Your wiki is live at {{ request.host_url }}@USERNAME/my-wiki</pre></div>
 
   <h2>MCP endpoint</h2>
   <div class="code-block"><pre>{
