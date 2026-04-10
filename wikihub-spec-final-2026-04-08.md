@@ -249,7 +249,16 @@ From `agent-first-web-brief-2026-04.md` — all cheap, all shipping in v1:
 
 - **Content negotiation** on every page URL. `Accept: text/markdown` -> raw markdown with frontmatter, no chrome. `Vary: Accept` and `Link: rel=alternate; type=text/markdown` headers. Also serve `<url>.md` as the primary machine-readable URL. **Cloudflare caveat (validated 2026-04-09):** Cloudflare ignores `Vary: Accept` for cache keying on non-Enterprise plans. Mitigation: bypass Cloudflare cache for wiki page routes (`/@*` URLs) via Cache Rule; cache only static assets (CSS/JS/fonts). Content negotiation works at the origin; `.md` suffix is the reliable agent path through any CDN. Optionally add a 15-line CF Worker for cache-key sharding by `Accept` header later.
 - **`/llms.txt`** and **`/llms-full.txt`** auto-generated per wiki and site-wide. Stripe pattern (curated top with an `## Optional` bucket for long tail).
-- **`/AGENTS.md`** at site root. Prose, short, explains signup, API base, MCP endpoint, llms.txt location, how `.wikihub/acl` works.
+- **`/AGENTS.md`** at site root AND **`/agents`** as a rendered HTML page (same content, dual format). This is the primary onboarding surface for agents. Content is structured as plain-English step-by-step instructions that an LLM can follow without parsing OpenAPI. Includes:
+  1. **One-call registration:** `POST /api/v1/accounts` with optional username/email → 201 with `{user_id, username, api_key}`. API key shown once, agent must save it. No browser, no CAPTCHA.
+  2. **Auth:** `Authorization: Bearer <api_key>` on all subsequent calls. Git HTTP Basic accepts API key as password.
+  3. **Create a wiki:** `POST /api/v1/wikis {slug, title?, description?}` → 201 with wiki metadata.
+  4. **Add pages:** `POST /api/v1/wikis/:owner/:slug/pages {path, content, visibility?}`.
+  5. **Read/search:** `GET /api/v1/wikis/:owner/:slug/pages/*path`, `GET /api/v1/search?q=...`.
+  6. **MCP endpoint:** `https://wikihub.md/mcp` — full tool suite, same capabilities as REST.
+  7. **Content negotiation:** `Accept: text/markdown` on any page URL returns raw markdown.
+  8. **Copyable curl examples** for registration, wiki creation, and page creation.
+  9. **"Plain English instructions for Claude / ChatGPT"** section — the same steps written as natural language that an agent can follow verbatim. This is the bridge between "we have an API" and "agents can use it cold."
 - **`/.well-known/mcp/server-card.json`** (SEP-1649 shape) and **`/.well-known/mcp`** (SEP-1960 shape). Both shipped — major MCP clients implement both speculatively and they're cheap.
 - **`/.well-known/wikihub.json`** site bootstrap manifest (API base, MCP URL, signup URL, docs URL) so an agent pointed at the domain can self-bootstrap.
 - **Server-hosted MCP server** (`wikihub-mcp`) wrapping the REST API. Tools: `whoami`, `search`, `read_page`, `list_pages`, `create_page`, `update_page`, `append_section`, `delete_page`, `set_visibility`, `share`, `create_wiki`, `fork_wiki`, `commit_log`.
@@ -277,6 +286,19 @@ From `agent-first-web-brief-2026-04.md` — all cheap, all shipping in v1:
 - `PATCH /api/v1/wikis/:owner/:slug/pages/*path` — partial update (frontmatter patches, append, etc.).
 - **`PATCH /api/v1/wikis/:owner/:slug/pages/*path {new_path: "..."}`** — rename/move. Performs git-mv-equivalent via plumbing, scans all pages for `[[old-title]]` / `[[old/path]]` wikilinks and rewrites them to the new path, commits everything atomically with message `Rename <old> -> <new>`. Git's rename detection preserves blame continuity. MCP tool: `move_page(old_path, new_path)`.
 - `DELETE /api/v1/wikis/:owner/:slug/pages/*path` — remove.
+
+## Wiki REST API (v1)
+
+- `POST /api/v1/wikis` — create a wiki. Body: `{slug, title?, description?}`. Returns `201 {id, owner, slug, title, clone_url, web_url}`. Initializes bare repo with Karpathy skeleton.
+- `GET /api/v1/wikis/:owner/:slug` — wiki metadata (title, description, star_count, fork_count, page_count, created_at, updated_at).
+- `PATCH /api/v1/wikis/:owner/:slug` — update wiki metadata (title, description).
+- `DELETE /api/v1/wikis/:owner/:slug` — delete wiki and both repos. Requires owner auth.
+- `POST /api/v1/wikis/:owner/:slug/fork` — fork a wiki into caller's namespace.
+- `POST /api/v1/wikis/:owner/:slug/star` / `DELETE /api/v1/wikis/:owner/:slug/star` — star/unstar.
+
+## Search API (v1)
+
+- `GET /api/v1/search?q=<query>&scope=<global|wiki>&wiki=<owner/slug>&tag=<name>&limit=20&offset=0` — cross-wiki full-text search. Returns `{results: [{wiki, page, title, excerpt, visibility, tags, score}], total}`. Scoped to what the authenticated user can see. `scope=wiki` + `wiki` param restricts to a single wiki.
 
 ## Error response convention
 
