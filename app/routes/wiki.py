@@ -239,6 +239,9 @@ def _folder_listing(username, slug, wiki, folder_path="", public=False):
     seen = set()
     items = []
 
+    # collect pages per folder so we can derive folder visibility from children
+    folder_pages = {}  # child_path -> list of Page objects
+
     for path in files:
         if prefix:
             if not path.startswith(prefix + "/"):
@@ -250,6 +253,9 @@ def _folder_listing(username, slug, wiki, folder_path="", public=False):
         if "/" in relative:
             child = relative.split("/", 1)[0]
             child_path = f"{prefix}/{child}".strip("/")
+            page = pages_by_path.get(path)
+            if page:
+                folder_pages.setdefault(child_path, []).append(page)
             if child_path in seen:
                 continue
             seen.add(child_path)
@@ -259,8 +265,7 @@ def _folder_listing(username, slug, wiki, folder_path="", public=False):
                     "name": child,
                     "path": child_path,
                     "url": _folder_url(username, slug, child_path),
-                    "visibility": resolve_visibility(child_path, load_acl_rules(username, slug)),
-                    "updated_at": None,
+                    "_folder_key": child_path,
                 }
             )
             continue
@@ -279,6 +284,19 @@ def _folder_listing(username, slug, wiki, folder_path="", public=False):
                 "updated_at": page.updated_at if page else None,
             }
         )
+
+    acl_rules = load_acl_rules(username, slug)
+    for item in items:
+        if item.get("_folder_key"):
+            children = folder_pages.get(item["_folder_key"], [])
+            if children:
+                vis_set = {p.visibility for p in children}
+                item["visibility"] = vis_set.pop() if len(vis_set) == 1 else "mixed"
+                item["updated_at"] = max((p.updated_at for p in children if p.updated_at), default=None)
+            else:
+                item["visibility"] = resolve_visibility(item["_folder_key"], acl_rules)
+                item["updated_at"] = None
+            del item["_folder_key"]
 
     return sorted(items, key=lambda item: (item["kind"] != "folder", item["name"].lower()))
 

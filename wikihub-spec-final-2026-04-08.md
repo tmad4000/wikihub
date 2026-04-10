@@ -339,6 +339,7 @@ From `agent-first-web-brief-2026-04.md` — all cheap, all shipping in v1:
 - `PATCH /api/v1/wikis/:owner/:slug` — update wiki metadata (title, description).
 - `DELETE /api/v1/wikis/:owner/:slug` — delete wiki and both repos. Requires owner auth. Web UI surfaces this in the download/actions menu on the wiki root folder view (with double-confirm).
 - `POST /api/v1/wikis/:owner/:slug/bulk-visibility` — batch-set visibility for multiple pages/folders. Body: `{paths: ["wiki/page.md", "folder/"], visibility: "public"}`. Folder prefixes (trailing `/`) expand to all pages under that prefix. Returns `{updated: [...], visibility}`. Commits all changes in a single git commit.
+- **Folder visibility display (added 2026-04-10).** Folders derive their visibility pill from child pages, not ACL rules. If all children share the same visibility, the folder shows that value. If children have mixed visibility, the folder shows "Mixed" (italic, muted style). Folder `updated_at` is the most recent child's timestamp. This ensures the management panel reflects the actual state after bulk-visibility changes.
 - `POST /api/v1/wikis/:owner/:slug/bulk-delete` — batch-delete multiple pages/folders. Body: `{paths: ["wiki/page.md", "folder/"]}`. Folder prefixes expand to all pages under that prefix. Returns `{deleted: [...]}`. Single git commit.
 - `POST /api/v1/wikis/:owner/:slug/fork` — fork a wiki into caller's namespace.
 - `POST /api/v1/wikis/:owner/:slug/star` / `DELETE /api/v1/wikis/:owner/:slug/star` — star/unstar.

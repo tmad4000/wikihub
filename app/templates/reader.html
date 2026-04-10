@@ -109,6 +109,7 @@
 .vis-pill.public, .vis-pill.public-edit { color: var(--color-public); border-color: rgba(122, 158, 107, 0.2); }
 .vis-pill.private { color: var(--color-private); border-color: rgba(196, 92, 60, 0.2); }
 .vis-pill.unlisted, .vis-pill.unlisted-edit { color: var(--color-unlisted); border-color: rgba(184, 173, 158, 0.2); }
+.vis-pill.mixed { color: var(--text-muted); border-color: rgba(184, 173, 158, 0.2); font-style: italic; }
 .vis-badge.public-edit { color: var(--accent); background: rgba(212, 160, 74, 0.1); border: 1px solid rgba(212, 160, 74, 0.2); }
 .vis-badge.unlisted-edit { color: var(--accent); background: rgba(212, 160, 74, 0.1); border: 1px solid rgba(212, 160, 74, 0.2); }
 
@@ -454,7 +455,7 @@
             {% endif %}
             <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ item.name }}</span>
           </a>
-          <span class="vis-pill {{ item.visibility }}" style="font-size:0.7rem;padding:2px 6px;">{{ item.visibility | replace('public-edit', 'Public Edit') | replace('unlisted-edit', 'Unlisted Edit') | replace('public', 'Public View') | replace('private', 'Private') | replace('unlisted', 'Unlisted') }}</span>
+          <span class="vis-pill {{ item.visibility }}" style="font-size:0.7rem;padding:2px 6px;">{{ item.visibility | replace('mixed', 'Mixed') | replace('public-edit', 'Public Edit') | replace('unlisted-edit', 'Unlisted Edit') | replace('public', 'Public View') | replace('private', 'Private') | replace('unlisted', 'Unlisted') }}</span>
           <span style="font-size:0.7rem;color:var(--text-muted);font-family:var(--font-mono);">{{ item.updated_at.strftime('%Y-%m-%d') if item.updated_at else '' }}</span>
           <button style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border:none;background:transparent;color:var(--text-muted);cursor:pointer;border-radius:var(--radius-sm);" title="Delete" onclick="deleteMgmtItem('{{ item.path }}{{ '/' if item.kind == 'folder' else '' }}', '{{ item.name }}', '{{ item.kind }}')">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
@@ -662,20 +663,27 @@ async function mgmtBulkVis() {
   var vis = document.getElementById('mgmt-vis-select').value;
   var paths = Array.from(mgmtSelected);
   if (!confirm('Set ' + paths.length + ' item(s) to "' + vis + '"?')) return;
+  var btn = event.currentTarget;
+  setButtonLoading(btn, 'Setting visibility…');
   var r = await fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}/bulk-visibility', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({paths:paths,visibility:vis})});
-  if (r.ok) location.reload(); else alert('Failed');
+  if (r.ok) location.reload(); else { btn.classList.remove('btn-loading'); btn.textContent = 'Set visibility'; alert('Failed'); }
 }
 async function mgmtBulkDel() {
   var paths = Array.from(mgmtSelected);
   if (!confirm('Delete ' + paths.length + ' item(s)? This cannot be undone.')) return;
+  var btn = event.currentTarget;
+  setButtonLoading(btn, 'Deleting…');
   var r = await fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}/bulk-delete', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({paths:paths})});
-  if (r.ok) location.reload(); else alert('Failed');
+  if (r.ok) location.reload(); else { btn.classList.remove('btn-loading'); btn.textContent = 'Delete'; alert('Failed'); }
 }
 async function deleteMgmtItem(path, name, kind) {
   var label = kind === 'folder' ? 'folder "' + name + '" and all contents' : '"' + name + '"';
   if (!confirm('Delete ' + label + '? This cannot be undone.')) return;
+  var btn = event.currentTarget;
+  btn.disabled = true;
+  btn.style.opacity = '0.5';
   var r = await fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}/bulk-delete', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({paths:[path]})});
-  if (r.ok) location.reload(); else alert('Failed');
+  if (r.ok) location.reload(); else { btn.disabled = false; btn.style.opacity = '1'; alert('Failed'); }
 }
 
 applyFolderState();
