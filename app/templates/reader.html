@@ -128,6 +128,17 @@
 }
 .backlinks-list a:hover { text-decoration: underline; }
 
+.graph-block {
+  margin-top: 16px; padding-top: 16px;
+  border-top: 1px solid var(--border-default);
+}
+.graph-title {
+  font-size: 0.8125rem; font-weight: 600; color: var(--text-secondary);
+  margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.04em;
+}
+#link-graph { width: 100%; height: 180px; }
+#link-graph svg { width: 100%; height: 100%; }
+
 .article [id] { scroll-margin-top: 72px; }
 
 .article { max-width: 720px; }
@@ -419,7 +430,7 @@
     {% endif %}
   </main>
 
-  {% if (toc and toc|length >= 3) or backlinks %}
+  {% if (toc and toc|length >= 3) or backlinks or (link_graph and link_graph.nodes|length > 1) %}
   <aside class="right-panel">
     <div class="right-panel-inner">
       {% if toc and toc|length >= 3 %}
@@ -445,6 +456,13 @@
           {% endfor %}
         </ul>
       </nav>
+      {% endif %}
+
+      {% if link_graph and link_graph.nodes|length > 1 %}
+      <div class="graph-block">
+        <div class="graph-title">Links</div>
+        <div id="link-graph"></div>
+      </div>
       {% endif %}
     </div>
   </aside>
@@ -513,6 +531,75 @@ function deletePage() {
 
 applyFolderState();
 </script>
+{% if link_graph and link_graph.nodes|length > 1 %}
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script>
+(function() {
+  const container = document.getElementById('link-graph');
+  if (!container) return;
+
+  const data = {{ link_graph | tojson }};
+  if (!data.nodes.length) return;
+
+  const width = container.clientWidth || 208;
+  const height = 180;
+
+  const svg = d3.select(container).append('svg')
+    .attr('viewBox', `0 0 ${width} ${height}`);
+
+  const nodeMap = new Map(data.nodes.map(n => [n.id, n]));
+
+  const links = data.links.filter(l => nodeMap.has(l.source) && nodeMap.has(l.target));
+
+  const sim = d3.forceSimulation(data.nodes)
+    .force('link', d3.forceLink(links).id(d => d.id).distance(50))
+    .force('charge', d3.forceManyBody().strength(-80))
+    .force('center', d3.forceCenter(width / 2, height / 2))
+    .force('collision', d3.forceCollide(20));
+
+  const link = svg.append('g')
+    .selectAll('line')
+    .data(links)
+    .join('line')
+    .attr('stroke', 'var(--border-emphasis)')
+    .attr('stroke-width', 1)
+    .attr('stroke-opacity', 0.5);
+
+  const node = svg.append('g')
+    .selectAll('g')
+    .data(data.nodes)
+    .join('g')
+    .style('cursor', 'pointer')
+    .on('click', (e, d) => { if (d.url) window.location.href = d.url; });
+
+  node.append('circle')
+    .attr('r', d => d.current ? 6 : 4)
+    .attr('fill', d => d.current ? 'var(--accent)' : 'var(--text-muted)')
+    .attr('stroke', d => d.current ? 'var(--accent)' : 'none')
+    .attr('stroke-width', 2)
+    .attr('stroke-opacity', 0.3);
+
+  node.append('text')
+    .text(d => d.title.length > 16 ? d.title.slice(0, 15) + '…' : d.title)
+    .attr('font-size', '9px')
+    .attr('fill', d => d.current ? 'var(--text-primary)' : 'var(--text-tertiary)')
+    .attr('dx', 8)
+    .attr('dy', 3)
+    .style('pointer-events', 'none');
+
+  sim.on('tick', () => {
+    link.attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+        .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+    node.attr('transform', d => {
+      d.x = Math.max(10, Math.min(width - 10, d.x));
+      d.y = Math.max(10, Math.min(height - 10, d.y));
+      return `translate(${d.x},${d.y})`;
+    });
+  });
+})();
+</script>
+{% endif %}
+
 {% if page and json_ld_author %}
 <script type="application/ld+json">
 {{ {

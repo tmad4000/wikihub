@@ -39,6 +39,38 @@ def _get_backlinks(page):
     return [source_page for _, source_page in links]
 
 
+def _get_link_graph(page, wiki):
+    """get wikilink graph centered on a page (outgoing + incoming links)."""
+    if not page or not hasattr(page, 'id') or not page.id:
+        return {"nodes": [], "links": []}
+
+    nodes = {}
+    links = []
+    page_url = f"/@{wiki.owner.username}/{wiki.slug}/{page.path.replace('.md', '')}"
+    nodes[page.id] = {"id": page.id, "title": page.title or page.path.replace('.md', ''), "url": page_url, "current": True}
+
+    # outgoing links
+    outgoing = Wikilink.query.filter_by(source_page_id=page.id).all()
+    for wl in outgoing:
+        if wl.target_page_id and wl.target_page_id not in nodes:
+            tgt = db.session.get(Page, wl.target_page_id)
+            if tgt:
+                nodes[tgt.id] = {"id": tgt.id, "title": tgt.title or tgt.path.replace('.md', ''), "url": f"/@{wiki.owner.username}/{wiki.slug}/{tgt.path.replace('.md', '')}", "current": False}
+        if wl.target_page_id:
+            links.append({"source": page.id, "target": wl.target_page_id})
+
+    # incoming links (backlinks)
+    incoming = Wikilink.query.filter_by(target_page_id=page.id).all()
+    for wl in incoming:
+        if wl.source_page_id not in nodes:
+            src = db.session.get(Page, wl.source_page_id)
+            if src:
+                nodes[src.id] = {"id": src.id, "title": src.title or src.path.replace('.md', ''), "url": f"/@{wiki.owner.username}/{wiki.slug}/{src.path.replace('.md', '')}", "current": False}
+        links.append({"source": wl.source_page_id, "target": page.id})
+
+    return {"nodes": list(nodes.values()), "links": links}
+
+
 def _resolve_owner(username):
     owner = User.query.filter_by(username=username).first()
     if owner:
@@ -401,11 +433,22 @@ def wiki_index(username, slug):
         rendered_html=rendered_html,
         toc=extract_toc(rendered_html),
         backlinks=_get_backlinks(page),
+        link_graph=_get_link_graph(page, wiki),
         recently_updated=recently_updated,
         sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=use_public, current_path=page_path),
         private_band_warning=not use_public and has_private_bands(content),
         json_ld_author=owner.display_name or owner.username,
     )
+
+
+@wiki_bp.route("/@<username>/<slug>/<path:page_path>/graph.json")
+def page_graph_json(username, slug, page_path):
+    """return wikilink graph data for a page as JSON."""
+    owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
+    file_path = page_path if page_path.endswith(".md") else page_path + ".md"
+    page = Page.query.filter_by(wiki_id=wiki.id, path=file_path).first()
+    from flask import jsonify
+    return jsonify(_get_link_graph(page, wiki))
 
 
 @wiki_bp.route("/@<username>/<slug>/tag/<tag_name>")
@@ -512,6 +555,7 @@ def wiki_page(username, slug, page_path):
         rendered_html=rendered_html,
         toc=extract_toc(rendered_html),
         backlinks=_get_backlinks(page),
+        link_graph=_get_link_graph(page, wiki),
         recently_updated=_recently_updated_pages(wiki, public_only=not is_owner),
         sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=use_public, current_path=file_path),
         private_band_warning=not use_public and has_private_bands(content),
