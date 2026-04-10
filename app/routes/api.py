@@ -1,11 +1,155 @@
+import secrets
+
+from flask import request, jsonify
+
+from app import db
+from app.models import User, ApiKey
+from app.auth_utils import (
+    generate_api_key, hash_password, api_auth_required, get_current_user_from_request,
+)
 from app.routes import api_bp
 
 
 @api_bp.route("/accounts", methods=["POST"])
 def create_account():
-    return {"error": "not_implemented"}, 501
+    """agent-native registration. no browser needed.
+    POST /api/v1/accounts {username?, display_name?, email?}
+    -> 201 {user_id, username, api_key}"""
+    data = request.get_json(silent=True) or {}
+
+    username = data.get("username", "").strip().lower()
+    if not username:
+        username = "user_" + secrets.token_hex(4)
+
+    email = data.get("email", "").strip() or None
+    display_name = data.get("display_name", "").strip() or None
+    password = data.get("password", "").strip() or None
+
+    if User.query.filter_by(username=username).first():
+        return {"error": "conflict", "message": f"Username '{username}' already taken"}, 409
+
+    if email and User.query.filter_by(email=email).first():
+        return {"error": "conflict", "message": "Email already registered"}, 409
+
+    user = User(
+        username=username,
+        email=email,
+        display_name=display_name,
+        password_hash=hash_password(password) if password else None,
+    )
+    db.session.add(user)
+    db.session.flush()  # get user.id
+
+    raw_key, key_hash, key_prefix = generate_api_key()
+    api_key = ApiKey(
+        user_id=user.id,
+        key_hash=key_hash,
+        key_prefix=key_prefix,
+        label="Initial key",
+    )
+    db.session.add(api_key)
+    db.session.commit()
+
+    return jsonify({
+        "user_id": user.id,
+        "username": user.username,
+        "api_key": raw_key,
+    }), 201
+
+
+@api_bp.route("/accounts/me", methods=["GET"])
+@api_auth_required
+def get_account():
+    user = request.current_user
+    return jsonify({
+        "user_id": user.id,
+        "username": user.username,
+        "display_name": user.display_name,
+        "email": user.email,
+        "created_at": user.created_at.isoformat(),
+    })
 
 
 @api_bp.route("/accounts/me", methods=["PATCH"])
+@api_auth_required
 def update_account():
-    return {"error": "not_implemented"}, 501
+    user = request.current_user
+    data = request.get_json(silent=True) or {}
+
+    if "username" in data:
+        new_username = data["username"].strip().lower()
+        if new_username != user.username:
+            if User.query.filter_by(username=new_username).first():
+                return {"error": "conflict", "message": "Username taken"}, 409
+            user.username = new_username
+
+    if "display_name" in data:
+        user.display_name = data["display_name"].strip() or None
+
+    if "email" in data:
+        new_email = data["email"].strip() or None
+        if new_email and new_email != user.email:
+            if User.query.filter_by(email=new_email).first():
+                return {"error": "conflict", "message": "Email taken"}, 409
+            user.email = new_email
+
+    db.session.commit()
+    return jsonify({
+        "user_id": user.id,
+        "username": user.username,
+        "display_name": user.display_name,
+        "email": user.email,
+    })
+
+
+@api_bp.route("/keys", methods=["POST"])
+@api_auth_required
+def create_key():
+    user = request.current_user
+    data = request.get_json(silent=True) or {}
+    label = data.get("label", "")
+
+    raw_key, key_hash, key_prefix = generate_api_key()
+    api_key = ApiKey(
+        user_id=user.id,
+        key_hash=key_hash,
+        key_prefix=key_prefix,
+        label=label,
+    )
+    db.session.add(api_key)
+    db.session.commit()
+
+    return jsonify({
+        "id": api_key.id,
+        "key": raw_key,
+        "prefix": key_prefix,
+        "label": label,
+    }), 201
+
+
+@api_bp.route("/keys/<int:key_id>", methods=["DELETE"])
+@api_auth_required
+def delete_key(key_id):
+    user = request.current_user
+    api_key = ApiKey.query.filter_by(id=key_id, user_id=user.id).first()
+    if not api_key:
+        return {"error": "not_found", "message": "API key not found"}, 404
+
+    db.session.delete(api_key)
+    db.session.commit()
+    return "", 204
+
+
+@api_bp.route("/keys", methods=["GET"])
+@api_auth_required
+def list_keys():
+    user = request.current_user
+    keys = ApiKey.query.filter_by(user_id=user.id).all()
+    return jsonify([{
+        "id": k.id,
+        "prefix": k.key_prefix,
+        "label": k.label,
+        "last_used_at": k.last_used_at.isoformat() if k.last_used_at else None,
+        "agent_name": k.agent_name,
+        "created_at": k.created_at.isoformat(),
+    } for k in keys])

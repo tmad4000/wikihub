@@ -31,6 +31,9 @@ def create_app(config_class="config.Config"):
     from app.git_backend import git_bp
     app.register_blueprint(git_bp)
 
+    from app.routes.auth import init_oauth
+    init_oauth(app)
+
     os.makedirs(app.config["REPOS_DIR"], exist_ok=True)
 
     return app

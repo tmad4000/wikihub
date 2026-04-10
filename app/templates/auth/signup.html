@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sign up — wikihub</title>
+<style>
+  :root {
+    --bg-base: #0f0e0c;
+    --bg-surface: #191714;
+    --text-primary: #e8e0d4;
+    --text-secondary: #b8ad9e;
+    --text-tertiary: #887d6e;
+    --accent: #d4a04a;
+    --accent-hover: #e0b35a;
+    --border-default: rgba(200, 180, 150, 0.08);
+    --border-emphasis: rgba(200, 180, 150, 0.15);
+    --border-accent: rgba(212, 160, 74, 0.4);
+    --control-bg: rgba(0, 0, 0, 0.2);
+    --control-border: rgba(200, 180, 150, 0.12);
+    --color-error: #c45c3c;
+    --font-body: 'Inter', -apple-system, sans-serif;
+    --font-mono: 'IBM Plex Mono', monospace;
+    --radius-sm: 4px;
+    --radius-md: 6px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--font-body); background: var(--bg-base); color: var(--text-primary); min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px; }
+  .card { background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-md); padding: 32px 28px; width: 100%; max-width: 400px; }
+  .logo { font-family: var(--font-mono); font-size: 1.125rem; text-align: center; margin-bottom: 24px; }
+  .logo .bracket { color: var(--text-tertiary); }
+  h1 { font-size: 1.25rem; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 24px; text-align: center; }
+  .flash { background: rgba(196, 92, 60, 0.1); border: 1px solid rgba(196, 92, 60, 0.3); color: var(--color-error); padding: 8px 12px; border-radius: var(--radius-sm); font-size: 0.8125rem; margin-bottom: 16px; }
+  label { display: block; font-size: 0.8125rem; color: var(--text-secondary); margin-bottom: 6px; font-weight: 500; }
+  input[type="text"], input[type="email"], input[type="password"] { width: 100%; background: var(--control-bg); border: 1px solid var(--control-border); border-radius: var(--radius-sm); color: var(--text-primary); font-family: var(--font-body); font-size: 0.9375rem; padding: 10px 12px; margin-bottom: 16px; outline: none; }
+  input:focus { border-color: var(--border-accent); }
+  .btn { display: block; width: 100%; padding: 12px; border: none; border-radius: var(--radius-sm); font-family: var(--font-body); font-size: 0.9375rem; font-weight: 600; cursor: pointer; text-align: center; min-height: 44px; }
+  .btn-primary { background: var(--accent); color: #0f0e0c; margin-bottom: 12px; }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-google { background: transparent; border: 1px solid var(--border-emphasis); color: var(--text-secondary); margin-bottom: 16px; text-decoration: none; display: flex; align-items: center; justify-content: center; }
+  .btn-google:hover { border-color: var(--border-accent); color: var(--text-primary); }
+  .divider { text-align: center; color: var(--text-muted); font-size: 0.75rem; margin: 16px 0; position: relative; }
+  .divider::before, .divider::after { content: ''; position: absolute; top: 50%; width: 40%; height: 1px; background: var(--border-default); }
+  .divider::before { left: 0; }
+  .divider::after { right: 0; }
+  .hint { font-size: 0.75rem; color: var(--text-tertiary); margin-top: -12px; margin-bottom: 16px; }
+  .footer { text-align: center; font-size: 0.8125rem; color: var(--text-tertiary); margin-top: 16px; }
+  .footer a { color: var(--accent); text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo"><span class="bracket">[[</span>wikihub<span class="bracket">]]</span></div>
+  <h1>Create account</h1>
+
+  {% with messages = get_flashed_messages() %}
+  {% if messages %}
+  {% for msg in messages %}
+  <div class="flash">{{ msg }}</div>
+  {% endfor %}
+  {% endif %}
+  {% endwith %}
+
+  <a href="{{ url_for('auth.google_login') }}" class="btn btn-google">Sign up with Google</a>
+  <div class="divider">or</div>
+
+  <form method="POST">
+    <label for="username">Username</label>
+    <input type="text" id="username" name="username" required pattern="[a-z0-9_-]+" title="lowercase letters, numbers, hyphens, underscores">
+    <label for="email">Email (optional)</label>
+    <input type="email" id="email" name="email">
+    <label for="password">Password</label>
+    <input type="password" id="password" name="password" required minlength="8">
+    <p class="hint">At least 8 characters</p>
+    <button type="submit" class="btn btn-primary">Create account</button>
+  </form>
+
+  <div class="footer">Already have an account? <a href="{{ url_for('auth.login') }}">Sign in</a></div>
+</div>
+</body>
+</html>
