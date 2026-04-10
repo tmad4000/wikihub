@@ -1,10 +1,13 @@
-from flask import jsonify, render_template, request
-from flask_login import login_required, current_user
+from flask import current_app, jsonify, render_template, request
+from flask_login import login_required, logout_user, current_user
 
 from app import db
 from app.discovery import discoverable_page_for_wiki, visible_wikis_for_owner
-from app.models import Wiki, Page, ApiKey, User
+from app.models import Wiki, Page, ApiKey, User, Star, Fork, MagicLoginToken, UsernameRedirect
 from app.routes import main_bp
+import os
+import shutil
+from app.wiki_ops import delete_wiki_repos
 
 
 @main_bp.route("/")
@@ -76,6 +79,46 @@ def claim_email_web():
     if request.is_json:
         return jsonify({"email": current_user.email})
     return jsonify({"email": current_user.email})
+
+
+@main_bp.route("/delete-account", methods=["POST"])
+@login_required
+def delete_account():
+    data = request.get_json(silent=True) or {}
+    if data.get("confirm") != current_user.username:
+        return {"error": "bad_request", "message": "Type your username to confirm"}, 400
+
+    user_id = current_user.id
+    username = current_user.username
+
+    # delete git repos on disk for every wiki, then the user directory
+    wikis = Wiki.query.filter_by(owner_id=user_id).all()
+    for wiki in wikis:
+        delete_wiki_repos(username, wiki.slug)
+    user_dir = os.path.join(current_app.config["REPOS_DIR"], username)
+    if os.path.isdir(user_dir):
+        shutil.rmtree(user_dir)
+
+    # clear DB: stars given by this user, stars on their wikis, forks, keys, tokens, redirects
+    wiki_ids = [w.id for w in wikis]
+    Star.query.filter(Star.user_id == user_id).delete()
+    if wiki_ids:
+        Star.query.filter(Star.wiki_id.in_(wiki_ids)).delete()
+        Fork.query.filter(Fork.source_wiki_id.in_(wiki_ids)).delete()
+        Fork.query.filter(Fork.forked_wiki_id.in_(wiki_ids)).delete()
+    Fork.query.filter(Fork.user_id == user_id).delete()
+    ApiKey.query.filter_by(user_id=user_id).delete()
+    MagicLoginToken.query.filter_by(user_id=user_id).delete()
+    UsernameRedirect.query.filter_by(user_id=user_id).delete()
+
+    for wiki in wikis:
+        db.session.delete(wiki)
+
+    db.session.delete(current_user._get_current_object())
+    db.session.commit()
+
+    logout_user()
+    return jsonify({"deleted": True})
 
 
 def _people_directory(limit=None):

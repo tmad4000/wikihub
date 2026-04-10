@@ -484,6 +484,27 @@
       {% endif %}
     </div>
   </section>
+
+  <section class="settings-card" style="margin-top: 16px; border-color: rgba(180, 80, 60, 0.25);">
+    <div class="settings-card-header" style="border-bottom-color: rgba(180, 80, 60, 0.15);">
+      <h2 style="color: var(--color-private);">Danger zone</h2>
+      <p>Permanently delete your account and all associated data. This cannot be undone.</p>
+    </div>
+    <div class="settings-card-body">
+      <div id="delete-prompt" style="display:none; margin-bottom: 14px;">
+        <div class="settings-note" style="margin-bottom: 10px;">Type <strong>{{ current_user.username }}</strong> to confirm deletion.</div>
+        <form id="delete-form" class="settings-inline-form">
+          <input id="delete-confirm-input" class="settings-input" type="text" placeholder="{{ current_user.username }}" autocomplete="off">
+          <div class="btn-row">
+            <button type="submit" class="btn-inline" style="background: var(--color-private); color: #fff;">Delete my account permanently</button>
+            <button type="button" class="btn-inline secondary" onclick="document.getElementById('delete-prompt').style.display='none'">Cancel</button>
+          </div>
+          <div id="delete-status" class="settings-status" aria-live="polite"></div>
+        </form>
+      </div>
+      <button type="button" class="btn-linkish" style="color: var(--color-private); border-color: rgba(180, 80, 60, 0.3);" onclick="document.getElementById('delete-prompt').style.display='block'; this.style.display='none';">Delete account...</button>
+    </div>
+  </section>
 </div>
 {% endblock %}
 
@@ -536,6 +557,30 @@ copyKeyBtn.addEventListener('click', async () => {
   await navigator.clipboard.writeText(newKeyValue.textContent);
   copyKeyBtn.textContent = 'Copied';
   setTimeout(() => { copyKeyBtn.textContent = 'Copy'; }, 1200);
+});
+
+const deleteForm = document.getElementById('delete-form');
+const deleteInput = document.getElementById('delete-confirm-input');
+const deleteStatus = document.getElementById('delete-status');
+
+deleteForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  deleteStatus.textContent = '';
+  deleteStatus.className = 'settings-status';
+
+  const resp = await fetch('/delete-account', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({confirm: deleteInput.value.trim()}),
+  });
+
+  if (resp.ok) {
+    window.location.href = '/';
+  } else {
+    const data = await resp.json().catch(() => ({}));
+    deleteStatus.textContent = data.message || 'Could not delete account.';
+    deleteStatus.classList.add('error');
+  }
 });
 
 async function deleteKey(id, btn) {
