@@ -480,9 +480,8 @@ def wiki_index(username, slug):
     page_path, content = _folder_index_content(owner.username, wiki.slug, "", public=use_public)
     if content is None:
         items = _folder_listing(owner.username, wiki.slug, wiki, "", public=use_public)
-        # anti-enumeration: if non-owner sees no public content, 404
         if use_public and not items:
-            abort(404)
+            return render_template("permission_error.html", owner=owner, wiki=wiki), 404
         return render_template(
             "folder.html",
             owner=owner,
@@ -601,7 +600,7 @@ def wiki_page(username, slug, page_path):
         content_path, content = _folder_index_content(owner.username, wiki.slug, page_path, public=use_public)
         items = _folder_listing(owner.username, wiki.slug, wiki, page_path, public=use_public)
         if use_public and not content and not items:
-            abort(404)
+            return render_template("permission_error.html", owner=owner, wiki=wiki), 404
         breadcrumb = []
         running = []
         for segment in page_path.strip("/").split("/"):
@@ -628,7 +627,7 @@ def wiki_page(username, slug, page_path):
     is_owner = _is_owner(wiki)
 
     if page and not is_owner and not can_read(page.path, acl_rules, user_name, page.visibility):
-        abort(404)
+        return render_template("permission_error.html", owner=owner, wiki=wiki), 404
 
     use_public = not is_owner and (page.visibility if page else "public") != "private"
     content = read_file_from_repo(owner.username, wiki.slug, file_path, public=use_public)
