@@ -280,6 +280,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/><path d="M3 7h5l2 2h11v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>
         New folder
       </a>
+      <button class="action-btn" style="color:var(--color-private);" onclick="deletePage()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+        Delete
+      </button>
       {% endif %}
 
       {% if current_user.is_authenticated and current_user.id != wiki.owner_id %}
@@ -364,6 +368,12 @@ function forkWiki() {
   fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}/fork', {method: 'POST'})
     .then(r => r.json())
     .then(d => { if (d.web_url) location.href = d.web_url; else alert(d.message || 'Fork failed'); });
+}
+
+function deletePage() {
+  if (!confirm('Delete "{{ page.path }}"? This cannot be undone.')) return;
+  fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}/pages/{{ page.path }}', {method: 'DELETE'})
+    .then(r => { if (r.ok) location.href = '/@{{ owner.username }}/{{ wiki.slug }}'; else alert('Delete failed'); });
 }
 
 applyFolderState();
