@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}wikihub — publish a wiki in seconds{% endblock %}
+
+{% block extra_css %}
+.hero {
+  text-align: center; padding: 80px 16px 48px;
+}
+@media (min-width: 768px) { .hero { padding: 120px 20px 64px; } }
+.hero h1 { font-size: 2.25rem; font-weight: 700; letter-spacing: -0.03em; line-height: 1.2; margin-bottom: 16px; }
+@media (min-width: 768px) { .hero h1 { font-size: 3.25rem; } }
+.hero h1 em { font-style: normal; color: var(--accent); }
+.hero-sub { font-size: 1.0625rem; color: var(--text-secondary); max-width: 520px; margin: 0 auto 32px; line-height: 1.5; }
+.hero-cta { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; }
+.btn { padding: 12px 28px; border-radius: var(--radius-sm); font-weight: 600; font-size: 0.9375rem; text-decoration: none; min-height: 44px; display: inline-flex; align-items: center; border: none; cursor: pointer; font-family: var(--font-body); }
+.btn-primary { background: var(--accent); color: #0f0e0c; }
+.btn-primary:hover { background: var(--accent-hover); text-decoration: none; }
+.btn-secondary { background: transparent; border: 1px solid var(--border-emphasis); color: var(--text-secondary); }
+.btn-secondary:hover { border-color: var(--border-accent); color: var(--text-primary); text-decoration: none; }
+{% endblock %}
+
+{% block body %}
+<section class="hero">
+  <h1>Publish a wiki<br>in <em>seconds</em></h1>
+  <p class="hero-sub">The home for markdown knowledge bases. Bring your files or let your agent build it.</p>
+  <div class="hero-cta">
+    <a href="/auth/signup" class="btn btn-primary">Get started</a>
+    <a href="/explore" class="btn btn-secondary">Explore wikis</a>
+  </div>
+</section>
+{% endblock %}

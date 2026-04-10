@@ -192,8 +192,111 @@ def delete_wiki(owner, slug):
 
     db.session.delete(wiki)
     db.session.commit()
-    # note: git repos left on disk for safety; add cleanup later
     return "", 204
+
+
+# --- fork / star ---
+
+@api_bp.route("/wikis/<owner>/<slug>/fork", methods=["POST"])
+@api_auth_required
+def fork_wiki(owner, slug):
+    """server-side git clone --bare into caller's namespace."""
+    import subprocess
+    owner_user, source_wiki, err = _get_wiki_or_404(owner, slug)
+    if err:
+        return err
+
+    user = request.current_user
+    if Wiki.query.filter_by(owner_id=user.id, slug=slug).first():
+        return {"error": "conflict", "message": f"You already have a wiki called '{slug}'"}, 409
+
+    # clone the public mirror (or authoritative if owner)
+    is_owner = user.id == source_wiki.owner_id
+    from app.git_backend import _repo_path, init_wiki_repo
+    src_repo = _repo_path(owner, slug, public=not is_owner)
+    dst_repo = _repo_path(user.username, slug)
+
+    os.makedirs(os.path.dirname(dst_repo), exist_ok=True)
+    subprocess.run(["git", "clone", "--bare", src_repo, dst_repo], check=True, capture_output=True)
+
+    # create wiki record (visibility reset to private per spec)
+    forked_wiki = Wiki(
+        owner_id=user.id,
+        slug=slug,
+        title=source_wiki.title,
+        description=source_wiki.description,
+        forked_from_id=source_wiki.id,
+    )
+    db.session.add(forked_wiki)
+
+    # create fork record
+    fork_record = Fork(
+        source_wiki_id=source_wiki.id,
+        forked_wiki_id=0,  # placeholder, set after flush
+        user_id=user.id,
+    )
+    db.session.flush()
+    fork_record.forked_wiki_id = forked_wiki.id
+    db.session.add(fork_record)
+
+    # increment fork count
+    source_wiki.fork_count += 1
+
+    # init public mirror for the fork
+    pub_repo = _repo_path(user.username, slug, public=True)
+    if not os.path.isdir(pub_repo):
+        subprocess.run(["git", "init", "--bare", pub_repo], check=True, capture_output=True)
+        subprocess.run(["git", "symbolic-ref", "HEAD", "refs/heads/main"],
+                       cwd=pub_repo, check=True, capture_output=True)
+
+    db.session.commit()
+
+    return jsonify({
+        "id": forked_wiki.id,
+        "owner": user.username,
+        "slug": slug,
+        "forked_from": f"{owner}/{slug}",
+        "web_url": f"/@{user.username}/{slug}",
+    }), 201
+
+
+@api_bp.route("/wikis/<owner>/<slug>/star", methods=["POST"])
+@api_auth_required
+def star_wiki(owner, slug):
+    owner_user, wiki, err = _get_wiki_or_404(owner, slug)
+    if err:
+        return err
+
+    user = request.current_user
+    existing = Star.query.filter_by(user_id=user.id, wiki_id=wiki.id).first()
+    if existing:
+        return {"error": "conflict", "message": "Already starred"}, 409
+
+    star = Star(user_id=user.id, wiki_id=wiki.id)
+    db.session.add(star)
+    wiki.star_count += 1
+    db.session.commit()
+
+    return jsonify({"starred": True, "star_count": wiki.star_count}), 201
+
+
+@api_bp.route("/wikis/<owner>/<slug>/star", methods=["DELETE"])
+@api_auth_required
+def unstar_wiki(owner, slug):
+    owner_user, wiki, err = _get_wiki_or_404(owner, slug)
+    if err:
+        return err
+
+    user = request.current_user
+    star = Star.query.filter_by(user_id=user.id, wiki_id=wiki.id).first()
+    if not star:
+        return {"error": "not_found", "message": "Not starred"}, 404
+
+    db.session.delete(star)
+    wiki.star_count = max(0, wiki.star_count - 1)
+    db.session.commit()
+
+    return jsonify({"starred": False, "star_count": wiki.star_count})
 
 
 # --- page endpoints ---

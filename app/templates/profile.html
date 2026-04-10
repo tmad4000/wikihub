@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}@{{ owner.username }} — wikihub{% endblock %}
+
+{% block extra_css %}
+.profile-header {
+  max-width: 800px; margin: 0 auto; padding: 32px 16px 0;
+  display: flex; align-items: center; gap: 20px;
+}
+@media (min-width: 640px) { .profile-header { padding: 48px 24px 0; } }
+.avatar {
+  width: 64px; height: 64px; border-radius: 50%;
+  background: var(--accent-muted); border: 2px solid var(--border-accent);
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-mono); font-size: 1.5rem; color: var(--accent);
+  flex-shrink: 0;
+}
+.profile-info h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.02em; }
+.profile-info .username { font-family: var(--font-mono); color: var(--text-tertiary); font-size: 0.875rem; }
+.profile-stats {
+  display: flex; gap: 16px; margin-top: 8px; font-size: 0.8125rem; color: var(--text-secondary);
+}
+.profile-stats strong { color: var(--text-primary); }
+
+.wiki-list {
+  max-width: 800px; margin: 24px auto 0; padding: 0 16px 64px;
+}
+@media (min-width: 640px) { .wiki-list { padding: 0 24px 64px; } }
+.wiki-list h2 { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 12px; }
+
+.wiki-card {
+  display: block; background: var(--bg-surface); border: 1px solid var(--border-default);
+  border-radius: var(--radius-md); padding: 16px 20px; margin-bottom: 8px;
+  text-decoration: none; transition: border-color 0.15s ease;
+}
+.wiki-card:hover { border-color: var(--border-emphasis); text-decoration: none; }
+.wiki-card-title { font-weight: 600; color: var(--text-primary); margin-bottom: 4px; }
+.wiki-card-desc { font-size: 0.8125rem; color: var(--text-tertiary); margin-bottom: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wiki-card-meta { display: flex; gap: 12px; font-size: 0.75rem; color: var(--text-muted); font-family: var(--font-mono); }
+.wiki-card-meta .star { color: var(--accent); }
+{% endblock %}
+
+{% block body %}
+<div class="profile-header">
+  <div class="avatar">{{ owner.username[0]|upper }}</div>
+  <div class="profile-info">
+    <h1>{{ owner.display_name or owner.username }}</h1>
+    <div class="username">@{{ owner.username }}</div>
+    <div class="profile-stats">
+      <span><strong>{{ wikis|length }}</strong> wikis</span>
+      <span><strong>{{ total_stars }}</strong> stars</span>
+    </div>
+  </div>
+</div>
+
+<div class="wiki-list">
+  <h2>Wikis</h2>
+  {% for wiki in wikis %}
+  <a href="/@{{ owner.username }}/{{ wiki.slug }}" class="wiki-card">
+    <div class="wiki-card-title">{{ wiki.title or wiki.slug }}</div>
+    {% if wiki.description %}
+    <div class="wiki-card-desc">{{ wiki.description }}</div>
+    {% endif %}
+    <div class="wiki-card-meta">
+      <span class="star">&#9733; {{ wiki.star_count }}</span>
+      <span>{{ wiki.fork_count }} forks</span>
+    </div>
+  </a>
+  {% else %}
+  <p style="color: var(--text-tertiary); font-size: 0.875rem;">No wikis yet.</p>
+  {% endfor %}
+</div>
+{% endblock %}

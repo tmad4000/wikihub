@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}{{ wiki.title or wiki.slug }} — wikihub{% endblock %}
+
+{% block extra_css %}
+.folder-layout { max-width: 800px; margin: 0 auto; padding: 32px 16px 64px; }
+@media (min-width: 640px) { .folder-layout { padding: 48px 24px 64px; } }
+
+.breadcrumb {
+  font-size: 0.8125rem; color: var(--text-tertiary); margin-bottom: 16px;
+  font-family: var(--font-mono);
+}
+.breadcrumb a { color: var(--text-tertiary); }
+.breadcrumb a:hover { color: var(--accent); }
+
+.file-list { border: 1px solid var(--border-default); border-radius: var(--radius-md); overflow: hidden; }
+.file-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 16px; border-bottom: 1px solid var(--border-default);
+  text-decoration: none; color: var(--text-primary); font-size: 0.875rem;
+  transition: background 0.1s ease;
+}
+.file-item:last-child { border-bottom: none; }
+.file-item:hover { background: var(--accent-subtle); text-decoration: none; }
+.file-icon { color: var(--text-muted); flex-shrink: 0; }
+.file-name { flex: 1; }
+{% endblock %}
+
+{% block body %}
+<div class="folder-layout">
+  <div class="breadcrumb">
+    <a href="/@{{ owner.username }}">@{{ owner.username }}</a> /
+    <a href="/@{{ owner.username }}/{{ wiki.slug }}">{{ wiki.slug }}</a>
+  </div>
+
+  <div class="file-list">
+    {% for item in items %}
+    <a href="{{ item.url }}" class="file-item">
+      <span class="file-icon">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      </span>
+      <span class="file-name">{{ item.label }}</span>
+    </a>
+    {% else %}
+    <div class="file-item" style="color: var(--text-tertiary);">No files yet.</div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

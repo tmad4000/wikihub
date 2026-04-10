@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Explore — wikihub{% endblock %}
+
+{% block extra_css %}
+.explore-page { max-width: 900px; margin: 0 auto; padding: 32px 16px 64px; }
+@media (min-width: 640px) { .explore-page { padding: 48px 24px 64px; } }
+.explore-page h1 { font-size: 1.75rem; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 8px; }
+.explore-page .subtitle { color: var(--text-secondary); margin-bottom: 32px; font-size: 0.9375rem; }
+
+.section-label {
+  font-size: 0.6875rem; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 12px;
+}
+
+.wiki-grid {
+  display: grid; grid-template-columns: 1fr; gap: 8px; margin-bottom: 40px;
+}
+@media (min-width: 600px) { .wiki-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (min-width: 840px) { .wiki-grid.featured { grid-template-columns: repeat(3, 1fr); } }
+
+.wiki-card {
+  display: block; background: var(--bg-surface); border: 1px solid var(--border-default);
+  border-radius: var(--radius-md); padding: 16px 20px;
+  text-decoration: none; transition: border-color 0.15s ease;
+}
+.wiki-card:hover { border-color: var(--border-emphasis); text-decoration: none; }
+.wiki-card-owner { font-size: 0.6875rem; color: var(--text-muted); font-family: var(--font-mono); margin-bottom: 2px; }
+.wiki-card-title { font-weight: 600; color: var(--text-primary); margin-bottom: 6px; }
+.wiki-card-desc {
+  font-size: 0.8125rem; color: var(--text-tertiary); margin-bottom: 10px;
+  overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}
+.wiki-card-meta { display: flex; gap: 12px; font-size: 0.75rem; color: var(--text-muted); font-family: var(--font-mono); }
+.wiki-card-meta .star { color: var(--accent); }
+{% endblock %}
+
+{% block body %}
+<div class="explore-page">
+  <h1>Explore</h1>
+  <p class="subtitle">Knowledge bases published by the community.</p>
+
+  {% if featured %}
+  <div class="section-label">Featured</div>
+  <div class="wiki-grid featured">
+    {% for wiki in featured %}
+    <a href="/@{{ wiki.owner.username }}/{{ wiki.slug }}" class="wiki-card">
+      <div class="wiki-card-owner">@{{ wiki.owner.username }}</div>
+      <div class="wiki-card-title">{{ wiki.title or wiki.slug }}</div>
+      {% if wiki.description %}
+      <div class="wiki-card-desc">{{ wiki.description }}</div>
+      {% endif %}
+      <div class="wiki-card-meta">
+        <span class="star">&#9733; {{ wiki.star_count }}</span>
+        <span>{{ wiki.fork_count }} forks</span>
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <div class="section-label">Recent</div>
+  <div class="wiki-grid">
+    {% for wiki in recent %}
+    <a href="/@{{ wiki.owner.username }}/{{ wiki.slug }}" class="wiki-card">
+      <div class="wiki-card-owner">@{{ wiki.owner.username }}</div>
+      <div class="wiki-card-title">{{ wiki.title or wiki.slug }}</div>
+      {% if wiki.description %}
+      <div class="wiki-card-desc">{{ wiki.description }}</div>
+      {% endif %}
+      <div class="wiki-card-meta">
+        <span class="star">&#9733; {{ wiki.star_count }}</span>
+        <span>{{ wiki.fork_count }} forks</span>
+      </div>
+    </a>
+    {% else %}
+    <p style="color: var(--text-tertiary); font-size: 0.875rem;">No public wikis yet.</p>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

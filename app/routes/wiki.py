@@ -1,3 +1,5 @@
+import os
+
 from flask import render_template, abort, request, redirect, url_for, flash, Response
 from flask_login import current_user, login_required
 
@@ -45,7 +47,36 @@ def user_profile(username):
         abort(404)
 
     wikis = Wiki.query.filter_by(owner_id=owner.id).order_by(Wiki.updated_at.desc()).all()
-    return render_template("profile.html", owner=owner, wikis=wikis)
+    total_stars = sum(w.star_count for w in wikis)
+    return render_template("profile.html", owner=owner, wikis=wikis, total_stars=total_stars)
+
+
+@wiki_bp.route("/@<username>/<slug>.zip")
+def wiki_zip(username, slug):
+    """ZIP download — git archive. owner gets full repo, others get public mirror."""
+    import subprocess
+    owner = User.query.filter_by(username=username).first_or_404()
+    wiki = Wiki.query.filter_by(owner_id=owner.id, slug=slug).first_or_404()
+
+    is_owner = current_user.is_authenticated and current_user.id == wiki.owner_id
+    from app.git_backend import _repo_path
+    repo = _repo_path(username, slug, public=not is_owner)
+
+    if not os.path.isdir(repo):
+        abort(404)
+
+    proc = subprocess.run(
+        ["git", "archive", "--format=zip", "HEAD"],
+        cwd=repo, capture_output=True,
+    )
+    if proc.returncode != 0:
+        abort(500)
+
+    return Response(
+        proc.stdout,
+        content_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{slug}.zip"'},
+    )
 
 
 @wiki_bp.route("/@<username>/<slug>")
