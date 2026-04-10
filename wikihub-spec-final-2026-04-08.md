@@ -427,7 +427,7 @@ Every error response returns a JSON body: `{"error": "forbidden", "message": "Yo
 - Live preview with the full reader pipeline (KaTeX, code highlighting, footnotes).
 - Visibility toggles that write to frontmatter or the ACL file as appropriate.
 - **New-page form pre-fills inherited visibility.** When creating a page under an ACL-governed folder (e.g., `wiki/entities/`), the editor's visibility field defaults to whatever `.wikihub/acl` would resolve for that path (e.g., `public` if `wiki/** public` matches). User can override. This makes the cascade visible and predictable rather than silently applied after save.
-- **Concurrent edits: true last-write-wins, no optimistic locking** (locked 2026-04-09). If two REST `PUT` requests arrive simultaneously, the second silently overwrites the first. No `If-Match` header, no 409 Conflict. Git history preserves both commits — revert is the recovery path. Add optimistic locking in v2 if users report data loss.
+- **Concurrent edits: optimistic locking via ETag / If-Match** (updated 2026-04-10). GET page responses include `ETag: "<content_hash>"`. PUT/PATCH accept optional `If-Match` header — if present and hash doesn't match current `content_hash`, returns 409 Conflict with clear message. Backwards compatible: omitting `If-Match` preserves last-write-wins behavior. Git history still preserves all commits for revert.
 - Collaborative editing (CRDT / OT / realtime) is **v2+, not v1**. Not biased toward realtime; async-first.
 
 ---
@@ -492,7 +492,7 @@ Each gets a one-off Python script to scrape/transform and produce a zip we uploa
 - SFTP upload path (session-batched commits, SSH key endpoint, `sshfs`/`rsync` compatible)
 - Link-share token expiry (v1 link tokens are permanent; add expiry syntax or Postgres-side override in v2)
 - **Private page enumeration hardening** — return 404 instead of 403 for unauthorized private page access, so attackers can't discover page names by probing URLs. Low priority; current 403 is correct behavior, just reveals existence.
-- Optimistic locking on REST API (If-Match / ETag / 409 Conflict)
+- ~~Optimistic locking on REST API (If-Match / ETag / 409 Conflict)~~ — **shipped 2026-04-10.** ETag on GET, optional If-Match on PUT/PATCH, 409 on mismatch.
 - **Twitter auth / tweet-to-verify** — signup requires tweeting a specific post (e.g., "I just created my wiki on @wikihub") and pasting the tweet URL to verify. Viral distribution mechanic + lightweight sybil resistance. Agent-compatible: agent tweets via user's Twitter API key or user pastes the link. Similar pattern to Farcaster Frames and various crypto airdrops.
 - **MCP server: expose wiki content for AI agent queries (added 2026-04-10).** Standalone MCP server (`mcp_server.py`) that exposes wiki tools (`list_pages`, `read_page`, `search_wiki`, `get_wiki_info`, `read_llms_txt`) over stdio. Any Claude Code or AI agent can connect and read/search wiki pages natively — the LLM does its own reasoning, no embeddings needed. Works against any wikihub instance (local or remote). Inspired by Farzapedia's `/wiki-query` (which just reads files) and gbrain's MCP layer. P0.
 - **Recently updated feed (added 2026-04-10).** Show last N modified pages on wiki homepage and user profiles. Data from git history. Like Farzapedia's "Recently updated" sidebar. P1.
@@ -537,7 +537,7 @@ All prior open questions resolved as of 2026-04-10. No open spec questions remai
 
 - ~~Auth providers~~ → Google OAuth + local. Noos dropped.
 - ~~Featured curation~~ → ~~most stars wins automatically. Admin override v2.~~ **Updated 2026-04-10:** three-layer curation in v1: editorial picks (official wiki) + most-starred + recent. Solves cold start, provides editorial control.
-- ~~Concurrent-edit resolution~~ → true last-write-wins, no optimistic locking v1.
+- ~~Concurrent-edit resolution~~ → ~~true last-write-wins, no optimistic locking v1.~~ **Updated 2026-04-10:** optional optimistic locking shipped (ETag/If-Match). Last-write-wins still default when If-Match omitted.
 - ~~Milkdown vs simpler~~ → Milkdown, ported from listhub with wikilink plugin added.
 - ~~Content in DB or git-only~~ → git-only for public content. DB has metadata + search index only.
 - ~~ACL file vs Postgres for link-shares~~ → ACL file for all grants. No expiry in v1.

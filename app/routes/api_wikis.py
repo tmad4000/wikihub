@@ -411,15 +411,20 @@ def read_page(owner, slug, page_path):
     if content is None and page.visibility == "private" and user:
         content = read_file_from_repo(owner_user.username, wiki.slug, page.path, public=False)
 
+    etag = f'"{page.content_hash}"' if page.content_hash else None
+
     wants_markdown = "text/markdown" in request.headers.get("Accept", "")
     if wants_markdown:
-        return Response(
+        resp = Response(
             content or "",
             content_type="text/markdown; charset=utf-8",
             headers={"Vary": "Accept"},
         )
+        if etag:
+            resp.headers["ETag"] = etag
+        return resp
 
-    return jsonify({
+    resp = jsonify({
         "id": page.id,
         "path": page.path,
         "title": page.title,
@@ -427,8 +432,12 @@ def read_page(owner, slug, page_path):
         "content": content,
         "excerpt": page.excerpt,
         "frontmatter": page.frontmatter_json,
+        "content_hash": page.content_hash,
         "updated_at": page.updated_at.isoformat(),
     })
+    if etag:
+        resp.headers["ETag"] = etag
+    return resp
 
 
 @api_bp.route("/wikis/<owner>/<slug>/pages/<path:page_path>", methods=["PUT"])
@@ -448,6 +457,13 @@ def replace_page(owner, slug, page_path):
     if not is_owner:
         if not can_write(page.path, acl_rules, _current_username(), page.visibility):
             return {"error": "forbidden", "message": "You need edit access to this page"}, 403
+
+    # optimistic locking: reject if client's ETag doesn't match current content_hash
+    if_match = request.headers.get("If-Match")
+    if if_match:
+        expected = if_match.strip().strip('"')
+        if expected != page.content_hash:
+            return {"error": "conflict", "message": "Page was modified since you last read it (ETag mismatch). Re-fetch and retry."}, 409
 
     data = request.get_json(silent=True) or {}
     content = data.get("content", "")
@@ -490,6 +506,13 @@ def patch_page(owner, slug, page_path):
     if not is_owner:
         if not can_write(page.path, acl_rules, _current_username(), page.visibility):
             return {"error": "forbidden", "message": "You need edit access to this page"}, 403
+
+    # optimistic locking: reject if client's ETag doesn't match current content_hash
+    if_match = request.headers.get("If-Match")
+    if if_match:
+        expected = if_match.strip().strip('"')
+        if expected != page.content_hash:
+            return {"error": "conflict", "message": "Page was modified since you last read it (ETag mismatch). Re-fetch and retry."}, 409
 
     data = request.get_json(silent=True) or {}
     new_path = data.get("new_path")
