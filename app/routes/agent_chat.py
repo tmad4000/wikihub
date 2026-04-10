@@ -445,12 +445,25 @@ def agent_chat():
     # Get model from env
     model = os.environ.get("CURATOR_MODEL", "claude-sonnet-4-20250514")
 
-    # Per-user key first, then fallback to server env var
+    # Check for auth: per-user API key, Claude subscription, or server env var
     from app.routes.main import get_user_llm_key
     api_key = get_user_llm_key(user) or os.environ.get("ANTHROPIC_API_KEY")
 
+    # Check for Claude subscription credentials if no API key
     if not api_key:
-        return {"error": "config_error", "message": "Add your Anthropic API key in Settings to use the Curator"}, 400
+        config_dir = _claude_config_dir(user.id)
+        creds_file = os.path.join(config_dir, ".credentials.json")
+        if os.path.exists(creds_file):
+            try:
+                with open(creds_file) as f:
+                    creds = json.load(f)
+                oauth = creds.get("claudeAiOauth", {})
+                api_key = oauth.get("accessToken")
+            except Exception:
+                pass
+
+    if not api_key:
+        return {"error": "config_error", "message": "Login with your Claude subscription or add an API key in Settings"}, 400
 
     def generate():
         client = anthropic.Anthropic(api_key=api_key)
@@ -575,3 +588,103 @@ def agent_chat():
             "X-Accel-Buffering": "no",
         },
     )
+
+
+# --- Claude subscription auth ---
+
+def _claude_config_dir(user_id):
+    """Per-user Claude config directory."""
+    base = os.environ.get("CLAUDE_USER_CONFIG_DIR", "/tmp/claude-configs")
+    d = os.path.join(base, str(user_id))
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+@agent_chat_bp.route("/agent/claude-auth/status", methods=["GET"])
+def claude_auth_status():
+    """Check if user has Claude subscription credentials."""
+    from flask_login import current_user
+    user = getattr(request, "current_user", None)
+    if not user:
+        if current_user and current_user.is_authenticated:
+            user = current_user
+    if not user:
+        return {"error": "unauthorized"}, 401
+
+    config_dir = _claude_config_dir(user.id)
+    try:
+        result = subprocess.run(
+            ["claude", "auth", "status"],
+            capture_output=True, text=True, timeout=10,
+            env={**os.environ, "CLAUDE_CONFIG_DIR": config_dir},
+        )
+        data = json.loads(result.stdout) if result.stdout.strip() else {}
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({"loggedIn": False, "error": str(e)})
+
+
+@agent_chat_bp.route("/agent/claude-auth/login", methods=["POST"])
+def claude_auth_login():
+    """Start Claude login flow. Returns SSE stream with auth URL."""
+    from flask_login import current_user
+    user = getattr(request, "current_user", None)
+    if not user:
+        if current_user and current_user.is_authenticated:
+            user = current_user
+    if not user:
+        return {"error": "unauthorized"}, 401
+
+    config_dir = _claude_config_dir(user.id)
+
+    def generate():
+        try:
+            proc = subprocess.Popen(
+                ["claude", "auth", "login"],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, bufsize=1,
+                env={**os.environ, "CLAUDE_CONFIG_DIR": config_dir},
+            )
+            for line in iter(proc.stdout.readline, ""):
+                yield _sse_event({"type": "output", "text": line.rstrip("\n")})
+                # Check if auth completed (credentials file appeared)
+                creds_file = os.path.join(config_dir, ".credentials.json")
+                if os.path.exists(creds_file):
+                    yield _sse_event({"type": "output", "text": "Authenticated successfully!"})
+                    yield _sse_event({"type": "done", "success": True})
+                    proc.terminate()
+                    return
+
+            proc.wait(timeout=5)
+            # Check one more time
+            creds_file = os.path.join(config_dir, ".credentials.json")
+            if os.path.exists(creds_file):
+                yield _sse_event({"type": "done", "success": True})
+            else:
+                yield _sse_event({"type": "done", "success": False})
+        except Exception as e:
+            yield _sse_event({"type": "error", "message": str(e)})
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@agent_chat_bp.route("/agent/claude-auth/logout", methods=["POST"])
+def claude_auth_logout():
+    """Remove Claude subscription credentials."""
+    from flask_login import current_user
+    user = getattr(request, "current_user", None)
+    if not user:
+        if current_user and current_user.is_authenticated:
+            user = current_user
+    if not user:
+        return {"error": "unauthorized"}, 401
+
+    config_dir = _claude_config_dir(user.id)
+    creds_file = os.path.join(config_dir, ".credentials.json")
+    if os.path.exists(creds_file):
+        os.unlink(creds_file)
+    return jsonify({"loggedIn": False})
