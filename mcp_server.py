@@ -31,6 +31,7 @@ def _api(path, accept="application/json"):
     url = f"{BASE_URL}/api/v1{path}"
     req = urllib.request.Request(url)
     req.add_header("Accept", accept)
+    req.add_header("User-Agent", "wikihub-mcp/1.0")
     if API_KEY:
         req.add_header("Authorization", f"Bearer {API_KEY}")
     try:
@@ -47,6 +48,7 @@ def _fetch_text(url):
     full = f"{BASE_URL}{url}"
     req = urllib.request.Request(full)
     req.add_header("Accept", "text/markdown")
+    req.add_header("User-Agent", "wikihub-mcp/1.0")
     if API_KEY:
         req.add_header("Authorization", f"Bearer {API_KEY}")
     try:
