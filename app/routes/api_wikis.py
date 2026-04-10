@@ -728,9 +728,11 @@ def search_pages():
         Page.search_vector.op("@@")(db.func.plainto_tsquery("english", q))
     )
 
-    # tag filter
+    # tag filter — search tags as text cast of the JSON field
     if tag:
-        query = query.filter(Page.frontmatter_json["tags"].astext.contains(tag))
+        query = query.filter(
+            db.cast(Page.frontmatter_json["tags"], db.String).contains(tag)
+        )
 
     total = query.count()
     results = query.order_by(

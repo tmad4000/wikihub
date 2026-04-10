@@ -226,55 +226,7 @@ a:hover { text-decoration: underline; }
 {% block head %}{% endblock %}
 </head>
 <body>
-<nav class="nav">
-  <a href="/" class="nav-logo"><span class="bracket">[[</span><span class="wordmark">wikihub</span><span class="bracket">]]</span></a>
-  <button class="search-trigger" onclick="wikihubSearch && wikihubSearch.open()">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-    Search <kbd>&#8984;K</kbd>
-  </button>
-  <div class="nav-spacer"></div>
-  {% if current_user and current_user.is_authenticated %}
-    <a href="/explore" class="nav-link">Explore</a>
-    <a href="/agents" class="nav-link nav-agents">For Agents</a>
-    <div class="nav-account" data-account-menu>
-      <button
-        type="button"
-        class="nav-account-trigger"
-        aria-haspopup="menu"
-        aria-expanded="false"
-        aria-label="Account menu"
-        data-account-trigger
-      >
-        <span class="nav-avatar">{{ current_user.username[0]|upper }}</span>
-        <svg class="nav-account-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="m6 9 6 6 6-6"/>
-        </svg>
-      </button>
-      <div class="nav-account-menu" role="menu" aria-label="Account">
-        <div class="nav-account-summary">
-          <strong>{{ current_user.display_name or current_user.username }}</strong>
-          <span>@{{ current_user.username }}</span>
-        </div>
-        <a href="/@{{ current_user.username }}" class="nav-account-item" role="menuitem">
-          <span>View profile</span>
-          <span class="menu-hint">home</span>
-        </a>
-        <a href="/settings" class="nav-account-item" role="menuitem">
-          <span>Settings</span>
-          <span class="menu-hint">account</span>
-        </a>
-        <a href="/auth/logout" class="nav-account-item logout" role="menuitem">
-          <span>Logout</span>
-          <span class="menu-hint">exit</span>
-        </a>
-      </div>
-    </div>
-  {% else %}
-    <a href="/explore" class="nav-link">Explore</a>
-    <a href="/agents" class="nav-link nav-agents">For Agents</a>
-    <a href="/auth/login" class="nav-link">Sign in</a>
-  {% endif %}
-</nav>
+{% include '_nav.html' %}
 
 <div class="search-overlay" id="search-overlay"></div>
 <div class="search-modal" id="search-modal">

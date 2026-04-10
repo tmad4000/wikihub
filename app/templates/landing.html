@@ -78,138 +78,79 @@
     /* ── nav ──────────────────────────────── */
 
     .nav {
-      position: sticky;
-      top: 0;
-      z-index: 100;
+      position: sticky; top: 0; z-index: 100;
       background: var(--bg-base);
       border-bottom: 1px solid var(--border-default);
+      padding: 0 16px; height: 56px;
+      display: flex; align-items: center; gap: 16px;
     }
-
-    .nav-inner {
-      max-width: var(--max-width);
-      margin: 0 auto;
-      padding: 0 20px;
-      height: 60px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-
     .nav-logo {
-      font-family: var(--font-mono);
-      font-size: 1.125rem;
-      font-weight: 500;
-      letter-spacing: -0.02em;
-      text-decoration: none;
+      font-family: var(--font-mono); font-weight: 500;
+      font-size: 1.0625rem; text-decoration: none; line-height: 1;
     }
+    .nav-logo .bracket { color: var(--text-tertiary); }
+    .nav-logo .wordmark { color: var(--text-primary); }
+    .nav-spacer { flex: 1; }
+    .nav-link { color: var(--text-tertiary); font-size: 0.875rem; text-decoration: none; }
+    .nav-link:hover { color: var(--text-primary); text-decoration: none; }
+    .nav-agents { color: var(--accent); font-weight: 500; font-family: var(--font-mono); font-size: 0.8125rem; }
+    .nav-agents:hover { color: var(--accent-hover); }
+    .nav-account { position: relative; display: flex; align-items: center; }
+    .nav-account-trigger {
+      display: inline-flex; align-items: center; gap: 6px; min-height: 36px;
+      padding: 2px 6px 2px 2px; border: 1px solid transparent; border-radius: 999px;
+      background: transparent; color: var(--text-secondary); cursor: pointer; font-family: var(--font-body);
+    }
+    .nav-account-trigger:hover, .nav-account:focus-within .nav-account-trigger, .nav-account.open .nav-account-trigger {
+      color: var(--text-primary); background: var(--accent-subtle); border-color: var(--border-default);
+    }
+    .nav-avatar {
+      width: 32px; height: 32px; border-radius: 50%;
+      background: var(--accent-muted); border: 1px solid var(--border-accent);
+      display: flex; align-items: center; justify-content: center;
+      font-family: var(--font-mono); font-size: 0.75rem; color: var(--accent); text-decoration: none;
+    }
+    .nav-account-chevron { color: var(--text-muted); transition: transform 0.14s ease; }
+    .nav-account:hover .nav-account-chevron, .nav-account:focus-within .nav-account-chevron, .nav-account.open .nav-account-chevron { transform: rotate(180deg); }
+    .nav-account-menu {
+      position: absolute; top: calc(100% + 8px); right: 0; width: 220px; padding: 8px;
+      border-radius: var(--radius-md); border: 1px solid var(--border-emphasis);
+      background: rgba(25, 23, 20, 0.98); backdrop-filter: blur(12px); box-shadow: none;
+      opacity: 0; transform: translateY(-4px); pointer-events: none;
+      transition: opacity 0.14s ease, transform 0.14s ease;
+    }
+    .nav-account:hover .nav-account-menu, .nav-account:focus-within .nav-account-menu, .nav-account.open .nav-account-menu {
+      opacity: 1; transform: translateY(0); pointer-events: auto;
+    }
+    .nav-account-summary { padding: 10px 12px 12px; border-bottom: 1px solid var(--border-default); margin-bottom: 4px; }
+    .nav-account-summary strong { display: block; font-size: 0.875rem; color: var(--text-primary); }
+    .nav-account-summary span { display: block; margin-top: 2px; font-size: 0.75rem; color: var(--text-muted); font-family: var(--font-mono); }
+    .nav-account-item {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: 10px 12px; border-radius: var(--radius-sm); color: var(--text-secondary); font-size: 0.8125rem; text-decoration: none;
+    }
+    .nav-account-item:hover { background: var(--accent-subtle); color: var(--text-primary); text-decoration: none; }
+    .nav-account-item.logout { color: #d88c75; }
+    .nav-account-item .menu-hint { font-family: var(--font-mono); font-size: 0.6875rem; color: var(--text-muted); }
+    .search-trigger { display: none; }
+    @media (min-width: 640px) { .nav { padding: 0 24px; } }
 
-    .nav-logo .bracket {
-      color: var(--text-tertiary);
-    }
-
-    .nav-logo .name {
-      color: var(--text-primary);
-    }
-
-    .nav-actions {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
+    /* ── btn (used elsewhere on landing) ── */
 
     .btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 44px;
-      min-width: 44px;
-      padding: 10px 20px;
-      border-radius: var(--radius-md);
-      font-family: var(--font-body);
-      font-size: 0.875rem;
-      font-weight: 500;
-      cursor: pointer;
-      border: none;
+      display: inline-flex; align-items: center; justify-content: center;
+      min-height: 44px; min-width: 44px; padding: 10px 20px;
+      border-radius: var(--radius-md); font-family: var(--font-body);
+      font-size: 0.875rem; font-weight: 500; cursor: pointer; border: none;
       transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
       white-space: nowrap;
     }
-
-    .btn-ghost {
-      background: transparent;
-      color: var(--text-secondary);
-    }
-
-    .btn-ghost:hover {
-      color: var(--text-primary);
-      background: var(--control-bg-hover);
-    }
-
-    .btn-primary {
-      background: var(--accent);
-      color: #0f0e0c;
-      font-weight: 600;
-    }
-
-    .btn-primary:hover {
-      background: var(--accent-hover);
-    }
-
-    .btn-secondary {
-      background: transparent;
-      color: var(--text-secondary);
-      border: 1px solid var(--border-emphasis);
-    }
-
-    .btn-secondary:hover {
-      border-color: var(--border-strong);
-      color: var(--text-primary);
-    }
-
-    /* ── mobile nav toggle ───────────────── */
-
-    .nav-toggle {
-      display: none;
-      background: none;
-      border: none;
-      color: var(--text-secondary);
-      cursor: pointer;
-      min-height: 44px;
-      min-width: 44px;
-      align-items: center;
-      justify-content: center;
-    }
-
-    .nav-toggle svg {
-      width: 22px;
-      height: 22px;
-    }
-
-    @media (max-width: 599px) {
-      .nav-toggle {
-        display: inline-flex;
-      }
-
-      .nav-actions {
-        display: none;
-        position: absolute;
-        top: 60px;
-        left: 0;
-        right: 0;
-        background: var(--bg-surface);
-        border-bottom: 1px solid var(--border-default);
-        flex-direction: column;
-        padding: 16px 20px;
-        gap: 8px;
-      }
-
-      .nav-actions.open {
-        display: flex;
-      }
-
-      .nav-actions .btn {
-        width: 100%;
-      }
-    }
+    .btn-ghost { background: transparent; color: var(--text-secondary); }
+    .btn-ghost:hover { color: var(--text-primary); background: var(--control-bg-hover); }
+    .btn-primary { background: var(--accent); color: #0f0e0c; font-weight: 600; }
+    .btn-primary:hover { background: var(--accent-hover); }
+    .btn-secondary { background: transparent; color: var(--text-secondary); border: 1px solid var(--border-emphasis); }
+    .btn-secondary:hover { border-color: var(--border-strong); color: var(--text-primary); }
 
     /* ── hero ─────────────────────────────── */
 
@@ -812,25 +753,7 @@
 <body>
 
   <!-- nav -->
-  <nav class="nav">
-    <div class="nav-inner">
-      <a href="/" class="nav-logo"><span class="bracket">[[</span><span class="name">wikihub</span><span class="bracket">]]</span></a>
-      <button class="nav-toggle" aria-label="Toggle menu" onclick="document.querySelector('.nav-actions').classList.toggle('open')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="7" x2="21" y2="7"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="17" x2="21" y2="17"/></svg>
-      </button>
-      <div class="nav-actions">
-        <a href="/explore" class="btn btn-ghost">Explore</a>
-        <a href="/agents" class="btn btn-ghost" style="color:var(--accent);font-family:var(--font-mono);font-size:0.8125rem;">For Agents</a>
-        {% if current_user and current_user.is_authenticated %}
-        <a href="/@{{ current_user.username }}" class="btn btn-ghost">@{{ current_user.username }}</a>
-        <a href="/new" class="btn btn-primary">New wiki</a>
-        {% else %}
-        <a href="/auth/login" class="btn btn-ghost">Sign in</a>
-        <a href="/auth/signup" class="btn btn-primary">Get started</a>
-        {% endif %}
-      </div>
-    </div>
-  </nav>
+  {% include '_nav.html' %}
 
   <!-- hero -->
   <section class="hero">

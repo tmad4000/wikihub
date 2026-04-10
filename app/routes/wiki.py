@@ -284,6 +284,39 @@ def user_profile(username):
     )
 
 
+@wiki_bp.route("/@<username>/<slug>/llms.txt")
+def wiki_llms_txt(username, slug):
+    """per-wiki LLM-readable index."""
+    owner = User.query.filter_by(username=username).first_or_404()
+    wiki = Wiki.query.filter_by(owner_id=owner.id, slug=slug).first_or_404()
+
+    lines = [
+        f"# {wiki.title or wiki.slug}",
+        f"> {wiki.description or 'A wiki on wikihub.'}",
+        f"",
+        f"Owner: @{owner.username}",
+        f"URL: /@{owner.username}/{wiki.slug}",
+        f"",
+        "## Pages",
+    ]
+
+    pages = Page.query.filter_by(wiki_id=wiki.id).filter(
+        Page.visibility.in_(["public", "public-edit"])
+    ).order_by(Page.path).all()
+
+    for p in pages:
+        url = f"/@{owner.username}/{wiki.slug}/{p.path.replace('.md', '')}"
+        lines.append(f"- [{p.title or p.path}]({url})")
+
+    if not pages:
+        lines.append("(no public pages)")
+
+    return Response(
+        "\n".join(lines),
+        content_type="text/plain; charset=utf-8",
+    )
+
+
 @wiki_bp.route("/@<username>/<slug>.zip")
 def wiki_zip(username, slug):
     owner, wiki, redirect_row = _get_owner_and_wiki_or_404(username, slug)

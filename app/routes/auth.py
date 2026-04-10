@@ -162,20 +162,24 @@ def magic_login(token):
 
 @auth_bp.route("/google")
 def google_login():
-    if not oauth.google:
+    try:
+        client = oauth.google
+    except AttributeError:
         flash("Google OAuth not configured")
         return redirect(url_for("auth.login"))
     redirect_uri = url_for("auth.google_callback", _external=True)
-    return oauth.google.authorize_redirect(redirect_uri)
+    return client.authorize_redirect(redirect_uri)
 
 
 @auth_bp.route("/google/callback")
 def google_callback():
-    if not oauth.google:
+    try:
+        client = oauth.google
+    except AttributeError:
         flash("Google OAuth not configured")
         return redirect(url_for("auth.login"))
 
-    token = oauth.google.authorize_access_token()
+    token = client.authorize_access_token()
     userinfo = token.get("userinfo", {})
     google_id = userinfo.get("sub")
     email = userinfo.get("email")
