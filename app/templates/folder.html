@@ -68,7 +68,6 @@
 <div class="folder-shell">
   <aside class="sidebar">
     <div class="sidebar-section">
-      <a href="/@{{ owner.username }}" class="sidebar-item" style="padding-left:12px;margin-bottom:4px;color:var(--text-muted);font-size:0.75rem;">@{{ owner.username }}</a>
       <a href="/@{{ owner.username }}/{{ wiki.slug }}" class="sidebar-heading" style="text-decoration:none;display:block;">{{ wiki.title or wiki.slug }}</a>
       {{ render_sidebar(sidebar_items or []) }}
       {% if current_user.is_authenticated and current_user.id == wiki.owner_id %}
