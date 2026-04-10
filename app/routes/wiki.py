@@ -10,6 +10,7 @@ from app import db
 from app.acl import can_read, can_write, resolve_visibility
 from app.content_utils import has_private_bands, parse_markdown_document, set_visibility_in_content
 from app.discovery import discoverable_page_for_wiki, visible_wikis_for_owner
+from app.git_backend import _repo_path
 from app.git_sync import read_file_from_repo, list_files_in_repo, regenerate_public_mirror, remove_page_from_repo, sync_page_to_repo
 from app.models import Page, User, UsernameRedirect, Wiki, Wikilink, utcnow
 from app.renderer import extract_toc, render_page
@@ -845,6 +846,8 @@ def reindex_wiki(username, slug):
     wiki = Wiki.query.filter_by(owner_id=owner.id, slug=slug).first_or_404()
     if not current_user.is_authenticated or current_user.id != owner.id:
         abort(403)
+    if not os.path.isdir(_repo_path(username, slug)):
+        return jsonify(ok=False, message="no git repo found for this wiki"), 422
     index_repo_pages(username, slug, wiki, reset=True)
     regenerate_public_mirror(username, slug, load_acl_rules(username, slug))
     db.session.commit()
@@ -857,8 +860,12 @@ def reindex_all_wikis(username):
     if not current_user.is_authenticated or current_user.id != owner.id:
         abort(403)
     wikis = Wiki.query.filter_by(owner_id=owner.id).all()
+    count = 0
     for wiki in wikis:
+        if not os.path.isdir(_repo_path(username, wiki.slug)):
+            continue
         index_repo_pages(username, wiki.slug, wiki, reset=True)
         regenerate_public_mirror(username, wiki.slug, load_acl_rules(username, wiki.slug))
+        count += 1
     db.session.commit()
-    return jsonify(ok=True, reindexed=len(wikis))
+    return jsonify(ok=True, reindexed=count)
