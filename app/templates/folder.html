@@ -15,9 +15,20 @@
 .sidebar-item { display: flex; align-items: center; gap: 8px; padding: 5px 12px; border-radius: var(--radius-sm); font-size: 0.8125rem; color: var(--text-tertiary); text-decoration: none; margin-bottom: 1px; }
 .sidebar-item:hover { color: var(--text-primary); background: var(--accent-subtle); text-decoration: none; }
 .sidebar-item.active { color: var(--text-primary); background: var(--accent-subtle); }
+.hamburger {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; background: none; border: none;
+  color: var(--text-muted); cursor: pointer; border-radius: var(--radius-sm);
+  margin-right: 4px; flex-shrink: 0;
+}
+.hamburger:hover { color: var(--text-secondary); background: var(--accent-subtle); }
+@media (min-width: 768px) { .hamburger { display: none; } }
+.sidebar-overlay { display: none; position: fixed; inset: 0; top: 56px; background: rgba(0,0,0,0.5); z-index: 50; }
+.sidebar-overlay.open { display: block; }
+.sidebar.open { display: block; position: fixed; top: 56px; left: 0; bottom: 0; z-index: 51; background: var(--bg-base); width: 260px; overflow-y: auto; }
 .content-pane { flex: 1; min-width: 0; padding: 32px 16px 64px; }
 @media (min-width: 640px) { .content-pane { padding: 40px 28px 72px; } }
-.breadcrumb { font-size: 0.8125rem; color: var(--text-tertiary); margin-bottom: 16px; font-family: var(--font-mono); }
+.breadcrumb { font-size: 0.8125rem; color: var(--text-tertiary); margin-bottom: 16px; font-family: var(--font-mono); display: flex; align-items: center; flex-wrap: wrap; }
 .breadcrumb a { color: var(--text-tertiary); }
 .folder-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
 .download-menu.open .download-dropdown { display: block !important; }
@@ -108,9 +119,13 @@
     </div>
     {% endif %}
   </aside>
+  <div class="sidebar-overlay" id="sidebar-overlay" onclick="toggleSidebar()"></div>
 
   <main class="content-pane">
     <div class="breadcrumb">
+      <button class="hamburger" onclick="toggleSidebar()" aria-label="Open sidebar">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
       <a href="/@{{ owner.username }}">@{{ owner.username }}</a> /
       <a href="/@{{ owner.username }}/{{ wiki.slug }}">{{ wiki.slug }}</a>
       {% for label, href in breadcrumb %}
@@ -208,6 +223,11 @@
 
 {% block scripts %}
 <script>
+function toggleSidebar() {
+  document.querySelector('.sidebar').classList.toggle('open');
+  document.getElementById('sidebar-overlay').classList.toggle('open');
+}
+
 const folderStorageKey = 'wikihub-sidebar-folders';
 
 function loadFolders() {

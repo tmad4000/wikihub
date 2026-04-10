@@ -107,6 +107,17 @@
   border-radius: var(--radius-md); color: var(--text-secondary);
   font-size: 0.8125rem; line-height: 1.5;
 }
+.hamburger {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; background: none; border: none;
+  color: var(--text-muted); cursor: pointer; border-radius: var(--radius-sm);
+  margin-right: 8px; flex-shrink: 0;
+}
+.hamburger:hover { color: var(--text-secondary); background: var(--accent-subtle); }
+@media (min-width: 768px) { .hamburger { display: none; } }
+.sidebar-overlay { display: none; position: fixed; inset: 0; top: 56px; background: rgba(0,0,0,0.5); z-index: 50; }
+.sidebar-overlay.open { display: block; }
+.profile-sidebar.open { display: block; position: fixed; top: 56px; left: 0; bottom: 0; z-index: 51; background: var(--bg-base); width: 260px; overflow-y: auto; }
 
 .wiki-card {
   display: block; background: var(--bg-surface); border: 1px solid var(--border-default);
@@ -190,9 +201,13 @@
     </div>
     {% endif %}
   </aside>
+  <div class="sidebar-overlay" id="sidebar-overlay" onclick="toggleSidebar()"></div>
 
   <main class="profile-main">
     <div class="profile-header">
+      <button class="hamburger" onclick="toggleSidebar()" aria-label="Open sidebar">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
       <div class="avatar">{{ owner.username[0]|upper }}</div>
       <div class="profile-info">
         <h1>{{ owner.display_name or owner.username }}</h1>
@@ -267,6 +282,11 @@
 
 {% block scripts %}
 <script>
+function toggleSidebar() {
+  document.querySelector('.profile-sidebar').classList.toggle('open');
+  document.getElementById('sidebar-overlay').classList.toggle('open');
+}
+
 const folderStorageKey = 'wikihub-sidebar-folders';
 
 function loadFolders() {

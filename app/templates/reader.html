@@ -91,7 +91,7 @@
 
 .breadcrumb {
   font-size: 0.8125rem; color: var(--text-muted); margin-bottom: 12px;
-  font-family: var(--font-mono);
+  font-family: var(--font-mono); display: flex; align-items: center; flex-wrap: wrap;
 }
 .breadcrumb a { color: var(--text-muted); }
 .breadcrumb a:hover { color: var(--accent); text-decoration: none; }
@@ -209,10 +209,12 @@
 .article strong { color: var(--text-primary); }
 
 .hamburger {
-  display: flex; align-items: center; justify-content: center;
-  width: 44px; height: 44px; background: none; border: none;
-  color: var(--text-secondary); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; background: none; border: none;
+  color: var(--text-muted); cursor: pointer; border-radius: var(--radius-sm);
+  margin-right: 4px; flex-shrink: 0;
 }
+.hamburger:hover { color: var(--text-secondary); background: var(--accent-subtle); }
 @media (min-width: 768px) { .hamburger { display: none; } }
 
 .sidebar-overlay {
@@ -358,9 +360,20 @@
 
   <main class="content-wrap">
     <div class="breadcrumb">
-      <a href="/@{{ owner.username }}">@{{ owner.username }}</a> /
-      <a href="/@{{ owner.username }}/{{ wiki.slug }}">{{ wiki.slug }}</a>
-      {% if page.path %} / {{ page.path.replace('.md', '').split('/')[-1] }}{% endif %}
+      <button class="hamburger" onclick="toggleSidebar()" aria-label="Open sidebar">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
+      <a href="/@{{ owner.username }}">@{{ owner.username }}</a>
+      {% if wiki.slug != owner.username %}
+        / <a href="/@{{ owner.username }}/{{ wiki.slug }}">{{ wiki.slug }}</a>
+      {% endif %}
+      {% if page.path %}
+        {% set parts = page.path.replace('.md', '').split('/') %}
+        {% for part in parts %}
+          {% if loop.first and wiki.slug != owner.username %}<span style="opacity:0.4;margin:0 2px">›</span>{% else %}/{% endif %}
+          {% if not loop.last %}<a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ '/'.join(parts[:loop.index]) }}/">{{ part }}</a>{% else %}{{ part }}{% endif %}
+        {% endfor %}
+      {% endif %}
     </div>
 
     <div class="page-actions">
