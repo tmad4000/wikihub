@@ -587,6 +587,10 @@ The login page shows one-click "Login as alice" / "Login as bob" buttons when th
 
 ## Open design questions — added 2026-04-10
 
+### P0: Editor and new-page web experience broken (wikihub-18e)
+
+The entire manual page editing and creation flow via the web UI needs a full QA pass and fix. This blocks dogfooding — without a working editor, the site is API-only. Includes: new page form, Milkdown editor loading, save flow, visibility setting, raw textarea fallback.
+
 ### Cross-wiki references in sidebar (wikihub-v02)
 
 Allow wikis to reference or alias other wikis in their sidebar navigation. The @wikihub community wiki could have a "Featured" folder that links to @jacobcole/rsi-wiki, @jacobcole/admitsphere, etc. as navigable sidebar entries. Like symlinks — you don't own the content but it appears in your wiki's nav. This would make the community index wiki a real navigational hub, not just a page with links. Possible mechanisms: `.wikihub/references` file, frontmatter field, or virtual folder entries.
