@@ -153,9 +153,8 @@
         <div class="profile-summary">{{ personal_excerpt }}</div>
         {% endif %}
         <div class="profile-stats">
-          <span><strong>{{ visible_wiki_count }}</strong> {{ 'visible wikis' if not is_owner else 'wikis' }}</span>
-          <span><strong>{{ total_stars }}</strong> stars</span>
-          <span><strong>{{ 'published' if personal_is_public else 'private' }}</strong> personal wiki</span>
+          <span><strong>{{ visible_wiki_count }}</strong> {{ 'wiki' if visible_wiki_count == 1 else 'wikis' }}</span>
+          {% if total_stars > 0 %}<span><strong>{{ total_stars }}</strong> {{ 'star' if total_stars == 1 else 'stars' }}</span>{% endif %}
         </div>
       </div>
     </div>
