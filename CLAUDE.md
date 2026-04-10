@@ -46,7 +46,6 @@ don't add unit tests for individual functions. if something breaks, add an e2e t
 - `app/auth_utils.py` — password hashing, API key gen/verify, Bearer auth decorators
 - `app/routes/` — blueprints: main, auth, api, api_wikis, wiki, agent_surfaces, upload
 - `hooks/post-receive` — git→DB sync (installed into each wiki's bare repo)
-- `mockups/` — standalone HTML mockups (obsidian+amber design system)
 - `.interface-design/system.md` — design tokens and component patterns
 
 ## key invariants
