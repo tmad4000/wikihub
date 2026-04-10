@@ -95,6 +95,25 @@
   </div>
   {% endif %}
 
+  <div class="section-label">Wikis</div>
+  <div class="wiki-grid">
+    {% for wiki in wikis %}
+    <a href="/@{{ wiki.owner.username }}/{{ wiki.slug }}" class="wiki-card">
+      <div class="wiki-card-owner">@{{ wiki.owner.username }}</div>
+      <div class="wiki-card-title">{{ wiki.title or wiki.slug }}</div>
+      {% if wiki.description %}
+      <div class="wiki-card-desc">{{ wiki.description }}</div>
+      {% endif %}
+      <div class="wiki-card-meta">
+        <span class="star">&#9733; {{ wiki.star_count }}</span>
+        <span>{{ wiki.fork_count }} forks</span>
+      </div>
+    </a>
+    {% else %}
+    <p style="color: var(--text-tertiary); font-size: 0.875rem;">No public wikis yet.</p>
+    {% endfor %}
+  </div>
+
   <div class="section-header">
     <div class="section-label" style="margin-bottom:0;">People</div>
     <a href="/people" class="section-link">All people</a>
@@ -121,44 +140,6 @@
     </a>
     {% else %}
     <p style="color: var(--text-tertiary); font-size: 0.875rem;">No people yet.</p>
-    {% endfor %}
-  </div>
-
-  {% if popular %}
-  <div class="section-label">Popular</div>
-  <div class="wiki-grid">
-    {% for wiki in popular %}
-    <a href="/@{{ wiki.owner.username }}/{{ wiki.slug }}" class="wiki-card">
-      <div class="wiki-card-owner">@{{ wiki.owner.username }}</div>
-      <div class="wiki-card-title">{{ wiki.title or wiki.slug }}</div>
-      {% if wiki.description %}
-      <div class="wiki-card-desc">{{ wiki.description }}</div>
-      {% endif %}
-      <div class="wiki-card-meta">
-        <span class="star">&#9733; {{ wiki.star_count }}</span>
-        <span>{{ wiki.fork_count }} forks</span>
-      </div>
-    </a>
-    {% endfor %}
-  </div>
-  {% endif %}
-
-  <div class="section-label">Recent</div>
-  <div class="wiki-grid">
-    {% for wiki in recent %}
-    <a href="/@{{ wiki.owner.username }}/{{ wiki.slug }}" class="wiki-card">
-      <div class="wiki-card-owner">@{{ wiki.owner.username }}</div>
-      <div class="wiki-card-title">{{ wiki.title or wiki.slug }}</div>
-      {% if wiki.description %}
-      <div class="wiki-card-desc">{{ wiki.description }}</div>
-      {% endif %}
-      <div class="wiki-card-meta">
-        <span class="star">&#9733; {{ wiki.star_count }}</span>
-        <span>{{ wiki.fork_count }} forks</span>
-      </div>
-    </a>
-    {% else %}
-    <p style="color: var(--text-tertiary); font-size: 0.875rem;">No public wikis yet.</p>
     {% endfor %}
   </div>
 </div>

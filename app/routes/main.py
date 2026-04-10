@@ -19,23 +19,19 @@ def explore():
         .filter(User.username == "wikihub", Wiki.slug == "wikihub")
         .all()
     )
-    popular = Wiki.query.filter(Wiki.star_count > 0).order_by(Wiki.star_count.desc()).limit(6).all()
-    recent = (
+    # All wikis with at least one public page, excluding editorial
+    editorial_ids = {wiki.id for wiki in editorial}
+    all_wikis = (
         Wiki.query.join(Page)
         .filter(Page.visibility.in_(["public", "public-edit"]))
         .order_by(Wiki.updated_at.desc())
-        .limit(12)
         .all()
     )
-
-    editorial_ids = {wiki.id for wiki in editorial}
-    popular = [wiki for wiki in popular if wiki.id not in editorial_ids]
-    popular_ids = {wiki.id for wiki in popular} | editorial_ids
-    recent = [wiki for wiki in recent if wiki.id not in popular_ids]
+    all_wikis = [w for w in all_wikis if w.id not in editorial_ids]
 
     people = _people_directory(limit=6)
 
-    return render_template("explore.html", editorial=editorial, popular=popular, recent=recent, people=people)
+    return render_template("explore.html", editorial=editorial, wikis=all_wikis, people=people)
 
 
 @main_bp.route("/people")
