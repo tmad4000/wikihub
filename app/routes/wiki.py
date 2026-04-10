@@ -1,9 +1,13 @@
-from flask import render_template, abort, request
-from flask_login import current_user
+from flask import render_template, abort, request, redirect, url_for, flash, Response
+from flask_login import current_user, login_required
 
+from app import db
 from app.models import User, Wiki, Page
-from app.git_sync import read_file_from_repo, list_files_in_repo
-from app.acl import parse_acl, can_read, resolve_visibility
+from app.git_sync import (
+    read_file_from_repo, list_files_in_repo,
+    sync_page_to_repo, regenerate_public_mirror,
+)
+from app.acl import parse_acl, can_read, can_write, resolve_visibility
 from app.renderer import render_page
 from app.routes import wiki_bp
 
@@ -138,3 +142,93 @@ def wiki_page(username, slug, page_path):
         "Vary": "Accept",
         "Link": f'</@{username}/{slug}/{page_path}.md>; rel="alternate"; type="text/markdown"',
     }
+
+
+@wiki_bp.route("/@<username>/<slug>/<path:page_path>/edit", methods=["GET", "POST"])
+@login_required
+def edit_page(username, slug, page_path):
+    owner = User.query.filter_by(username=username).first_or_404()
+    wiki = Wiki.query.filter_by(owner_id=owner.id, slug=slug).first_or_404()
+
+    file_path = page_path if page_path.endswith(".md") else page_path + ".md"
+    page = Page.query.filter_by(wiki_id=wiki.id, path=file_path).first()
+    is_owner = current_user.id == wiki.owner_id
+
+    acl_rules = _load_acl_rules(username, slug)
+    if not is_owner and not can_write(file_path, acl_rules, current_user.username):
+        return render_template("permission_error.html", owner=owner, wiki=wiki), 403
+
+    if request.method == "POST":
+        content = request.form.get("content", "")
+        visibility = request.form.get("visibility", "private")
+
+        if not page:
+            page = Page(wiki_id=wiki.id, path=file_path, author=current_user.username)
+            db.session.add(page)
+
+        page.visibility = visibility
+        page.author = current_user.username
+
+        # extract frontmatter for metadata
+        import hashlib, os
+        fm = {}
+        body = content
+        if content.startswith("---"):
+            parts = content.split("---", 2)
+            if len(parts) >= 3:
+                for line in parts[1].strip().split("\n"):
+                    if ":" in line:
+                        k, v = line.split(":", 1)
+                        fm[k.strip().lower()] = v.strip()
+                body = parts[2].strip()
+
+        page.title = fm.get("title", os.path.splitext(os.path.basename(file_path))[0])
+        page.frontmatter_json = fm
+        page.content_hash = hashlib.sha256(content.encode()).hexdigest()
+        page.excerpt = body[:200].replace("\n", " ").strip()
+        page.search_vector = db.func.to_tsvector("english", f"{page.title or ''} {body}")
+
+        if visibility == "private":
+            page.private_content = content
+        else:
+            page.private_content = None
+            sync_page_to_repo(username, slug, file_path, content)
+
+        db.session.commit()
+        regenerate_public_mirror(username, slug, acl_rules)
+
+        return redirect(url_for("wiki.wiki_page", username=username, slug=slug, page_path=page_path))
+
+    # GET: load existing content
+    if page and page.private_content:
+        content = page.private_content
+    else:
+        content = read_file_from_repo(username, slug, file_path) or ""
+
+    visibility = page.visibility if page else resolve_visibility(file_path, acl_rules)
+
+    return render_template("editor.html",
+        owner=owner, wiki=wiki, page_path=file_path,
+        content=content, visibility=visibility)
+
+
+@wiki_bp.route("/@<username>/<slug>/new", methods=["GET", "POST"])
+@login_required
+def new_page(username, slug):
+    owner = User.query.filter_by(username=username).first_or_404()
+    wiki = Wiki.query.filter_by(owner_id=owner.id, slug=slug).first_or_404()
+
+    if request.method == "POST":
+        page_path = request.form.get("path", "").strip()
+        if not page_path.endswith(".md"):
+            page_path += ".md"
+        # redirect to edit with the new path
+        return redirect(url_for("wiki.edit_page",
+            username=username, slug=slug, page_path=page_path.replace(".md", "")))
+
+    acl_rules = _load_acl_rules(username, slug)
+    default_vis = resolve_visibility("wiki/new-page.md", acl_rules)
+
+    return render_template("editor.html",
+        owner=owner, wiki=wiki, page_path="wiki/new-page.md",
+        content="", visibility=default_vis)

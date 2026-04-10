@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% block title %}Edit {{ page_path }} — {{ wiki.title or wiki.slug }} — wikihub{% endblock %}
+
+{% block extra_css %}
+.editor-layout {
+  display: flex; flex-direction: column; height: calc(100vh - 56px);
+}
+.editor-topbar {
+  display: flex; align-items: center; gap: 12px; padding: 8px 16px;
+  border-bottom: 1px solid var(--border-default); flex-shrink: 0;
+}
+@media (min-width: 640px) { .editor-topbar { padding: 8px 24px; } }
+.editor-breadcrumb {
+  font-family: var(--font-mono); font-size: 0.8125rem; color: var(--text-tertiary);
+  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.editor-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.btn-sm {
+  padding: 8px 16px; border-radius: var(--radius-sm); font-size: 0.8125rem;
+  font-weight: 600; cursor: pointer; min-height: 36px; border: none;
+  font-family: var(--font-body);
+}
+.btn-save { background: var(--accent); color: #0f0e0c; }
+.btn-save:hover { background: var(--accent-hover); }
+.btn-cancel { background: transparent; color: var(--text-secondary); border: 1px solid var(--border-emphasis); }
+
+.editor-tabs {
+  display: flex; gap: 0; border-bottom: 1px solid var(--border-default); flex-shrink: 0;
+}
+.editor-tab {
+  padding: 10px 20px; font-size: 0.8125rem; color: var(--text-tertiary);
+  cursor: pointer; border-bottom: 2px solid transparent; background: none;
+  border-top: none; border-left: none; border-right: none; font-family: var(--font-body);
+  font-weight: 500;
+}
+.editor-tab.active { color: var(--text-primary); border-bottom-color: var(--accent); }
+.editor-tab:hover { color: var(--text-secondary); }
+
+.editor-wrap { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.editor-textarea {
+  flex: 1; width: 100%; resize: none; border: none; outline: none;
+  background: var(--control-bg); color: var(--text-primary);
+  font-family: var(--font-mono); font-size: 14.5px; line-height: 1.6;
+  padding: 20px 16px;
+}
+@media (min-width: 640px) { .editor-textarea { padding: 20px 24px; } }
+
+.preview-wrap {
+  flex: 1; overflow-y: auto; padding: 20px 16px; display: none;
+}
+@media (min-width: 640px) { .preview-wrap { padding: 20px 24px; } }
+.preview-wrap .article { max-width: 720px; }
+
+.editor-statusbar {
+  display: flex; align-items: center; gap: 16px; padding: 6px 16px;
+  background: var(--bg-surface); border-top: 1px solid var(--border-default);
+  font-size: 0.6875rem; color: var(--text-muted); font-family: var(--font-mono);
+  flex-shrink: 0;
+}
+
+.vis-dropdown {
+  position: relative; display: inline-block;
+}
+.vis-trigger {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 12px; background: var(--bg-surface); border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm); color: var(--text-secondary); cursor: pointer;
+  font-size: 0.75rem; font-family: var(--font-body); min-height: 32px;
+}
+.vis-menu {
+  display: none; position: absolute; top: 100%; right: 0; margin-top: 4px;
+  background: var(--bg-elevated); border: 1px solid var(--border-emphasis);
+  border-radius: var(--radius-md); padding: 4px; min-width: 200px; z-index: 10;
+}
+.vis-menu.open { display: block; }
+.vis-option {
+  display: block; width: 100%; padding: 8px 12px; border: none; background: none;
+  color: var(--text-secondary); font-size: 0.8125rem; text-align: left;
+  cursor: pointer; border-radius: var(--radius-sm); font-family: var(--font-body);
+}
+.vis-option:hover { background: var(--accent-subtle); color: var(--text-primary); }
+.vis-option.selected { background: var(--accent-muted); color: var(--accent); }
+{% endblock %}
+
+{% block body %}
+<form method="POST" class="editor-layout" id="editor-form">
+  <div class="editor-topbar">
+    <div class="editor-breadcrumb">
+      @{{ owner.username }} / {{ wiki.slug }} / {{ page_path }}
+    </div>
+    <div class="editor-actions">
+      <div class="vis-dropdown">
+        <button type="button" class="vis-trigger" onclick="this.nextElementSibling.classList.toggle('open')">
+          <span id="vis-label">{{ visibility or 'private' }}</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <div class="vis-menu" id="vis-menu">
+          {% for v in ['private', 'public', 'public-edit', 'unlisted', 'unlisted-edit'] %}
+          <button type="button" class="vis-option {{ 'selected' if v == (visibility or 'private') }}"
+            onclick="setVisibility('{{ v }}')">{{ v }}</button>
+          {% endfor %}
+        </div>
+      </div>
+      <a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ page_path.replace('.md', '') }}" class="btn-sm btn-cancel">Cancel</a>
+      <button type="submit" class="btn-sm btn-save">Save</button>
+    </div>
+  </div>
+
+  <div class="editor-tabs">
+    <button type="button" class="editor-tab active" onclick="showTab('edit')">Edit</button>
+    <button type="button" class="editor-tab" onclick="showTab('preview')">Preview</button>
+  </div>
+
+  <div class="editor-wrap">
+    <textarea name="content" class="editor-textarea" id="editor-textarea">{{ content or '' }}</textarea>
+    <div class="preview-wrap" id="preview-wrap">
+      <article class="article" id="preview-article"></article>
+    </div>
+  </div>
+
+  <input type="hidden" name="visibility" id="visibility-input" value="{{ visibility or 'private' }}">
+  <input type="hidden" name="path" value="{{ page_path }}">
+
+  <div class="editor-statusbar">
+    <span>Markdown</span>
+    <span id="line-count"></span>
+  </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function showTab(tab) {
+  const tabs = document.querySelectorAll('.editor-tab');
+  tabs.forEach(t => t.classList.remove('active'));
+  event.target.classList.add('active');
+
+  const textarea = document.getElementById('editor-textarea');
+  const preview = document.getElementById('preview-wrap');
+  const previewEl = document.getElementById('preview-article');
+
+  if (tab === 'edit') {
+    textarea.style.display = '';
+    preview.style.display = 'none';
+  } else {
+    textarea.style.display = 'none';
+    preview.style.display = '';
+    // safe preview: use textContent to avoid XSS, show raw markdown as plaintext
+    previewEl.textContent = textarea.value;
+    previewEl.style.whiteSpace = 'pre-wrap';
+    previewEl.style.fontFamily = 'var(--font-body)';
+  }
+}
+
+function setVisibility(v) {
+  document.getElementById('visibility-input').value = v;
+  document.getElementById('vis-label').textContent = v;
+  document.querySelectorAll('.vis-option').forEach(opt => {
+    opt.classList.toggle('selected', opt.textContent.trim() === v);
+  });
+  document.getElementById('vis-menu').classList.remove('open');
+}
+
+// line count
+const ta = document.getElementById('editor-textarea');
+function updateLineCount() {
+  const lines = ta.value.split('\n').length;
+  document.getElementById('line-count').textContent = lines + ' lines';
+}
+ta.addEventListener('input', updateLineCount);
+updateLineCount();
+</script>
+{% endblock %}
