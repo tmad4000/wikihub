@@ -585,6 +585,30 @@ The login page shows one-click "Login as alice" / "Login as bob" buttons when th
 
 ---
 
+## Open design questions — added 2026-04-10
+
+### Cross-wiki references in sidebar (wikihub-v02)
+
+Allow wikis to reference or alias other wikis in their sidebar navigation. The @wikihub community wiki could have a "Featured" folder that links to @jacobcole/rsi-wiki, @jacobcole/admitsphere, etc. as navigable sidebar entries. Like symlinks — you don't own the content but it appears in your wiki's nav. This would make the community index wiki a real navigational hub, not just a page with links. Possible mechanisms: `.wikihub/references` file, frontmatter field, or virtual folder entries.
+
+### Quartz-style folder index pages (wikihub-jjt)
+
+When visiting a wiki root or folder with no index.md, render a Quartz-style overview with page title + excerpt cards instead of a plain file listing. Could be opt-in via `layout: quartz-index` frontmatter or the default empty-folder behavior. Would make wikis more browsable without requiring authors to manually maintain index pages.
+
+### Community curation model (wikihub-dz5, wikihub-52z)
+
+The @wikihub wiki is the editorial/curated index ("awesome list of awesome lists"). The `/explore` page is the algorithmic view. Key questions: Should `/explore` have its own editorial section, or just link to the community wiki? How do wikis get featured — admin flag, suggested-edit PR, or just a page edit in the community wiki? Current implementation: editorial picks on explore is hardcoded to show @wikihub's personal wiki. Community curation is just markdown pages with links. No special machinery yet.
+
+### Bio/profile frontmatter (wikihub-722)
+
+Profile-aware frontmatter (`bio:`, `avatar:`, `links:`) in personal wiki `index.md` — Claude-proposed design. Works but needs human review on whether bio belongs in frontmatter, DB fields with settings UI, or just the markdown body. See ticket for full options.
+
+### Explore page ordering (wikihub-gw0)
+
+Sort accounts and wikis by recent activity instead of creation order. Currently shows Editorial Picks → all Wikis → People, but wikis are ordered by updated_at. Could factor in stars, page count, or recency of edits.
+
+---
+
 ## Research docs to consult
 
 - `research/wikihub-spec-work-2026-04-08/agent-first-web-brief-2026-04.md` — authoritative source for agent-first web standards (WebMCP, llms.txt, .well-known manifests, content negotiation, agent-native auth, agent identity).
