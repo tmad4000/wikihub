@@ -781,7 +781,7 @@
         <div class="hero-panel-label">Your agent</div>
         <div class="hero-panel-desc">Paste this into your agent</div>
         <div class="agent-code">
-          <button class="copy-btn" onclick="navigator.clipboard.writeText(this.parentElement.querySelector('pre').textContent)">copy</button>
+          <button class="copy-btn" onclick="navigator.clipboard.writeText(this.parentElement.querySelector('pre').textContent).then(()=>{this.textContent='copied!';setTimeout(()=>this.textContent='copy',1500)})">copy</button>
           <pre>Go to wikihub.md/agents for setup instructions, then create a wiki called "research" with a note about what wikis are good for.</pre>
         </div>
       </div>
