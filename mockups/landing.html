@@ -844,17 +844,10 @@
 
       <div class="hero-panel">
         <div class="hero-panel-label">Your agent</div>
+        <div class="hero-panel-desc">Paste this into your agent</div>
         <div class="agent-code">
           <button class="copy-btn" onclick="navigator.clipboard.writeText(this.parentElement.querySelector('pre').textContent)">copy</button>
-          <pre><span class="comment"># add to your MCP config</span>
-{
-  <span class="key">"wikihub"</span>: {
-    <span class="key">"url"</span>: <span class="string">"https://wikihub.md/mcp"</span>
-  }
-}
-
-<span class="comment"># then tell your agent:</span>
-<span class="string">"Create a wiki from ./notes/"</span></pre>
+          <pre>Go onto wikihub.md, make an account, and create a wiki with a note about what wikis are good for.</pre>
         </div>
       </div>
     </div>
