@@ -46,8 +46,8 @@
   color: var(--text-primary); background: var(--accent-subtle);
   border-left-color: var(--accent);
 }
-.sidebar-item.indent-1 { padding-left: 28px; }
-.sidebar-item.indent-2 { padding-left: 44px; }
+.sidebar-item.indent-1 { padding-left: 40px; }
+.sidebar-item.indent-2 { padding-left: 56px; }
 .sidebar-icon { flex-shrink: 0; color: var(--text-muted); }
 .sidebar-item:hover .sidebar-icon { color: var(--text-tertiary); }
 .sidebar-item.active .sidebar-icon { color: var(--accent); }
@@ -250,7 +250,7 @@
 .download-menu { position: relative; display: inline-flex; }
 .download-dropdown {
   display: none; position: absolute; top: 100%; right: 0; margin-top: 4px;
-  min-width: 160px; padding: 4px; border-radius: var(--radius-md);
+  min-width: 340px; padding: 4px; border-radius: var(--radius-md);
   border: 1px solid var(--border-emphasis); background: rgba(25, 23, 20, 0.98);
   backdrop-filter: blur(12px); z-index: 50;
 }
@@ -386,10 +386,16 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             Download ZIP
           </a>
-          <button class="download-option" onclick="navigator.clipboard.writeText('{{ request.host_url.rstrip('/') }}/@{{ owner.username }}/{{ wiki.slug }}.git').then(()=>{this.textContent='Copied!';setTimeout(()=>this.innerHTML='<svg width=14 height=14 viewBox=&quot;0 0 24 24&quot; fill=none stroke=currentColor stroke-width=2 stroke-linecap=round stroke-linejoin=round><path d=&quot;M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71&quot;/><path d=&quot;M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71&quot;/></svg> Copy clone URL',1500)})">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-            Copy clone URL
-          </button>
+          <div style="border-top:1px solid var(--border-default);margin:4px 0;"></div>
+          <div style="padding:6px 10px;">
+            <div style="font-size:0.6875rem;font-weight:600;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;">Clone</div>
+            <div style="display:flex;align-items:center;gap:0;border:1px solid var(--border-emphasis);border-radius:var(--radius-sm);background:var(--control-bg);overflow:hidden;">
+              <input type="text" value="git clone {{ request.host_url.rstrip('/') }}/@{{ owner.username }}/{{ wiki.slug }}.git" readonly style="flex:1;padding:6px 8px;font-family:var(--font-mono);font-size:0.6875rem;color:var(--text-primary);background:transparent;border:none;outline:none;min-width:0;" onclick="this.select()">
+              <button title="Copy" style="display:flex;align-items:center;justify-content:center;width:32px;height:32px;border:none;border-left:1px solid var(--border-emphasis);background:transparent;color:var(--text-tertiary);cursor:pointer;flex-shrink:0;" onclick="event.stopPropagation();var inp=this.previousElementSibling;navigator.clipboard.writeText(inp.value);this.innerHTML='<svg width=12 height=12 viewBox=&quot;0 0 24 24&quot; fill=none stroke=&quot;var(--color-success)&quot; stroke-width=2.5><polyline points=&quot;20 6 9 17 4 12&quot;/></svg>';setTimeout(()=>{this.innerHTML='<svg width=12 height=12 viewBox=&quot;0 0 24 24&quot; fill=none stroke=currentColor stroke-width=2><rect x=9 y=9 width=13 height=13 rx=2 ry=2/><path d=&quot;M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1&quot;/></svg>'},1500)">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              </button>
+            </div>
+          </div>
           {% if current_user.is_authenticated and current_user.id == wiki.owner_id and wiki.slug != owner.username %}
           <div style="border-top:1px solid var(--border-default);margin:4px 0;"></div>
           <button class="download-option" style="color:var(--color-private);" onclick="deleteWiki()">
