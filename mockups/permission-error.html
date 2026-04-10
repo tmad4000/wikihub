@@ -9,32 +9,39 @@
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg-primary: #0d1117;
-    --bg-secondary: #161b22;
-    --bg-tertiary: #21262d;
-    --border: #30363d;
-    --border-hover: #484f58;
-    --text-primary: #e6edf3;
-    --text-secondary: #8b949e;
-    --text-tertiary: #6e7681;
-    --accent: #58a6ff;
-    --accent-hover: #79c0ff;
-    --accent-muted: rgba(56,139,253,0.15);
-    --green: #3fb950;
-    --orange: #d29922;
-    --orange-muted: rgba(210,153,34,0.15);
-    --red: #f85149;
-    --purple: #bc8cff;
-    --font-body: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
-    --radius: 6px;
-    --radius-lg: 8px;
-    --space-xs: 4px;
-    --space-sm: 8px;
-    --space-md: 16px;
-    --space-lg: 24px;
-    --space-xl: 32px;
-    --space-2xl: 48px;
+    --bg-base: #0f0e0c;
+    --bg-surface: #191714;
+    --bg-elevated: #221f1b;
+    --bg-overlay: #2a2622;
+    --text-primary: #e8e0d4;
+    --text-secondary: #b8ad9e;
+    --text-tertiary: #887d6e;
+    --text-muted: #5a5248;
+    --accent: #d4a04a;
+    --accent-hover: #e0b35a;
+    --accent-muted: rgba(212, 160, 74, 0.12);
+    --accent-subtle: rgba(212, 160, 74, 0.06);
+    --color-public: #7a9e6b;
+    --color-private: #c45c3c;
+    --color-unlisted: #b8ad9e;
+    --color-edit: #d4a04a;
+    --color-wikilink: #d4a04a;
+    --color-external: #7a9bb5;
+    --color-success: #7a9e6b;
+    --color-warning: #d4a04a;
+    --color-error: #c45c3c;
+    --border-default: rgba(200, 180, 150, 0.08);
+    --border-emphasis: rgba(200, 180, 150, 0.15);
+    --border-strong: rgba(200, 180, 150, 0.25);
+    --border-accent: rgba(212, 160, 74, 0.4);
+    --control-bg: rgba(0, 0, 0, 0.2);
+    --control-bg-hover: rgba(200, 180, 150, 0.08);
+    --control-border: rgba(200, 180, 150, 0.12);
+    --font-body: 'Inter', -apple-system, sans-serif;
+    --font-mono: 'IBM Plex Mono', 'Menlo', monospace;
+    --radius-sm: 4px;
+    --radius-md: 6px;
+    --radius-lg: 10px;
     --touch-min: 44px;
   }
 
@@ -45,7 +52,7 @@
     font-size: 16px;
     line-height: 1.5;
     color: var(--text-primary);
-    background: var(--bg-primary);
+    background: var(--bg-base);
     -webkit-font-smoothing: antialiased;
     min-height: 100vh;
     display: flex;
@@ -56,38 +63,39 @@
   .topnav {
     display: flex;
     align-items: center;
-    gap: var(--space-md);
-    padding: var(--space-sm) var(--space-md);
-    border-bottom: 1px solid var(--border);
-    background: var(--bg-secondary);
+    gap: 16px;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border-default);
+    background: var(--bg-surface);
     min-height: var(--touch-min);
     flex-shrink: 0;
   }
   .topnav-logo {
-    font-weight: 700;
-    font-size: 18px;
-    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-weight: 500;
+    font-size: 16px;
     text-decoration: none;
     white-space: nowrap;
   }
-  .topnav-logo span { color: var(--accent); }
+  .topnav-logo .bracket { color: var(--text-tertiary); }
+  .topnav-logo .name { color: var(--text-primary); }
   .topnav-right {
     display: flex;
     align-items: center;
-    gap: var(--space-sm);
+    gap: 8px;
     margin-left: auto;
   }
   .topnav-right a {
     color: var(--text-secondary);
     text-decoration: none;
     font-size: 14px;
-    padding: var(--space-sm) var(--space-md);
-    border-radius: var(--radius);
+    padding: 8px 12px;
+    border-radius: var(--radius-md);
     min-height: var(--touch-min);
     display: flex;
     align-items: center;
   }
-  .topnav-right a:hover { color: var(--text-primary); background: var(--bg-tertiary); }
+  .topnav-right a:hover { color: var(--text-primary); background: var(--control-bg-hover); }
 
   /* center content */
   .error-page {
@@ -95,55 +103,61 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: var(--space-lg);
+    padding: 24px;
   }
 
   .error-card {
     text-align: center;
-    max-width: 480px;
+    max-width: 460px;
     width: 100%;
   }
 
   .error-icon {
-    font-size: 72px;
-    margin-bottom: var(--space-lg);
-    opacity: 0.7;
+    margin-bottom: 24px;
     display: block;
-    line-height: 1;
+  }
+  .error-icon svg {
+    width: 72px;
+    height: 72px;
   }
 
   .error-heading {
     font-size: 28px;
     font-weight: 700;
+    letter-spacing: -0.02em;
     color: var(--text-primary);
-    margin-bottom: var(--space-sm);
+    margin-bottom: 8px;
   }
 
   .error-sub {
     font-size: 16px;
     color: var(--text-secondary);
-    margin-bottom: var(--space-xl);
+    margin-bottom: 32px;
     line-height: 1.6;
   }
 
   .error-wiki-ref {
     display: inline-flex;
     align-items: center;
-    gap: var(--space-sm);
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: var(--space-sm) var(--space-md);
-    margin-bottom: var(--space-xl);
+    gap: 8px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    padding: 10px 16px;
+    margin-bottom: 32px;
     font-family: var(--font-mono);
     font-size: 14px;
-    color: var(--text-secondary);
+    color: var(--text-tertiary);
   }
-  .error-wiki-ref .lock { color: var(--orange); }
+  .error-wiki-ref .lock-icon svg {
+    width: 16px;
+    height: 16px;
+    display: block;
+  }
 
   .error-actions {
     display: flex;
-    gap: var(--space-md);
+    gap: 12px;
     justify-content: center;
     flex-wrap: wrap;
   }
@@ -152,9 +166,9 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: var(--space-sm);
+    gap: 8px;
     padding: 10px 24px;
-    border-radius: var(--radius);
+    border-radius: var(--radius-md);
     font-family: var(--font-body);
     font-size: 16px;
     font-weight: 500;
@@ -162,36 +176,23 @@
     text-decoration: none;
     min-height: var(--touch-min);
     min-width: 140px;
-    transition: background 0.1s, border-color 0.1s;
   }
   .btn-primary {
     background: var(--accent);
     border: 1px solid var(--accent);
-    color: #fff;
+    color: var(--bg-base);
   }
   .btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
   .btn-secondary {
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-emphasis);
     color: var(--text-primary);
   }
-  .btn-secondary:hover { border-color: var(--border-hover); background: var(--border); }
-
-  .error-footer {
-    margin-top: var(--space-2xl);
-    font-size: 13px;
-    color: var(--text-tertiary);
-  }
-  .error-footer code {
-    font-family: var(--font-mono);
-    background: var(--bg-secondary);
-    padding: 2px 6px;
-    border-radius: 3px;
-  }
+  .btn-secondary:hover { border-color: var(--border-strong); background: var(--bg-overlay); }
 
   @media (max-width: 767px) {
     .error-heading { font-size: 22px; }
-    .error-icon { font-size: 56px; }
+    .error-icon svg { width: 56px; height: 56px; }
     .error-actions { flex-direction: column; align-items: center; }
     .btn { width: 100%; max-width: 280px; }
   }
@@ -200,7 +201,7 @@
 <body>
 
 <nav class="topnav">
-  <a href="/" class="topnav-logo">wiki<span>hub</span></a>
+  <a href="/" class="topnav-logo"><span class="bracket">[[</span><span class="name">wikihub</span><span class="bracket">]]</span></a>
   <div class="topnav-right">
     <a href="/explore">Explore</a>
     <a href="/login">Sign in</a>
@@ -209,27 +210,30 @@
 
 <main class="error-page">
   <div class="error-card">
-    <span class="error-icon">🔒</span>
+    <span class="error-icon">
+      <svg viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="16" y="32" width="40" height="28" rx="4" stroke="var(--color-private)" stroke-width="2.5"/>
+        <path d="M24 32V24a12 12 0 0124 0v8" stroke="var(--color-private)" stroke-width="2.5" stroke-linecap="round"/>
+        <circle cx="36" cy="44" r="3" fill="var(--color-private)"/>
+        <line x1="36" y1="47" x2="36" y2="52" stroke="var(--color-private)" stroke-width="2.5" stroke-linecap="round"/>
+      </svg>
+    </span>
 
     <h1 class="error-heading">You don't have access to this page</h1>
 
     <p class="error-sub">
-      This page is private. If you think you should have access, contact the wiki owner.
+      This page is private. Contact the wiki owner for access.
     </p>
 
     <div class="error-wiki-ref">
-      <span class="lock">🔒</span>
-      @alice / ml-research
+      <span class="lock-icon"><svg viewBox="0 0 16 16" fill="none" stroke="var(--color-private)" stroke-width="1.5"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5 7V5a3 3 0 016 0v2"/></svg></span>
+      @alice / research-wiki
     </div>
 
     <div class="error-actions">
       <a href="/login" class="btn btn-primary">Sign in</a>
       <a href="/explore" class="btn btn-secondary">Go to Explore</a>
     </div>
-
-    <p class="error-footer">
-      <code>403</code> — you can also try requesting access from the wiki owner.
-    </p>
   </div>
 </main>
 

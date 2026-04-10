@@ -9,34 +9,39 @@
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg-primary: #0d1117;
-    --bg-secondary: #161b22;
-    --bg-tertiary: #21262d;
-    --border: #30363d;
-    --border-hover: #484f58;
-    --text-primary: #e6edf3;
-    --text-secondary: #8b949e;
-    --text-tertiary: #6e7681;
-    --accent: #58a6ff;
-    --accent-hover: #79c0ff;
-    --accent-muted: rgba(56,139,253,0.15);
-    --green: #3fb950;
-    --green-muted: rgba(63,185,80,0.15);
-    --orange: #d29922;
-    --orange-muted: rgba(210,153,34,0.15);
-    --red: #f85149;
-    --red-muted: rgba(248,81,73,0.15);
-    --purple: #bc8cff;
-    --font-body: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
-    --radius: 6px;
-    --radius-lg: 8px;
-    --space-xs: 4px;
-    --space-sm: 8px;
-    --space-md: 16px;
-    --space-lg: 24px;
-    --space-xl: 32px;
-    --space-2xl: 48px;
+    --bg-base: #0f0e0c;
+    --bg-surface: #191714;
+    --bg-elevated: #221f1b;
+    --bg-overlay: #2a2622;
+    --text-primary: #e8e0d4;
+    --text-secondary: #b8ad9e;
+    --text-tertiary: #887d6e;
+    --text-muted: #5a5248;
+    --accent: #d4a04a;
+    --accent-hover: #e0b35a;
+    --accent-muted: rgba(212, 160, 74, 0.12);
+    --accent-subtle: rgba(212, 160, 74, 0.06);
+    --color-public: #7a9e6b;
+    --color-private: #c45c3c;
+    --color-unlisted: #b8ad9e;
+    --color-edit: #d4a04a;
+    --color-wikilink: #d4a04a;
+    --color-external: #7a9bb5;
+    --color-success: #7a9e6b;
+    --color-warning: #d4a04a;
+    --color-error: #c45c3c;
+    --border-default: rgba(200, 180, 150, 0.08);
+    --border-emphasis: rgba(200, 180, 150, 0.15);
+    --border-strong: rgba(200, 180, 150, 0.25);
+    --border-accent: rgba(212, 160, 74, 0.4);
+    --control-bg: rgba(0, 0, 0, 0.2);
+    --control-bg-hover: rgba(200, 180, 150, 0.08);
+    --control-border: rgba(200, 180, 150, 0.12);
+    --font-body: 'Inter', -apple-system, sans-serif;
+    --font-mono: 'IBM Plex Mono', 'Menlo', monospace;
+    --radius-sm: 4px;
+    --radius-md: 6px;
+    --radius-lg: 10px;
     --touch-min: 44px;
   }
 
@@ -47,40 +52,38 @@
     font-size: 16px;
     line-height: 1.5;
     color: var(--text-primary);
-    background: var(--bg-primary);
+    background: var(--bg-base);
     -webkit-font-smoothing: antialiased;
   }
 
-  /* ── section labels ── */
   .demo-section {
     max-width: 800px;
-    margin: var(--space-2xl) auto;
-    padding: 0 var(--space-md);
+    margin: 48px auto;
+    padding: 0 16px;
   }
   .demo-label {
     font-size: 12px;
     font-weight: 600;
-    color: var(--text-tertiary);
+    color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    margin-bottom: var(--space-md);
-    padding-bottom: var(--space-sm);
-    border-bottom: 1px solid var(--border);
+    margin-bottom: 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border-default);
   }
 
-  /* ── standalone panel (centered) ── */
+  /* visibility panel */
   .vis-panel {
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-emphasis);
+    border-radius: var(--radius-md);
     width: 100%;
-    max-width: 360px;
+    max-width: 380px;
     overflow: hidden;
-    box-shadow: 0 16px 48px rgba(0,0,0,0.4);
   }
   .vis-panel-header {
-    padding: var(--space-md);
-    border-bottom: 1px solid var(--border);
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border-default);
     font-size: 14px;
     font-weight: 600;
     color: var(--text-primary);
@@ -91,7 +94,7 @@
   .vis-panel-header .close-btn {
     background: none;
     border: none;
-    color: var(--text-tertiary);
+    color: var(--text-muted);
     font-size: 18px;
     cursor: pointer;
     min-width: var(--touch-min);
@@ -99,35 +102,40 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: var(--radius);
+    border-radius: var(--radius-md);
     margin: -8px -8px -8px 0;
   }
-  .vis-panel-header .close-btn:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+  .vis-panel-header .close-btn:hover { background: var(--control-bg-hover); color: var(--text-primary); }
 
-  .vis-options { padding: var(--space-sm) 0; }
+  .vis-options { padding: 4px 0; }
   .vis-option {
     display: flex;
     align-items: center;
-    gap: var(--space-sm);
-    padding: var(--space-sm) var(--space-md);
+    gap: 10px;
+    padding: 8px 16px;
     cursor: pointer;
     min-height: var(--touch-min);
-    transition: background 0.1s;
     border: none;
+    border-left: 2px solid transparent;
     background: none;
     width: 100%;
     text-align: left;
     font-family: var(--font-body);
     color: var(--text-primary);
   }
-  .vis-option:hover { background: var(--bg-tertiary); }
-  .vis-option.selected { background: var(--accent-muted); }
+  .vis-option:hover { background: var(--control-bg-hover); }
+  .vis-option.selected {
+    background: var(--accent-muted);
+    border-left-color: var(--border-accent);
+  }
   .vis-option .vis-opt-icon {
-    font-size: 18px;
-    min-width: 44px;
-    text-align: left;
+    font-size: 16px;
+    min-width: 40px;
     flex-shrink: 0;
     white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 2px;
   }
   .vis-option .vis-opt-text {
     flex: 1;
@@ -139,81 +147,88 @@
   }
   .vis-option .vis-opt-desc {
     font-size: 12px;
-    color: var(--text-secondary);
+    color: var(--text-tertiary);
     margin-top: 1px;
   }
   .vis-option .vis-opt-check {
     color: var(--accent);
-    font-size: 16px;
+    font-size: 14px;
     width: 20px;
     text-align: center;
     flex-shrink: 0;
   }
 
+  /* semantic colors on labels */
+  .vis-option.opt-private .vis-opt-label { color: var(--color-private); }
+  .vis-option.opt-public-read .vis-opt-label { color: var(--color-public); }
+  .vis-option.opt-public-edit .vis-opt-label { color: var(--color-edit); }
+  .vis-option.opt-unlisted-read .vis-opt-label { color: var(--color-unlisted); }
+  .vis-option.opt-unlisted-edit .vis-opt-label { color: var(--color-edit); }
+
   /* share section */
   .share-section {
-    border-top: 1px solid var(--border);
-    padding: var(--space-md);
+    border-top: 1px solid var(--border-default);
+    padding: 16px;
   }
   .share-section-title {
     font-size: 13px;
     font-weight: 600;
-    color: var(--text-secondary);
-    margin-bottom: var(--space-sm);
+    color: var(--text-tertiary);
+    margin-bottom: 10px;
   }
   .share-input-row {
     display: flex;
-    gap: var(--space-sm);
-    margin-bottom: var(--space-sm);
+    gap: 8px;
+    margin-bottom: 8px;
     align-items: stretch;
   }
   .share-input-row input {
     flex: 1;
     min-width: 0;
     padding: 6px 12px;
-    background: var(--bg-primary);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
+    background: var(--control-bg);
+    border: 1px solid var(--control-border);
+    border-radius: var(--radius-md);
     color: var(--text-primary);
     font-family: var(--font-mono);
     font-size: 14px;
     min-height: var(--touch-min);
   }
-  .share-input-row input::placeholder { color: var(--text-tertiary); }
-  .share-input-row input:focus { outline: none; border-color: var(--accent); }
+  .share-input-row input::placeholder { color: var(--text-muted); }
+  .share-input-row input:focus { outline: none; border-color: var(--border-accent); }
 
   .perm-toggle {
     display: flex;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border: 1px solid var(--control-border);
+    border-radius: var(--radius-md);
     overflow: hidden;
     flex-shrink: 0;
   }
   .perm-toggle button {
     padding: 6px 12px;
-    background: var(--bg-primary);
+    background: var(--control-bg);
     border: none;
-    color: var(--text-secondary);
+    color: var(--text-tertiary);
     font-family: var(--font-body);
     font-size: 13px;
     cursor: pointer;
     min-height: var(--touch-min);
     min-width: var(--touch-min);
   }
-  .perm-toggle button + button { border-left: 1px solid var(--border); }
+  .perm-toggle button + button { border-left: 1px solid var(--control-border); }
   .perm-toggle button.active {
     background: var(--accent-muted);
     color: var(--accent);
     font-weight: 500;
   }
-  .perm-toggle button:hover:not(.active) { background: var(--bg-tertiary); }
+  .perm-toggle button:hover:not(.active) { background: var(--control-bg-hover); }
 
   .btn-add {
     padding: 6px 16px;
     background: var(--accent);
     border: none;
-    border-radius: var(--radius);
-    color: #fff;
+    border-radius: var(--radius-md);
+    color: var(--bg-base);
     font-family: var(--font-body);
     font-size: 14px;
     font-weight: 500;
@@ -225,33 +240,33 @@
 
   .share-list {
     list-style: none;
-    margin-top: var(--space-sm);
+    margin-top: 8px;
   }
   .share-list li {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: var(--space-sm) 0;
-    border-top: 1px solid var(--border);
+    padding: 8px 0;
+    border-top: 1px solid var(--border-default);
     min-height: var(--touch-min);
   }
   .share-list .share-user {
     display: flex;
     align-items: center;
-    gap: var(--space-sm);
+    gap: 8px;
     font-size: 14px;
   }
   .share-list .share-user .user-avatar {
     width: 24px;
     height: 24px;
     border-radius: 50%;
-    background: var(--bg-tertiary);
+    background: var(--bg-overlay);
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 12px;
     font-weight: 600;
-    color: var(--text-secondary);
+    color: var(--text-tertiary);
     flex-shrink: 0;
   }
   .share-list .share-user .username {
@@ -260,23 +275,28 @@
     color: var(--text-primary);
   }
   .share-list .share-perm {
-    font-size: 12px;
-    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 500;
     padding: 2px 8px;
     border-radius: 10px;
-    background: var(--bg-tertiary);
   }
-  .share-list .share-perm.edit { color: var(--accent); background: var(--accent-muted); }
-  .share-list .share-perm.read { color: var(--green); background: var(--green-muted); }
+  .share-list .share-perm.edit {
+    color: var(--color-edit);
+    background: var(--accent-muted);
+  }
+  .share-list .share-perm.read {
+    color: var(--color-public);
+    background: rgba(122, 158, 107, 0.12);
+  }
   .share-list .share-right {
     display: flex;
     align-items: center;
-    gap: var(--space-sm);
+    gap: 8px;
   }
   .share-remove {
     background: none;
     border: none;
-    color: var(--text-tertiary);
+    color: var(--text-muted);
     font-size: 16px;
     cursor: pointer;
     min-width: var(--touch-min);
@@ -284,19 +304,19 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: var(--radius);
+    border-radius: var(--radius-md);
   }
-  .share-remove:hover { background: var(--red-muted); color: var(--red); }
+  .share-remove:hover { background: rgba(196, 92, 60, 0.12); color: var(--color-error); }
 
-  /* ── in-context: toolbar ── */
+  /* toolbar demo */
   .toolbar-demo {
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
     border-radius: var(--radius-lg);
-    padding: var(--space-sm) var(--space-md);
+    padding: 8px 16px;
     display: flex;
     align-items: center;
-    gap: var(--space-md);
+    gap: 16px;
     flex-wrap: wrap;
     position: relative;
     max-width: 700px;
@@ -304,7 +324,7 @@
   .toolbar-path {
     font-family: var(--font-mono);
     font-size: 13px;
-    color: var(--text-secondary);
+    color: var(--text-tertiary);
     flex: 1;
     min-width: 0;
     overflow: hidden;
@@ -314,17 +334,17 @@
   .toolbar-actions {
     display: flex;
     align-items: center;
-    gap: var(--space-sm);
+    gap: 8px;
     flex-shrink: 0;
   }
   .toolbar-btn {
     display: flex;
     align-items: center;
-    gap: var(--space-xs);
+    gap: 4px;
     padding: 6px 12px;
     background: none;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
     color: var(--text-secondary);
     font-family: var(--font-body);
     font-size: 13px;
@@ -332,29 +352,29 @@
     min-height: var(--touch-min);
     white-space: nowrap;
   }
-  .toolbar-btn:hover { border-color: var(--border-hover); color: var(--text-primary); background: var(--bg-tertiary); }
+  .toolbar-btn:hover { border-color: var(--border-emphasis); color: var(--text-primary); background: var(--control-bg-hover); }
   .toolbar-btn.vis-trigger {
-    border-color: var(--green);
-    color: var(--green);
-    background: var(--green-muted);
+    border-color: rgba(122, 158, 107, 0.3);
+    color: var(--color-public);
+    background: rgba(122, 158, 107, 0.08);
   }
   .toolbar-btn.vis-trigger:hover {
-    background: rgba(63,185,80,0.25);
+    background: rgba(122, 158, 107, 0.14);
   }
   .toolbar-save {
     padding: 6px 16px;
-    background: var(--green);
+    background: var(--accent);
     border: none;
-    border-radius: var(--radius);
-    color: #fff;
+    border-radius: var(--radius-md);
+    color: var(--bg-base);
     font-family: var(--font-body);
     font-size: 14px;
     font-weight: 500;
     cursor: pointer;
     min-height: var(--touch-min);
   }
+  .toolbar-save:hover { background: var(--accent-hover); }
 
-  /* dropdown positioned from toolbar */
   .toolbar-dropdown-wrapper {
     position: relative;
     display: inline-flex;
@@ -366,14 +386,13 @@
     z-index: 50;
   }
 
-  /* center helper for standalone */
   .center-panel {
     display: flex;
     justify-content: center;
   }
 
   @media (max-width: 767px) {
-    .demo-section { margin: var(--space-lg) auto; }
+    .demo-section { margin: 24px auto; }
     .vis-panel { max-width: 100%; }
     .share-input-row { flex-wrap: wrap; }
     .share-input-row input { min-width: 100%; }
@@ -386,19 +405,19 @@
 </head>
 <body>
 
-<!-- ─── STANDALONE PANEL (centered) ─── -->
+<!-- standalone panel (centered) -->
 <div class="demo-section">
   <div class="demo-label">Standalone — visibility &amp; sharing panel</div>
   <div class="center-panel">
     <div class="vis-panel">
       <div class="vis-panel-header">
         Page visibility
-        <button class="close-btn" aria-label="Close">×</button>
+        <button class="close-btn" aria-label="Close">&times;</button>
       </div>
 
       <div class="vis-options">
-        <button class="vis-option">
-          <span class="vis-opt-icon">🔒</span>
+        <button class="vis-option opt-private">
+          <span class="vis-opt-icon">&#128274;</span>
           <div class="vis-opt-text">
             <div class="vis-opt-label">Private</div>
             <div class="vis-opt-desc">Only you can see this page</div>
@@ -406,17 +425,17 @@
           <span class="vis-opt-check"></span>
         </button>
 
-        <button class="vis-option selected">
-          <span class="vis-opt-icon">🌐</span>
+        <button class="vis-option opt-public-read selected">
+          <span class="vis-opt-icon">&#127760;</span>
           <div class="vis-opt-text">
             <div class="vis-opt-label">Public (read)</div>
             <div class="vis-opt-desc">Anyone can read, only you can edit</div>
           </div>
-          <span class="vis-opt-check">✓</span>
+          <span class="vis-opt-check">&#10003;</span>
         </button>
 
-        <button class="vis-option">
-          <span class="vis-opt-icon">🌐 ✏️</span>
+        <button class="vis-option opt-public-edit">
+          <span class="vis-opt-icon">&#127760; &#9998;</span>
           <div class="vis-opt-text">
             <div class="vis-opt-label">Public (edit)</div>
             <div class="vis-opt-desc">Anyone can read and edit, no account required</div>
@@ -424,8 +443,8 @@
           <span class="vis-opt-check"></span>
         </button>
 
-        <button class="vis-option">
-          <span class="vis-opt-icon">👁</span>
+        <button class="vis-option opt-unlisted-read">
+          <span class="vis-opt-icon">&#128065;</span>
           <div class="vis-opt-text">
             <div class="vis-opt-label">Unlisted (read)</div>
             <div class="vis-opt-desc">Accessible by URL, not discoverable</div>
@@ -433,8 +452,8 @@
           <span class="vis-opt-check"></span>
         </button>
 
-        <button class="vis-option">
-          <span class="vis-opt-icon">👁 ✏️</span>
+        <button class="vis-option opt-unlisted-edit">
+          <span class="vis-opt-icon">&#128065; &#9998;</span>
           <div class="vis-opt-text">
             <div class="vis-opt-label">Unlisted (edit)</div>
             <div class="vis-opt-desc">Anyone with URL can read and edit</div>
@@ -463,7 +482,7 @@
             </div>
             <div class="share-right">
               <span class="share-perm edit">edit</span>
-              <button class="share-remove" aria-label="Remove @bob">×</button>
+              <button class="share-remove" aria-label="Remove @bob">&times;</button>
             </div>
           </li>
           <li>
@@ -473,7 +492,7 @@
             </div>
             <div class="share-right">
               <span class="share-perm read">read</span>
-              <button class="share-remove" aria-label="Remove @carol">×</button>
+              <button class="share-remove" aria-label="Remove @carol">&times;</button>
             </div>
           </li>
         </ul>
@@ -482,7 +501,7 @@
   </div>
 </div>
 
-<!-- ─── IN CONTEXT: editor toolbar ─── -->
+<!-- in context: editor toolbar -->
 <div class="demo-section">
   <div class="demo-label">In context — editor toolbar with dropdown open</div>
 
@@ -492,17 +511,17 @@
       <button class="toolbar-btn">Preview</button>
       <button class="toolbar-btn">History</button>
       <div class="toolbar-dropdown-wrapper">
-        <button class="toolbar-btn vis-trigger">🌐 Public (read) ▾</button>
+        <button class="toolbar-btn vis-trigger">&#127760; Public (read) &#9662;</button>
         <div class="toolbar-dropdown">
           <div class="vis-panel">
             <div class="vis-panel-header">
               Page visibility
-              <button class="close-btn" aria-label="Close">×</button>
+              <button class="close-btn" aria-label="Close">&times;</button>
             </div>
 
             <div class="vis-options">
-              <button class="vis-option">
-                <span class="vis-opt-icon">🔒</span>
+              <button class="vis-option opt-private">
+                <span class="vis-opt-icon">&#128274;</span>
                 <div class="vis-opt-text">
                   <div class="vis-opt-label">Private</div>
                   <div class="vis-opt-desc">Only you can see this page</div>
@@ -510,17 +529,17 @@
                 <span class="vis-opt-check"></span>
               </button>
 
-              <button class="vis-option selected">
-                <span class="vis-opt-icon">🌐</span>
+              <button class="vis-option opt-public-read selected">
+                <span class="vis-opt-icon">&#127760;</span>
                 <div class="vis-opt-text">
                   <div class="vis-opt-label">Public (read)</div>
                   <div class="vis-opt-desc">Anyone can read, only you can edit</div>
                 </div>
-                <span class="vis-opt-check">✓</span>
+                <span class="vis-opt-check">&#10003;</span>
               </button>
 
-              <button class="vis-option">
-                <span class="vis-opt-icon">🌐 ✏️</span>
+              <button class="vis-option opt-public-edit">
+                <span class="vis-opt-icon">&#127760; &#9998;</span>
                 <div class="vis-opt-text">
                   <div class="vis-opt-label">Public (edit)</div>
                   <div class="vis-opt-desc">Anyone can read and edit, no account required</div>
@@ -528,8 +547,8 @@
                 <span class="vis-opt-check"></span>
               </button>
 
-              <button class="vis-option">
-                <span class="vis-opt-icon">👁</span>
+              <button class="vis-option opt-unlisted-read">
+                <span class="vis-opt-icon">&#128065;</span>
                 <div class="vis-opt-text">
                   <div class="vis-opt-label">Unlisted (read)</div>
                   <div class="vis-opt-desc">Accessible by URL, not discoverable</div>
@@ -537,8 +556,8 @@
                 <span class="vis-opt-check"></span>
               </button>
 
-              <button class="vis-option">
-                <span class="vis-opt-icon">👁 ✏️</span>
+              <button class="vis-option opt-unlisted-edit">
+                <span class="vis-opt-icon">&#128065; &#9998;</span>
                 <div class="vis-opt-text">
                   <div class="vis-opt-label">Unlisted (edit)</div>
                   <div class="vis-opt-desc">Anyone with URL can read and edit</div>
@@ -567,7 +586,7 @@
                   </div>
                   <div class="share-right">
                     <span class="share-perm edit">edit</span>
-                    <button class="share-remove" aria-label="Remove @bob">×</button>
+                    <button class="share-remove" aria-label="Remove @bob">&times;</button>
                   </div>
                 </li>
                 <li>
@@ -577,7 +596,7 @@
                   </div>
                   <div class="share-right">
                     <span class="share-perm read">read</span>
-                    <button class="share-remove" aria-label="Remove @carol">×</button>
+                    <button class="share-remove" aria-label="Remove @carol">&times;</button>
                   </div>
                 </li>
               </ul>
@@ -591,7 +610,6 @@
 </div>
 
 <script>
-// toggle visibility options
 document.querySelectorAll('.vis-options').forEach(group => {
   group.addEventListener('click', e => {
     const opt = e.target.closest('.vis-option');
@@ -605,7 +623,6 @@ document.querySelectorAll('.vis-options').forEach(group => {
   });
 });
 
-// toggle permission read/edit
 document.querySelectorAll('.perm-toggle').forEach(toggle => {
   toggle.addEventListener('click', e => {
     const btn = e.target.closest('button');

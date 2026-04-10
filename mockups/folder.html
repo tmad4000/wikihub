@@ -9,30 +9,39 @@
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg-primary: #0d1117;
-    --bg-secondary: #161b22;
-    --bg-tertiary: #21262d;
-    --border: #30363d;
-    --border-hover: #484f58;
-    --text-primary: #e6edf3;
-    --text-secondary: #8b949e;
-    --text-tertiary: #6e7681;
-    --accent: #58a6ff;
-    --accent-hover: #79c0ff;
-    --green: #3fb950;
-    --orange: #d29922;
-    --red: #f85149;
-    --purple: #bc8cff;
-    --font-body: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
-    --radius: 6px;
-    --radius-lg: 8px;
-    --space-xs: 4px;
-    --space-sm: 8px;
-    --space-md: 16px;
-    --space-lg: 24px;
-    --space-xl: 32px;
-    --space-2xl: 48px;
+    --bg-base: #0f0e0c;
+    --bg-surface: #191714;
+    --bg-elevated: #221f1b;
+    --bg-overlay: #2a2622;
+    --text-primary: #e8e0d4;
+    --text-secondary: #b8ad9e;
+    --text-tertiary: #887d6e;
+    --text-muted: #5a5248;
+    --accent: #d4a04a;
+    --accent-hover: #e0b35a;
+    --accent-muted: rgba(212, 160, 74, 0.12);
+    --accent-subtle: rgba(212, 160, 74, 0.06);
+    --color-public: #7a9e6b;
+    --color-private: #c45c3c;
+    --color-unlisted: #b8ad9e;
+    --color-edit: #d4a04a;
+    --color-wikilink: #d4a04a;
+    --color-external: #7a9bb5;
+    --color-success: #7a9e6b;
+    --color-warning: #d4a04a;
+    --color-error: #c45c3c;
+    --border-default: rgba(200, 180, 150, 0.08);
+    --border-emphasis: rgba(200, 180, 150, 0.15);
+    --border-strong: rgba(200, 180, 150, 0.25);
+    --border-accent: rgba(212, 160, 74, 0.4);
+    --control-bg: rgba(0, 0, 0, 0.2);
+    --control-bg-hover: rgba(200, 180, 150, 0.08);
+    --control-border: rgba(200, 180, 150, 0.12);
+    --font-body: 'Inter', -apple-system, sans-serif;
+    --font-mono: 'IBM Plex Mono', 'Menlo', monospace;
+    --radius-sm: 4px;
+    --radius-md: 6px;
+    --radius-lg: 10px;
     --touch-min: 44px;
   }
 
@@ -43,7 +52,7 @@
     font-size: 16px;
     line-height: 1.5;
     color: var(--text-primary);
-    background: var(--bg-primary);
+    background: var(--bg-base);
     -webkit-font-smoothing: antialiased;
   }
 
@@ -51,23 +60,25 @@
   .topnav {
     display: flex;
     align-items: center;
-    gap: var(--space-md);
-    padding: var(--space-sm) var(--space-md);
-    border-bottom: 1px solid var(--border);
-    background: var(--bg-secondary);
+    gap: 16px;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border-default);
+    background: var(--bg-surface);
     min-height: var(--touch-min);
     position: sticky;
     top: 0;
     z-index: 100;
   }
   .topnav-logo {
-    font-weight: 700;
-    font-size: 18px;
-    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-weight: 500;
+    font-size: 16px;
     text-decoration: none;
     white-space: nowrap;
   }
-  .topnav-logo span { color: var(--accent); }
+  .topnav-logo .bracket { color: var(--text-tertiary); }
+  .topnav-logo .name { color: var(--text-primary); }
+
   .topnav-search {
     flex: 1;
     max-width: 480px;
@@ -76,25 +87,25 @@
   .topnav-search input {
     width: 100%;
     padding: 6px 12px 6px 32px;
-    background: var(--bg-primary);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
+    background: var(--control-bg);
+    border: 1px solid var(--control-border);
+    border-radius: var(--radius-md);
     color: var(--text-primary);
     font-family: var(--font-body);
     font-size: 14px;
     min-height: var(--touch-min);
   }
-  .topnav-search input::placeholder { color: var(--text-tertiary); }
-  .topnav-search input:focus { outline: none; border-color: var(--accent); }
+  .topnav-search input::placeholder { color: var(--text-muted); }
+  .topnav-search input:focus { outline: none; border-color: var(--border-accent); }
   .topnav-search .search-icon {
     position: absolute;
     left: 10px;
     top: 50%;
     transform: translateY(-50%);
-    color: var(--text-tertiary);
-    font-size: 14px;
+    color: var(--text-muted);
     pointer-events: none;
   }
+  .topnav-search .search-icon svg { width: 16px; height: 16px; display: block; }
   .topnav-search .kbd {
     position: absolute;
     right: 8px;
@@ -102,40 +113,41 @@
     transform: translateY(-50%);
     font-family: var(--font-mono);
     font-size: 11px;
-    color: var(--text-tertiary);
-    border: 1px solid var(--border);
-    border-radius: 3px;
+    color: var(--text-muted);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
     padding: 1px 5px;
-    background: var(--bg-secondary);
+    background: var(--bg-surface);
   }
+
   .topnav-right {
     display: flex;
     align-items: center;
-    gap: var(--space-sm);
+    gap: 8px;
     margin-left: auto;
   }
   .topnav-right a {
     color: var(--text-secondary);
     text-decoration: none;
     font-size: 14px;
-    padding: var(--space-sm) var(--space-md);
-    border-radius: var(--radius);
+    padding: 8px 12px;
+    border-radius: var(--radius-md);
     min-height: var(--touch-min);
     display: flex;
     align-items: center;
   }
-  .topnav-right a:hover { color: var(--text-primary); background: var(--bg-tertiary); }
+  .topnav-right a:hover { color: var(--text-primary); background: var(--control-bg-hover); }
   .avatar {
     width: 28px;
     height: 28px;
     border-radius: 50%;
-    background: linear-gradient(135deg, var(--accent), var(--purple));
+    background: var(--accent);
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 13px;
     font-weight: 600;
-    color: #fff;
+    color: var(--bg-base);
     flex-shrink: 0;
   }
 
@@ -145,66 +157,77 @@
     min-height: calc(100vh - var(--touch-min));
   }
 
-  /* sidebar */
+  /* sidebar — same bg as canvas */
   .sidebar {
     width: 260px;
-    border-right: 1px solid var(--border);
-    background: var(--bg-secondary);
-    padding: var(--space-md);
+    border-right: 1px solid var(--border-default);
+    background: var(--bg-base);
+    padding: 16px;
     overflow-y: auto;
     flex-shrink: 0;
   }
   .sidebar-header {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
-    color: var(--text-secondary);
+    color: var(--text-tertiary);
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    margin-bottom: var(--space-sm);
+    margin-bottom: 8px;
   }
   .sidebar-tree { list-style: none; }
   .sidebar-tree li { margin: 0; }
   .sidebar-tree a {
     display: flex;
     align-items: center;
-    gap: var(--space-sm);
-    padding: 6px var(--space-sm);
+    gap: 8px;
+    padding: 6px 8px;
     color: var(--text-secondary);
     text-decoration: none;
     font-size: 14px;
-    border-radius: var(--radius);
+    border-radius: var(--radius-md);
     min-height: var(--touch-min);
+    border-left: 2px solid transparent;
   }
-  .sidebar-tree a:hover { background: var(--bg-tertiary); color: var(--text-primary); }
-  .sidebar-tree a.active { background: rgba(88,166,255,0.1); color: var(--accent); }
-  .sidebar-tree .tree-icon { font-size: 14px; width: 18px; text-align: center; flex-shrink: 0; }
+  .sidebar-tree a:hover { background: var(--control-bg-hover); color: var(--text-primary); }
+  .sidebar-tree a.active {
+    background: var(--accent-subtle);
+    color: var(--accent);
+    border-left-color: var(--border-accent);
+  }
+  .sidebar-tree .tree-icon {
+    width: 18px;
+    text-align: center;
+    flex-shrink: 0;
+    color: var(--text-tertiary);
+  }
+  .sidebar-tree a.active .tree-icon { color: var(--accent); }
   .sidebar-tree .tree-indent { padding-left: 22px; }
   .sidebar-tree .tree-indent-2 { padding-left: 44px; }
-  .sidebar-section + .sidebar-section { margin-top: var(--space-lg); }
+  .sidebar-section + .sidebar-section { margin-top: 24px; }
   .sidebar-badge {
     font-size: 11px;
     margin-left: auto;
     padding: 1px 6px;
     border-radius: 10px;
-    background: var(--bg-tertiary);
-    color: var(--text-tertiary);
+    background: var(--bg-elevated);
+    color: var(--text-muted);
   }
 
   /* main content */
   .main {
     flex: 1;
     min-width: 0;
-    padding: var(--space-lg);
+    padding: 24px;
   }
 
   /* breadcrumb */
   .breadcrumb {
     display: flex;
     align-items: center;
-    gap: var(--space-xs);
+    gap: 4px;
     font-size: 14px;
     color: var(--text-secondary);
-    margin-bottom: var(--space-lg);
+    margin-bottom: 24px;
     flex-wrap: wrap;
   }
   .breadcrumb a {
@@ -213,7 +236,7 @@
     padding: 2px 0;
   }
   .breadcrumb a:hover { text-decoration: underline; }
-  .breadcrumb .sep { color: var(--text-tertiary); margin: 0 2px; }
+  .breadcrumb .sep { color: var(--text-muted); margin: 0 2px; }
   .breadcrumb .current { color: var(--text-primary); font-weight: 500; }
 
   /* folder header */
@@ -221,87 +244,91 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: var(--space-lg);
-    gap: var(--space-md);
+    margin-bottom: 24px;
+    gap: 16px;
     flex-wrap: wrap;
   }
   .folder-title {
     font-size: 24px;
-    font-weight: 600;
+    font-weight: 700;
+    letter-spacing: -0.02em;
     display: flex;
     align-items: center;
-    gap: var(--space-sm);
+    gap: 8px;
   }
-  .folder-title .folder-icon { color: var(--accent); font-size: 20px; }
+  .folder-title .folder-icon { color: var(--text-tertiary); }
+  .folder-title .folder-icon svg { width: 22px; height: 22px; }
   .folder-actions {
     display: flex;
-    gap: var(--space-sm);
+    gap: 8px;
   }
   .btn {
     display: inline-flex;
     align-items: center;
-    gap: var(--space-sm);
+    gap: 8px;
     padding: 6px 16px;
-    border-radius: var(--radius);
+    border-radius: var(--radius-md);
     font-family: var(--font-body);
     font-size: 14px;
     font-weight: 500;
     cursor: pointer;
-    border: 1px solid var(--border);
-    background: var(--bg-tertiary);
+    border: 1px solid var(--border-emphasis);
+    background: var(--bg-elevated);
     color: var(--text-primary);
     min-height: var(--touch-min);
     text-decoration: none;
     white-space: nowrap;
   }
-  .btn:hover { border-color: var(--border-hover); background: var(--border); }
+  .btn:hover { border-color: var(--border-strong); background: var(--bg-overlay); }
   .btn-primary {
     background: var(--accent);
     border-color: var(--accent);
-    color: #fff;
+    color: var(--bg-base);
   }
   .btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 
-  /* file table */
+  /* file listing */
   .file-table {
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-default);
     border-radius: var(--radius-lg);
     overflow: hidden;
   }
   .file-table-header {
     display: flex;
     align-items: center;
-    padding: var(--space-sm) var(--space-md);
-    background: var(--bg-secondary);
-    border-bottom: 1px solid var(--border);
-    font-size: 13px;
-    color: var(--text-secondary);
-    gap: var(--space-md);
+    padding: 8px 16px;
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border-default);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    gap: 16px;
   }
-  .file-table-header .col-name { flex: 1; }
+  .file-table-header .col-name { flex: 1; padding-left: 34px; }
   .file-table-header .col-desc { flex: 2; }
+  .file-table-header .col-vis { width: 100px; text-align: center; }
   .file-table-header .col-date { width: 120px; text-align: right; }
-  .file-table-header .col-vis { width: 80px; text-align: center; }
 
   .file-row {
     display: flex;
     align-items: center;
-    padding: var(--space-sm) var(--space-md);
-    border-bottom: 1px solid var(--border);
-    gap: var(--space-md);
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border-default);
+    gap: 16px;
     min-height: var(--touch-min);
-    transition: background 0.1s;
+    background: var(--bg-base);
   }
   .file-row:last-child { border-bottom: none; }
-  .file-row:hover { background: var(--bg-secondary); }
+  .file-row:hover { background: var(--control-bg-hover); }
   .file-row .file-icon {
-    font-size: 16px;
     width: 20px;
     text-align: center;
     flex-shrink: 0;
+    color: var(--text-tertiary);
   }
-  .file-row .file-icon.folder { color: var(--accent); }
-  .file-row .file-icon.file { color: var(--text-tertiary); }
+  .file-row .file-icon svg { width: 18px; height: 18px; display: block; }
   .file-row .file-name {
     flex: 1;
     min-width: 0;
@@ -331,31 +358,31 @@
     white-space: nowrap;
   }
   .file-row .file-vis {
-    width: 80px;
+    width: 100px;
     text-align: center;
     flex-shrink: 0;
   }
   .vis-badge {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: 3px;
     font-size: 11px;
+    font-weight: 500;
     padding: 2px 8px;
     border-radius: 10px;
-    cursor: pointer;
     white-space: nowrap;
   }
   .vis-badge.public {
-    background: rgba(63,185,80,0.15);
-    color: var(--green);
+    background: rgba(122, 158, 107, 0.12);
+    color: var(--color-public);
   }
   .vis-badge.private {
-    background: rgba(248,81,73,0.15);
-    color: var(--red);
+    background: rgba(196, 92, 60, 0.12);
+    color: var(--color-private);
   }
   .vis-badge.unlisted {
-    background: rgba(210,153,34,0.15);
-    color: var(--orange);
+    background: rgba(184, 173, 158, 0.1);
+    color: var(--color-unlisted);
   }
 
   /* hamburger */
@@ -371,16 +398,15 @@
     align-items: center;
     justify-content: center;
   }
-
   .sidebar-overlay {
     display: none;
     position: fixed;
     inset: 0;
-    background: rgba(0,0,0,0.5);
+    background: rgba(0,0,0,0.6);
     z-index: 90;
   }
 
-  /* mobile */
+  /* mobile-first breakpoints */
   @media (max-width: 767px) {
     .hamburger { display: flex; }
     .sidebar {
@@ -401,7 +427,7 @@
     .file-table-header .col-desc { display: none; }
     .file-row .file-date { width: auto; }
     .file-table-header .col-date { width: auto; }
-    .main { padding: var(--space-md); }
+    .main { padding: 16px; }
     .folder-title { font-size: 20px; }
   }
 
@@ -414,11 +440,13 @@
 <body>
 
 <nav class="topnav">
-  <button class="hamburger" onclick="toggleSidebar()" aria-label="Toggle sidebar">☰</button>
-  <a href="/" class="topnav-logo">wiki<span>hub</span></a>
+  <button class="hamburger" onclick="toggleSidebar()" aria-label="Toggle sidebar">
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="3" y1="5" x2="17" y2="5"/><line x1="3" y1="10" x2="17" y2="10"/><line x1="3" y1="15" x2="17" y2="15"/></svg>
+  </button>
+  <a href="/" class="topnav-logo"><span class="bracket">[[</span><span class="name">wikihub</span><span class="bracket">]]</span></a>
   <div class="topnav-search">
-    <span class="search-icon">🔍</span>
-    <input type="text" placeholder="Search wikis, pages, users…">
+    <span class="search-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4.5"/><line x1="10.5" y1="10.5" x2="14" y2="14"/></svg></span>
+    <input type="text" placeholder="Search wikis, pages, users...">
     <span class="kbd">⌘K</span>
   </div>
   <div class="topnav-right">
@@ -434,48 +462,48 @@
     <div class="sidebar-section">
       <div class="sidebar-header">ml-research</div>
       <ul class="sidebar-tree">
-        <li><a href="#"><span class="tree-icon">📄</span> index.md</a></li>
-        <li><a href="#"><span class="tree-icon">📄</span> schema.md</a></li>
-        <li><a href="#"><span class="tree-icon">📄</span> log.md</a></li>
-        <li><a href="#"><span class="tree-icon">📂</span> raw/</a></li>
+        <li><a href="#"><span class="tree-icon"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 1h5l4 4v9a1 1 0 01-1 1H4a1 1 0 01-1-1V2a1 1 0 011-1z"/><path d="M9 1v4h4"/></svg></span> index.md</a></li>
+        <li><a href="#"><span class="tree-icon"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 1h5l4 4v9a1 1 0 01-1 1H4a1 1 0 01-1-1V2a1 1 0 011-1z"/><path d="M9 1v4h4"/></svg></span> schema.md</a></li>
+        <li><a href="#"><span class="tree-icon"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 1h5l4 4v9a1 1 0 01-1 1H4a1 1 0 01-1-1V2a1 1 0 011-1z"/><path d="M9 1v4h4"/></svg></span> log.md</a></li>
+        <li><a href="#"><span class="tree-icon"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3h4l1 1h5a1 1 0 011 1v7a1 1 0 01-1 1H2a1 1 0 01-1-1V4a1 1 0 011-1z"/></svg></span> raw/</a></li>
         <li>
-          <a href="#"><span class="tree-icon">📂</span> wiki/</a>
+          <a href="#"><span class="tree-icon"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3h4l1 1h5a1 1 0 011 1v7a1 1 0 01-1 1H2a1 1 0 01-1-1V4a1 1 0 011-1z"/></svg></span> wiki/</a>
         </li>
         <li class="tree-indent">
-          <a href="#"><span class="tree-icon">📄</span> overview.md</a>
+          <a href="#"><span class="tree-icon"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 1h5l4 4v9a1 1 0 01-1 1H4a1 1 0 01-1-1V2a1 1 0 011-1z"/><path d="M9 1v4h4"/></svg></span> overview.md</a>
         </li>
         <li class="tree-indent">
-          <a href="#"><span class="tree-icon">📄</span> transformers.md</a>
+          <a href="#"><span class="tree-icon"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 1h5l4 4v9a1 1 0 01-1 1H4a1 1 0 01-1-1V2a1 1 0 011-1z"/><path d="M9 1v4h4"/></svg></span> transformers.md</a>
         </li>
         <li class="tree-indent">
-          <a href="#" class="active"><span class="tree-icon">📂</span> entities/</a>
+          <a href="#" class="active"><span class="tree-icon"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3h4l1 1h5a1 1 0 011 1v7a1 1 0 01-1 1H2a1 1 0 01-1-1V4a1 1 0 011-1z"/></svg></span> entities/</a>
         </li>
         <li class="tree-indent-2">
-          <a href="#"><span class="tree-icon">📂</span> research/</a>
+          <a href="#"><span class="tree-icon"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3h4l1 1h5a1 1 0 011 1v7a1 1 0 01-1 1H2a1 1 0 01-1-1V4a1 1 0 011-1z"/></svg></span> research/</a>
         </li>
         <li class="tree-indent-2">
-          <a href="#"><span class="tree-icon">📄</span> google.md</a>
+          <a href="#"><span class="tree-icon"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 1h5l4 4v9a1 1 0 01-1 1H4a1 1 0 01-1-1V2a1 1 0 011-1z"/><path d="M9 1v4h4"/></svg></span> google.md</a>
         </li>
         <li class="tree-indent-2">
-          <a href="#"><span class="tree-icon">📄</span> openai.md</a>
+          <a href="#"><span class="tree-icon"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 1h5l4 4v9a1 1 0 01-1 1H4a1 1 0 01-1-1V2a1 1 0 011-1z"/><path d="M9 1v4h4"/></svg></span> openai.md</a>
         </li>
         <li class="tree-indent-2">
-          <a href="#"><span class="tree-icon">📄</span> anthropic.md</a>
+          <a href="#"><span class="tree-icon"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 1h5l4 4v9a1 1 0 01-1 1H4a1 1 0 01-1-1V2a1 1 0 011-1z"/><path d="M9 1v4h4"/></svg></span> anthropic.md</a>
         </li>
         <li class="tree-indent-2">
-          <a href="#"><span class="tree-icon">📄</span> meta.md</a>
+          <a href="#"><span class="tree-icon"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 1h5l4 4v9a1 1 0 01-1 1H4a1 1 0 01-1-1V2a1 1 0 011-1z"/><path d="M9 1v4h4"/></svg></span> meta.md</a>
         </li>
         <li class="tree-indent">
-          <a href="#"><span class="tree-icon">📂</span> papers/</a>
+          <a href="#"><span class="tree-icon"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3h4l1 1h5a1 1 0 011 1v7a1 1 0 01-1 1H2a1 1 0 01-1-1V4a1 1 0 011-1z"/></svg></span> papers/</a>
         </li>
       </ul>
     </div>
     <div class="sidebar-section">
       <div class="sidebar-header">Info</div>
       <ul class="sidebar-tree">
-        <li><a href="#"><span class="tree-icon">⭐</span> 42 stars</a></li>
-        <li><a href="#"><span class="tree-icon">🍴</span> 7 forks</a></li>
-        <li><a href="#"><span class="tree-icon">📋</span> 23 pages</a></li>
+        <li><a href="#"><span class="tree-icon" style="color:var(--accent)">&#9733;</span> 42 stars</a></li>
+        <li><a href="#"><span class="tree-icon">&#9906;</span> 7 forks</a></li>
+        <li><a href="#"><span class="tree-icon">&#9638;</span> 23 pages</a></li>
       </ul>
     </div>
   </aside>
@@ -493,60 +521,59 @@
 
     <div class="folder-header">
       <h1 class="folder-title">
-        <span class="folder-icon">📂</span>
+        <span class="folder-icon"><svg viewBox="0 0 20 20" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2.5 4h5l1.5 1.5h6a1 1 0 011 1v8.5a1 1 0 01-1 1h-13a1 1 0 01-1-1V5a1 1 0 011-1z"/></svg></span>
         entities
       </h1>
       <div class="folder-actions">
-        <a href="#" class="btn">⬇ Download</a>
         <a href="#" class="btn btn-primary">+ New page</a>
       </div>
     </div>
 
     <div class="file-table">
       <div class="file-table-header">
-        <div class="col-name" style="padding-left:36px">Name</div>
+        <div class="col-name" style="padding-left:34px">Name</div>
         <div class="col-desc">Description</div>
         <div class="col-vis">Visibility</div>
         <div class="col-date">Modified</div>
       </div>
 
       <div class="file-row">
-        <span class="file-icon folder">📂</span>
+        <span class="file-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3h4l1 1h5a1 1 0 011 1v7a1 1 0 01-1 1H2a1 1 0 01-1-1V4a1 1 0 011-1z"/></svg></span>
         <div class="file-name"><a href="/@alice/ml-research/wiki/entities/research/">research/</a></div>
         <div class="file-desc">Research groups and initiatives</div>
-        <div class="file-vis"><span class="vis-badge public">🌐 public</span></div>
+        <div class="file-vis"><span class="vis-badge public">&#127760; public</span></div>
         <div class="file-date">Apr 7, 2026</div>
       </div>
 
       <div class="file-row">
-        <span class="file-icon file">📄</span>
+        <span class="file-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 1h5l4 4v9a1 1 0 01-1 1H4a1 1 0 01-1-1V2a1 1 0 011-1z"/><path d="M9 1v4h4"/></svg></span>
         <div class="file-name"><a href="/@alice/ml-research/wiki/entities/google">google.md</a></div>
         <div class="file-desc">Google DeepMind overview</div>
-        <div class="file-vis"><span class="vis-badge public">🌐 public</span></div>
+        <div class="file-vis"><span class="vis-badge public">&#127760; public</span></div>
         <div class="file-date">Apr 8, 2026</div>
       </div>
 
       <div class="file-row">
-        <span class="file-icon file">📄</span>
+        <span class="file-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 1h5l4 4v9a1 1 0 01-1 1H4a1 1 0 01-1-1V2a1 1 0 011-1z"/><path d="M9 1v4h4"/></svg></span>
         <div class="file-name"><a href="/@alice/ml-research/wiki/entities/openai">openai.md</a></div>
         <div class="file-desc">OpenAI research and products</div>
-        <div class="file-vis"><span class="vis-badge public">🌐 public</span></div>
+        <div class="file-vis"><span class="vis-badge public">&#127760; public</span></div>
         <div class="file-date">Apr 6, 2026</div>
       </div>
 
       <div class="file-row">
-        <span class="file-icon file">📄</span>
+        <span class="file-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 1h5l4 4v9a1 1 0 01-1 1H4a1 1 0 01-1-1V2a1 1 0 011-1z"/><path d="M9 1v4h4"/></svg></span>
         <div class="file-name"><a href="/@alice/ml-research/wiki/entities/anthropic">anthropic.md</a></div>
         <div class="file-desc">Anthropic and Claude</div>
-        <div class="file-vis"><span class="vis-badge unlisted">👁 unlisted</span></div>
+        <div class="file-vis"><span class="vis-badge unlisted">&#128065; unlisted</span></div>
         <div class="file-date">Apr 9, 2026</div>
       </div>
 
       <div class="file-row">
-        <span class="file-icon file">📄</span>
+        <span class="file-icon"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 1h5l4 4v9a1 1 0 01-1 1H4a1 1 0 01-1-1V2a1 1 0 011-1z"/><path d="M9 1v4h4"/></svg></span>
         <div class="file-name"><a href="/@alice/ml-research/wiki/entities/meta">meta.md</a></div>
         <div class="file-desc">Meta AI / FAIR</div>
-        <div class="file-vis"><span class="vis-badge private">🔒 private</span></div>
+        <div class="file-vis"><span class="vis-badge private">&#128274; private</span></div>
         <div class="file-date">Apr 5, 2026</div>
       </div>
     </div>

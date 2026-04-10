@@ -9,25 +9,37 @@
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg-primary: #0d1117;
-    --bg-secondary: #161b22;
-    --bg-tertiary: #21262d;
-    --border-default: #30363d;
-    --border-muted: #21262d;
-    --text-primary: #e6edf3;
-    --text-secondary: #8b949e;
-    --text-tertiary: #6e7681;
-    --accent: #58a6ff;
-    --accent-hover: #79b8ff;
-    --badge-public: #3fb950;
-    --badge-private: #f85149;
-    --badge-unlisted: #d29922;
-    --badge-edit: #bc8cff;
-    --font-body: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
-    --radius-sm: 6px;
-    --radius-md: 8px;
-    --radius-lg: 12px;
+    --bg-base: #0f0e0c;
+    --bg-surface: #191714;
+    --bg-elevated: #221f1b;
+    --bg-overlay: #2a2622;
+    --text-primary: #e8e0d4;
+    --text-secondary: #b8ad9e;
+    --text-tertiary: #887d6e;
+    --text-muted: #5a5248;
+    --accent: #d4a04a;
+    --accent-hover: #e0b35a;
+    --accent-muted: rgba(212, 160, 74, 0.12);
+    --accent-subtle: rgba(212, 160, 74, 0.06);
+    --color-public: #7a9e6b;
+    --color-private: #c45c3c;
+    --color-unlisted: #b8ad9e;
+    --color-edit: #d4a04a;
+    --color-success: #7a9e6b;
+    --color-warning: #d4a04a;
+    --color-error: #c45c3c;
+    --border-default: rgba(200, 180, 150, 0.08);
+    --border-emphasis: rgba(200, 180, 150, 0.15);
+    --border-strong: rgba(200, 180, 150, 0.25);
+    --border-accent: rgba(212, 160, 74, 0.4);
+    --control-bg: rgba(0, 0, 0, 0.2);
+    --control-bg-hover: rgba(200, 180, 150, 0.08);
+    --control-border: rgba(200, 180, 150, 0.12);
+    --font-body: 'Inter', -apple-system, sans-serif;
+    --font-mono: 'IBM Plex Mono', 'Menlo', monospace;
+    --radius-sm: 4px;
+    --radius-md: 6px;
+    --radius-lg: 10px;
   }
 
   *, *::before, *::after {
@@ -43,7 +55,7 @@
 
   body {
     font-family: var(--font-body);
-    background: var(--bg-primary);
+    background: var(--bg-base);
     color: var(--text-primary);
     line-height: 1.5;
     min-height: 100vh;
@@ -54,7 +66,7 @@
     position: sticky;
     top: 0;
     z-index: 100;
-    background: var(--bg-secondary);
+    background: var(--bg-surface);
     border-bottom: 1px solid var(--border-default);
     padding: 0 16px;
     height: 56px;
@@ -66,38 +78,52 @@
 
   .nav-logo {
     font-family: var(--font-mono);
-    font-weight: 600;
-    font-size: 1.125rem;
-    color: var(--text-primary);
+    font-weight: 500;
+    font-size: 1.0625rem;
     text-decoration: none;
     flex-shrink: 0;
+    line-height: 1;
+  }
+
+  .nav-logo .bracket {
+    color: var(--text-tertiary);
+  }
+
+  .nav-logo .wordmark {
+    color: var(--text-primary);
   }
 
   .nav-search {
     flex: 1;
     max-width: 400px;
     height: 36px;
-    background: var(--bg-primary);
-    border: 1px solid var(--border-default);
+    background: var(--control-bg);
+    border: 1px solid var(--control-border);
     border-radius: var(--radius-md);
     padding: 0 12px;
     color: var(--text-secondary);
     font-size: 0.875rem;
     font-family: var(--font-body);
+    outline: none;
     display: none;
+  }
+
+  .nav-search:focus {
+    border-color: var(--border-accent);
   }
 
   .nav-user {
     width: 32px;
     height: 32px;
     border-radius: 50%;
-    background: var(--accent);
+    background: var(--accent-muted);
+    border: 1px solid var(--border-accent);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 0.75rem;
+    font-size: 0.6875rem;
     font-weight: 600;
-    color: var(--bg-primary);
+    color: var(--accent);
     cursor: pointer;
     flex-shrink: 0;
     min-width: 44px;
@@ -127,13 +153,15 @@
     width: 72px;
     height: 72px;
     border-radius: 50%;
-    background: linear-gradient(135deg, #58a6ff 0%, #bc8cff 100%);
+    background: var(--accent-muted);
+    border: 1px solid var(--border-accent);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 1.5rem;
+    font-size: 1.375rem;
     font-weight: 700;
-    color: #fff;
+    letter-spacing: -0.02em;
+    color: var(--accent);
     flex-shrink: 0;
   }
 
@@ -141,7 +169,7 @@
     .avatar {
       width: 96px;
       height: 96px;
-      font-size: 2rem;
+      font-size: 1.875rem;
     }
     .profile-header { padding: 32px 24px; }
   }
@@ -153,7 +181,9 @@
   .profile-name {
     font-size: 1.375rem;
     font-weight: 700;
+    letter-spacing: -0.02em;
     line-height: 1.2;
+    color: var(--text-primary);
   }
 
   .profile-username {
@@ -175,7 +205,7 @@
 
   /* --- stats bar --- */
   .stats-bar {
-    padding: 16px 16px;
+    padding: 16px;
     border-bottom: 1px solid var(--border-default);
   }
 
@@ -194,7 +224,9 @@
 
   .stat-value {
     font-size: 1.125rem;
-    font-weight: 600;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--text-primary);
   }
 
   .stat-label {
@@ -216,7 +248,6 @@
     max-width: 960px;
     margin: 0 auto;
     display: flex;
-    gap: 0;
   }
 
   .tab {
@@ -242,7 +273,8 @@
   }
 
   .tab-count {
-    background: var(--bg-tertiary);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-default);
     border-radius: 10px;
     padding: 0 7px;
     font-size: 0.75rem;
@@ -268,17 +300,16 @@
 
   /* --- wiki card --- */
   .wiki-card {
-    background: var(--bg-secondary);
+    background: var(--bg-surface);
     border: 1px solid var(--border-default);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-md);
     padding: 16px;
     margin-bottom: 12px;
     transition: border-color 0.15s ease;
   }
 
   .wiki-card:hover {
-    border-color: var(--border-muted);
-    border-color: #484f58;
+    border-color: var(--border-emphasis);
   }
 
   .wiki-card-header {
@@ -290,7 +321,7 @@
   }
 
   .wiki-card-title {
-    font-size: 1.125rem;
+    font-size: 1.0625rem;
     font-weight: 600;
     color: var(--accent);
     text-decoration: none;
@@ -298,6 +329,7 @@
   }
 
   .wiki-card-title:hover {
+    color: var(--accent-hover);
     text-decoration: underline;
   }
 
@@ -328,43 +360,18 @@
     gap: 4px;
   }
 
-  /* --- visibility badge --- */
+  /* --- visibility badges --- */
   .badge {
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    padding: 2px 8px;
-    border-radius: 10px;
+    padding: 2px 10px;
+    border-radius: 9999px;
     font-size: 0.75rem;
     font-weight: 500;
     border: 1px solid;
     white-space: nowrap;
-    cursor: pointer;
     min-height: 24px;
-  }
-
-  .badge-public {
-    color: var(--badge-public);
-    border-color: rgba(63, 185, 80, 0.3);
-    background: rgba(63, 185, 80, 0.1);
-  }
-
-  .badge-private {
-    color: var(--badge-private);
-    border-color: rgba(248, 81, 73, 0.3);
-    background: rgba(248, 81, 73, 0.1);
-  }
-
-  .badge-unlisted {
-    color: var(--badge-unlisted);
-    border-color: rgba(210, 153, 34, 0.3);
-    background: rgba(210, 153, 34, 0.1);
-  }
-
-  .badge-edit {
-    color: var(--badge-edit);
-    border-color: rgba(188, 140, 255, 0.3);
-    background: rgba(188, 140, 255, 0.1);
   }
 
   .badge-icon {
@@ -373,10 +380,41 @@
     white-space: nowrap;
   }
 
+  .badge-public {
+    color: var(--color-public);
+    border-color: rgba(122, 158, 107, 0.3);
+    background: rgba(122, 158, 107, 0.08);
+  }
+
+  .badge-private {
+    color: var(--color-private);
+    border-color: rgba(196, 92, 60, 0.3);
+    background: rgba(196, 92, 60, 0.08);
+  }
+
+  .badge-unlisted {
+    color: var(--color-unlisted);
+    border-color: rgba(184, 173, 158, 0.2);
+    background: rgba(184, 173, 158, 0.06);
+  }
+
+  .badge-public-edit {
+    color: var(--color-edit);
+    border-color: rgba(212, 160, 74, 0.3);
+    background: rgba(212, 160, 74, 0.08);
+  }
+
+  .badge-unlisted-edit {
+    color: var(--color-edit);
+    border-color: rgba(212, 160, 74, 0.3);
+    background: rgba(212, 160, 74, 0.08);
+  }
+
   /* --- star/fork icons --- */
   .icon-star, .icon-fork {
     display: inline-flex;
     align-items: center;
+    color: var(--text-tertiary);
   }
 
   .icon-star svg, .icon-fork svg {
@@ -399,6 +437,7 @@
   .page-footer a {
     color: var(--text-secondary);
     text-decoration: none;
+    font-family: var(--font-mono);
   }
 
   .page-footer a:hover {
@@ -418,8 +457,8 @@
 
 <!-- nav -->
 <nav class="nav">
-  <a href="#" class="nav-logo">wikihub</a>
-  <input type="text" class="nav-search" placeholder="Search wikis... (⌘K)" readonly>
+  <a href="#" class="nav-logo"><span class="bracket">[[</span><span class="wordmark">wikihub</span><span class="bracket">]]</span></a>
+  <input type="text" class="nav-search" placeholder="Search wikis..." readonly>
   <div class="nav-user">HQ</div>
 </nav>
 
@@ -503,7 +542,7 @@
   <div class="wiki-card">
     <div class="wiki-card-header">
       <a href="#" class="wiki-card-title">effective-altruism-reading-list</a>
-      <span class="badge badge-edit"><span class="badge-icon">🌐 ✏️</span> Public (edit)</span>
+      <span class="badge badge-public-edit"><span class="badge-icon">🌐 ✏️</span> Public (edit)</span>
     </div>
     <p class="wiki-card-desc">Curated reading list for effective altruism concepts, cause prioritization, and career advice. Community contributions welcome — anyone can add or annotate entries.</p>
     <div class="wiki-card-footer">
@@ -543,7 +582,7 @@
   <div class="wiki-card">
     <div class="wiki-card-header">
       <a href="#" class="wiki-card-title">labs-research-log</a>
-      <span class="badge badge-edit"><span class="badge-icon">👁 ✏️</span> Unlisted (edit)</span>
+      <span class="badge badge-unlisted-edit"><span class="badge-icon">👁 ✏️</span> Unlisted (edit)</span>
     </div>
     <p class="wiki-card-desc">Shared research log for the labs team. Experiment notes, benchmark results, and weekly syncs. Collaborators edit directly.</p>
     <div class="wiki-card-footer">

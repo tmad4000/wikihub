@@ -9,39 +9,42 @@
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg-page: #0d1117;
-    --bg-modal: #1c2128;
-    --bg-input: #141920;
-    --bg-result-hover: #262c36;
-    --bg-badge: #2a2f3a;
-    --bg-tag: #1a3a2a;
-    --bg-tag-active: #1e6b3a;
-    --bg-create: #1a2332;
-    --backdrop: rgba(0, 0, 0, 0.72);
-    --border-subtle: #30363d;
-    --border-input: #3d444d;
-    --border-input-focus: #58a6ff;
-    --text-primary: #e6edf3;
-    --text-secondary: #8b949e;
-    --text-tertiary: #6e7681;
-    --text-highlight: #ffa657;
-    --text-link: #58a6ff;
-    --text-create: #3fb950;
-    --text-tag: #56d364;
-    --font-body: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+    --bg-base: #0f0e0c;
+    --bg-surface: #191714;
+    --bg-elevated: #221f1b;
+    --bg-overlay: #2a2622;
+    --text-primary: #e8e0d4;
+    --text-secondary: #b8ad9e;
+    --text-tertiary: #887d6e;
+    --text-muted: #5a5248;
+    --accent: #d4a04a;
+    --accent-hover: #e0b35a;
+    --accent-muted: rgba(212, 160, 74, 0.12);
+    --accent-subtle: rgba(212, 160, 74, 0.06);
+    --color-public: #7a9e6b;
+    --color-private: #c45c3c;
+    --color-unlisted: #b8ad9e;
+    --color-edit: #d4a04a;
+    --color-wikilink: #d4a04a;
+    --border-default: rgba(200, 180, 150, 0.08);
+    --border-emphasis: rgba(200, 180, 150, 0.15);
+    --border-strong: rgba(200, 180, 150, 0.25);
+    --border-accent: rgba(212, 160, 74, 0.4);
+    --control-bg: rgba(0, 0, 0, 0.2);
+    --control-bg-hover: rgba(200, 180, 150, 0.08);
+    --control-border: rgba(200, 180, 150, 0.12);
+    --font-body: 'Inter', -apple-system, sans-serif;
+    --font-mono: 'IBM Plex Mono', 'Menlo', monospace;
     --radius-sm: 4px;
-    --radius-md: 8px;
-    --radius-lg: 12px;
-    --radius-xl: 16px;
-    --shadow-modal: 0 16px 48px rgba(0, 0, 0, 0.4), 0 0 0 1px var(--border-subtle);
+    --radius-md: 6px;
+    --radius-lg: 10px;
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
   body {
     font-family: var(--font-body);
-    background: var(--bg-page);
+    background: var(--bg-base);
     color: var(--text-primary);
     font-size: 16px;
     line-height: 1.5;
@@ -54,8 +57,7 @@
     padding: 48px 24px;
     max-width: 720px;
     margin: 0 auto;
-    filter: blur(2px);
-    opacity: 0.25;
+    opacity: 0.18;
     pointer-events: none;
     user-select: none;
   }
@@ -71,6 +73,9 @@
     margin-bottom: 24px;
     font-family: var(--font-mono);
   }
+  .page-behind .breadcrumb .owner {
+    color: var(--accent);
+  }
   .page-behind p {
     color: var(--text-secondary);
     margin-bottom: 16px;
@@ -79,7 +84,7 @@
   .page-behind code {
     font-family: var(--font-mono);
     font-size: 14px;
-    background: #262c36;
+    background: var(--bg-overlay);
     padding: 2px 6px;
     border-radius: var(--radius-sm);
   }
@@ -88,9 +93,7 @@
   .backdrop {
     position: fixed;
     inset: 0;
-    background: var(--backdrop);
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
+    background: rgba(0, 0, 0, 0.7);
     z-index: 100;
     animation: fadeIn 0.15s ease-out;
   }
@@ -104,9 +107,9 @@
     transform: translateX(-50%);
     width: 600px;
     max-height: 70vh;
-    background: var(--bg-modal);
-    border-radius: var(--radius-xl);
-    box-shadow: var(--shadow-modal);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-emphasis);
+    border-radius: var(--radius-lg);
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -118,7 +121,7 @@
     to   { opacity: 1; }
   }
   @keyframes modalIn {
-    from { opacity: 0; transform: translateX(-50%) scale(0.96); }
+    from { opacity: 0; transform: translateX(-50%) scale(0.97); }
     to   { opacity: 1; transform: translateX(-50%) scale(1); }
   }
 
@@ -126,37 +129,42 @@
   .search-input-row {
     display: flex;
     align-items: center;
-    padding: 16px 20px;
-    border-bottom: 1px solid var(--border-subtle);
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border-default);
     gap: 12px;
   }
   .search-icon {
     flex-shrink: 0;
     width: 20px;
     height: 20px;
-    color: var(--text-secondary);
+    color: var(--text-tertiary);
   }
   .search-input {
     flex: 1;
-    background: none;
-    border: none;
+    background: var(--control-bg);
+    border: 1px solid var(--control-border);
+    border-radius: var(--radius-md);
     outline: none;
     font-family: var(--font-body);
     font-size: 18px;
     font-weight: 400;
     color: var(--text-primary);
-    caret-color: var(--border-input-focus);
+    caret-color: var(--accent);
+    padding: 8px 12px;
+  }
+  .search-input:focus {
+    border-color: var(--border-accent);
   }
   .search-input::placeholder {
-    color: var(--text-tertiary);
+    color: var(--text-muted);
   }
   .kbd-hint {
     flex-shrink: 0;
     font-family: var(--font-mono);
     font-size: 12px;
-    color: var(--text-tertiary);
-    background: var(--bg-badge);
-    border: 1px solid var(--border-subtle);
+    color: var(--text-muted);
+    background: var(--bg-overlay);
+    border: 1px solid var(--border-default);
     padding: 2px 7px;
     border-radius: var(--radius-sm);
     line-height: 1.4;
@@ -166,19 +174,20 @@
   .results {
     overflow-y: auto;
     flex: 1;
-    padding: 8px 0;
+    padding: 6px 0;
   }
   .result-item {
     padding: 12px 20px;
     cursor: pointer;
+    border-left: 3px solid transparent;
     transition: background 0.1s;
   }
   .result-item:hover {
-    background: var(--bg-result-hover);
+    background: var(--control-bg-hover);
   }
   .result-item.active {
-    background: var(--bg-result-hover);
-    border-left: 3px solid var(--text-link);
+    background: var(--accent-subtle);
+    border-left-color: var(--border-accent);
     padding-left: 17px;
   }
   .result-header {
@@ -190,14 +199,14 @@
   }
   .result-path {
     font-family: var(--font-mono);
-    font-size: 13px;
-    color: var(--text-secondary);
+    font-size: 12px;
+    color: var(--text-tertiary);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
   .result-path .owner {
-    color: var(--text-link);
+    color: var(--accent);
   }
   .result-title {
     font-size: 15px;
@@ -216,13 +225,13 @@
   }
   .result-excerpt mark {
     background: none;
-    color: var(--text-highlight);
+    color: var(--accent);
     font-weight: 600;
   }
   .result-meta {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     margin-top: 6px;
     flex-wrap: wrap;
   }
@@ -233,15 +242,27 @@
     align-items: center;
     gap: 4px;
     font-size: 11px;
-    color: var(--text-tertiary);
-    background: var(--bg-badge);
+    font-family: var(--font-mono);
     padding: 2px 8px;
     border-radius: 999px;
     white-space: nowrap;
+    border: 1px solid var(--border-default);
   }
   .vis-badge svg {
-    width: 12px;
-    height: 12px;
+    width: 11px;
+    height: 11px;
+  }
+  .vis-badge.public {
+    color: var(--color-public);
+  }
+  .vis-badge.private {
+    color: var(--color-private);
+  }
+  .vis-badge.unlisted {
+    color: var(--color-unlisted);
+  }
+  .vis-badge.public-edit {
+    color: var(--color-edit);
   }
 
   /* ── tag pills ────────────────────────────────────── */
@@ -250,16 +271,17 @@
     align-items: center;
     font-family: var(--font-mono);
     font-size: 11px;
-    color: var(--text-tag);
-    background: var(--bg-tag);
-    padding: 2px 8px;
+    color: var(--text-tertiary);
+    background: var(--bg-overlay);
+    border: 1px solid var(--border-default);
+    padding: 1px 8px;
     border-radius: 999px;
     white-space: nowrap;
   }
   .tag-pill.active {
-    background: var(--bg-tag-active);
-    color: #fff;
-    font-weight: 500;
+    color: var(--accent);
+    border-color: var(--border-accent);
+    background: var(--accent-muted);
   }
 
   /* ── create action ────────────────────────────────── */
@@ -270,15 +292,15 @@
     padding: 14px 20px;
     cursor: pointer;
     transition: background 0.1s;
-    border-top: 1px solid var(--border-subtle);
+    border-top: 1px solid var(--border-default);
   }
   .create-action:hover {
-    background: var(--bg-create);
+    background: var(--accent-muted);
   }
   .create-icon {
     width: 20px;
     height: 20px;
-    color: var(--text-create);
+    color: var(--accent);
     flex-shrink: 0;
   }
   .create-text {
@@ -286,25 +308,35 @@
     color: var(--text-secondary);
   }
   .create-text strong {
-    color: var(--text-create);
+    color: var(--accent);
     font-weight: 600;
+  }
+  .create-kbd {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-muted);
   }
 
   /* ── empty state ──────────────────────────────────── */
   .empty-state {
-    padding: 32px 20px 16px;
+    padding: 40px 20px 20px;
     text-align: center;
   }
   .empty-state .empty-icon {
     width: 40px;
     height: 40px;
-    color: var(--text-tertiary);
-    margin-bottom: 12px;
+    color: var(--text-muted);
+    margin-bottom: 14px;
   }
   .empty-state p {
     font-size: 14px;
     color: var(--text-tertiary);
     margin-bottom: 4px;
+  }
+  .empty-state .empty-sub {
+    font-size: 12px;
+    color: var(--text-muted);
   }
 
   /* ── footer hint ──────────────────────────────────── */
@@ -313,15 +345,16 @@
     align-items: center;
     gap: 16px;
     padding: 10px 20px;
-    border-top: 1px solid var(--border-subtle);
+    border-top: 1px solid var(--border-default);
     font-size: 12px;
-    color: var(--text-tertiary);
+    color: var(--text-muted);
   }
   .modal-footer kbd {
     font-family: var(--font-mono);
     font-size: 11px;
-    background: var(--bg-badge);
-    border: 1px solid var(--border-subtle);
+    color: var(--text-muted);
+    background: var(--bg-overlay);
+    border: 1px solid var(--border-default);
     padding: 1px 5px;
     border-radius: 3px;
     margin: 0 2px;
@@ -331,34 +364,44 @@
     align-items: center;
     gap: 4px;
   }
+  .modal-footer .result-count {
+    margin-left: auto;
+    color: var(--text-tertiary);
+  }
 
   /* ── state toggle (mockup controls) ───────────────── */
   .mockup-controls {
     position: fixed;
     bottom: 16px;
-    right: 16px;
+    left: 50%;
+    transform: translateX(-50%);
     z-index: 200;
     display: flex;
-    gap: 8px;
+    gap: 4px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-emphasis);
+    border-radius: var(--radius-lg);
+    padding: 4px;
   }
   .mockup-btn {
     font-family: var(--font-mono);
     font-size: 12px;
-    background: var(--bg-modal);
-    color: var(--text-secondary);
-    border: 1px solid var(--border-subtle);
-    padding: 6px 12px;
+    background: transparent;
+    color: var(--text-tertiary);
+    border: 1px solid transparent;
+    padding: 6px 14px;
     border-radius: var(--radius-md);
     cursor: pointer;
-    transition: all 0.15s;
+    transition: all 0.12s;
   }
   .mockup-btn:hover {
-    background: var(--bg-result-hover);
-    color: var(--text-primary);
+    color: var(--text-secondary);
+    background: var(--control-bg-hover);
   }
   .mockup-btn.active {
-    border-color: var(--border-input-focus);
-    color: var(--text-link);
+    border-color: var(--border-accent);
+    color: var(--accent);
+    background: var(--accent-muted);
   }
 
   /* ── mobile ───────────────────────────────────────── */
@@ -379,34 +422,36 @@
       to   { opacity: 1; transform: translateY(0); }
     }
     .kbd-hint { display: none; }
-    .search-input-row { padding: 14px 16px; }
+    .search-input-row { padding: 12px 16px; }
     .result-item { padding: 12px 16px; }
     .modal-footer { padding: 10px 16px; }
     .modal-footer .desktop-only { display: none; }
     .create-action { padding: 14px 16px; }
+    .create-kbd { display: none; }
     .page-behind { display: none; }
+    .mockup-controls { bottom: 8px; }
   }
 </style>
 </head>
 <body>
 
-<!-- ═══ dimmed page behind ═══════════════════════════════ -->
+<!-- dimmed page behind -->
 <div class="page-behind">
-  <div class="breadcrumb">@jacob / ml-research / wiki /</div>
+  <div class="breadcrumb"><span class="owner">@jacob</span> / ml-research / wiki /</div>
   <h1>Agent Protocols</h1>
   <p>Agent communication protocols define how autonomous software agents exchange structured messages, negotiate capabilities, and coordinate actions. The two dominant patterns emerging in 2026 are <code>MCP</code> (Model Context Protocol) and <code>A2A</code> (Agent-to-Agent).</p>
   <p>MCP focuses on tool registration and invocation — a client discovers a server's capabilities via a manifest and calls tools with typed parameters. A2A is higher-level: agents exchange "tasks" with lifecycle semantics (pending, working, completed, failed).</p>
   <p>Both protocols assume HTTP transport but differ on session semantics. MCP uses stateless request-response; A2A supports long-running tasks with streaming updates via SSE.</p>
 </div>
 
-<!-- ═══ backdrop ═════════════════════════════════════════ -->
+<!-- backdrop -->
 <div class="backdrop" id="backdrop"></div>
 
 <!-- ═══ modal: results state ════════════════════════════ -->
 <div class="modal" id="modal-results">
   <div class="search-input-row">
     <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-    <input class="search-input" type="text" value="agent protocol" placeholder="Search wikis..." readonly>
+    <input class="search-input" type="text" value="agent protocol" placeholder="search wikis..." readonly>
     <span class="kbd-hint">&#8984;K</span>
   </div>
 
@@ -415,7 +460,7 @@
     <div class="result-item active">
       <div class="result-header">
         <span class="result-path"><span class="owner">@jacob</span> / ml-research</span>
-        <span class="vis-badge">
+        <span class="vis-badge public">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10A15.3 15.3 0 0 1 12 2z"/></svg>
           public
         </span>
@@ -432,7 +477,7 @@
     <div class="result-item">
       <div class="result-header">
         <span class="result-path"><span class="owner">@alice</span> / deep-learning</span>
-        <span class="vis-badge">
+        <span class="vis-badge public">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10A15.3 15.3 0 0 1 12 2z"/></svg>
           public
         </span>
@@ -449,7 +494,7 @@
     <div class="result-item">
       <div class="result-header">
         <span class="result-path"><span class="owner">@jacob</span> / crm</span>
-        <span class="vis-badge">
+        <span class="vis-badge unlisted">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>
           unlisted
         </span>
@@ -462,7 +507,7 @@
     <div class="result-item">
       <div class="result-header">
         <span class="result-path"><span class="owner">@boris</span> / anthropic-cookbook</span>
-        <span class="vis-badge">
+        <span class="vis-badge public-edit">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
           public-edit
         </span>
@@ -476,11 +521,11 @@
       </div>
     </div>
 
-    <!-- result 5 — tag:research filter demo -->
+    <!-- result 5 -->
     <div class="result-item">
       <div class="result-header">
         <span class="result-path"><span class="owner">@alice</span> / deep-learning</span>
-        <span class="vis-badge">
+        <span class="vis-badge public">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10A15.3 15.3 0 0 1 12 2z"/></svg>
           public
         </span>
@@ -488,7 +533,7 @@
       <div class="result-title">Reward Modeling Survey</div>
       <div class="result-excerpt">RLHF and DPO reward signals compared across 12 benchmarks. <mark>Agent</mark> evaluators show higher inter-annotator agreement than crowd workers on <mark>protocol</mark> adherence tasks...</div>
       <div class="result-meta">
-        <span class="tag-pill active">research</span>
+        <span class="tag-pill">research</span>
         <span class="tag-pill">rlhf</span>
       </div>
     </div>
@@ -497,7 +542,7 @@
     <div class="result-item">
       <div class="result-header">
         <span class="result-path"><span class="owner">@jacob</span> / ml-research</span>
-        <span class="vis-badge">
+        <span class="vis-badge private">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
           private
         </span>
@@ -511,7 +556,7 @@
     <span class="footer-group desktop-only"><kbd>&uarr;</kbd><kbd>&darr;</kbd> navigate</span>
     <span class="footer-group desktop-only"><kbd>Enter</kbd> open</span>
     <span class="footer-group desktop-only"><kbd>Esc</kbd> close</span>
-    <span class="footer-group" style="margin-left:auto;">6 results</span>
+    <span class="result-count">6 results</span>
   </div>
 </div>
 
@@ -519,7 +564,7 @@
 <div class="modal" id="modal-tag" style="display:none;">
   <div class="search-input-row">
     <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-    <input class="search-input" type="text" value="tag:research" placeholder="Search wikis..." readonly>
+    <input class="search-input" type="text" value="tag:research" placeholder="search wikis..." readonly>
     <span class="kbd-hint">&#8984;K</span>
   </div>
 
@@ -527,7 +572,7 @@
     <div class="result-item active">
       <div class="result-header">
         <span class="result-path"><span class="owner">@alice</span> / deep-learning</span>
-        <span class="vis-badge">
+        <span class="vis-badge public">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10A15.3 15.3 0 0 1 12 2z"/></svg>
           public
         </span>
@@ -543,7 +588,7 @@
     <div class="result-item">
       <div class="result-header">
         <span class="result-path"><span class="owner">@alice</span> / deep-learning</span>
-        <span class="vis-badge">
+        <span class="vis-badge public">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10A15.3 15.3 0 0 1 12 2z"/></svg>
           public
         </span>
@@ -559,7 +604,7 @@
     <div class="result-item">
       <div class="result-header">
         <span class="result-path"><span class="owner">@jacob</span> / ml-research</span>
-        <span class="vis-badge">
+        <span class="vis-badge public">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10A15.3 15.3 0 0 1 12 2z"/></svg>
           public
         </span>
@@ -578,7 +623,7 @@
     <span class="footer-group desktop-only"><kbd>&uarr;</kbd><kbd>&darr;</kbd> navigate</span>
     <span class="footer-group desktop-only"><kbd>Enter</kbd> open</span>
     <span class="footer-group desktop-only"><kbd>Esc</kbd> close</span>
-    <span class="footer-group" style="margin-left:auto;">3 results &middot; filtered by <span style="color:var(--text-tag)">tag:research</span></span>
+    <span class="result-count">3 results &middot; filtered by <span style="color:var(--accent)">tag:research</span></span>
   </div>
 </div>
 
@@ -586,7 +631,7 @@
 <div class="modal" id="modal-empty" style="display:none;">
   <div class="search-input-row">
     <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-    <input class="search-input" type="text" value="quantum error correction" placeholder="Search wikis..." readonly>
+    <input class="search-input" type="text" value="quantum error correction" placeholder="search wikis..." readonly>
     <span class="kbd-hint">&#8984;K</span>
   </div>
 
@@ -594,23 +639,24 @@
     <div class="empty-state">
       <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
       <p>No results for "quantum error correction"</p>
-      <p style="font-size:12px;">Try a different query or create a new page</p>
+      <p class="empty-sub">try a different query or create a new page</p>
     </div>
   </div>
 
   <div class="create-action">
     <svg class="create-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
     <span class="create-text">Create <strong>"quantum error correction"</strong> in @jacob / ml-research</span>
+    <span class="create-kbd"><kbd style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);background:var(--bg-overlay);border:1px solid var(--border-default);padding:1px 5px;border-radius:3px;">Enter</kbd></span>
   </div>
 
   <div class="modal-footer">
     <span class="footer-group desktop-only"><kbd>Enter</kbd> create page</span>
     <span class="footer-group desktop-only"><kbd>Esc</kbd> close</span>
-    <span class="footer-group" style="margin-left:auto;">0 results</span>
+    <span class="result-count">0 results</span>
   </div>
 </div>
 
-<!-- ═══ mockup state toggle ════════════════════════════ -->
+<!-- mockup state toggle -->
 <div class="mockup-controls">
   <button class="mockup-btn active" onclick="showState('results')">results</button>
   <button class="mockup-btn" onclick="showState('tag')">tag:filter</button>
