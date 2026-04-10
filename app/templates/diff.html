@@ -1,0 +1,193 @@
+{% extends "base.html" %}
+{% block title %}{{ commit.message if commit else sha[:12] }} — {{ wiki.title or wiki.slug }} — wikihub{% endblock %}
+
+{% block extra_css %}
+.diff-shell { display: flex; min-height: calc(100vh - 56px); }
+.sidebar { width: 280px; flex-shrink: 0; border-right: 1px solid var(--border-default); padding: 16px 0; overflow-y: auto; display: none; }
+@media (min-width: 768px) { .sidebar { display: block; } }
+.sidebar-section { padding: 0 8px; }
+.sidebar-heading { font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); padding: 6px 12px; margin-bottom: 2px; }
+.sidebar-folder-row { display: flex; align-items: center; gap: 4px; }
+.sidebar-folder-toggle { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border: none; background: transparent; color: var(--text-muted); cursor: pointer; padding: 0; }
+.sidebar-folder.open > .sidebar-folder-row .sidebar-folder-toggle svg { transform: rotate(90deg); }
+.sidebar-children { display: none; }
+.sidebar-folder.open > .sidebar-children { display: block; }
+.sidebar-item { display: flex; align-items: center; gap: 8px; padding: 5px 12px; border-radius: var(--radius-sm); font-size: 0.8125rem; color: var(--text-tertiary); text-decoration: none; margin-bottom: 1px; }
+.sidebar-item:hover { color: var(--text-primary); background: var(--accent-subtle); text-decoration: none; }
+.sidebar-item.active { color: var(--text-primary); background: var(--accent-subtle); }
+.sidebar-icon { display: inline-flex; color: var(--text-muted); }
+
+.content-pane { flex: 1; min-width: 0; padding: 32px 16px 64px; }
+@media (min-width: 640px) { .content-pane { padding: 40px 28px 72px; } }
+.breadcrumb { font-size: 0.8125rem; color: var(--text-muted); margin-bottom: 16px; font-family: var(--font-mono); display: flex; align-items: center; flex-wrap: wrap; }
+.breadcrumb a { color: var(--text-muted); }
+
+.hamburger {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; background: none; border: none;
+  color: var(--text-muted); cursor: pointer; border-radius: var(--radius-sm);
+  margin-right: 4px; flex-shrink: 0;
+}
+.hamburger:hover { color: var(--text-secondary); background: var(--accent-subtle); }
+@media (min-width: 768px) { .hamburger { display: none; } }
+.sidebar-overlay { display: none; position: fixed; inset: 0; top: 56px; background: rgba(0,0,0,0.5); z-index: 50; }
+.sidebar-overlay.open { display: block; }
+.sidebar.open { display: block; position: fixed; top: 56px; left: 0; bottom: 0; z-index: 51; background: var(--bg-base); width: 260px; overflow-y: auto; }
+
+.commit-header {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 16px 20px;
+  background: var(--bg-surface);
+  margin-bottom: 24px;
+}
+.commit-message { font-size: 1.125rem; font-weight: 600; color: var(--text-primary); margin-bottom: 8px; }
+.commit-meta { font-size: 0.75rem; color: var(--text-muted); font-family: var(--font-mono); display: flex; gap: 16px; flex-wrap: wrap; }
+
+.diff-block {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  margin-bottom: 16px;
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+}
+.diff-file-header {
+  padding: 8px 16px;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-default);
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+}
+.diff-line { padding: 0 16px; white-space: pre-wrap; word-break: break-all; }
+.diff-line.add { background: rgba(122, 158, 107, 0.12); color: #7a9e6b; }
+.diff-line.del { background: rgba(196, 92, 60, 0.12); color: #c45c3c; }
+.diff-line.hunk { background: var(--bg-elevated); color: var(--accent); padding: 4px 16px; border-top: 1px solid var(--border-default); }
+.diff-line.meta { color: var(--text-muted); }
+.diff-line.ctx { color: var(--text-secondary); }
+{% endblock %}
+
+{% block body %}
+{% macro render_sidebar(items, level=0) %}
+  {% for item in items %}
+    {% if item.kind == 'folder' %}
+    <div class="sidebar-folder {{ 'open' if item.active else '' }}" data-folder-path="{{ item.path }}">
+      <div class="sidebar-folder-row">
+        <button type="button" class="sidebar-folder-toggle" onclick="toggleFolder('{{ item.path }}')">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
+        </button>
+        <a href="{{ item.url }}" class="sidebar-item {{ 'active' if item.active else '' }}" style="padding-left: {{ 12 + (level * 16) }}px;">
+          <span class="sidebar-icon">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h5l2 2h11v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>
+          </span>
+          {{ item.name }}
+        </a>
+      </div>
+      <div class="sidebar-children">
+        {{ render_sidebar(item.children, level + 1) }}
+      </div>
+    </div>
+    {% else %}
+    <a href="{{ item.url }}" class="sidebar-item {{ 'active' if item.active else '' }}" style="padding-left: {{ 28 + (level * 16) }}px;">
+      <span class="sidebar-icon">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      </span>
+      {{ item.name }}
+    </a>
+    {% endif %}
+  {% endfor %}
+{% endmacro %}
+
+<div class="diff-shell">
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-section">
+      <a href="/@{{ owner.username }}/{{ wiki.slug }}" class="sidebar-heading" style="text-decoration:none;display:block;">{{ wiki.title or wiki.slug }}</a>
+      {{ render_sidebar(sidebar_items) }}
+    </div>
+  </aside>
+  <div class="sidebar-overlay" id="sidebar-overlay" onclick="toggleSidebar()"></div>
+
+  <main class="content-pane">
+    <div class="breadcrumb">
+      <button class="hamburger" onclick="toggleSidebar()" aria-label="Open sidebar">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
+      <a href="/@{{ owner.username }}">@{{ owner.username }}</a>&nbsp;/&nbsp;
+      <a href="/@{{ owner.username }}/{{ wiki.slug }}">{{ wiki.slug }}</a>&nbsp;/&nbsp;
+      <a href="/@{{ owner.username }}/{{ wiki.slug }}/history">history</a>&nbsp;/&nbsp;
+      {{ sha[:12] }}
+    </div>
+
+    {% if commit %}
+    <div class="commit-header">
+      <div class="commit-message">{{ commit.message }}</div>
+      <div class="commit-meta">
+        <span>{{ commit.sha[:12] }}</span>
+        <span>{{ commit.author }}</span>
+        <span>{{ commit.date[:10] }}</span>
+        {% if commit.files_changed %}
+        <span>{{ commit.files_changed | length }} file{{ 's' if commit.files_changed | length != 1 else '' }}</span>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% set current_file = namespace(name='') %}
+    {% for kind, line in diff_lines %}
+      {% if kind == 'file' %}
+        {% if current_file.name %}
+          </div>
+        {% endif %}
+        {% set file_path = line.replace('diff --git a/', '').split(' b/')[0] %}
+        {% set current_file.name = file_path %}
+        <div class="diff-block">
+          <div class="diff-file-header">{{ file_path }}</div>
+      {% elif kind == 'meta' %}
+        {# skip --- and +++ lines, file header covers it #}
+      {% else %}
+        <div class="diff-line {{ kind }}">{{ line }}</div>
+      {% endif %}
+    {% endfor %}
+    {% if current_file.name %}
+      </div>
+    {% endif %}
+
+    {% if not diff_lines %}
+    <p style="color: var(--text-muted);">No changes in this commit.</p>
+    {% endif %}
+  </main>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('open');
+  document.getElementById('sidebar-overlay').classList.toggle('open');
+}
+
+const folderStorageKey = 'wikihub-sidebar-folders';
+function loadFolders() {
+  try { return JSON.parse(localStorage.getItem(folderStorageKey) || '{}'); } catch (e) { return {}; }
+}
+function toggleFolder(path) {
+  const folder = document.querySelector(`.sidebar-folder[data-folder-path="${CSS.escape(path)}"]`);
+  if (!folder) return;
+  folder.classList.toggle('open');
+  const state = loadFolders();
+  state[path] = folder.classList.contains('open');
+  localStorage.setItem(folderStorageKey, JSON.stringify(state));
+}
+document.addEventListener('DOMContentLoaded', () => {
+  const state = loadFolders();
+  for (const [path, isOpen] of Object.entries(state)) {
+    if (isOpen) {
+      const folder = document.querySelector(`.sidebar-folder[data-folder-path="${CSS.escape(path)}"]`);
+      if (folder) folder.classList.add('open');
+    }
+  }
+});
+</script>
+{% endblock %}

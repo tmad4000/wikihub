@@ -352,7 +352,12 @@ def _git_history(username, slug, public=False, path=None, limit=50):
         if not chunk:
             continue
         lines = [line for line in chunk.splitlines() if line.strip()]
-        sha, author, date, message = lines[0].split("\x1f")
+        if not lines:
+            continue
+        parts = lines[0].split("\x1f")
+        if len(parts) != 4:
+            continue
+        sha, author, date, message = parts
         commits.append(
             {
                 "sha": sha,
@@ -363,6 +368,31 @@ def _git_history(username, slug, public=False, path=None, limit=50):
             }
         )
     return commits
+
+
+def _git_diff(username, slug, sha, public=False, path=None):
+    """get the diff for a specific commit."""
+    from app.git_backend import _repo_path
+
+    repo = _repo_path(username, slug, public=public)
+    if not os.path.isdir(repo):
+        return None
+
+    cmd = ["git", "-C", repo, "diff", f"{sha}~1", sha, "--no-color"]
+    if path:
+        cmd += ["--", path]
+
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        # first commit has no parent — use diff against empty tree
+        cmd = ["git", "-C", repo, "diff", "--no-color", "4b825dc642cb6eb9a060e54bf899d69f82cf0178", sha]
+        if path:
+            cmd += ["--", path]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if result.returncode != 0:
+            return None
+
+    return result.stdout
 
 
 @wiki_bp.route("/@<username>", strict_slashes=False)
@@ -593,6 +623,52 @@ def page_history(username, slug, folder_path):
     path = folder_path if folder_path.endswith(".md") else f"{folder_path}.md"
     commits = _git_history(owner.username, wiki.slug, public=not _is_owner(wiki), path=path)
     return render_template("folder.html", owner=owner, wiki=wiki, items=[], sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=not _is_owner(wiki), current_path=path), folder_path=f"{path} history", rendered_html=None, breadcrumb=[("History", None)], history_commits=commits)
+
+
+@wiki_bp.route("/@<username>/<slug>/commit/<sha>")
+def wiki_commit(username, slug, sha):
+    """show diff for a single commit."""
+    owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
+    is_owner = _is_owner(wiki)
+
+    # try public mirror first, fall back to authoritative repo
+    diff_text = _git_diff(owner.username, wiki.slug, sha, public=True)
+    use_public = True
+    if diff_text is None:
+        diff_text = _git_diff(owner.username, wiki.slug, sha, public=False)
+        use_public = False
+    if diff_text is None:
+        abort(404)
+
+    # parse diff into structured hunks for rendering
+    diff_lines = []
+    for line in diff_text.splitlines():
+        if line.startswith("+++") or line.startswith("---"):
+            diff_lines.append(("meta", line))
+        elif line.startswith("@@"):
+            diff_lines.append(("hunk", line))
+        elif line.startswith("+"):
+            diff_lines.append(("add", line))
+        elif line.startswith("-"):
+            diff_lines.append(("del", line))
+        elif line.startswith("diff --git"):
+            diff_lines.append(("file", line))
+        else:
+            diff_lines.append(("ctx", line))
+
+    # get commit metadata
+    history = _git_history(owner.username, wiki.slug, public=use_public, limit=200)
+    commit = next((c for c in history if c["sha"] == sha), None)
+
+    return render_template(
+        "diff.html",
+        owner=owner,
+        wiki=wiki,
+        sha=sha,
+        commit=commit,
+        diff_lines=diff_lines,
+        sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=use_public),
+    )
 
 
 @wiki_bp.route("/@<username>/<slug>/<path:page_path>", strict_slashes=False)
