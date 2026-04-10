@@ -48,6 +48,30 @@
 .content-wrap { flex: 1; min-width: 0; padding: 32px 20px 80px; }
 @media (min-width: 768px) { .content-wrap { padding: 40px 48px 80px; } }
 
+.right-panel {
+  display: none; width: 240px; flex-shrink: 0;
+  border-left: 1px solid var(--border-default);
+  padding: 24px 16px;
+}
+@media (min-width: 1100px) { .right-panel { display: block; } }
+.right-panel-inner {
+  position: sticky; top: 72px;
+  max-height: calc(100vh - 88px); overflow-y: auto;
+}
+
+.right-panel .toc-block {
+  max-width: none; margin-bottom: 20px; padding: 0;
+  border: none; border-radius: 0; background: transparent;
+}
+.right-panel .backlinks-block {
+  max-width: none; margin-top: 20px; padding: 0;
+  border: none; border-top: 1px solid var(--border-default);
+  padding-top: 16px; border-radius: 0; background: transparent;
+}
+
+.inline-toc, .inline-backlinks { display: block; }
+@media (min-width: 1100px) { .inline-toc, .inline-backlinks { display: none; } }
+
 .breadcrumb {
   font-size: 0.8125rem; color: var(--text-muted); margin-bottom: 12px;
   font-family: var(--font-mono);
@@ -366,7 +390,7 @@
     {% endif %}
 
     {% if toc and toc|length >= 3 %}
-    <nav class="toc-block">
+    <nav class="toc-block inline-toc">
       <div class="toc-title">Contents</div>
       <ol class="toc-list">
         {% for level, id, text in toc %}
@@ -381,7 +405,7 @@
     </article>
 
     {% if backlinks %}
-    <nav class="backlinks-block">
+    <nav class="backlinks-block inline-backlinks">
       <div class="backlinks-title">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 1 1 0 10h-2"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
         What links here
@@ -394,6 +418,37 @@
     </nav>
     {% endif %}
   </main>
+
+  {% if (toc and toc|length >= 3) or backlinks %}
+  <aside class="right-panel">
+    <div class="right-panel-inner">
+      {% if toc and toc|length >= 3 %}
+      <nav class="toc-block">
+        <div class="toc-title">Contents</div>
+        <ol class="toc-list">
+          {% for level, id, text in toc %}
+          <li class="toc-item toc-level-{{ level }}"><a href="#{{ id }}">{{ text }}</a></li>
+          {% endfor %}
+        </ol>
+      </nav>
+      {% endif %}
+
+      {% if backlinks %}
+      <nav class="backlinks-block">
+        <div class="backlinks-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 1 1 0 10h-2"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+          What links here
+        </div>
+        <ul class="backlinks-list">
+          {% for bl in backlinks %}
+          <li><a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ bl.path.replace('.md', '') }}">{{ bl.title or bl.path.replace('.md', '') }}</a></li>
+          {% endfor %}
+        </ul>
+      </nav>
+      {% endif %}
+    </div>
+  </aside>
+  {% endif %}
 </div>
 {% endblock %}
 
