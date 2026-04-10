@@ -22,7 +22,7 @@ Every user gets a **default personal wiki** created automatically at signup. Arc
 - **Auto-created on signup** with slug matching the username. `/@username` resolves to this wiki's `index.md` — it IS the user's profile page.
 - **Can't be deleted.** It is the user's identity on the platform. Other wikis can be deleted; the personal wiki cannot.
 - **Default private ACL.** Scaffolded with `* private` like every other wiki (updated 2026-04-10). The personal wiki starts locked — users explicitly publish what they want. Same private-by-default invariant as all wikis.
-- **Profile-aware frontmatter.** The `index.md` supports optional profile fields in frontmatter (`bio:`, `avatar:`, `links:`) that the profile template renders specially — similar to GitHub's profile README pattern.
+- **Profile-aware frontmatter.** The `index.md` supports optional profile fields in frontmatter (`bio:`, `avatar:`, `links:`) that the profile template renders specially — similar to GitHub's profile README pattern. **[OPEN QUESTION — wikihub-722]** This was a Claude-proposed design (2026-04-10 03:45 PT). Needs human review: should bio/avatar/links live in frontmatter, in DB fields with a settings UI, or should the rendered markdown body simply BE the profile with no special fields? Current implementation works but the decision is not locked.
 - **Other wikis listed below.** When visiting `/@username`, the personal wiki's index renders as the main content, with the user's other wikis listed below or in a sidebar.
 - **Discoverability respects viewer context.** The owner sees all of their wikis on `/@username`; everyone else sees only discoverable project wikis (`public`, `public-edit`). This is a people page, not a private wiki-name leak.
 
