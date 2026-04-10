@@ -151,7 +151,7 @@
   font-size: 0.8125rem; font-weight: 600; color: var(--text-secondary);
   margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.04em;
 }
-#link-graph { width: 100%; height: 280px; }
+#link-graph { width: 100%; aspect-ratio: 1 / 1; min-height: 200px; }
 #link-graph svg { width: 100%; height: 100%; }
 
 .article [id] { scroll-margin-top: 72px; }
@@ -370,6 +370,13 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
             Copy clone URL
           </button>
+          {% if current_user.is_authenticated and current_user.id == wiki.owner_id and wiki.slug != owner.username %}
+          <div style="border-top:1px solid var(--border-default);margin:4px 0;"></div>
+          <button class="download-option" style="color:var(--color-private);" onclick="deleteWiki()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            Delete wiki
+          </button>
+          {% endif %}
         </div>
       </div>
 
@@ -565,6 +572,13 @@ function deletePage() {
     .then(r => { if (r.ok) location.href = '/@{{ owner.username }}/{{ wiki.slug }}'; else { btn.classList.remove('btn-loading'); btn.textContent = 'Delete'; alert('Delete failed'); } });
 }
 
+function deleteWiki() {
+  if (!confirm('Delete the entire wiki "{{ wiki.slug }}"? All pages and history will be lost. This cannot be undone.')) return;
+  if (!confirm('Are you sure? Click OK to permanently delete this wiki.')) return;
+  fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}', {method: 'DELETE'})
+    .then(r => { if (r.ok) location.href = '/@{{ owner.username }}'; else r.json().then(d => alert(d.message || 'Delete failed')); });
+}
+
 applyFolderState();
 
 document.addEventListener('click', function(e) {
@@ -599,6 +613,7 @@ document.addEventListener('click', function(e) {
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
       localStorage.setItem('wikihub-right-panel-width', panel.offsetWidth);
+      if (window._resizeGraph) window._resizeGraph();
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
     }
@@ -617,8 +632,8 @@ document.addEventListener('click', function(e) {
   const data = {{ link_graph | tojson }};
   if (!data.nodes.length) return;
 
-  const width = container.clientWidth || 240;
-  const height = 280;
+  let width = container.clientWidth || 240;
+  let height = container.clientHeight || width;
 
   // directory-based coloring
   const dirColors = ['#d4a04a', '#7a9e6b', '#c45c3c', '#6b9ec4', '#b8ad9e', '#9e6bc4', '#c4946b'];
@@ -695,6 +710,18 @@ document.addEventListener('click', function(e) {
       return `translate(${d.x},${d.y})`;
     });
   });
+
+  // re-fit graph when panel resizes (triggered on drag end)
+  window._resizeGraph = function() {
+    const newW = container.clientWidth;
+    const newH = container.clientHeight;
+    if (newW > 0 && newH > 0 && (newW !== width || newH !== height)) {
+      width = newW; height = newH;
+      svg.attr('viewBox', `0 0 ${width} ${height}`);
+      sim.force('center', d3.forceCenter(width / 2, height / 2));
+      sim.alpha(0.3).restart();
+    }
+  };
 })();
 </script>
 {% endif %}
