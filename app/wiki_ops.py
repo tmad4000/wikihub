@@ -93,8 +93,8 @@ def ensure_personal_wiki(user):
     return create_wiki_for_user(
         user,
         slug=user.username,
-        title=f"{user.username}'s wiki",
-        description="Personal wiki",
+        title=user.display_name or user.username,
+        description=None,
         scaffold=True,
     )
 
