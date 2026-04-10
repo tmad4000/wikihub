@@ -121,18 +121,27 @@
 {% endmacro %}
 
 <div class="profile-shell">
-  {% if personal_wiki and sidebar_items %}
-  <aside class="profile-sidebar">
+  <aside class="profile-sidebar" {% if not (personal_wiki and sidebar_items) and not wikis %}style="display:none;"{% endif %}>
+    {% if personal_wiki and sidebar_items %}
     <div class="sidebar-section">
       <div class="sidebar-heading">Personal Wiki</div>
       {{ render_sidebar(sidebar_items) }}
       {% if is_owner %}
       <a href="/@{{ owner.username }}/{{ personal_wiki.slug }}/new" class="sidebar-item" style="color:var(--accent);margin-top:8px;">New page</a>
-      <a href="/@{{ owner.username }}/{{ personal_wiki.slug }}/new-folder" class="sidebar-item" style="color:var(--accent);">New folder</a>
       {% endif %}
     </div>
+    {% endif %}
+    {% if wikis %}
+    <div class="sidebar-section" style="margin-top: 16px;">
+      <div class="sidebar-heading">Wikis</div>
+      {% for wiki in wikis %}
+      <a href="/@{{ owner.username }}/{{ wiki.slug }}" class="sidebar-item" style="padding-left: 12px;">
+        <span>{{ wiki.title or wiki.slug }}</span>
+      </a>
+      {% endfor %}
+    </div>
+    {% endif %}
   </aside>
-  {% endif %}
 
   <main class="profile-main">
     <div class="profile-header">

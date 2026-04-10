@@ -90,14 +90,15 @@
           <div class="person-handle">@{{ person.user.username }}</div>
         </div>
       </div>
-      <div class="person-summary">
-        {{ person.profile_excerpt or "Personal wiki is still private or empty. Browse their public project wikis from the person page." }}
-      </div>
+      {% if person.profile_excerpt %}
+      <div class="person-summary">{{ person.profile_excerpt }}</div>
+      {% endif %}
+      {% if person.project_count > 0 or person.total_stars > 0 %}
       <div class="person-meta">
-        <span>{{ person.project_count }} public projects</span>
-        <span>{{ person.total_stars }} stars</span>
-        <span>{{ 'Profile public' if person.profile_is_public else 'Profile private' }}</span>
+        {% if person.project_count > 0 %}<span>{{ person.project_count }} {{ 'wiki' if person.project_count == 1 else 'wikis' }}</span>{% endif %}
+        {% if person.total_stars > 0 %}<span>{{ person.total_stars }} {{ 'star' if person.total_stars == 1 else 'stars' }}</span>{% endif %}
       </div>
+      {% endif %}
     </a>
     {% else %}
     <p style="color: var(--text-tertiary); font-size: 0.875rem;">No people yet.</p>
