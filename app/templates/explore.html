@@ -80,7 +80,7 @@
   <div class="section-label">Editorial Picks</div>
   <div class="wiki-grid featured">
     {% for wiki in editorial %}
-    <a href="/@{{ wiki.owner.username }}/{{ wiki.slug }}" class="wiki-card">
+    <a href="/@{{ wiki.owner.username }}{% if wiki.slug != wiki.owner.username %}/{{ wiki.slug }}{% endif %}" class="wiki-card">
       <div class="wiki-card-owner">@{{ wiki.owner.username }}</div>
       <div class="wiki-card-title">{{ wiki.title or wiki.slug }}</div>
       {% if wiki.description %}
@@ -98,7 +98,7 @@
   <div class="section-label">Wikis</div>
   <div class="wiki-grid">
     {% for wiki in wikis %}
-    <a href="/@{{ wiki.owner.username }}/{{ wiki.slug }}" class="wiki-card">
+    <a href="/@{{ wiki.owner.username }}{% if wiki.slug != wiki.owner.username %}/{{ wiki.slug }}{% endif %}" class="wiki-card">
       <div class="wiki-card-owner">@{{ wiki.owner.username }}</div>
       <div class="wiki-card-title">{{ wiki.title or wiki.slug }}</div>
       {% if wiki.description %}

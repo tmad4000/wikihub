@@ -313,6 +313,10 @@ def wiki_index(username, slug):
     if redirect_row:
         return redirect(url_for("wiki.wiki_index", username=owner.username, slug=slug), code=302)
 
+    # Personal wiki: redirect to profile page
+    if slug == owner.username:
+        return redirect(url_for("wiki.user_profile", username=owner.username), code=302)
+
     use_public = not _is_owner(wiki)
     page_path, content = _folder_index_content(owner.username, wiki.slug, "", public=use_public)
     if content is None:
