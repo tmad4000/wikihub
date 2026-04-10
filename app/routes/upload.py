@@ -106,7 +106,13 @@ def _process_zip(username, slug, wiki_id, zip_file):
     max_page = current_app.config["MAX_PAGE_SIZE"]
 
     data = zip_file.read()
-    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+    if not data or len(data) < 4:
+        raise ValueError("Uploaded file is empty or too small to be a zip")
+    try:
+        zf_obj = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile:
+        raise ValueError("Uploaded file is not a valid zip archive")
+    with zf_obj as zf:
         entries = [i for i in zf.infolist() if not i.is_dir()
                    and not i.filename.startswith("__MACOSX/")
                    and not i.filename.startswith(".")]

@@ -20,8 +20,8 @@
 .breadcrumb { font-size: 0.8125rem; color: var(--text-tertiary); margin-bottom: 16px; font-family: var(--font-mono); }
 .breadcrumb a { color: var(--text-tertiary); }
 .folder-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
-.download-menu:hover .download-dropdown,
-.download-menu:focus-within .download-dropdown { display: block !important; }
+.download-menu.open .download-dropdown { display: block !important; }
+.download-dropdown::before { content: ''; position: absolute; top: -8px; left: 0; right: 0; height: 8px; }
 .download-dropdown a:hover, .download-dropdown button:hover { background: var(--accent-subtle); color: var(--text-primary); }
 .folder-title { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.02em; }
 .folder-copy { max-width: 760px; margin-bottom: 28px; }
@@ -69,7 +69,7 @@
 {% endmacro %}
 
 <div class="folder-shell">
-  <aside class="sidebar">
+  <aside class="sidebar thin-scroll">
     <div class="sidebar-section">
       {% if wiki.slug == owner.username %}
       <a href="/@{{ owner.username }}" class="sidebar-heading" style="text-decoration:none;display:block;">{{ owner.display_name or owner.username }}</a>
@@ -107,7 +107,7 @@
     <div class="folder-header">
       <div class="folder-title">{{ folder_path or wiki.title or wiki.slug }}</div>
       <div class="download-menu" style="position:relative;display:inline-flex;">
-        <button style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;color:var(--text-muted);border:none;background:transparent;cursor:pointer;border-radius:var(--radius-sm);" title="Download / Clone">
+        <button style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;color:var(--text-muted);border:none;background:transparent;cursor:pointer;border-radius:var(--radius-sm);" title="Download / Clone" onclick="event.stopPropagation(); this.parentElement.classList.toggle('open')">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         </button>
         <div class="download-dropdown" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:160px;padding:4px;border-radius:var(--radius-md);border:1px solid var(--border-emphasis);background:rgba(25,23,20,0.98);backdrop-filter:blur(12px);z-index:50;">

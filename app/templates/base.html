@@ -107,8 +107,6 @@ a:hover { text-decoration: underline; }
   color: var(--text-muted);
   transition: transform 0.14s ease;
 }
-.nav-account:hover .nav-account-chevron,
-.nav-account:focus-within .nav-account-chevron,
 .nav-account.open .nav-account-chevron {
   transform: rotate(180deg);
 }
@@ -128,8 +126,6 @@ a:hover { text-decoration: underline; }
   pointer-events: none;
   transition: opacity 0.14s ease, transform 0.14s ease;
 }
-.nav-account:hover .nav-account-menu,
-.nav-account:focus-within .nav-account-menu,
 .nav-account.open .nav-account-menu {
   opacity: 1;
   transform: translateY(0);
@@ -274,13 +270,6 @@ document.addEventListener('DOMContentLoaded', () => {
       menu.classList.add('open');
       trigger.setAttribute('aria-expanded', 'true');
     };
-
-    menu.addEventListener('mouseenter', openMenu);
-    menu.addEventListener('mouseleave', closeMenu);
-    menu.addEventListener('focusin', openMenu);
-    menu.addEventListener('focusout', (event) => {
-      if (!menu.contains(event.relatedTarget)) closeMenu();
-    });
 
     trigger.addEventListener('click', (event) => {
       event.preventDefault();

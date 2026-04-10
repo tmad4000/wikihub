@@ -69,24 +69,44 @@ textarea { resize: vertical; min-height: 80px; }
 const dropZone = document.getElementById('drop-zone');
 const fileInput = document.getElementById('files');
 const fileList = document.getElementById('file-list');
+const form = document.getElementById('wiki-form');
+let droppedFiles = null;
 
 ['dragenter', 'dragover'].forEach(e => {
-  dropZone.addEventListener(e, (ev) => { ev.preventDefault(); dropZone.classList.add('dragover'); });
+  dropZone.addEventListener(e, (ev) => { ev.preventDefault(); ev.stopPropagation(); dropZone.classList.add('dragover'); });
 });
-['dragleave', 'drop'].forEach(e => {
-  dropZone.addEventListener(e, (ev) => { ev.preventDefault(); dropZone.classList.remove('dragover'); });
-});
-dropZone.addEventListener('drop', (ev) => {
-  fileInput.files = ev.dataTransfer.files;
-  updateFileList();
-});
-fileInput.addEventListener('change', updateFileList);
+dropZone.addEventListener('dragleave', (ev) => { ev.preventDefault(); dropZone.classList.remove('dragover'); });
 
-function updateFileList() {
-  const files = fileInput.files;
-  if (files.length === 0) { fileList.textContent = ''; return; }
+dropZone.addEventListener('drop', (ev) => {
+  ev.preventDefault();
+  ev.stopPropagation();
+  dropZone.classList.remove('dragover');
+  const files = ev.dataTransfer.files;
+  if (files.length > 0) {
+    droppedFiles = files;
+    try { fileInput.files = files; } catch(e) { /* some browsers block programmatic .files set */ }
+    updateFileList(files);
+  }
+});
+
+fileInput.addEventListener('change', () => { droppedFiles = null; updateFileList(fileInput.files); });
+
+function updateFileList(files) {
+  files = files || fileInput.files;
+  if (!files || files.length === 0) { fileList.textContent = ''; return; }
   const names = Array.from(files).map(f => f.name).slice(0, 10);
   fileList.textContent = names.join(', ') + (files.length > 10 ? ` +${files.length - 10} more` : '');
 }
+
+form.addEventListener('submit', (ev) => {
+  if (!droppedFiles) return;
+  ev.preventDefault();
+  const fd = new FormData(form);
+  fd.delete('files');
+  for (const f of droppedFiles) fd.append('files', f);
+  fetch(form.action || window.location.href, { method: 'POST', body: fd, redirect: 'follow' })
+    .then(r => { if (r.redirected) { window.location.href = r.url; } else { window.location.reload(); } })
+    .catch(err => alert('Upload failed: ' + err.message));
+});
 </script>
 {% endblock %}
