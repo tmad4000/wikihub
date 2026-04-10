@@ -474,15 +474,20 @@ def wiki_index(username, slug):
     if slug == owner.username:
         return redirect(url_for("wiki.user_profile", username=owner.username), code=302)
 
-    use_public = not _is_owner(wiki)
+    is_owner = _is_owner(wiki)
+    use_public = not is_owner
     recently_updated = _recently_updated_pages(wiki, public_only=use_public)
     page_path, content = _folder_index_content(owner.username, wiki.slug, "", public=use_public)
     if content is None:
+        items = _folder_listing(owner.username, wiki.slug, wiki, "", public=use_public)
+        # anti-enumeration: if non-owner sees no public content, 404
+        if use_public and not items:
+            abort(404)
         return render_template(
             "folder.html",
             owner=owner,
             wiki=wiki,
-            items=_folder_listing(owner.username, wiki.slug, wiki, "", public=use_public),
+            items=items,
             sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=use_public),
             folder_path="",
             rendered_html=None,
@@ -594,6 +599,9 @@ def wiki_page(username, slug, page_path):
     if request.path.endswith("/"):
         use_public = not _is_owner(wiki)
         content_path, content = _folder_index_content(owner.username, wiki.slug, page_path, public=use_public)
+        items = _folder_listing(owner.username, wiki.slug, wiki, page_path, public=use_public)
+        if use_public and not content and not items:
+            abort(404)
         breadcrumb = []
         running = []
         for segment in page_path.strip("/").split("/"):
@@ -605,7 +613,7 @@ def wiki_page(username, slug, page_path):
             "folder.html",
             owner=owner,
             wiki=wiki,
-            items=_folder_listing(owner.username, wiki.slug, wiki, page_path, public=use_public),
+            items=items,
             sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=use_public, current_path=page_path.strip("/")),
             folder_path=page_path.strip("/"),
             rendered_html=render_page(content, owner.username, wiki.slug) if content else None,
