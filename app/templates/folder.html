@@ -127,10 +127,16 @@
       <button class="hamburger" onclick="toggleSidebar()" aria-label="Open sidebar">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </button>
-      <a href="/@{{ owner.username }}">@{{ owner.username }}</a> /
-      <a href="/@{{ owner.username }}/{{ wiki.slug }}">{{ wiki.slug }}</a>
+      <a href="/@{{ owner.username }}">@{{ owner.username }}</a>
+      {% if wiki.slug != owner.username %}
+        / <a href="/@{{ owner.username }}/{{ wiki.slug }}">{{ wiki.slug }}</a>
+      {% endif %}
+      {% if breadcrumb %}
+        <span style="opacity:0.4;margin:0 2px">›</span>
+      {% endif %}
       {% for label, href in breadcrumb %}
-        / {% if href %}<a href="{{ href }}">{{ label }}</a>{% else %}{{ label }}{% endif %}
+        {% if not loop.first %}/{% endif %}
+        {% if href %}<a href="{{ href }}">{{ label }}</a>{% else %}{{ label }}{% endif %}
       {% endfor %}
     </div>
 
