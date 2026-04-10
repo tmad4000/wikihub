@@ -70,6 +70,10 @@
     <div class="sidebar-section">
       <div class="sidebar-heading">Pages</div>
       {{ render_sidebar(sidebar_items or []) }}
+      {% if current_user.is_authenticated and current_user.id == wiki.owner_id %}
+      <a href="/@{{ owner.username }}/{{ wiki.slug }}/new" class="sidebar-item" style="color:var(--accent);margin-top:8px;">New page</a>
+      <a href="/@{{ owner.username }}/{{ wiki.slug }}/new-folder{% if folder_path %}?parent={{ folder_path | urlencode }}{% endif %}" class="sidebar-item" style="color:var(--accent);">New folder</a>
+      {% endif %}
     </div>
   </aside>
 
@@ -85,7 +89,10 @@
     <div class="folder-header">
       <div class="folder-title">{{ folder_path or wiki.title or wiki.slug }}</div>
       {% if current_user.is_authenticated and current_user.id == wiki.owner_id %}
-      <a href="/@{{ owner.username }}/{{ wiki.slug }}/new" style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;min-height:36px;background:var(--accent);color:#0f0e0c;border-radius:var(--radius-sm);font-size:0.8125rem;font-weight:600;text-decoration:none;">New page</a>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <a href="/@{{ owner.username }}/{{ wiki.slug }}/new" style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;min-height:36px;background:var(--accent);color:#0f0e0c;border-radius:var(--radius-sm);font-size:0.8125rem;font-weight:600;text-decoration:none;">New page</a>
+        <a href="/@{{ owner.username }}/{{ wiki.slug }}/new-folder{% if folder_path %}?parent={{ folder_path | urlencode }}{% endif %}" style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;min-height:36px;border:1px solid var(--border-emphasis);color:var(--text-secondary);border-radius:var(--radius-sm);font-size:0.8125rem;font-weight:600;text-decoration:none;">New folder</a>
+      </div>
       {% endif %}
     </div>
 

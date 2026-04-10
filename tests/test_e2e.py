@@ -230,6 +230,91 @@ def test_acl_permissions(client, api_key):
     assert r.status_code in (401, 403, 404)
 
 
+def test_people_directory_and_profiles(client, api_key):
+    h = {"Authorization": f"Bearer {api_key}"}
+
+    # publish agent1 personal wiki and one public project
+    r = client.put("/api/v1/wikis/agent1/agent1/pages/index.md", json={
+        "content": "---\ntitle: Agent One\nvisibility: public\n---\n\nBuilder of public wiki systems.",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 200
+
+    r = client.post("/api/v1/wikis", json={"slug": "atlas", "title": "Atlas"}, headers=h)
+    assert r.status_code == 201
+    r = client.put("/api/v1/wikis/agent1/atlas/pages/index.md", json={
+        "content": "---\ntitle: Atlas\nvisibility: public\n---\n\nPublic atlas.",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 200
+
+    r = client.post("/api/v1/wikis", json={"slug": "vault", "title": "Vault"}, headers=h)
+    assert r.status_code == 201
+    r = client.put("/api/v1/wikis/agent1/vault/pages/index.md", json={
+        "content": "---\ntitle: Vault\nvisibility: private\n---\n\nPrivate vault.",
+        "visibility": "private",
+    }, headers=h)
+    assert r.status_code == 200
+
+    # another person with a public profile + project
+    r = client.post("/api/v1/accounts", json={"username": "person2"})
+    assert r.status_code == 201
+    key2 = r.get_json()["api_key"]
+    h2 = {"Authorization": f"Bearer {key2}"}
+
+    r = client.put("/api/v1/wikis/person2/person2/pages/index.md", json={
+        "content": "---\ntitle: Person Two\nvisibility: public\n---\n\nSecond profile wiki.",
+        "visibility": "public",
+    }, headers=h2)
+    assert r.status_code == 200
+    r = client.post("/api/v1/wikis", json={"slug": "garden", "title": "Garden"}, headers=h2)
+    assert r.status_code == 201
+    r = client.put("/api/v1/wikis/person2/garden/pages/index.md", json={
+        "content": "---\ntitle: Garden\nvisibility: public\n---\n\nPublic garden.",
+        "visibility": "public",
+    }, headers=h2)
+    assert r.status_code == 200
+
+    r = client.get("/explore")
+    assert r.status_code == 200
+    assert b"All people" in r.data
+    assert b"@agent1" in r.data
+    assert b"@person2" in r.data
+
+    r = client.get("/people")
+    assert r.status_code == 200
+    assert b"People" in r.data
+    assert b"@agent1" in r.data
+    assert b"@person2" in r.data
+
+    r = client.get("/@agent1")
+    assert r.status_code == 200
+    assert b"Builder of public wiki systems." in r.data
+    assert b"Atlas" in r.data
+    assert b"Vault" not in r.data
+
+    r = client.get("/@person2")
+    assert r.status_code == 200
+    assert b"Second profile wiki." in r.data
+    assert b"Garden" in r.data
+
+
+def test_new_folder_ui(client):
+    r = client.post("/auth/signup", data={"username": "folderuser", "password": "testpass123"}, follow_redirects=False)
+    assert r.status_code == 302
+
+    r = client.post("/@folderuser/folderuser/new-folder", data={
+        "folder_path": "plans/2026",
+        "visibility": "public",
+    }, follow_redirects=False)
+    assert r.status_code == 302
+    assert "/@folderuser/folderuser/plans/2026/index/edit" in r.headers["Location"]
+
+    r = client.get("/@folderuser/folderuser/plans/2026/")
+    assert r.status_code == 200
+    assert b"plans/2026" in r.data or b"2026" in r.data
+
+
 def run_all():
     app = setup()
 
@@ -258,6 +343,8 @@ def run_all():
             ("token + settings", lambda: test_token_and_settings(client)),
             ("ACL permissions", lambda: test_acl_permissions(client, key)),
             ("anonymous public edit", lambda: test_anonymous_public_edit(client, key)),
+            ("people directory + profiles", lambda: test_people_directory_and_profiles(client, key)),
+            ("new folder UI", lambda: test_new_folder_ui(client)),
         ]
 
         passed = 1  # account creation already passed

@@ -195,6 +195,12 @@
         </span>
         New page
       </a>
+      <a href="/@{{ owner.username }}/{{ wiki.slug }}/new-folder{% if '/' in page.path %}?parent={{ page.path.rsplit('/', 1)[0] | urlencode }}{% endif %}" class="sidebar-item" style="color:var(--accent);">
+        <span class="sidebar-icon" style="color:var(--accent);">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/><path d="M3 7h5l2 2h11v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>
+        </span>
+        New folder
+      </a>
       {% endif %}
     </div>
   </aside>
@@ -225,6 +231,10 @@
       <a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ page.path.replace('.md', '') }}/edit" class="action-btn">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
         Edit
+      </a>
+      <a href="/@{{ owner.username }}/{{ wiki.slug }}/new-folder{% if '/' in page.path %}?parent={{ page.path.rsplit('/', 1)[0] | urlencode }}{% endif %}" class="action-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/><path d="M3 7h5l2 2h11v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>
+        New folder
       </a>
       {% endif %}
 

@@ -9,6 +9,7 @@ from flask_login import current_user
 from app import db
 from app.acl import can_read, can_write, resolve_visibility
 from app.content_utils import has_private_bands, parse_markdown_document, set_visibility_in_content
+from app.discovery import discoverable_page_for_wiki, visible_wikis_for_owner
 from app.git_sync import read_file_from_repo, list_files_in_repo, regenerate_public_mirror, sync_page_to_repo
 from app.models import Page, User, UsernameRedirect, Wiki, utcnow
 from app.renderer import render_page
@@ -39,6 +40,15 @@ def _get_owner_and_wiki_or_404(username, slug):
 
 def _is_owner(wiki):
     return current_user.is_authenticated and current_user.id == wiki.owner_id
+
+
+def _normalize_folder_path(raw_path):
+    clean = (raw_path or "").replace("\\", "/").strip().strip("/")
+    clean = clean.removesuffix("/index.md").removesuffix("/index").removesuffix(".md")
+    segments = [segment for segment in clean.split("/") if segment]
+    if not segments or any(segment in {".", ".."} for segment in segments):
+        return None
+    return "/".join(segments)
 
 
 def _visible_files(username, slug, wiki, public=False):
@@ -233,8 +243,9 @@ def user_profile(username):
         return redirect(url_for("wiki.user_profile", username=owner.username), code=302)
 
     personal_wiki = Wiki.query.filter_by(owner_id=owner.id, slug=owner.username).first()
-    wikis = Wiki.query.filter_by(owner_id=owner.id).order_by(Wiki.updated_at.desc()).all()
-    for wiki in wikis:
+    all_wikis = Wiki.query.filter_by(owner_id=owner.id).order_by(Wiki.updated_at.desc()).all()
+    wikis = visible_wikis_for_owner(owner, current_user)
+    for wiki in all_wikis:
         sync_wiki_counters(wiki)
     total_stars = sum(w.star_count for w in wikis)
 
@@ -242,16 +253,21 @@ def user_profile(username):
     personal_rendered_html = None
     personal_sidebar = []
     private_band_warning = False
+    is_owner = bool(personal_wiki and _is_owner(personal_wiki))
 
     if personal_wiki:
-        use_public = not _is_owner(personal_wiki)
+        use_public = not is_owner
         _, personal_content = _folder_index_content(owner.username, personal_wiki.slug, "", public=use_public)
         if personal_content:
             personal_rendered_html = render_page(personal_content, owner.username, personal_wiki.slug)
             personal_sidebar = _build_sidebar_tree(owner.username, personal_wiki.slug, personal_wiki, public=use_public, current_path="index.md")
             private_band_warning = not use_public and has_private_bands(personal_content)
+        elif any(wiki.id == personal_wiki.id for wiki in wikis):
+            personal_sidebar = _build_sidebar_tree(owner.username, personal_wiki.slug, personal_wiki, public=not is_owner)
 
     other_wikis = [wiki for wiki in wikis if wiki.slug != owner.username]
+    profile_page = discoverable_page_for_wiki(personal_wiki.id, viewer_is_owner=is_owner) if personal_wiki else None
+    personal_visible = bool(personal_wiki and (is_owner or profile_page or personal_sidebar))
     return render_template(
         "profile.html",
         owner=owner,
@@ -261,6 +277,10 @@ def user_profile(username):
         personal_rendered_html=personal_rendered_html,
         private_band_warning=private_band_warning,
         sidebar_items=personal_sidebar,
+        personal_excerpt=profile_page.excerpt if profile_page else None,
+        personal_is_public=bool(profile_page),
+        visible_wiki_count=len(other_wikis) + (1 if personal_visible else 0),
+        is_owner=is_owner,
     )
 
 
@@ -496,12 +516,87 @@ def new_page(username, slug):
         return redirect(url_for("wiki.edit_page", username=owner.username, slug=wiki.slug, page_path=page_path.replace(".md", "")))
 
     acl_rules = load_acl_rules(owner.username, wiki.slug)
-    default_vis = resolve_visibility("wiki/new-page.md", acl_rules)
+    requested_path = request.args.get("path", "").strip()
+    page_path = requested_path or "wiki/new-page.md"
+    if not page_path.endswith(".md"):
+        page_path += ".md"
+    default_vis = resolve_visibility(page_path, acl_rules)
     return render_template(
         "editor.html",
         owner=owner,
         wiki=wiki,
-        page_path="wiki/new-page.md",
+        page_path=page_path,
         content="",
         visibility=default_vis,
+    )
+
+
+@wiki_bp.route("/@<username>/<slug>/new-folder", methods=["GET", "POST"])
+def new_folder(username, slug):
+    owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
+    if not _is_owner(wiki):
+        return render_template("permission_error.html", owner=owner, wiki=wiki), 403
+
+    acl_rules = load_acl_rules(owner.username, wiki.slug)
+    parent_path = request.values.get("parent", "").strip().strip("/")
+
+    if request.method == "POST":
+        folder_path = _normalize_folder_path(request.form.get("folder_path"))
+        if not folder_path:
+            return render_template(
+                "new_folder.html",
+                owner=owner,
+                wiki=wiki,
+                parent_path=parent_path,
+                default_visibility=resolve_visibility(f"{(parent_path + '/' if parent_path else '')}new-folder/index.md", acl_rules),
+                error="Enter a valid folder path.",
+            ), 400
+
+        file_path = f"{folder_path}/index.md"
+        existing_content = read_file_from_repo(owner.username, wiki.slug, file_path, public=False)
+        if existing_content is not None:
+            return redirect(url_for("wiki.edit_page", username=owner.username, slug=wiki.slug, page_path=f"{folder_path}/index"))
+
+        visibility = request.form.get("visibility") or resolve_visibility(file_path, acl_rules)
+        folder_title = folder_path.split("/")[-1].replace("-", " ").replace("_", " ").title()
+        content = (
+            f"---\n"
+            f"title: {folder_title}\n"
+            f"visibility: {visibility}\n"
+            f"---\n\n"
+            f"# {folder_title}\n\n"
+        )
+
+        page = Page.query.filter_by(wiki_id=wiki.id, path=file_path).first()
+        if not page:
+            page = Page(wiki_id=wiki.id, path=file_path)
+            db.session.add(page)
+
+        frontmatter, _ = parse_markdown_document(content)
+        page.visibility = frontmatter.get("visibility") or resolve_visibility(file_path, acl_rules)
+        page.author = current_user.username
+        update_page_metadata(page, content, frontmatter)
+        db.session.flush()
+        refresh_wikilinks_for_page(page, content)
+        sync_page_to_repo(
+            owner.username,
+            wiki.slug,
+            file_path,
+            content,
+            message=f"Create folder {folder_path}",
+            author_name=current_user.username,
+            author_email=f"{current_user.username}@wikihub",
+        )
+        regenerate_public_mirror(owner.username, wiki.slug, acl_rules)
+        db.session.commit()
+        return redirect(url_for("wiki.edit_page", username=owner.username, slug=wiki.slug, page_path=f"{folder_path}/index"))
+
+    default_target = f"{(parent_path + '/' if parent_path else '')}new-folder/index.md"
+    return render_template(
+        "new_folder.html",
+        owner=owner,
+        wiki=wiki,
+        parent_path=parent_path,
+        default_visibility=resolve_visibility(default_target, acl_rules),
+        error=None,
     )
