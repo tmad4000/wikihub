@@ -207,8 +207,8 @@ def test_binary_file_serving(client, api_key):
     assert r.status_code == 200
     assert b'<img' in r.data
     assert b'wiki/test.png' in r.data
-    # should contain PDF embed
-    assert b'<object' in r.data
+    # should contain PDF file link
+    assert b'file-embed' in r.data
     assert b'wiki/doc.pdf' in r.data
 
 
