@@ -1,0 +1,197 @@
+#!/usr/bin/env python3
+"""
+wikihub post-receive hook.
+
+installed into each wiki's authoritative bare repo by init_wiki_repo().
+when a push lands:
+  1. reads ref updates from stdin
+  2. finds changed .md files
+  3. calls the wikihub admin API to upsert Page rows
+  4. triggers public mirror regeneration
+
+ported from listhub's post-receive hook.
+"""
+
+import json
+import os
+import subprocess
+import sys
+import urllib.request
+import urllib.error
+
+
+def read_config():
+    conf_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "wikihub.conf")
+    config = {}
+    if os.path.isfile(conf_path):
+        with open(conf_path) as f:
+            for line in f:
+                line = line.strip()
+                if "=" in line and not line.startswith("#"):
+                    key, val = line.split("=", 1)
+                    config[key.strip()] = val.strip()
+    return config
+
+
+def get_changed_files(old_sha, new_sha, repo_dir):
+    null_sha = "0" * 40
+    if old_sha == null_sha:
+        result = subprocess.run(
+            ["git", "ls-tree", "-r", "--name-only", new_sha],
+            capture_output=True, text=True, cwd=repo_dir,
+        )
+    elif new_sha == null_sha:
+        return []
+    else:
+        result = subprocess.run(
+            ["git", "diff", "--name-only", old_sha, new_sha],
+            capture_output=True, text=True, cwd=repo_dir,
+        )
+    if result.returncode != 0:
+        return []
+    return [f.strip() for f in result.stdout.strip().split("\n") if f.strip()]
+
+
+def get_deleted_files(old_sha, new_sha, repo_dir):
+    null_sha = "0" * 40
+    if old_sha == null_sha or new_sha == null_sha:
+        return []
+    result = subprocess.run(
+        ["git", "diff", "--name-only", "--diff-filter=D", old_sha, new_sha],
+        capture_output=True, text=True, cwd=repo_dir,
+    )
+    if result.returncode != 0:
+        return []
+    return [f.strip() for f in result.stdout.strip().split("\n") if f.strip()]
+
+
+def read_file_content(sha, filepath, repo_dir):
+    result = subprocess.run(
+        ["git", "show", f"{sha}:{filepath}"],
+        capture_output=True, text=True, cwd=repo_dir,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout
+
+
+def extract_frontmatter(content):
+    metadata = {}
+    body = content
+    if content.startswith("---"):
+        parts = content.split("---", 2)
+        if len(parts) >= 3:
+            frontmatter = parts[1].strip()
+            body = parts[2].strip()
+            for line in frontmatter.split("\n"):
+                line = line.strip()
+                if ":" in line:
+                    key, val = line.split(":", 1)
+                    metadata[key.strip().lower()] = val.strip()
+    return metadata, body
+
+
+def api_request(base_url, path, method, data, admin_token):
+    url = f"{base_url}{path}"
+    body = json.dumps(data).encode("utf-8")
+    req = urllib.request.Request(url, data=body, method=method)
+    req.add_header("Content-Type", "application/json")
+    req.add_header("Authorization", f"Bearer {admin_token}")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read().decode()), resp.status
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode() if e.fp else ""
+        return {"error": error_body}, e.code
+    except Exception as e:
+        return {"error": str(e)}, 0
+
+
+def main():
+    config = read_config()
+    base_url = config.get("WIKIHUB_BASE_URL", "http://localhost:5000")
+    admin_token = config.get("WIKIHUB_ADMIN_TOKEN", "")
+    username = config.get("WIKIHUB_USERNAME", "")
+    slug = config.get("WIKIHUB_SLUG", "")
+
+    if not admin_token:
+        print("WARNING: no WIKIHUB_ADMIN_TOKEN. push accepted but pages won't sync.",
+              file=sys.stderr)
+        sys.exit(0)
+
+    repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+
+        old_sha, new_sha, refname = parts[0], parts[1], parts[2]
+        if refname not in ("refs/heads/main", "refs/heads/master"):
+            continue
+
+        print(f"Syncing push to {refname}...")
+
+        changed = get_changed_files(old_sha, new_sha, repo_dir)
+        deleted = get_deleted_files(old_sha, new_sha, repo_dir)
+
+        # upsert changed .md files
+        md_changed = [f for f in changed if f.endswith(".md") and f not in deleted]
+        for filepath in md_changed:
+            content = read_file_content(new_sha, filepath, repo_dir)
+            if content is None:
+                continue
+            metadata, body = extract_frontmatter(content)
+            title = metadata.get("title", os.path.splitext(os.path.basename(filepath))[0])
+            visibility = metadata.get("visibility", "private")
+
+            result, status = api_request(
+                base_url,
+                f"/api/v1/admin/sync-page",
+                "POST",
+                {
+                    "username": username,
+                    "slug": slug,
+                    "path": filepath,
+                    "title": title,
+                    "visibility": visibility,
+                    "content": content,
+                    "frontmatter": metadata,
+                },
+                admin_token,
+            )
+            if status in (200, 201):
+                print(f"  synced: {filepath}")
+            else:
+                print(f"  FAILED: {filepath}: {result}", file=sys.stderr)
+
+        # delete removed .md files
+        md_deleted = [f for f in deleted if f.endswith(".md")]
+        for filepath in md_deleted:
+            result, status = api_request(
+                base_url,
+                f"/api/v1/admin/delete-page",
+                "POST",
+                {"username": username, "slug": slug, "path": filepath},
+                admin_token,
+            )
+            if status in (200, 204):
+                print(f"  deleted: {filepath}")
+
+        # trigger public mirror regeneration
+        api_request(
+            base_url,
+            f"/api/v1/admin/regenerate-mirror",
+            "POST",
+            {"username": username, "slug": slug},
+            admin_token,
+        )
+
+    print("Sync complete.")
+
+
+if __name__ == "__main__":
+    main()

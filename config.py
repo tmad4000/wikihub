@@ -9,3 +9,5 @@ class Config:
     GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
     GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
     SERVER_NAME = os.environ.get("SERVER_NAME")  # e.g. wikihub.md
+    BASE_URL = os.environ.get("BASE_URL", "http://localhost:5000")
+    ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")

@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from flask_login import UserMixin
+from sqlalchemy.dialects.postgresql import TSVECTOR
 from app import db
 
 
@@ -64,12 +65,13 @@ class Page(db.Model):
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = db.Column(db.DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
 
-    # tsvector column for full-text search — populated at index time
-    search_vector = db.Column(db.Text)  # will be TSVector in migration, Text placeholder
+    # tsvector column for full-text search — populated at index time from content
+    search_vector = db.Column(TSVECTOR)
 
     __table_args__ = (
         db.UniqueConstraint("wiki_id", "path", name="uq_page_wiki_path"),
         db.Index("ix_page_visibility", "visibility"),
+        db.Index("ix_page_search", "search_vector", postgresql_using="gin"),
     )
 
 

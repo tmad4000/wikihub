@@ -1,3 +1,5 @@
+import os
+
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager
@@ -25,5 +27,10 @@ def create_app(config_class="config.Config"):
     app.register_blueprint(auth_bp)
     app.register_blueprint(api_bp, url_prefix="/api/v1")
     app.register_blueprint(wiki_bp)
+
+    from app.git_backend import git_bp
+    app.register_blueprint(git_bp)
+
+    os.makedirs(app.config["REPOS_DIR"], exist_ok=True)
 
     return app
