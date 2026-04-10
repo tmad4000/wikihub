@@ -12,76 +12,100 @@
 }
 @media (min-width: 768px) { .sidebar { display: block; } }
 
-.sidebar-section { padding: 0 12px; margin-bottom: 16px; }
+.sidebar-section { padding: 0 8px; margin-bottom: 16px; }
 .sidebar-heading {
   font-size: 0.6875rem; font-weight: 600; text-transform: uppercase;
-  letter-spacing: 0.06em; color: var(--text-muted); padding: 4px 8px; margin-bottom: 4px;
+  letter-spacing: 0.06em; color: var(--text-muted); padding: 6px 12px; margin-bottom: 2px;
 }
 .sidebar-item {
-  display: block; padding: 6px 8px; border-radius: var(--radius-sm);
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 12px; border-radius: var(--radius-sm);
   font-size: 0.8125rem; color: var(--text-tertiary);
   text-decoration: none; border-left: 2px solid transparent;
+  margin-bottom: 1px;
 }
 .sidebar-item:hover { color: var(--text-primary); background: var(--accent-subtle); text-decoration: none; }
 .sidebar-item.active {
   color: var(--text-primary); background: var(--accent-subtle);
   border-left-color: var(--accent);
 }
-.sidebar-item.folder { color: var(--text-secondary); font-weight: 500; }
-.sidebar-item.indent-1 { padding-left: 20px; }
-.sidebar-item.indent-2 { padding-left: 32px; }
+.sidebar-item.indent-1 { padding-left: 28px; }
+.sidebar-item.indent-2 { padding-left: 44px; }
+.sidebar-icon { flex-shrink: 0; color: var(--text-muted); }
+.sidebar-item:hover .sidebar-icon { color: var(--text-tertiary); }
+.sidebar-item.active .sidebar-icon { color: var(--accent); }
 
-.content-wrap { flex: 1; min-width: 0; padding: 32px 16px 64px; }
-@media (min-width: 768px) { .content-wrap { padding: 32px 40px 64px; } }
+.content-wrap { flex: 1; min-width: 0; padding: 32px 20px 80px; }
+@media (min-width: 768px) { .content-wrap { padding: 40px 48px 80px; } }
 
 .breadcrumb {
-  font-size: 0.8125rem; color: var(--text-tertiary); margin-bottom: 8px;
+  font-size: 0.8125rem; color: var(--text-muted); margin-bottom: 12px;
   font-family: var(--font-mono);
 }
-.breadcrumb a { color: var(--text-tertiary); }
-.breadcrumb a:hover { color: var(--accent); }
-.breadcrumb .sep { margin: 0 4px; }
+.breadcrumb a { color: var(--text-muted); }
+.breadcrumb a:hover { color: var(--accent); text-decoration: none; }
 
 .vis-badge {
-  display: inline-flex; align-items: center; gap: 4px;
-  font-size: 0.6875rem; font-weight: 500; padding: 2px 8px;
-  border-radius: var(--radius-sm); margin-bottom: 16px;
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 0.75rem; font-weight: 500; padding: 4px 10px;
+  border-radius: var(--radius-sm); margin-bottom: 20px;
 }
+.vis-badge svg { width: 14px; height: 14px; }
 .vis-badge.public { color: var(--color-public); background: rgba(122, 158, 107, 0.1); border: 1px solid rgba(122, 158, 107, 0.2); }
 .vis-badge.private { color: var(--color-private); background: rgba(196, 92, 60, 0.1); border: 1px solid rgba(196, 92, 60, 0.2); }
 .vis-badge.unlisted { color: var(--color-unlisted); background: rgba(184, 173, 158, 0.1); border: 1px solid rgba(184, 173, 158, 0.2); }
+.vis-badge.public-edit { color: var(--accent); background: rgba(212, 160, 74, 0.1); border: 1px solid rgba(212, 160, 74, 0.2); }
+.vis-badge.unlisted-edit { color: var(--accent); background: rgba(212, 160, 74, 0.1); border: 1px solid rgba(212, 160, 74, 0.2); }
 
 .article { max-width: 720px; }
-.article h1 { font-size: 2rem; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 16px; line-height: 1.3; }
-.article h2 { font-size: 1.375rem; font-weight: 700; letter-spacing: -0.01em; margin-top: 32px; margin-bottom: 12px; }
-.article h3 { font-size: 1.125rem; font-weight: 600; margin-top: 24px; margin-bottom: 8px; }
-.article p { color: var(--text-secondary); line-height: 1.7; margin-bottom: 16px; }
-.article ul, .article ol { color: var(--text-secondary); padding-left: 24px; margin-bottom: 16px; line-height: 1.7; }
-.article li { margin-bottom: 4px; }
-.article blockquote { border-left: 3px solid var(--border-accent); padding-left: 16px; color: var(--text-tertiary); margin-bottom: 16px; }
+.article h1 {
+  font-size: 2.25rem; font-weight: 700; letter-spacing: -0.03em;
+  margin-bottom: 8px; line-height: 1.2;
+}
+.article .page-meta {
+  font-size: 0.8125rem; color: var(--text-muted); margin-bottom: 24px;
+}
+.article h2 {
+  font-size: 1.375rem; font-weight: 700; letter-spacing: -0.01em;
+  margin-top: 40px; margin-bottom: 16px;
+  padding-bottom: 8px; border-bottom: 1px solid var(--border-default);
+}
+.article h3 { font-size: 1.125rem; font-weight: 600; margin-top: 28px; margin-bottom: 10px; }
+.article p { color: var(--text-secondary); line-height: 1.75; margin-bottom: 18px; font-size: 0.9375rem; }
+.article ul, .article ol { color: var(--text-secondary); padding-left: 24px; margin-bottom: 18px; line-height: 1.75; font-size: 0.9375rem; }
+.article li { margin-bottom: 6px; }
+.article blockquote {
+  border-left: 3px solid var(--border-accent); padding: 4px 16px;
+  color: var(--text-tertiary); margin-bottom: 18px; font-style: italic;
+}
 .article code {
   font-family: var(--font-mono); font-size: 0.8125rem;
-  background: var(--bg-elevated); padding: 2px 6px; border-radius: var(--radius-sm);
+  background: var(--bg-elevated); padding: 2px 7px; border-radius: var(--radius-sm);
   border: 1px solid var(--border-default);
 }
-.article pre { background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-md); padding: 16px; margin-bottom: 16px; overflow-x: auto; }
-.article pre code { background: none; border: none; padding: 0; font-size: 0.8125rem; line-height: 1.6; }
-.article img { max-width: 100%; border-radius: var(--radius-sm); margin-bottom: 16px; }
-.article table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 0.875rem; overflow-x: auto; display: block; }
-.article th, .article td { padding: 8px 12px; border: 1px solid var(--border-default); text-align: left; }
+.article pre {
+  background: var(--bg-surface); border: 1px solid var(--border-default);
+  border-radius: var(--radius-md); padding: 18px; margin-bottom: 20px;
+  overflow-x: auto;
+}
+.article pre code { background: none; border: none; padding: 0; font-size: 0.8125rem; line-height: 1.65; }
+.article img { max-width: 100%; border-radius: var(--radius-sm); margin-bottom: 18px; }
+.article table { width: 100%; border-collapse: collapse; margin-bottom: 18px; font-size: 0.875rem; overflow-x: auto; display: block; }
+.article th, .article td { padding: 10px 14px; border: 1px solid var(--border-default); text-align: left; }
 .article th { background: var(--bg-surface); color: var(--text-secondary); font-weight: 600; }
 .article td { color: var(--text-secondary); }
-.article hr { border: none; border-top: 1px solid var(--border-default); margin: 32px 0; }
+.article hr { border: none; border-top: 1px solid var(--border-default); margin: 36px 0; }
 .article .wikilink { color: var(--color-wikilink); text-decoration: none; }
 .article .wikilink:hover { text-decoration: underline; }
 .article .wikilink-broken { color: var(--color-wikilink-broken); text-decoration: none; border-bottom: 1px dashed var(--color-wikilink-broken); }
-.article .external-link::after { content: ' ↗'; font-size: 0.75em; }
+.article .external-link::after { content: ' ↗'; font-size: 0.7em; opacity: 0.7; }
 .article .external-link { color: var(--color-external); }
+.article strong { color: var(--text-primary); }
 
 .hamburger {
   display: flex; align-items: center; justify-content: center;
   width: 44px; height: 44px; background: none; border: none;
-  color: var(--text-secondary); cursor: pointer; margin-right: -8px;
+  color: var(--text-secondary); cursor: pointer;
 }
 @media (min-width: 768px) { .hamburger { display: none; } }
 
@@ -90,16 +114,19 @@
   background: rgba(0,0,0,0.5); z-index: 50;
 }
 .sidebar-overlay.open { display: block; }
-.sidebar.open { display: block; position: fixed; top: 56px; left: 0; bottom: 0; z-index: 51; background: var(--bg-base); }
+.sidebar.open { display: block; position: fixed; top: 56px; left: 0; bottom: 0; z-index: 51; background: var(--bg-base); width: 260px; }
 {% endblock %}
 
 {% block body %}
 <div class="reader-layout">
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-section">
-      <div class="sidebar-heading">{{ wiki.slug }}</div>
+      <div class="sidebar-heading">Pages</div>
       {% for item in sidebar_items %}
       <a href="{{ item.url }}" class="sidebar-item {{ 'active' if item.active else '' }} {{ item.indent_class }}">
+        <span class="sidebar-icon">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        </span>
         {{ item.label }}
       </a>
       {% endfor %}
@@ -109,16 +136,21 @@
 
   <main class="content-wrap">
     <div class="breadcrumb">
-      <a href="/@{{ owner.username }}">@{{ owner.username }}</a>
-      <span class="sep">/</span>
+      <a href="/@{{ owner.username }}">@{{ owner.username }}</a> /
       <a href="/@{{ owner.username }}/{{ wiki.slug }}">{{ wiki.slug }}</a>
-      {% if page.path %}
-      <span class="sep">/</span>
-      <span>{{ page.path.replace('.md', '') }}</span>
-      {% endif %}
+      {% if page.path %} / {{ page.path.replace('.md', '').split('/')[-1] }}{% endif %}
     </div>
 
-    <span class="vis-badge {{ page.visibility }}">{{ page.visibility }}</span>
+    <span class="vis-badge {{ page.visibility }}">
+      {% if page.visibility in ('public', 'public-edit') %}
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+      {% elif page.visibility == 'private' %}
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+      {% else %}
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+      {% endif %}
+      {{ page.visibility | replace('-', ' ') | title }}
+    </span>
 
     <article class="article">
       {{ rendered_html | safe }}
