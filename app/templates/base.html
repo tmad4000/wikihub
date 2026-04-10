@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{% block title %}wikihub{% endblock %}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github-dark-dimmed.min.css">
+<style>
+:root {
+  --bg-base: #0f0e0c;
+  --bg-surface: #191714;
+  --bg-elevated: #221f1b;
+  --bg-overlay: #2a2622;
+  --text-primary: #e8e0d4;
+  --text-secondary: #b8ad9e;
+  --text-tertiary: #887d6e;
+  --text-muted: #5a5248;
+  --accent: #d4a04a;
+  --accent-hover: #e0b35a;
+  --accent-muted: rgba(212, 160, 74, 0.12);
+  --accent-subtle: rgba(212, 160, 74, 0.06);
+  --color-public: #7a9e6b;
+  --color-private: #c45c3c;
+  --color-unlisted: #b8ad9e;
+  --color-wikilink: #d4a04a;
+  --color-wikilink-broken: #c45c3c;
+  --color-external: #7a9bb5;
+  --border-default: rgba(200, 180, 150, 0.08);
+  --border-emphasis: rgba(200, 180, 150, 0.15);
+  --border-strong: rgba(200, 180, 150, 0.25);
+  --border-accent: rgba(212, 160, 74, 0.4);
+  --control-bg: rgba(0, 0, 0, 0.2);
+  --control-border: rgba(200, 180, 150, 0.12);
+  --font-body: 'Inter', -apple-system, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'Menlo', monospace;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  background: var(--bg-base);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.nav {
+  position: sticky; top: 0; z-index: 100;
+  background: var(--bg-base);
+  border-bottom: 1px solid var(--border-default);
+  padding: 0 16px; height: 56px;
+  display: flex; align-items: center; gap: 16px;
+}
+.nav-logo {
+  font-family: var(--font-mono); font-weight: 500;
+  font-size: 1.0625rem; text-decoration: none; line-height: 1;
+}
+.nav-logo .bracket { color: var(--text-tertiary); }
+.nav-logo .wordmark { color: var(--text-primary); }
+.nav-spacer { flex: 1; }
+.nav-link { color: var(--text-tertiary); font-size: 0.875rem; text-decoration: none; }
+.nav-link:hover { color: var(--text-primary); text-decoration: none; }
+.nav-avatar {
+  width: 32px; height: 32px; border-radius: 50%;
+  background: var(--accent-muted); border: 1px solid var(--border-accent);
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-mono); font-size: 0.75rem; color: var(--accent);
+  text-decoration: none;
+}
+@media (min-width: 640px) { .nav { padding: 0 24px; } }
+
+{% block extra_css %}{% endblock %}
+</style>
+{% block head %}{% endblock %}
+</head>
+<body>
+<nav class="nav">
+  <a href="/" class="nav-logo"><span class="bracket">[[</span><span class="wordmark">wikihub</span><span class="bracket">]]</span></a>
+  <div class="nav-spacer"></div>
+  {% if current_user and current_user.is_authenticated %}
+    <a href="/explore" class="nav-link">Explore</a>
+    <a href="/@{{ current_user.username }}" class="nav-avatar">{{ current_user.username[0]|upper }}</a>
+  {% else %}
+    <a href="/explore" class="nav-link">Explore</a>
+    <a href="/auth/login" class="nav-link">Sign in</a>
+  {% endif %}
+</nav>
+
+{% block body %}{% endblock %}
+
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/highlight.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  // render KaTeX
+  renderMathInElement(document.body, {
+    delimiters: [
+      {left: '$$', right: '$$', display: true},
+      {left: '$', right: '$', display: false},
+    ],
+    throwOnError: false,
+  });
+  // highlight code blocks
+  document.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
+});
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

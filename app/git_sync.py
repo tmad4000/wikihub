@@ -212,15 +212,24 @@ def regenerate_public_mirror(username, slug, acl_rules=None):
             if filepath == ".wikihub/acl":
                 continue
 
-            # check visibility via ACL
-            if acl_rules:
-                vis = resolve_visibility(filepath, acl_rules)
-                if vis == "private":
-                    continue
-
             # read file content from authoritative repo
             content_bytes = _git_bytes(auth_repo, "cat-file", "blob", f"HEAD:{filepath}")
             content = content_bytes.decode("utf-8", errors="replace")
+
+            # extract frontmatter visibility (wins over ACL per spec)
+            fm_vis = None
+            if filepath.endswith(".md") and content.startswith("---"):
+                parts = content.split("---", 2)
+                if len(parts) >= 3:
+                    for line in parts[1].strip().split("\n"):
+                        if line.strip().lower().startswith("visibility:"):
+                            fm_vis = line.split(":", 1)[1].strip().lower()
+                            break
+
+            # check visibility: frontmatter > ACL > default (private)
+            vis = resolve_visibility(filepath, acl_rules or [], fm_vis)
+            if vis == "private":
+                continue
 
             # strip private bands from markdown files
             if filepath.endswith(".md"):

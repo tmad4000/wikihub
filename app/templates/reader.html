@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% block title %}{{ page.title or page.path }} — {{ wiki.title or wiki.slug }} — wikihub{% endblock %}
+
+{% block extra_css %}
+.reader-layout { display: flex; min-height: calc(100vh - 56px); }
+
+.sidebar {
+  width: 240px; flex-shrink: 0;
+  border-right: 1px solid var(--border-default);
+  padding: 16px 0; overflow-y: auto;
+  display: none;
+}
+@media (min-width: 768px) { .sidebar { display: block; } }
+
+.sidebar-section { padding: 0 12px; margin-bottom: 16px; }
+.sidebar-heading {
+  font-size: 0.6875rem; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--text-muted); padding: 4px 8px; margin-bottom: 4px;
+}
+.sidebar-item {
+  display: block; padding: 6px 8px; border-radius: var(--radius-sm);
+  font-size: 0.8125rem; color: var(--text-tertiary);
+  text-decoration: none; border-left: 2px solid transparent;
+}
+.sidebar-item:hover { color: var(--text-primary); background: var(--accent-subtle); text-decoration: none; }
+.sidebar-item.active {
+  color: var(--text-primary); background: var(--accent-subtle);
+  border-left-color: var(--accent);
+}
+.sidebar-item.folder { color: var(--text-secondary); font-weight: 500; }
+.sidebar-item.indent-1 { padding-left: 20px; }
+.sidebar-item.indent-2 { padding-left: 32px; }
+
+.content-wrap { flex: 1; min-width: 0; padding: 32px 16px 64px; }
+@media (min-width: 768px) { .content-wrap { padding: 32px 40px 64px; } }
+
+.breadcrumb {
+  font-size: 0.8125rem; color: var(--text-tertiary); margin-bottom: 8px;
+  font-family: var(--font-mono);
+}
+.breadcrumb a { color: var(--text-tertiary); }
+.breadcrumb a:hover { color: var(--accent); }
+.breadcrumb .sep { margin: 0 4px; }
+
+.vis-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 0.6875rem; font-weight: 500; padding: 2px 8px;
+  border-radius: var(--radius-sm); margin-bottom: 16px;
+}
+.vis-badge.public { color: var(--color-public); background: rgba(122, 158, 107, 0.1); border: 1px solid rgba(122, 158, 107, 0.2); }
+.vis-badge.private { color: var(--color-private); background: rgba(196, 92, 60, 0.1); border: 1px solid rgba(196, 92, 60, 0.2); }
+.vis-badge.unlisted { color: var(--color-unlisted); background: rgba(184, 173, 158, 0.1); border: 1px solid rgba(184, 173, 158, 0.2); }
+
+.article { max-width: 720px; }
+.article h1 { font-size: 2rem; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 16px; line-height: 1.3; }
+.article h2 { font-size: 1.375rem; font-weight: 700; letter-spacing: -0.01em; margin-top: 32px; margin-bottom: 12px; }
+.article h3 { font-size: 1.125rem; font-weight: 600; margin-top: 24px; margin-bottom: 8px; }
+.article p { color: var(--text-secondary); line-height: 1.7; margin-bottom: 16px; }
+.article ul, .article ol { color: var(--text-secondary); padding-left: 24px; margin-bottom: 16px; line-height: 1.7; }
+.article li { margin-bottom: 4px; }
+.article blockquote { border-left: 3px solid var(--border-accent); padding-left: 16px; color: var(--text-tertiary); margin-bottom: 16px; }
+.article code {
+  font-family: var(--font-mono); font-size: 0.8125rem;
+  background: var(--bg-elevated); padding: 2px 6px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border-default);
+}
+.article pre { background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-md); padding: 16px; margin-bottom: 16px; overflow-x: auto; }
+.article pre code { background: none; border: none; padding: 0; font-size: 0.8125rem; line-height: 1.6; }
+.article img { max-width: 100%; border-radius: var(--radius-sm); margin-bottom: 16px; }
+.article table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 0.875rem; overflow-x: auto; display: block; }
+.article th, .article td { padding: 8px 12px; border: 1px solid var(--border-default); text-align: left; }
+.article th { background: var(--bg-surface); color: var(--text-secondary); font-weight: 600; }
+.article td { color: var(--text-secondary); }
+.article hr { border: none; border-top: 1px solid var(--border-default); margin: 32px 0; }
+.article .wikilink { color: var(--color-wikilink); text-decoration: none; }
+.article .wikilink:hover { text-decoration: underline; }
+.article .wikilink-broken { color: var(--color-wikilink-broken); text-decoration: none; border-bottom: 1px dashed var(--color-wikilink-broken); }
+.article .external-link::after { content: ' ↗'; font-size: 0.75em; }
+.article .external-link { color: var(--color-external); }
+
+.hamburger {
+  display: flex; align-items: center; justify-content: center;
+  width: 44px; height: 44px; background: none; border: none;
+  color: var(--text-secondary); cursor: pointer; margin-right: -8px;
+}
+@media (min-width: 768px) { .hamburger { display: none; } }
+
+.sidebar-overlay {
+  display: none; position: fixed; inset: 0; top: 56px;
+  background: rgba(0,0,0,0.5); z-index: 50;
+}
+.sidebar-overlay.open { display: block; }
+.sidebar.open { display: block; position: fixed; top: 56px; left: 0; bottom: 0; z-index: 51; background: var(--bg-base); }
+{% endblock %}
+
+{% block body %}
+<div class="reader-layout">
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-section">
+      <div class="sidebar-heading">{{ wiki.slug }}</div>
+      {% for item in sidebar_items %}
+      <a href="{{ item.url }}" class="sidebar-item {{ 'active' if item.active else '' }} {{ item.indent_class }}">
+        {{ item.label }}
+      </a>
+      {% endfor %}
+    </div>
+  </aside>
+  <div class="sidebar-overlay" id="sidebar-overlay" onclick="toggleSidebar()"></div>
+
+  <main class="content-wrap">
+    <div class="breadcrumb">
+      <a href="/@{{ owner.username }}">@{{ owner.username }}</a>
+      <span class="sep">/</span>
+      <a href="/@{{ owner.username }}/{{ wiki.slug }}">{{ wiki.slug }}</a>
+      {% if page.path %}
+      <span class="sep">/</span>
+      <span>{{ page.path.replace('.md', '') }}</span>
+      {% endif %}
+    </div>
+
+    <span class="vis-badge {{ page.visibility }}">{{ page.visibility }}</span>
+
+    <article class="article">
+      {{ rendered_html | safe }}
+    </article>
+  </main>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('open');
+  document.getElementById('sidebar-overlay').classList.toggle('open');
+}
+</script>
+{% endblock %}
