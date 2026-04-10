@@ -186,6 +186,9 @@
 <div class="reader-layout">
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-section">
+      <a href="/@{{ owner.username }}" class="sidebar-item" style="padding-left:12px;margin-bottom:8px;font-weight:500;color:var(--text-secondary);">
+        <span style="margin-right:2px;">&larr;</span> @{{ owner.username }}
+      </a>
       <div class="sidebar-heading">Pages</div>
       {{ render_sidebar(sidebar_items) }}
       {% if current_user.is_authenticated and current_user.id == wiki.owner_id %}
