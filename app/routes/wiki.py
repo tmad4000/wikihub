@@ -565,6 +565,10 @@ def page_history(username, slug, folder_path):
 
 @wiki_bp.route("/@<username>/<slug>/<path:page_path>", strict_slashes=False)
 def wiki_page(username, slug, page_path):
+    # root index/README should be served by wiki_index, not as a standalone page
+    if page_path.rstrip("/") in ("index", "index.md", "README", "README.md"):
+        return redirect(url_for("wiki.wiki_index", username=username, slug=slug), code=302)
+
     owner, wiki, redirect_row = _get_owner_and_wiki_or_404(username, slug)
     if redirect_row:
         return redirect(url_for("wiki.wiki_page", username=owner.username, slug=slug, page_path=page_path), code=302)
@@ -598,7 +602,7 @@ def wiki_page(username, slug, page_path):
     is_owner = _is_owner(wiki)
 
     if page and not is_owner and not can_read(page.path, acl_rules, user_name, page.visibility):
-        return render_template("permission_error.html", owner=owner, wiki=wiki), 403
+        abort(404)
 
     use_public = not is_owner and (page.visibility if page else "public") != "private"
     content = read_file_from_repo(owner.username, wiki.slug, file_path, public=use_public)
