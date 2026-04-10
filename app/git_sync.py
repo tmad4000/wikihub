@@ -267,6 +267,17 @@ def read_file_from_repo(username, slug, file_path, public=False):
         return None
 
 
+def read_file_bytes_from_repo(username, slug, file_path, public=False):
+    """read a file as raw bytes from HEAD of a bare repo (for binary files)."""
+    repo = _repo_path(username, slug, public=public)
+    if not os.path.isdir(repo):
+        return None
+    try:
+        return _git_bytes(repo, "cat-file", "blob", f"HEAD:{file_path}")
+    except subprocess.CalledProcessError:
+        return None
+
+
 def list_files_in_repo(username, slug, public=False):
     """list all files in HEAD of a bare repo."""
     repo = _repo_path(username, slug, public=public)
