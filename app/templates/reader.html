@@ -186,7 +186,11 @@
 <div class="reader-layout">
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-section">
+      {% if wiki.slug == owner.username %}
+      <a href="/@{{ owner.username }}" class="sidebar-heading" style="text-decoration:none;display:block;">{{ owner.display_name or owner.username }}</a>
+      {% else %}
       <a href="/@{{ owner.username }}/{{ wiki.slug }}" class="sidebar-heading" style="text-decoration:none;display:block;">{{ wiki.title or wiki.slug }}</a>
+      {% endif %}
       {{ render_sidebar(sidebar_items) }}
       {% if current_user.is_authenticated and current_user.id == wiki.owner_id %}
       <a href="/@{{ owner.username }}/{{ wiki.slug }}/new" class="sidebar-item" style="color:var(--accent);margin-top:8px;">
