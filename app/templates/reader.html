@@ -57,14 +57,21 @@
 
 .right-panel {
   display: none; width: 240px; flex-shrink: 0;
-  border-left: 1px solid var(--border-default);
-  padding: 24px 0 24px 16px;
+  border-left: none;
+  padding: 24px 0 24px 0; position: relative;
 }
 @media (min-width: 1100px) { .right-panel { display: block; } }
+.resize-handle {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 5px;
+  cursor: col-resize; z-index: 10;
+  background: var(--border-default);
+  transition: background 0.15s ease;
+}
+.resize-handle:hover, .resize-handle.dragging { background: var(--accent); }
 .right-panel-inner {
   position: sticky; top: 72px;
   max-height: calc(100vh - 88px); overflow-y: auto;
-  padding-right: 12px;
+  padding: 0 12px 0 16px;
 }
 
 .right-panel .toc-block {
@@ -441,7 +448,8 @@
   </main>
 
   {% if (toc and toc|length >= 3) or backlinks or (link_graph and link_graph.nodes|length > 1) %}
-  <aside class="right-panel">
+  <aside class="right-panel" id="right-panel">
+    <div class="resize-handle" id="resize-handle"></div>
     <div class="right-panel-inner thin-scroll">
       {% if toc and toc|length >= 3 %}
       <nav class="toc-block">
@@ -522,21 +530,36 @@ function toggleFolder(path) {
   saveFolders(state);
 }
 
+function setButtonLoading(btn, text) {
+  btn.classList.add('btn-loading');
+  btn.textContent = '';
+  var sp = document.createElement('span');
+  sp.className = 'wh-spinner';
+  btn.appendChild(sp);
+  btn.appendChild(document.createTextNode(text));
+}
+
 function starWiki() {
+  var btn = event.currentTarget;
+  setButtonLoading(btn, 'Starring...');
   fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}/star', {method: 'POST'})
-    .then(r => { if (r.ok) location.reload(); else alert('Already starred or not logged in'); });
+    .then(r => { if (r.ok) location.reload(); else { btn.classList.remove('btn-loading'); btn.textContent = 'Star'; alert('Already starred or not logged in'); } });
 }
 
 function forkWiki() {
+  var btn = event.currentTarget;
+  setButtonLoading(btn, 'Forking...');
   fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}/fork', {method: 'POST'})
     .then(r => r.json())
-    .then(d => { if (d.web_url) location.href = d.web_url; else alert(d.message || 'Fork failed'); });
+    .then(d => { if (d.web_url) location.href = d.web_url; else { btn.classList.remove('btn-loading'); btn.textContent = 'Fork'; alert(d.message || 'Fork failed'); } });
 }
 
 function deletePage() {
   if (!confirm('Delete "{{ page.path }}"? This cannot be undone.')) return;
+  var btn = event.currentTarget;
+  setButtonLoading(btn, 'Deleting...');
   fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}/pages/{{ page.path }}', {method: 'DELETE'})
-    .then(r => { if (r.ok) location.href = '/@{{ owner.username }}/{{ wiki.slug }}'; else alert('Delete failed'); });
+    .then(r => { if (r.ok) location.href = '/@{{ owner.username }}/{{ wiki.slug }}'; else { btn.classList.remove('btn-loading'); btn.textContent = 'Delete'; alert('Delete failed'); } });
 }
 
 applyFolderState();
@@ -546,6 +569,40 @@ document.addEventListener('click', function(e) {
     if (!m.contains(e.target)) m.classList.remove('open');
   });
 });
+
+(function() {
+  const handle = document.getElementById('resize-handle');
+  const panel = document.getElementById('right-panel');
+  if (!handle || !panel) return;
+
+  const stored = localStorage.getItem('wikihub-right-panel-width');
+  if (stored) panel.style.width = stored + 'px';
+
+  let startX, startW;
+  handle.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    startX = e.clientX;
+    startW = panel.offsetWidth;
+    handle.classList.add('dragging');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    function onMove(e) {
+      const w = Math.max(180, Math.min(600, startW - (e.clientX - startX)));
+      panel.style.width = w + 'px';
+    }
+    function onUp() {
+      handle.classList.remove('dragging');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      localStorage.setItem('wikihub-right-panel-width', panel.offsetWidth);
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+})();
 </script>
 {% if link_graph and link_graph.nodes|length > 1 %}
 <script src="https://d3js.org/d3.v7.min.js"></script>

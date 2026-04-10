@@ -19,7 +19,7 @@ from app.models import Wiki, Page
 from app.content_utils import parse_markdown_document
 from app.git_sync import regenerate_public_mirror, read_file_from_repo, scaffold_wiki, sync_page_to_repo
 from app.routes import main_bp
-from app.wiki_ops import create_wiki_for_user, index_repo_pages, load_acl_rules, update_page_metadata
+from app.wiki_ops import create_wiki_for_user, index_repo_pages, load_acl_rules, refresh_wikilinks_for_page, update_page_metadata
 
 
 @main_bp.route("/new", methods=["GET", "POST"])
@@ -167,6 +167,8 @@ def _index_page(wiki_id, path, content, username, slug):
         db.session.add(page)
     page.visibility = resolve_visibility(path, acl_rules, frontmatter.get("visibility"))
     update_page_metadata(page, content, frontmatter)
+    db.session.flush()
+    refresh_wikilinks_for_page(page, content)
     db.session.commit()
 
 
