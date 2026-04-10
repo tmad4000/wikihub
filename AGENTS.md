@@ -1,8 +1,8 @@
 # wikihub
 
-GitHub for LLM wikis. Flask + Postgres + bare git. Spec: `wikihub-spec-final-2026-04-08.md`.
+GitHub for LLM wikis. Flask + Postgres + bare git.
 
-**When the user describes a feature request or new behavior, always add it to the spec** (`wikihub-spec-final-2026-04-08.md`) in the appropriate section, in addition to implementing it. The spec is the living record of all product decisions.
+**When the user describes a feature request or new behavior, always create a beads ticket for it.** Beads is the living record of all product decisions — use `bd create` for new features/bugs, `bd show` for context, `bd close` when done. Do not maintain a separate spec file.
 
 ## running locally
 
