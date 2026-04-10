@@ -763,13 +763,15 @@
     <div class="hero-panels">
       <div class="hero-panel">
         <div class="hero-panel-label">You</div>
-        <div class="drop-zone">
+        <div class="drop-zone" id="hero-drop-zone">
           <div class="drop-zone-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
           </div>
           <div class="drop-zone-text"><strong>Drop your wiki here</strong></div>
           <div class="drop-zone-hint">.md files, folders, or a zip &mdash; or <code style="font-family:var(--font-mono);font-size:0.75rem;color:var(--text-secondary);background:var(--bg-elevated);padding:1px 5px;border-radius:3px;">git push</code></div>
+          <div id="hero-drop-status" style="margin-top:8px;font-size:0.75rem;color:var(--accent);font-family:var(--font-mono);"></div>
         </div>
+        <input type="file" id="hero-file-input" multiple accept=".md,.txt,.zip,.png,.jpg,.jpeg,.gif,.webp,.svg,.pdf" style="display:none">
       </div>
 
       <div class="hero-panel">
@@ -962,6 +964,73 @@
   </footer>
 
 <script>
+// prevent browser from opening dropped files anywhere on the page
+document.addEventListener('dragover', (e) => { e.preventDefault(); });
+document.addEventListener('drop', (e) => { e.preventDefault(); });
+
+const heroZone = document.getElementById('hero-drop-zone');
+const heroFileInput = document.getElementById('hero-file-input');
+const heroStatus = document.getElementById('hero-drop-status');
+
+if (heroZone) {
+  ['dragenter', 'dragover'].forEach(e => {
+    heroZone.addEventListener(e, (ev) => { ev.preventDefault(); ev.stopPropagation(); heroZone.style.borderColor = 'var(--accent)'; heroZone.style.background = 'var(--accent-subtle)'; });
+  });
+  heroZone.addEventListener('dragleave', (ev) => { ev.preventDefault(); heroZone.style.borderColor = ''; heroZone.style.background = ''; });
+
+  heroZone.addEventListener('drop', (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    heroZone.style.borderColor = '';
+    heroZone.style.background = '';
+    const files = ev.dataTransfer.files;
+    if (files.length === 0) return;
+
+    const names = Array.from(files).map(f => f.name);
+    const slug = names[0].replace(/\.zip$|\.md$/i, '').replace(/[^a-z0-9-_]/gi, '-').toLowerCase();
+    heroStatus.textContent = names.join(', ') + ' — creating wiki...';
+
+    const fd = new FormData();
+    fd.append('slug', slug);
+    fd.append('title', slug.replace(/-/g, ' '));
+    fd.append('description', '');
+    for (const f of files) fd.append('files', f);
+
+    function handleUploadResponse(r) {
+      if (r.redirected && !r.url.includes('/auth/login')) {
+        window.location.href = r.url;
+      } else {
+        heroStatus.textContent = 'Sign in to create your wiki — your files will be waiting for you.';
+        sessionStorage.setItem('wikihub_pending_upload', JSON.stringify(names));
+        setTimeout(() => { window.location.href = '/auth/login?next=/new'; }, 1500);
+      }
+    }
+
+    fetch('/new', { method: 'POST', body: fd, redirect: 'follow' })
+      .then(handleUploadResponse)
+      .catch(err => { heroStatus.textContent = 'Upload failed: ' + err.message; });
+  });
+
+  heroZone.addEventListener('click', () => heroFileInput.click());
+  heroFileInput.addEventListener('change', () => {
+    if (heroFileInput.files.length === 0) return;
+    const files = heroFileInput.files;
+    const names = Array.from(files).map(f => f.name);
+    const slug = names[0].replace(/\.zip$|\.md$/i, '').replace(/[^a-z0-9-_]/gi, '-').toLowerCase();
+    heroStatus.textContent = names.join(', ') + ' — creating wiki...';
+
+    const fd = new FormData();
+    fd.append('slug', slug);
+    fd.append('title', slug.replace(/-/g, ' '));
+    fd.append('description', '');
+    for (const f of files) fd.append('files', f);
+
+    fetch('/new', { method: 'POST', body: fd, redirect: 'follow' })
+      .then(handleUploadResponse)
+      .catch(err => { heroStatus.textContent = 'Upload failed: ' + err.message; });
+  });
+}
+
 document.querySelectorAll('[data-account-menu]').forEach(menu => {
   const trigger = menu.querySelector('[data-account-trigger]');
   if (!trigger) return;

@@ -66,6 +66,10 @@ textarea { resize: vertical; min-height: 80px; }
 
 {% block scripts %}
 <script>
+// prevent browser from opening dropped files anywhere on the page
+document.addEventListener('dragover', (e) => { e.preventDefault(); });
+document.addEventListener('drop', (e) => { e.preventDefault(); });
+
 const dropZone = document.getElementById('drop-zone');
 const fileInput = document.getElementById('files');
 const fileList = document.getElementById('file-list');
