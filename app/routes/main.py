@@ -12,6 +12,11 @@ def index():
     return render_template("landing.html")
 
 
+@main_bp.route("/roadmap")
+def roadmap():
+    return render_template("roadmap.html")
+
+
 @main_bp.route("/explore")
 def explore():
     editorial = (
