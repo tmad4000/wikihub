@@ -47,7 +47,17 @@ def people_index():
 @login_required
 def settings():
     api_keys = ApiKey.query.filter_by(user_id=current_user.id).order_by(ApiKey.created_at.desc()).all()
-    return render_template("settings.html", api_keys=api_keys)
+    personal_wiki = Wiki.query.filter_by(owner_id=current_user.id, slug=current_user.username).first()
+    project_count = (
+        Wiki.query.filter(Wiki.owner_id == current_user.id, Wiki.slug != current_user.username)
+        .count()
+    )
+    return render_template(
+        "settings.html",
+        api_keys=api_keys,
+        personal_wiki=personal_wiki,
+        project_count=project_count,
+    )
 
 
 @main_bp.route("/claim-email", methods=["POST"])

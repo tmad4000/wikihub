@@ -196,6 +196,10 @@ def test_token_and_settings(client):
 
     r = client.get("/settings")
     assert r.status_code == 200
+    assert b"Account Control Room" in r.data
+    assert b"aria-label=\"Account menu\"" in r.data
+    assert b"Open profile" in r.data
+    assert b"/auth/logout" in r.data
 
 
 def test_magic_link_login(client):

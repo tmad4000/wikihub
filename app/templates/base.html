@@ -71,6 +71,31 @@ a:hover { text-decoration: underline; }
 .nav-link:hover { color: var(--text-primary); text-decoration: none; }
 .nav-agents { color: var(--accent); font-weight: 500; font-family: var(--font-mono); font-size: 0.8125rem; }
 .nav-agents:hover { color: var(--accent-hover); }
+.nav-account {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.nav-account-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  padding: 2px 6px 2px 2px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: var(--font-body);
+}
+.nav-account-trigger:hover,
+.nav-account:focus-within .nav-account-trigger,
+.nav-account.open .nav-account-trigger {
+  color: var(--text-primary);
+  background: var(--accent-subtle);
+  border-color: var(--border-default);
+}
 .nav-avatar {
   width: 32px; height: 32px; border-radius: 50%;
   background: var(--accent-muted); border: 1px solid var(--border-accent);
@@ -78,7 +103,89 @@ a:hover { text-decoration: underline; }
   font-family: var(--font-mono); font-size: 0.75rem; color: var(--accent);
   text-decoration: none;
 }
-@media (min-width: 640px) { .nav { padding: 0 24px; } }
+.nav-account-label {
+  display: none;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.nav-account-chevron {
+  color: var(--text-muted);
+  transition: transform 0.14s ease;
+}
+.nav-account:hover .nav-account-chevron,
+.nav-account:focus-within .nav-account-chevron,
+.nav-account.open .nav-account-chevron {
+  transform: rotate(180deg);
+}
+.nav-account-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 220px;
+  padding: 8px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-emphasis);
+  background: rgba(25, 23, 20, 0.98);
+  backdrop-filter: blur(12px);
+  box-shadow: none;
+  opacity: 0;
+  transform: translateY(-4px);
+  pointer-events: none;
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+.nav-account:hover .nav-account-menu,
+.nav-account:focus-within .nav-account-menu,
+.nav-account.open .nav-account-menu {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+.nav-account-summary {
+  padding: 10px 12px 12px;
+  border-bottom: 1px solid var(--border-default);
+  margin-bottom: 4px;
+}
+.nav-account-summary strong {
+  display: block;
+  font-size: 0.875rem;
+  color: var(--text-primary);
+}
+.nav-account-summary span {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+.nav-account-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  text-decoration: none;
+}
+.nav-account-item:hover {
+  background: var(--accent-subtle);
+  color: var(--text-primary);
+  text-decoration: none;
+}
+.nav-account-item.logout {
+  color: #d88c75;
+}
+.nav-account-item .menu-hint {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+}
+@media (min-width: 640px) {
+  .nav { padding: 0 24px; }
+  .nav-account-label { display: inline; }
+}
 
 .search-trigger {
   display: none; align-items: center; gap: 6px; padding: 6px 12px;
@@ -138,9 +245,40 @@ a:hover { text-decoration: underline; }
   {% if current_user and current_user.is_authenticated %}
     <a href="/explore" class="nav-link">Explore</a>
     <a href="/agents" class="nav-link nav-agents">For Agents</a>
-    <a href="/@{{ current_user.username }}" class="nav-avatar">{{ current_user.username[0]|upper }}</a>
-    <a href="/settings" class="nav-link" style="font-size: 0.75rem;">Settings</a>
-    <a href="/auth/logout" class="nav-link" style="font-size: 0.75rem;">Logout</a>
+    <div class="nav-account" data-account-menu>
+      <button
+        type="button"
+        class="nav-account-trigger"
+        aria-haspopup="menu"
+        aria-expanded="false"
+        aria-label="Account menu"
+        data-account-trigger
+      >
+        <span class="nav-avatar">{{ current_user.username[0]|upper }}</span>
+        <span class="nav-account-label">@{{ current_user.username }}</span>
+        <svg class="nav-account-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="m6 9 6 6 6-6"/>
+        </svg>
+      </button>
+      <div class="nav-account-menu" role="menu" aria-label="Account">
+        <div class="nav-account-summary">
+          <strong>{{ current_user.display_name or current_user.username }}</strong>
+          <span>@{{ current_user.username }}</span>
+        </div>
+        <a href="/@{{ current_user.username }}" class="nav-account-item" role="menuitem">
+          <span>View profile</span>
+          <span class="menu-hint">home</span>
+        </a>
+        <a href="/settings" class="nav-account-item" role="menuitem">
+          <span>Settings</span>
+          <span class="menu-hint">account</span>
+        </a>
+        <a href="/auth/logout" class="nav-account-item logout" role="menuitem">
+          <span>Logout</span>
+          <span class="menu-hint">exit</span>
+        </a>
+      </div>
+    </div>
   {% else %}
     <a href="/explore" class="nav-link">Explore</a>
     <a href="/agents" class="nav-link nav-agents">For Agents</a>
@@ -171,6 +309,43 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   // highlight code blocks
   document.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
+
+  const accountMenus = document.querySelectorAll('[data-account-menu]');
+  accountMenus.forEach((menu) => {
+    const trigger = menu.querySelector('[data-account-trigger]');
+    if (!trigger) return;
+
+    const closeMenu = () => {
+      menu.classList.remove('open');
+      trigger.setAttribute('aria-expanded', 'false');
+    };
+
+    const openMenu = () => {
+      menu.classList.add('open');
+      trigger.setAttribute('aria-expanded', 'true');
+    };
+
+    menu.addEventListener('mouseenter', openMenu);
+    menu.addEventListener('mouseleave', closeMenu);
+    menu.addEventListener('focusin', openMenu);
+    menu.addEventListener('focusout', (event) => {
+      if (!menu.contains(event.relatedTarget)) closeMenu();
+    });
+
+    trigger.addEventListener('click', (event) => {
+      event.preventDefault();
+      if (menu.classList.contains('open')) closeMenu();
+      else openMenu();
+    });
+
+    document.addEventListener('click', (event) => {
+      if (!menu.contains(event.target)) closeMenu();
+    });
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') closeMenu();
+    });
+  });
 });
 </script>
 <script src="{{ url_for('static', filename='js/search.js') }}"></script>

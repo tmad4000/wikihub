@@ -304,7 +304,7 @@ From `agent-first-web-brief-2026-04.md` — all cheap, all shipping in v1:
 
 - `POST /api/v1/accounts {display_name?, email?}` -> `201 {user_id, username, api_key}`. Email optional, username server-assigned if omitted, no CAPTCHA, no verification required.
 - **API key management (updated 2026-04-10).** Keys use the GitHub/Stripe model: hashed (SHA-256) in the DB, shown in full only at creation time. But generating new keys is frictionless:
-  - **Settings page** (`/settings`): web UI showing all keys (by prefix), "Generate new key" button that displays the full key inline with a copy button, and per-key "Revoke" button. Accessible from the nav bar for logged-in users.
+  - **Settings page** (`/settings`): web UI for account management, personal-wiki/profile entry points, and agent credentials. Shows all keys (by prefix), "Generate new key" button that displays the full key inline with a copy button, and per-key "Revoke" button. Accessible from the logged-in account menu in the nav bar.
   - **`POST /api/v1/auth/token {username, password}`**: agent-native endpoint — exchange credentials for a fresh API key. No browser needed. This is the canonical "I lost my key" or "I'm a new agent that only knows a password" path.
   - **`POST /api/v1/keys`** (Bearer auth): create additional keys programmatically if you already have one.
   - **`GET /api/v1/keys`** (Bearer auth): list keys by prefix, label, last_used_at, agent_name. Does NOT return full key values (hashed).
@@ -569,7 +569,7 @@ The top nav bar includes a prominent **"For Agents"** link (amber, monospace, al
 
 ### Explore = people + wikis (no separate People page) — added 2026-04-10
 
-The `/explore` page shows people first, then wikis — there is no separate `/people` nav link. One page, two sections. The Explore page already had a people section with an "All people" link; making `/people` a separate top-level nav item was redundant clutter. The nav is now: **Explore | For Agents | [user/auth]**.
+The `/explore` page shows people first, then wikis — there is no separate `/people` nav link. One page, two sections. The Explore page already had a people section with an "All people" link; making `/people` a separate top-level nav item was redundant clutter. The nav is now: **Explore | For Agents | [user/auth]**. For authenticated users, the user/auth area is a standard account trigger (avatar + handle) that opens a small menu containing at least **View profile, Settings, Logout** rather than exposing Settings/Logout as always-on top-level links.
 
 ### Official @wikihub account — added 2026-04-10
 
