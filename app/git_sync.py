@@ -216,10 +216,12 @@ def regenerate_public_mirror(username, slug, acl_rules=None):
                 content_bytes = _git_bytes(auth_repo, "cat-file", "blob", f"HEAD:{filepath}")
             except subprocess.CalledProcessError:
                 continue  # skip files git can't read (encoding issues, etc)
-            content = content_bytes.decode("utf-8", errors="replace")
+
+            is_markdown = filepath.endswith(".md")
 
             fm_vis = None
-            if filepath.endswith(".md"):
+            if is_markdown:
+                content = content_bytes.decode("utf-8", errors="replace")
                 frontmatter, _ = parse_markdown_document(content)
                 fm_vis = frontmatter.get("visibility")
 
@@ -229,13 +231,16 @@ def regenerate_public_mirror(username, slug, acl_rules=None):
                 continue
 
             # strip private bands from markdown files
-            if filepath.endswith(".md"):
+            if is_markdown:
                 content = strip_private_bands(content)
+                blob_input = content.encode("utf-8")
+            else:
+                blob_input = content_bytes
 
             # write to public mirror index
             blob = _git_bytes(
                 pub_repo, "hash-object", "-w", "--stdin",
-                input=content.encode("utf-8"), env=env,
+                input=blob_input, env=env,
             ).strip().decode()
 
             _git(pub_repo, "update-index", "--add", "--cacheinfo",

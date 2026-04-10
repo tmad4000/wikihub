@@ -123,6 +123,95 @@ def test_wiki_lifecycle(client, api_key):
     assert r.status_code == 204
 
 
+def test_binary_file_serving(client, api_key):
+    """upload and serve binary files (images, PDFs) from wiki repos"""
+    h = {"Authorization": f"Bearer {api_key}"}
+
+    # create a wiki for binary test
+    r = client.post("/api/v1/wikis", json={"slug": "media-wiki", "title": "Media"}, headers=h)
+    assert r.status_code == 201
+
+    # make wiki/** public so binary files are accessible — write ACL directly to git
+    from app.git_sync import sync_page_to_repo
+    sync_page_to_repo("agent1", "media-wiki", ".wikihub/acl", "* private\nwiki/** public\n")
+
+    # add a page with an image embed
+    r = client.post("/api/v1/wikis/agent1/media-wiki/pages", json={
+        "path": "wiki/page-with-image.md",
+        "content": "---\ntitle: Image Test\nvisibility: public\n---\n\n# Image Test\n\n![[wiki/test.png]]\n\n![[wiki/doc.pdf]]\n",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201
+
+    # write a fake PNG (1x1 pixel) directly to the repo
+    import struct
+    png_data = (
+        b'\x89PNG\r\n\x1a\n'  # PNG signature
+        + struct.pack('>I', 13) + b'IHDR' + struct.pack('>IIBBBBB', 1, 1, 8, 2, 0, 0, 0)
+        + struct.pack('>I', 0x1D15C187)  # CRC (pre-computed for 1x1 RGB)
+        + struct.pack('>I', 12) + b'IDAT' + b'\x08\xd7c\xf8\x0f\x00\x00\x01\x01\x00\x05'
+        + struct.pack('>I', 0x1A2B3C4D)  # CRC placeholder
+        + struct.pack('>I', 0) + b'IEND' + struct.pack('>I', 0xAE426082)
+    )
+    from app.git_sync import _git_bytes, _git, _repo_path, _AUTHOR_ENV
+    import tempfile
+    repo = _repo_path("agent1", "media-wiki")
+    idx = tempfile.mktemp(prefix="wikihub-test-bin-", suffix=".idx")
+    env = {"GIT_INDEX_FILE": idx}
+    try:
+        # read existing tree first
+        existing = _git(repo, "ls-tree", "-r", "--name-only", "HEAD").strip().split("\n")
+        for f in existing:
+            if f:
+                blob_info = _git(repo, "ls-tree", "HEAD", f).strip().split()
+                if len(blob_info) >= 3:
+                    _git(repo, "update-index", "--add", "--cacheinfo", blob_info[0].split()[0] if ' ' in blob_info[0] else "100644", blob_info[2], f, env=env)
+        # add binary file
+        blob = _git_bytes(repo, "hash-object", "-w", "--stdin", input=png_data, env=env).strip().decode()
+        _git(repo, "update-index", "--add", "--cacheinfo", "100644", blob, "wiki/test.png", env=env)
+        # add fake PDF
+        pdf_data = b"%PDF-1.4 fake pdf content for testing"
+        blob2 = _git_bytes(repo, "hash-object", "-w", "--stdin", input=pdf_data, env=env).strip().decode()
+        _git(repo, "update-index", "--add", "--cacheinfo", "100644", blob2, "wiki/doc.pdf", env=env)
+        tree = _git(repo, "write-tree", env=env)
+        parent = _git(repo, "rev-parse", "HEAD")
+        commit = _git(repo, "commit-tree", tree, "-p", parent, "-m", "Add test binary files", env={**env, **_AUTHOR_ENV})
+        _git(repo, "update-ref", "refs/heads/main", commit)
+    finally:
+        if os.path.exists(idx):
+            os.unlink(idx)
+
+    # regenerate public mirror
+    from app.wiki_ops import load_acl_rules
+    from app.git_sync import regenerate_public_mirror
+    acl_rules = load_acl_rules("agent1", "media-wiki")
+    regenerate_public_mirror("agent1", "media-wiki", acl_rules)
+
+    # serve image — should return PNG with correct content type
+    r = client.get("/@agent1/media-wiki/wiki/test.png")
+    assert r.status_code == 200, f"Expected 200 for PNG, got {r.status_code}"
+    assert "image/png" in r.content_type
+    assert r.data[:4] == b'\x89PNG'
+
+    # serve PDF — should return PDF with correct content type
+    r = client.get("/@agent1/media-wiki/wiki/doc.pdf")
+    assert r.status_code == 200, f"Expected 200 for PDF, got {r.status_code}"
+    assert "application/pdf" in r.content_type
+
+    # non-existent file should 404
+    r = client.get("/@agent1/media-wiki/wiki/nonexistent.png")
+    assert r.status_code == 404
+
+    # rendered page should contain img tag
+    r = client.get("/@agent1/media-wiki/wiki/page-with-image")
+    assert r.status_code == 200
+    assert b'<img' in r.data
+    assert b'wiki/test.png' in r.data
+    # should contain PDF embed
+    assert b'<object' in r.data
+    assert b'wiki/doc.pdf' in r.data
+
+
 def test_search(client, api_key):
     """full-text search returns results"""
     h = {"Authorization": f"Bearer {api_key}"}
@@ -368,6 +457,7 @@ def run_all():
 
         test_funcs = [
             ("wiki lifecycle", lambda: test_wiki_lifecycle(client, key)),
+            ("binary file serving", lambda: test_binary_file_serving(client, key)),
             ("search", lambda: test_search(client, key)),
             ("social (star + fork)", lambda: test_social(client, key)),
             ("zip upload", lambda: test_zip_upload(client, key)),

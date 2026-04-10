@@ -117,8 +117,9 @@ def _obsidian_embed_plugin(md):
         else:
             filename = content.strip()
 
-        # check if it's an image
+        # check file type for appropriate embed rendering
         img_exts = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".avif"}
+        pdf_exts = {".pdf"}
         ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
 
         if ext in img_exts:
@@ -128,8 +129,18 @@ def _obsidian_embed_plugin(md):
                 token.attrs["width"] = str(width)
                 token.attrs["style"] = f"max-width: {width}px"
             token.children = []
+        elif ext in pdf_exts:
+            # inline PDF embed via <object> with download fallback
+            w = f"{width}px" if width else "100%"
+            token = state.push("html_inline", "", 0)
+            token.content = (
+                f'<object data="{filename}" type="application/pdf" '
+                f'width="{w}" style="height: 80vh; min-height: 500px; border: 1px solid var(--border-subtle, #333); border-radius: 4px;">'
+                f'<p>PDF: <a href="{filename}" class="embed-link">{filename}</a></p>'
+                f'</object>'
+            )
         else:
-            # non-image embed: render as a link
+            # other files: render as a download link
             token = state.push("html_inline", "", 0)
             token.content = f'<a href="{filename}" class="embed-link">{filename}</a>'
 
