@@ -100,28 +100,16 @@ def ensure_personal_wiki(user):
 
 
 def ensure_official_wiki():
+    """Ensure the @wikihub user exists. The personal wiki (slug=wikihub) is
+    auto-created by ensure_personal_wiki; no separate 'wiki' slug needed."""
     user = User.query.filter_by(username="wikihub").first()
     if not user:
         user = User(username="wikihub", display_name="wikihub")
         db.session.add(user)
         db.session.flush()
 
-    wiki = Wiki.query.filter_by(owner_id=user.id, slug="wiki").first()
-    if wiki:
-        return wiki
-
-    wiki = create_wiki_for_user(
-        user,
-        slug="wiki",
-        title="wikihub",
-        description="Official wikihub docs and showcase",
-        scaffold=True,
-    )
-    public_index = "---\ntitle: wikihub\nvisibility: public\n---\n\n# wikihub\n\nOfficial docs, examples, and featured wikis.\n"
-    sync_page_to_repo(user.username, wiki.slug, "index.md", public_index, message="Seed official wiki")
-    index_repo_pages(user.username, wiki.slug, wiki, reset=True)
-    regenerate_public_mirror(user.username, wiki.slug, load_acl_rules(user.username, wiki.slug))
-    return wiki
+    ensure_personal_wiki(user)
+    return Wiki.query.filter_by(owner_id=user.id, slug="wikihub").first()
 
 
 def replace_acl_file(username, slug, content, message="Update ACL"):
