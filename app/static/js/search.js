@@ -7,18 +7,34 @@
   if (!modal) return;
 
   let debounceTimer;
+  let activeIndex = 0;
+  let items = [];
 
   function open() {
     modal.classList.add('open');
     overlay.classList.add('open');
     input.value = '';
     results.textContent = '';
+    items = [];
+    activeIndex = 0;
     setTimeout(() => input.focus(), 50);
   }
 
   function close() {
     modal.classList.remove('open');
     overlay.classList.remove('open');
+  }
+
+  function setActive(index) {
+    items.forEach((el, i) => {
+      el.classList.toggle('active', i === index);
+      if (i === index) el.scrollIntoView({ block: 'nearest' });
+    });
+    activeIndex = index;
+  }
+
+  function activateItem() {
+    if (items[activeIndex]) items[activeIndex].click();
   }
 
   // keyboard shortcuts
@@ -33,18 +49,34 @@
     }
   });
 
+  // arrow keys + enter inside the modal
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (items.length) setActive(Math.min(activeIndex + 1, items.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (items.length) setActive(Math.max(activeIndex - 1, 0));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      activateItem();
+    }
+  });
+
   overlay.addEventListener('click', close);
 
   // search on input
   input.addEventListener('input', () => {
     clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(doSearch, 200);
+    debounceTimer = setTimeout(doSearch, 150);
   });
 
   function doSearch() {
     const q = input.value.trim();
     if (!q) {
       results.textContent = '';
+      items = [];
+      activeIndex = 0;
       return;
     }
 
@@ -52,6 +84,8 @@
       .then(r => r.json())
       .then(data => {
         results.textContent = '';
+        items = [];
+        activeIndex = 0;
 
         if (data.results && data.results.length > 0) {
           data.results.forEach(r => {
@@ -77,33 +111,49 @@
             }
 
             results.appendChild(item);
+            items.push(item);
           });
         } else {
-          // search-or-create fallback
           const empty = document.createElement('div');
           empty.className = 'search-empty';
           empty.textContent = 'No results found.';
           results.appendChild(empty);
+        }
 
-          // only show create if user is logged in (check for avatar in nav)
-          if (document.querySelector('.nav-avatar')) {
+        // always show create option if logged in and in a wiki context
+        if (document.querySelector('.nav-avatar')) {
+          const match = window.location.pathname.match(/\/@([\w-]+)\/([\w-]+)/);
+          if (match) {
+            const slug = q.replace(/\s+/g, '-').toLowerCase().replace(/[^a-z0-9\-\/]/g, '').replace(/-+/g, '-').replace(/^-|-$/g, '');
+            if (!slug) return; // nothing left after cleaning
+
             const create = document.createElement('a');
-            create.className = 'search-create';
-            create.textContent = 'Create "' + q + '"';
+            create.className = 'search-result search-create';
             create.href = '#';
+
+            const createTitle = document.createElement('div');
+            createTitle.className = 'search-result-title';
+            createTitle.textContent = '+ Create "' + slug + '"';
+            create.appendChild(createTitle);
+
+            const createPath = document.createElement('div');
+            createPath.className = 'search-result-path';
+            createPath.textContent = 'wiki/' + slug + '.md → @' + match[1] + '/' + match[2];
+            create.appendChild(createPath);
+
             create.addEventListener('click', (e) => {
               e.preventDefault();
-              // get current wiki context from URL
-              const match = window.location.pathname.match(/\/@(\w+)\/(\w+)/);
-              if (match) {
-                window.location.href = '/@' + match[1] + '/' + match[2] +
-                  '/new?title=' + encodeURIComponent(q);
-              }
+              window.location.href = '/@' + match[1] + '/' + match[2] +
+                '/new?path=wiki/' + encodeURIComponent(slug);
               close();
             });
             results.appendChild(create);
+            items.push(create);
           }
         }
+
+        // auto-select first item
+        if (items.length) setActive(0);
       })
       .catch(() => {});
   }

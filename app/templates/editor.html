@@ -86,9 +86,17 @@
 <form method="POST" class="editor-layout" id="editor-form">
   <div class="editor-topbar">
     <div class="editor-breadcrumb">
-      @{{ owner.username }} / {{ wiki.slug }} / {{ page_path }}
+      @{{ owner.username }} / {{ wiki.slug }} /
+      {% if is_owner %}
+      <input type="text" id="path-input" name="path" value="{{ page_path }}"
+        style="background:transparent;border:none;border-bottom:1px solid var(--border-default);color:var(--text-primary);font-family:var(--font-mono);font-size:0.8125rem;padding:2px 4px;min-width:120px;outline:none;"
+        onfocus="this.style.borderBottomColor='var(--accent)'" onblur="this.style.borderBottomColor='var(--border-default)'">
+      {% else %}
+      {{ page_path }}
+      {% endif %}
     </div>
     <div class="editor-actions">
+      {% if is_owner %}
       <div class="vis-dropdown">
         <button type="button" class="vis-trigger" onclick="this.nextElementSibling.classList.toggle('open')">
           <span id="vis-label">{{ visibility or 'private' }}</span>
@@ -101,6 +109,9 @@
           {% endfor %}
         </div>
       </div>
+      {% else %}
+      <span style="font-size:0.75rem;color:var(--text-muted);">{{ visibility }}</span>
+      {% endif %}
       <a href="{% if content %}/@{{ owner.username }}/{{ wiki.slug }}/{{ page_path.replace('.md', '') }}{% else %}/@{{ owner.username }}/{{ wiki.slug }}{% endif %}" class="btn-sm btn-cancel">Cancel</a>
       <button type="submit" class="btn-sm btn-save">Save</button>
     </div>
@@ -119,7 +130,9 @@
   </div>
 
   <input type="hidden" name="visibility" id="visibility-input" value="{{ visibility or 'private' }}">
+  {% if not is_owner %}
   <input type="hidden" name="path" value="{{ page_path }}">
+  {% endif %}
 
   <div class="editor-statusbar">
     <span>Markdown</span>
@@ -144,11 +157,16 @@ function showTab(tab) {
     preview.style.display = 'none';
   } else {
     textarea.style.display = 'none';
-    preview.style.display = '';
-    // safe preview: use textContent to avoid XSS, show raw markdown as plaintext
-    previewEl.textContent = textarea.value;
-    previewEl.style.whiteSpace = 'pre-wrap';
-    previewEl.style.fontFamily = 'var(--font-body)';
+    preview.style.display = 'block';
+    previewEl.textContent = 'Rendering…';
+    fetch('/@{{ owner.username }}/{{ wiki.slug }}/preview', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({content: textarea.value})
+    })
+    .then(r => r.json())
+    .then(d => { previewEl.innerHTML = d.html; })
+    .catch(() => { previewEl.textContent = 'Preview failed'; });
   }
 }
 

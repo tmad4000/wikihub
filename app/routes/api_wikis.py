@@ -723,20 +723,28 @@ def search_pages():
     else:
         query = query.filter(Page.visibility.in_(["public", "public-edit"]))
 
-    # full-text search
-    query = query.filter(
-        Page.search_vector.op("@@")(db.func.plainto_tsquery("english", q))
-    )
-
     # tag filter — search tags as text cast of the JSON field
     if tag:
         query = query.filter(
             db.cast(Page.frontmatter_json["tags"], db.String).contains(tag)
         )
 
+    # fuzzy search: combine full-text, ILIKE on title/path, and trigram similarity
+    like_pattern = f"%{q}%"
+    ts_query = db.func.plainto_tsquery("english", q)
+    fuzzy_filter = db.or_(
+        Page.search_vector.op("@@")(ts_query),
+        Page.title.ilike(like_pattern),
+        Page.path.ilike(like_pattern),
+    )
+    query = query.filter(fuzzy_filter)
+
     total = query.count()
+    # rank: full-text rank + trigram similarity on title for ordering
+    ts_rank = db.func.ts_rank(Page.search_vector, ts_query)
+    trgm_sim = db.func.similarity(db.func.coalesce(Page.title, Page.path), q)
     results = query.order_by(
-        db.func.ts_rank(Page.search_vector, db.func.plainto_tsquery("english", q)).desc()
+        (ts_rank + trgm_sim).desc()
     ).offset(offset).limit(limit).all()
 
     return jsonify({

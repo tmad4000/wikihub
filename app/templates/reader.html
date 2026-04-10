@@ -284,6 +284,11 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
         Delete
       </button>
+      {% elif page.visibility in ('public-edit', 'unlisted-edit') %}
+      <a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ page.path.replace('.md', '') }}/edit" class="action-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+        Edit
+      </a>
       {% endif %}
 
       {% if current_user.is_authenticated and current_user.id != wiki.owner_id %}
@@ -308,6 +313,17 @@
     <div class="private-band-warning">
       This page has sections visible only to editors; not a security boundary. Don’t use private bands for real secrets.
     </div>
+    {% endif %}
+
+    {% if toc and toc|length >= 3 %}
+    <nav class="toc-block">
+      <div class="toc-title">Contents</div>
+      <ol class="toc-list">
+        {% for level, id, text in toc %}
+        <li class="toc-item toc-level-{{ level }}"><a href="#{{ id }}">{{ text }}</a></li>
+        {% endfor %}
+      </ol>
+    </nav>
     {% endif %}
 
     <article class="article">

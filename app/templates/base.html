@@ -135,6 +135,14 @@ a:hover { text-decoration: underline; }
   transform: translateY(0);
   pointer-events: auto;
 }
+.nav-account-menu::before {
+  content: '';
+  position: absolute;
+  top: -12px;
+  left: 0;
+  right: 0;
+  height: 12px;
+}
 .nav-account-summary {
   padding: 10px 12px 12px;
   border-bottom: 1px solid var(--border-default);
@@ -213,7 +221,7 @@ a:hover { text-decoration: underline; }
   border-bottom: 1px solid var(--border-default);
   transition: background 0.1s ease;
 }
-.search-result:hover { background: var(--accent-subtle); text-decoration: none; }
+.search-result:hover, .search-result.active { background: var(--accent-subtle); text-decoration: none; }
 .search-result-path { font-size: 0.6875rem; color: var(--text-muted); font-family: var(--font-mono); margin-bottom: 2px; }
 .search-result-title { font-size: 0.875rem; color: var(--text-primary); font-weight: 500; margin-bottom: 2px; }
 .search-result-excerpt { font-size: 0.75rem; color: var(--text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

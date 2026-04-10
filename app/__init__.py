@@ -38,6 +38,8 @@ def create_app(config_class="config.Config"):
     os.makedirs(app.config["REPOS_DIR"], exist_ok=True)
 
     with app.app_context():
+        db.session.execute(db.text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+        db.session.commit()
         db.create_all()
         from app.wiki_ops import ensure_official_wiki
         ensure_official_wiki()

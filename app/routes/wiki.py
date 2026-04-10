@@ -10,9 +10,9 @@ from app import db
 from app.acl import can_read, can_write, resolve_visibility
 from app.content_utils import has_private_bands, parse_markdown_document, set_visibility_in_content
 from app.discovery import discoverable_page_for_wiki, visible_wikis_for_owner
-from app.git_sync import read_file_from_repo, list_files_in_repo, regenerate_public_mirror, sync_page_to_repo
+from app.git_sync import read_file_from_repo, list_files_in_repo, regenerate_public_mirror, remove_page_from_repo, sync_page_to_repo
 from app.models import Page, User, UsernameRedirect, Wiki, utcnow
-from app.renderer import render_page
+from app.renderer import extract_toc, render_page
 from app.routes import wiki_bp
 from app.wiki_ops import load_acl_rules, refresh_wikilinks_for_page, sync_wiki_counters, update_page_metadata
 
@@ -368,12 +368,14 @@ def wiki_index(username, slug):
     if page is None:
         page = type("Page", (), {"path": page_path, "title": wiki.title, "visibility": "private", "updated_at": wiki.updated_at})()
 
+    rendered_html = render_page(content, owner.username, wiki.slug)
     return render_template(
         "reader.html",
         owner=owner,
         wiki=wiki,
         page=page,
-        rendered_html=render_page(content, owner.username, wiki.slug),
+        rendered_html=rendered_html,
+        toc=extract_toc(rendered_html),
         sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=use_public, current_path=page_path),
         private_band_warning=not use_public and has_private_bands(content),
         json_ld_author=owner.display_name or owner.username,
@@ -475,12 +477,14 @@ def wiki_page(username, slug, page_path):
     if not page:
         page = type("Page", (), {"path": file_path, "title": os.path.basename(file_path).replace(".md", ""), "visibility": resolve_visibility(file_path, acl_rules), "updated_at": wiki.updated_at})()
 
+    rendered_html = render_page(content, owner.username, wiki.slug)
     return render_template(
         "reader.html",
         owner=owner,
         wiki=wiki,
         page=page,
-        rendered_html=render_page(content, owner.username, wiki.slug),
+        rendered_html=rendered_html,
+        toc=extract_toc(rendered_html),
         sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=use_public, current_path=file_path),
         private_band_warning=not use_public and has_private_bands(content),
         json_ld_author=owner.display_name or owner.username,
@@ -488,6 +492,15 @@ def wiki_page(username, slug, page_path):
         "Vary": "Accept",
         "Link": f'</@{owner.username}/{wiki.slug}/{quote(page_path, safe="/")}.md>; rel="alternate"; type="text/markdown"',
     }
+
+
+@wiki_bp.route("/@<username>/<slug>/preview", methods=["POST"])
+def preview_page(username, slug):
+    owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
+    content = request.get_json(silent=True) or {}
+    markdown = content.get("content", "")
+    html = render_page(markdown, owner.username, wiki.slug)
+    return {"html": html}
 
 
 @wiki_bp.route("/@<username>/<slug>/<path:page_path>/edit", methods=["GET", "POST"])
@@ -504,17 +517,26 @@ def edit_page(username, slug, page_path):
 
     if request.method == "POST":
         content = request.form.get("content", "")
-        visibility = request.form.get("visibility", page.visibility if page else resolve_visibility(file_path, acl_rules))
+        new_path = request.form.get("path", "").strip()
+        if new_path and not new_path.endswith(".md"):
+            new_path += ".md"
+        target_path = new_path if (is_owner and new_path) else file_path
+        renamed = target_path != file_path
+
+        visibility = request.form.get("visibility", page.visibility if page else resolve_visibility(target_path, acl_rules))
         if is_owner:
             content = set_visibility_in_content(content, visibility)
         elif page:
             content = set_visibility_in_content(content, page.visibility)
 
         frontmatter, _ = parse_markdown_document(content)
-        page_visibility = frontmatter.get("visibility") or resolve_visibility(file_path, acl_rules)
+        page_visibility = frontmatter.get("visibility") or resolve_visibility(target_path, acl_rules)
 
-        if not page:
-            page = Page(wiki_id=wiki.id, path=file_path)
+        if renamed and page:
+            remove_page_from_repo(owner.username, wiki.slug, file_path)
+            page.path = target_path
+        elif not page:
+            page = Page(wiki_id=wiki.id, path=target_path)
             db.session.add(page)
 
         page.visibility = page_visibility
@@ -524,10 +546,11 @@ def edit_page(username, slug, page_path):
         refresh_wikilinks_for_page(page, content)
         author_name = current_user.username if current_user.is_authenticated else "anonymous"
         author_email = f"{author_name}@wikihub" if current_user.is_authenticated else "anon@wikihub"
-        sync_page_to_repo(owner.username, wiki.slug, file_path, content, message=f"Update {file_path}", author_name=author_name, author_email=author_email)
+        msg = f"Rename {file_path} → {target_path}" if renamed else f"Update {target_path}"
+        sync_page_to_repo(owner.username, wiki.slug, target_path, content, message=msg, author_name=author_name, author_email=author_email)
         regenerate_public_mirror(owner.username, wiki.slug, acl_rules)
         db.session.commit()
-        return redirect(url_for("wiki.wiki_page", username=owner.username, slug=wiki.slug, page_path=page_path))
+        return redirect(url_for("wiki.wiki_page", username=owner.username, slug=wiki.slug, page_path=target_path.replace(".md", "")))
 
     content = read_file_from_repo(owner.username, wiki.slug, file_path, public=False) or ""
     visibility = page.visibility if page else resolve_visibility(file_path, acl_rules)
@@ -539,24 +562,54 @@ def edit_page(username, slug, page_path):
         page_path=file_path,
         content=content,
         visibility=visibility,
+        is_owner=is_owner,
     )
 
 
 @wiki_bp.route("/@<username>/<slug>/new", methods=["GET", "POST"])
 def new_page(username, slug):
     owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
+    is_owner = _is_owner(wiki)
 
     if request.method == "POST":
         page_path = request.form.get("path", "").strip()
         if not page_path.endswith(".md"):
             page_path += ".md"
-        return redirect(url_for("wiki.edit_page", username=owner.username, slug=wiki.slug, page_path=page_path.replace(".md", "")))
+        content = request.form.get("content", "")
+
+        acl_rules = load_acl_rules(owner.username, wiki.slug)
+        visibility = request.form.get("visibility", resolve_visibility(page_path, acl_rules))
+        if is_owner:
+            content = set_visibility_in_content(content, visibility)
+
+        frontmatter, _ = parse_markdown_document(content)
+        page_visibility = frontmatter.get("visibility") or resolve_visibility(page_path, acl_rules)
+
+        page = Page(wiki_id=wiki.id, path=page_path)
+        db.session.add(page)
+        page.visibility = page_visibility
+        page.author = current_user.username if current_user.is_authenticated else None
+        update_page_metadata(page, content, frontmatter)
+        db.session.flush()
+        refresh_wikilinks_for_page(page, content)
+        author_name = current_user.username if current_user.is_authenticated else "anonymous"
+        author_email = f"{author_name}@wikihub" if current_user.is_authenticated else "anon@wikihub"
+        sync_page_to_repo(owner.username, wiki.slug, page_path, content, message=f"Create {page_path}", author_name=author_name, author_email=author_email)
+        regenerate_public_mirror(owner.username, wiki.slug, acl_rules)
+        db.session.commit()
+        return redirect(url_for("wiki.wiki_page", username=owner.username, slug=wiki.slug, page_path=page_path.replace(".md", "")))
 
     acl_rules = load_acl_rules(owner.username, wiki.slug)
     requested_path = request.args.get("path", "").strip()
-    page_path = requested_path or "wiki/new-page.md"
-    if not page_path.endswith(".md"):
-        page_path += ".md"
+    if requested_path:
+        page_path = requested_path if requested_path.endswith(".md") else requested_path + ".md"
+    else:
+        base = "wiki/new-page"
+        page_path = f"{base}.md"
+        n = 2
+        while Page.query.filter_by(wiki_id=wiki.id, path=page_path).first():
+            page_path = f"{base}-{n}.md"
+            n += 1
     default_vis = resolve_visibility(page_path, acl_rules)
     return render_template(
         "editor.html",
@@ -565,6 +618,7 @@ def new_page(username, slug):
         page_path=page_path,
         content="",
         visibility=default_vis,
+        is_owner=_is_owner(wiki),
     )
 
 
