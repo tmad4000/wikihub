@@ -148,6 +148,13 @@ def _is_owner(wiki):
     return current_user.is_authenticated and current_user.id == wiki.owner_id
 
 
+def _sibling_wikis(owner, current_wiki):
+    """other wikis by the same owner, for cross-wiki nav in sidebar."""
+    from app.discovery import visible_wikis_for_owner
+    wikis = visible_wikis_for_owner(owner, current_user)
+    return [w for w in wikis if w.id != current_wiki.id]
+
+
 def _normalize_folder_path(raw_path):
     clean = (raw_path or "").replace("\\", "/").strip().strip("/")
     clean = clean.removesuffix("/index.md").removesuffix("/index").removesuffix(".md")
@@ -401,7 +408,7 @@ def user_profile(username):
         personal_rendered_html=personal_rendered_html,
         private_band_warning=private_band_warning,
         sidebar_items=personal_sidebar,
-        personal_excerpt=profile_page.excerpt if profile_page else None,
+        personal_excerpt=(profile_page and (profile_page.frontmatter_json or {}).get("bio")) or (profile_page.excerpt if profile_page else None),
         personal_is_public=bool(profile_page),
         visible_wiki_count=len(other_wikis) + (1 if personal_visible else 0),
         is_owner=is_owner,
@@ -478,6 +485,7 @@ def wiki_index(username, slug):
     use_public = not is_owner
     recently_updated = _recently_updated_pages(wiki, public_only=use_public)
     page_path, content = _folder_index_content(owner.username, wiki.slug, "", public=use_public)
+    siblings = _sibling_wikis(owner, wiki)
     if content is None:
         items = _folder_listing(owner.username, wiki.slug, wiki, "", public=use_public)
         if use_public and not items:
@@ -492,6 +500,7 @@ def wiki_index(username, slug):
             rendered_html=None,
             breadcrumb=[],
             recently_updated=recently_updated,
+            sibling_wikis=siblings,
         )
 
     page = Page.query.filter_by(wiki_id=wiki.id, path=page_path).first()
@@ -515,6 +524,7 @@ def wiki_index(username, slug):
         private_band_warning=not use_public and has_private_bands(content),
         json_ld_author=owner.display_name or owner.username,
         management_items=management_items,
+        sibling_wikis=siblings,
     )
 
 
@@ -595,6 +605,7 @@ def wiki_page(username, slug, page_path):
     if redirect_row:
         return redirect(url_for("wiki.wiki_page", username=owner.username, slug=slug, page_path=page_path), code=302)
 
+    siblings = _sibling_wikis(owner, wiki)
     if request.path.endswith("/"):
         use_public = not _is_owner(wiki)
         content_path, content = _folder_index_content(owner.username, wiki.slug, page_path, public=use_public)
@@ -618,6 +629,7 @@ def wiki_page(username, slug, page_path):
             rendered_html=render_page(content, owner.username, wiki.slug) if content else None,
             breadcrumb=breadcrumb,
             private_band_warning=bool(content and not use_public and has_private_bands(content)),
+            sibling_wikis=siblings,
         )
 
     file_path = page_path if page_path.endswith(".md") else page_path + ".md"
@@ -664,6 +676,7 @@ def wiki_page(username, slug, page_path):
         sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=use_public, current_path=file_path),
         private_band_warning=not use_public and has_private_bands(content),
         json_ld_author=owner.display_name or owner.username,
+        sibling_wikis=siblings,
     ), 200, {
         "Vary": "Accept",
         "Link": f'</@{owner.username}/{wiki.slug}/{quote(page_path, safe="/")}.md>; rel="alternate"; type="text/markdown"',

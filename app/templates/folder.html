@@ -94,6 +94,19 @@
       {% endfor %}
     </div>
     {% endif %}
+    {% if sibling_wikis is defined and sibling_wikis %}
+    <div class="sidebar-section" style="margin-top: 16px; border-top: 1px solid var(--border-default); padding-top: 12px;">
+      <div class="sidebar-heading">{{ owner.display_name or owner.username }}'s Wikis</div>
+      {% for w in sibling_wikis %}
+      <a href="/@{{ owner.username }}/{{ w.slug }}" class="sidebar-item" style="padding-left: 12px;">
+        <span class="sidebar-icon" style="display:inline-flex;margin-right:6px;color:var(--text-muted);">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+        </span>
+        {{ w.title or w.slug }}
+      </a>
+      {% endfor %}
+    </div>
+    {% endif %}
   </aside>
 
   <main class="content-pane">
