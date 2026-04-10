@@ -1,5 +1,6 @@
 import hashlib
 import os
+import re
 import shutil
 from datetime import date, datetime
 
@@ -27,6 +28,22 @@ def load_acl_rules(username, slug):
     return parse_acl(acl_content) if acl_content else []
 
 
+def _plain_excerpt(text, length=200):
+    """strip markdown syntax to produce a plain-text excerpt."""
+    t = text
+    t = re.sub(r"\[\[([^|\]]+)\|([^\]]+)\]\]", r"\2", t)  # [[target|display]] → display
+    t = re.sub(r"\[\[([^\]]+)\]\]", r"\1", t)              # [[page]] → page
+    t = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", t)         # [text](url) → text
+    t = re.sub(r"^#{1,6}\s+", "", t, flags=re.MULTILINE)   # strip heading markers
+    t = re.sub(r"\*\*([^*]+)\*\*", r"\1", t)               # **bold** → bold
+    t = re.sub(r"\*([^*]+)\*", r"\1", t)                    # *italic* → italic
+    t = re.sub(r"`([^`]+)`", r"\1", t)                      # `code` → code
+    t = re.sub(r"^[-*>]\s+", "", t, flags=re.MULTILINE)    # strip list/blockquote markers
+    t = t.replace("\n", " ").strip()
+    t = re.sub(r"\s+", " ", t)
+    return t[:length]
+
+
 def update_page_metadata(page, content, frontmatter=None):
     try:
         if frontmatter is None:
@@ -42,7 +59,7 @@ def update_page_metadata(page, content, frontmatter=None):
         page.title = str(page.title)
     page.frontmatter_json = _sanitize_for_json(frontmatter)
     page.content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
-    page.excerpt = body[:200].replace("\n", " ").strip() if body else ""
+    page.excerpt = _plain_excerpt(body) if body else ""
     page.search_vector = db.func.to_tsvector("english", f"{page.title or ''} {body or ''}")
     return frontmatter, body
 
