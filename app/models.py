@@ -17,6 +17,7 @@ class User(UserMixin, db.Model):
     email = db.Column(db.String(256), unique=True, nullable=True)
     password_hash = db.Column(db.String(256), nullable=True)  # null for oauth-only users
     google_id = db.Column(db.String(256), unique=True, nullable=True)
+    llm_api_key_encrypted = db.Column(db.Text, nullable=True)  # encrypted Anthropic API key for Curator
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
 
     wikis = db.relationship("Wiki", backref="owner", lazy="dynamic")

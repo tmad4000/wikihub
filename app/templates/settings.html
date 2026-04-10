@@ -485,6 +485,33 @@
     </div>
   </section>
 
+  <section class="settings-card" style="margin-top: 16px;">
+    <div class="settings-card-header">
+      <h2>Curator (AI)</h2>
+      <p>Connect your Anthropic API key to use the Curator sidebar on wiki pages.</p>
+    </div>
+    <div class="settings-card-body">
+      <div id="llm-key-status" style="margin-bottom: 10px;">
+        {% if current_user.llm_api_key_encrypted %}
+        <span style="color: var(--color-success); font-size: 0.875rem;">Key saved</span>
+        <button type="button" class="btn-linkish" style="margin-left: 12px; color: var(--color-private); font-size: 0.8125rem;" onclick="deleteLlmKey()">Remove</button>
+        {% else %}
+        <span style="color: var(--text-muted); font-size: 0.875rem;">No key configured</span>
+        {% endif %}
+      </div>
+      <form id="llm-key-form" class="settings-inline-form" onsubmit="saveLlmKey(event)">
+        <input id="llm-key-input" class="settings-input" type="password" placeholder="sk-ant-..." autocomplete="off" style="font-family: var(--font-mono); font-size: 0.8125rem;">
+        <div class="btn-row">
+          <button type="submit" class="btn-inline">Save key</button>
+        </div>
+        <div id="llm-key-msg" class="settings-status" aria-live="polite"></div>
+      </form>
+      <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 8px;">
+        Get a key at <a href="https://console.anthropic.com/settings/keys" target="_blank" style="color: var(--accent);">console.anthropic.com</a>. Encrypted at rest, used only for your Curator sessions.
+      </p>
+    </div>
+  </section>
+
   <section class="settings-card" style="margin-top: 16px; border-color: rgba(180, 80, 60, 0.25);">
     <div class="settings-card-header" style="border-bottom-color: rgba(180, 80, 60, 0.15);">
       <h2 style="color: var(--color-private);">Danger zone</h2>
@@ -593,6 +620,42 @@ async function deleteKey(id, btn) {
   if (!document.querySelector('[data-key-row]')) {
     document.getElementById('keys-list').innerHTML =
       '<div class="key-empty">No API keys yet. Generate one when an agent or integration actually needs durable access.</div>';
+  }
+}
+
+async function saveLlmKey(e) {
+  e.preventDefault();
+  const input = document.getElementById('llm-key-input');
+  const msg = document.getElementById('llm-key-msg');
+  const key = input.value.trim();
+  if (!key) return;
+  msg.textContent = 'Saving...';
+  msg.className = 'settings-status';
+  const resp = await fetch('/settings/llm-key', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({key}),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (resp.ok) {
+    msg.textContent = 'Key saved.';
+    msg.classList.add('success');
+    input.value = '';
+    document.getElementById('llm-key-status').innerHTML =
+      '<span style="color:var(--color-success);font-size:0.875rem;">Key saved (' + data.prefix + ')</span>' +
+      ' <button type="button" class="btn-linkish" style="margin-left:12px;color:var(--color-private);font-size:0.8125rem;" onclick="deleteLlmKey()">Remove</button>';
+  } else {
+    msg.textContent = data.message || 'Failed to save key.';
+    msg.classList.add('error');
+  }
+}
+
+async function deleteLlmKey() {
+  const resp = await fetch('/settings/llm-key', {method: 'DELETE'});
+  if (resp.ok) {
+    document.getElementById('llm-key-status').innerHTML =
+      '<span style="color:var(--text-muted);font-size:0.875rem;">No key configured</span>';
+    document.getElementById('llm-key-msg').textContent = '';
   }
 }
 </script>

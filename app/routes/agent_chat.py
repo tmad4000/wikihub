@@ -444,10 +444,13 @@ def agent_chat():
 
     # Get model from env
     model = os.environ.get("CURATOR_MODEL", "claude-sonnet-4-20250514")
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
+
+    # Per-user key first, then fallback to server env var
+    from app.routes.main import get_user_llm_key
+    api_key = get_user_llm_key(user) or os.environ.get("ANTHROPIC_API_KEY")
 
     if not api_key:
-        return {"error": "config_error", "message": "ANTHROPIC_API_KEY not configured"}, 500
+        return {"error": "config_error", "message": "Add your Anthropic API key in Settings to use the Curator"}, 400
 
     def generate():
         client = anthropic.Anthropic(api_key=api_key)

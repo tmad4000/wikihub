@@ -121,6 +121,57 @@ def delete_account():
     return jsonify({"deleted": True})
 
 
+@main_bp.route("/settings/llm-key", methods=["POST"])
+@login_required
+def save_llm_key():
+    """Save user's Anthropic API key (encrypted at rest)."""
+    import base64, hashlib
+    from cryptography.fernet import Fernet
+
+    data = request.get_json(silent=True) or {}
+    raw_key = (data.get("key") or "").strip()
+    if not raw_key:
+        return {"error": "bad_request", "message": "key is required"}, 400
+    if not raw_key.startswith("sk-ant-"):
+        return {"error": "bad_request", "message": "Key should start with sk-ant-"}, 400
+
+    # Derive encryption key from app SECRET_KEY
+    secret = current_app.config["SECRET_KEY"]
+    fernet_key = base64.urlsafe_b64encode(hashlib.sha256(secret.encode()).digest())
+    f = Fernet(fernet_key)
+    encrypted = f.encrypt(raw_key.encode()).decode()
+
+    current_user.llm_api_key_encrypted = encrypted
+    db.session.commit()
+    return jsonify({"saved": True, "prefix": raw_key[:12] + "..."})
+
+
+@main_bp.route("/settings/llm-key", methods=["DELETE"])
+@login_required
+def delete_llm_key():
+    """Remove user's stored Anthropic API key."""
+    current_user.llm_api_key_encrypted = None
+    db.session.commit()
+    return jsonify({"deleted": True})
+
+
+def get_user_llm_key(user):
+    """Decrypt and return a user's Anthropic API key, or None."""
+    import base64, hashlib
+    from cryptography.fernet import Fernet
+    from flask import current_app
+
+    if not user or not user.llm_api_key_encrypted:
+        return None
+    try:
+        secret = current_app.config["SECRET_KEY"]
+        fernet_key = base64.urlsafe_b64encode(hashlib.sha256(secret.encode()).digest())
+        f = Fernet(fernet_key)
+        return f.decrypt(user.llm_api_key_encrypted.encode()).decode()
+    except Exception:
+        return None
+
+
 def _people_directory(limit=None):
     cards = []
 
