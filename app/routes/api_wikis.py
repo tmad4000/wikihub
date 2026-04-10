@@ -404,7 +404,7 @@ def read_page(owner, slug, page_path):
     acl_rules = load_acl_rules(owner_user.username, wiki.slug)
     if not is_owner:
         if not can_read(page.path, acl_rules, user.username if user else None, page.visibility):
-            return {"error": "forbidden", "message": "You don't have access to this page"}, 403
+            return {"error": "not_found", "message": "Page not found"}, 404
 
     use_public_repo = not is_owner and page.visibility != "private"
     content = read_file_from_repo(owner_user.username, wiki.slug, page.path, public=use_public_repo)

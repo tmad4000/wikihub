@@ -251,16 +251,18 @@ a:hover { text-decoration: underline; }
 <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/highlight.min.js"></script>
 <script>
 document.addEventListener('DOMContentLoaded', () => {
-  // render KaTeX
-  renderMathInElement(document.body, {
-    delimiters: [
-      {left: '$$', right: '$$', display: true},
-      {left: '$', right: '$', display: false},
-    ],
-    throwOnError: false,
-  });
-  // highlight code blocks
-  document.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
+  try {
+    renderMathInElement(document.body, {
+      delimiters: [
+        {left: '$$', right: '$$', display: true},
+        {left: '$', right: '$', display: false},
+      ],
+      throwOnError: false,
+    });
+  } catch(e) {}
+  try {
+    document.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
+  } catch(e) {}
 
   const accountMenus = document.querySelectorAll('[data-account-menu]');
   accountMenus.forEach((menu) => {

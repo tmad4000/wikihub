@@ -201,6 +201,8 @@ Three orthogonal axes:
 
 **Internal mode names stay short** (`public`, `public-edit`, `unlisted`, `unlisted-edit`) — that's what the ACL file uses and what the API returns. **User-facing UI labels disambiguate** with parentheticals: `public (read)`, `public (edit)`, `unlisted (read)`, `unlisted (edit)`, `private`, `signed-in (read)`.
 
+**Anti-enumeration: 404 not 403 for private reads (added 2026-04-10).** When an unauthorized user requests a private page (web or API), the server returns 404, not 403. This prevents attackers from discovering which private pages exist by diffing status codes. Owner-only mutation endpoints (edit, reindex, delete, visibility changes) still return 403 because the wiki's existence is already public — the 403 just means "you can't do this action."
+
 ### v1 mode vocabulary (simplified 2026-04-09)
 
 Two orthogonal properties: **visibility** (who discovers it) × **editable** (can non-owners write).
