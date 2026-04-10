@@ -74,7 +74,26 @@
 {% block body %}
 <div class="explore-page">
   <h1>Explore</h1>
-  <p class="subtitle">People first, then the wikis they publish.</p>
+  <p class="subtitle">Discover wikis and the people who publish them.</p>
+
+  {% if editorial %}
+  <div class="section-label">Editorial Picks</div>
+  <div class="wiki-grid featured">
+    {% for wiki in editorial %}
+    <a href="/@{{ wiki.owner.username }}/{{ wiki.slug }}" class="wiki-card">
+      <div class="wiki-card-owner">@{{ wiki.owner.username }}</div>
+      <div class="wiki-card-title">{{ wiki.title or wiki.slug }}</div>
+      {% if wiki.description %}
+      <div class="wiki-card-desc">{{ wiki.description }}</div>
+      {% endif %}
+      <div class="wiki-card-meta">
+        <span class="star">&#9733; {{ wiki.star_count }}</span>
+        <span>{{ wiki.fork_count }} forks</span>
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
 
   <div class="section-header">
     <div class="section-label" style="margin-bottom:0;">People</div>
@@ -104,25 +123,6 @@
     <p style="color: var(--text-tertiary); font-size: 0.875rem;">No people yet.</p>
     {% endfor %}
   </div>
-
-  {% if editorial %}
-  <div class="section-label">Editorial Picks</div>
-  <div class="wiki-grid featured">
-    {% for wiki in editorial %}
-    <a href="/@{{ wiki.owner.username }}/{{ wiki.slug }}" class="wiki-card">
-      <div class="wiki-card-owner">@{{ wiki.owner.username }}</div>
-      <div class="wiki-card-title">{{ wiki.title or wiki.slug }}</div>
-      {% if wiki.description %}
-      <div class="wiki-card-desc">{{ wiki.description }}</div>
-      {% endif %}
-      <div class="wiki-card-meta">
-        <span class="star">&#9733; {{ wiki.star_count }}</span>
-        <span>{{ wiki.fork_count }} forks</span>
-      </div>
-    </a>
-    {% endfor %}
-  </div>
-  {% endif %}
 
   {% if popular %}
   <div class="section-label">Popular</div>
