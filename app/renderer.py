@@ -16,8 +16,34 @@ import re
 from markdown_it import MarkdownIt
 from mdit_py_plugins.footnote import footnote_plugin
 from mdit_py_plugins.dollarmath import dollarmath_plugin
+from mdit_py_plugins.anchors import anchors_plugin
 
 from app.content_utils import parse_markdown_document
+
+
+def _heading_slug(title, _used_slugs):
+    """generate a URL-friendly slug from heading text."""
+    slug = re.sub(r'[^\w\s-]', '', title.lower()).strip()
+    slug = re.sub(r'[-\s]+', '-', slug)
+    if slug in _used_slugs:
+        n = 2
+        while f"{slug}-{n}" in _used_slugs:
+            n += 1
+        slug = f"{slug}-{n}"
+    _used_slugs.add(slug)
+    return slug
+
+
+def extract_toc(html):
+    """extract table of contents entries from rendered HTML headings.
+    returns list of (level, id, text) tuples for h2-h4 elements."""
+    toc = []
+    for match in re.finditer(r'<h([2-4])\s+id="([^"]+)"[^>]*>(.*?)</h\1>', html, re.DOTALL):
+        level = int(match.group(1))
+        heading_id = match.group(2)
+        text = re.sub(r'<[^>]+>', '', match.group(3)).strip()
+        toc.append((level, heading_id, text))
+    return toc
 
 
 def _wikilink_plugin(md):
@@ -185,6 +211,7 @@ def create_renderer():
 
     footnote_plugin(md)
     dollarmath_plugin(md, double_inline=True)
+    anchors_plugin(md, permalink=False, slug_func=_heading_slug)
     _wikilink_plugin(md)
     _obsidian_embed_plugin(md)
     _external_link_plugin(md)
