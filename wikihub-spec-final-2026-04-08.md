@@ -1,6 +1,6 @@
-# wikihub — final spec (2026-04-08, updated 2026-04-09)
+# wikihub — final spec (2026-04-08, updated 2026-04-10)
 
-This is the consolidated specification for wikihub, combining all decisions from the side session and its branch fork on 2026-04-08, plus resolutions from the 2026-04-09 review session. This document is self-contained — it supersedes the earlier `wikihub-spec-state-from-side-session-2026-04-08.md` and `wikihub-post-fork-delta-2026-04-08.md`.
+This is the consolidated specification for wikihub, combining all decisions from the side session and its branch fork on 2026-04-08, resolutions from the 2026-04-09 review session, and updates from the 2026-04-10 review. This document is self-contained — it supersedes the earlier `wikihub-spec-state-from-side-session-2026-04-08.md` and `wikihub-post-fork-delta-2026-04-08.md`.
 
 ---
 
@@ -14,6 +14,28 @@ This is the consolidated specification for wikihub, combining all decisions from
 - **Built from scratch** in a new repo. Not grafted onto listhub. Copies listhub's git plumbing patterns verbatim (`git_backend.py`, `git_sync.py`, `hooks/post-receive`) — those files are battle-tested and should be ported with path generalization, not rewritten.
 - **Reader aesthetic bar:** KaTeX, code highlighting, footnotes, clean dark typography. Justification: the Karpathy-wave audience expects a real reader (many of them run ML research wikis with math and code).
 - **Landing page framing (from user story research 2026-04-09):** Lead with "Drop your files, get a URL" — the #1 user story is zero-config publishing, not agent APIs. Secondary pitch: "Your agent can read and write it too" (MCP + REST + content negotiation). The agent-first surface is the retention hook; publishing is the acquisition hook. Don't lead with git or API on the landing page.
+
+### Personal wiki (auto-provisioned on signup) — added 2026-04-10
+
+Every user gets a **default personal wiki** created automatically at signup. Architecturally identical to any other wiki (same bare git repo pair, same ACL system, same rendering) but semantically special:
+
+- **Auto-created on signup** with slug matching the username. `/@username` resolves to this wiki's `index.md` — it IS the user's profile page.
+- **Can't be deleted.** It is the user's identity on the platform. Other wikis can be deleted; the personal wiki cannot.
+- **Default private ACL.** Scaffolded with `* private` like every other wiki (updated 2026-04-10). The personal wiki starts locked — users explicitly publish what they want. Same private-by-default invariant as all wikis.
+- **Profile-aware frontmatter.** The `index.md` supports optional profile fields in frontmatter (`bio:`, `avatar:`, `links:`) that the profile template renders specially — similar to GitHub's profile README pattern.
+- **Other wikis listed below.** When visiting `/@username`, the personal wiki's index renders as the main content, with the user's other wikis listed below or in a sidebar.
+- **Discoverability respects viewer context.** The owner sees all of their wikis on `/@username`; everyone else sees only discoverable project wikis (`public`, `public-edit`). This is a people page, not a private wiki-name leak.
+
+Other wikis a user creates are projects/topics. The personal wiki is *you*.
+
+### Official wikihub wiki — added 2026-04-10
+
+wikihub has a **platform-level wiki** at `/@wikihub/wiki` (or `/@wikihub/docs`) — the official knowledge base, docs, and curated showcase. This is:
+
+- **The canonical docs site** — how-to guides, API reference, onboarding walkthroughs live here as wiki pages, not static docs.
+- **A curated showcase** — featured wikis, example use cases, and community highlights are pages in this wiki, editable by admins, not just an algorithmic feed.
+- **A dogfood exemplar** — demonstrates what a well-structured wiki looks like on the platform (good ACL usage, folder structure, frontmatter, tags).
+- **Linked from the landing page** — the `/explore` featured section draws from both the official wiki's curated content AND the algorithmic most-starred feed (see Featured curation below).
 
 ## Stack
 
@@ -40,10 +62,10 @@ Earlier sessions drifted toward SQLite on scope-cut grounds. Overruled — Postg
 **Bare git repo = source of truth. Postgres = derived index, rebuildable from repos.**
 
 - Every wiki has its own bare repo at `repos/<user>/<slug>.git` (repo-per-wiki, confirmed — not repo-per-user).
-- **Markdown page content does NOT live in Postgres** (confirmed 2026-04-09). DB stores metadata only: `pages` table has id, wiki_id, path, title, visibility, frontmatter_json, excerpt (~200 chars), content_hash, timestamps. Content reads go through `git cat-file` from the bare repo (~3-5ms per file, batch via `git cat-file --batch`). This eliminates content sync bugs — the DB is purely derived metadata, not a content replica. The search index (`tsvector`) is populated from content at index time but the content column itself does not exist.
-- **Exception: private page content lives in Postgres only** (never enters git — already locked). This is the one case where Postgres holds primary content, not derived.
+- **Markdown page content does NOT live in Postgres** (confirmed 2026-04-09, clarified 2026-04-10). DB stores metadata only: `pages` table has id, wiki_id, path, title, visibility, frontmatter_json, excerpt (~200 chars), content_hash, timestamps. Content reads go through `git cat-file` from the bare repo (~3-5ms per file, batch via `git cat-file --batch`). This eliminates content sync bugs — the DB is purely derived metadata, not a content replica. The search index (`tsvector`) is populated from content at index time but no content column exists in Postgres.
+- **All pages live in the authoritative git repo — including private pages** (clarified 2026-04-10). The two-repo model handles access control: private pages exist in the authoritative repo (owner-only access) and are excluded from the public mirror during regeneration. There is no Postgres-only content tier. This means the authoritative repo is the complete backup — `wikihub reindex` can rebuild all Postgres metadata from git HEAD.
 - **Binary files (images, PDFs, attachments) live in the git repo alongside markdown**, same as Obsidian treats attachments. No quota in v1. Git LFS is NOT used in v1. Future escape hatch when a wiki outgrows in-repo binaries: globalbr.ai already has an S3 bucket that can host external blobs, with markdown links rewritten server-side to signed HTTPS URLs (v2+).
-- Postgres stores: users, wikis, pages (derived metadata + search index), wikilinks, stars, forks, sessions, API keys, principals, audit rows, **private page content**. Social graph is ONLY in Postgres and can't be rebuilt from repos. Reindex rebuilds public page metadata from git HEAD but cannot rebuild private page content or social data — those need DB backup.
+- Postgres stores: users, wikis, pages (derived metadata + search index), wikilinks, stars, forks, sessions, API keys, audit rows. Social graph (stars, forks) is ONLY in Postgres and can't be rebuilt from repos — those need DB backup. All page content (public and private) lives in the authoritative git repo and can be fully reindexed from git HEAD.
 - **Two-way sync** copied from listhub:
   - DB->git: Flask writes via git plumbing (`GIT_INDEX_FILE`, `hash-object`, `update-index --cacheinfo`, `write-tree`, `commit-tree`, `update-ref`). This path does NOT fire hooks, which is why the loop below doesn't run forever.
   - git->DB: `post-receive` hook parses pushed .md files and calls the admin REST API. Fires on `git push`, NOT on `update-ref`.
@@ -70,7 +92,20 @@ Stock `git-http-backend`, stock `git-upload-pack`. `git clone`, `fetch`, `push`,
 
 **Two separate bare repos (not two refs in one repo)** — chosen for auditability. Filesystem permissions separate them, and you can `ls -R` the public mirror on disk to confirm no private content leaked.
 
-**Private pages never enter git at all.** They live in Postgres only. The `git` layer is coarse (owner-or-not); the Postgres layer is fine-grained per-file. This is the honest answer to "git can't filter packs per-user" — stop trying, and split storage by access tier.
+**Private pages live in the authoritative repo only** (clarified 2026-04-10). They are excluded from the public mirror during regeneration. The two-repo split IS the access control — the authoritative repo is owner-only (via filesystem permissions + Flask auth dispatch), and the public mirror contains only what non-owners should see. No per-file filtering at clone time, no custom pack surgery. The `git` layer is coarse (owner-or-not); the ACL file + Postgres handle fine-grained per-file visibility for web rendering and search.
+
+**Flask dispatches web reads by auth too (added 2026-04-10):**
+
+The same owner-or-public-mirror split applies to ALL web-facing reads, not just git clones:
+
+- **Wiki index** (`/@user/slug`): reads `index.md`/`README.md` from authoritative repo for owner, public mirror for everyone else.
+- **Page view** (`/@user/slug/page`): reads content from authoritative repo for owner, public mirror for everyone else.
+- **Sidebar**: lists files from authoritative repo for owner, public mirror for everyone else. Additionally, non-owner sidebar filters to **discoverable pages only** (public, public-edit) — unlisted pages are in the public mirror (so they render when accessed by URL) but excluded from listings/sidebar. This preserves the "accessible by URL, not indexed" contract.
+- **ZIP download**: already dispatched by auth (owner gets authoritative, others get public mirror).
+
+**Unlisted = accessible but not discoverable.** Unlisted pages exist in the public mirror so they can be rendered when a non-owner visits the URL directly. But they are excluded from sidebar listings, search results, and the `/explore` page. The sidebar filters by checking `Page.visibility` in Postgres — only `public` and `public-edit` pass the discoverability check.
+
+**v2: ACL grants in sidebar.** Currently, non-owner sidebar shows only public-mirror content. A user with `@alice:read` grant on a private page won't see it in the sidebar. To support this, merge DB-backed private pages the user `can_read()` into the sidebar alongside public-mirror files. Don't switch to authoritative repo reads for grantees — that would leak private bands in otherwise public pages.
 
 ### Why not dynamic pack filtering
 
@@ -263,14 +298,21 @@ From `agent-first-web-brief-2026-04.md` — all cheap, all shipping in v1:
 - **`/.well-known/wikihub.json`** site bootstrap manifest (API base, MCP URL, signup URL, docs URL) so an agent pointed at the domain can self-bootstrap.
 - **Server-hosted MCP server** (`wikihub-mcp`) wrapping the REST API. Tools: `whoami`, `search`, `read_page`, `list_pages`, `create_page`, `update_page`, `append_section`, `delete_page`, `set_visibility`, `share`, `create_wiki`, `fork_wiki`, `commit_log`.
 - **WebMCP** tool registration on edit pages via `navigator.modelContext.registerTool` (Chrome 146 flag-only as of April 2026, feature-detected). Reuses logged-in browser session.
-- **JSON-LD** — deferred to v2 (2026-04-09). `@type: Article` structured data on HTML responses. No current user cares about SEO for personal wikis.
+- **JSON-LD** — **restored to v1** (2026-04-10). `@type: Article` structured data on HTML responses with author, datePublished, dateModified, license. ~15 lines of Jinja template. Zero dependencies, zero cost to ship.
 
 ## Agent-native auth
 
 - `POST /api/v1/accounts {display_name?, email?}` -> `201 {user_id, username, api_key}`. Email optional, username server-assigned if omitted, no CAPTCHA, no verification required.
+- **API key management (updated 2026-04-10).** Keys use the GitHub/Stripe model: hashed (SHA-256) in the DB, shown in full only at creation time. But generating new keys is frictionless:
+  - **Settings page** (`/settings`): web UI showing all keys (by prefix), "Generate new key" button that displays the full key inline with a copy button, and per-key "Revoke" button. Accessible from the nav bar for logged-in users.
+  - **`POST /api/v1/auth/token {username, password}`**: agent-native endpoint — exchange credentials for a fresh API key. No browser needed. This is the canonical "I lost my key" or "I'm a new agent that only knows a password" path.
+  - **`POST /api/v1/keys`** (Bearer auth): create additional keys programmatically if you already have one.
+  - **`GET /api/v1/keys`** (Bearer auth): list keys by prefix, label, last_used_at, agent_name. Does NOT return full key values (hashed).
+  - **`DELETE /api/v1/keys/:id`** (Bearer auth): revoke a key.
+  - An agent should never be permanently locked out — if it has a password, `/auth/token` always works. If it has an existing key, `/keys` creates a new one.
+- **Three web login methods** (updated 2026-04-10): Google OAuth, username+password, and API key paste. The login page has all three as equal options.
 - `PATCH /api/v1/accounts/me` for programmatic rename (username, display_name, email independently). Username change -> old slug redirects for 90 days.
 - `POST /claim-email` for post-hoc email affiliation. Email is not identity; it's an optional attachment.
-- `POST /api/v1/keys`, `DELETE /api/v1/keys/:id` for key management (session-auth).
 - ~~Per-key scopes~~ — **cut from v1** (2026-04-09). Every API key is `read+write`. Add scopes when users ask for read-only keys.
 - Soft `X-Agent-Name` / `X-Agent-Version` header logged; surfaced in user's dashboard ("this key was used by `claude-code@1.2.3`").
 - `/api/v1/delegation` endpoint — **deferred to v2** (2026-04-09). RFC 8693 token exchange for scoped, short-lived agent tokens. No current users; skip the stub.
@@ -320,12 +362,22 @@ Every error response returns a JSON body: `{"error": "forbidden", "message": "Yo
 
 - **Fork** — server-side `git clone --bare` under caller's namespace, plus a matching regen of the public mirror. Copies Page rows into Postgres, **resets visibility to `private` (the repo-default `* private` line)** — the forker explicitly republishes if they want it public. Sets `forked_from_id`. Free from the bare-repo model.
 - **Star** — single counter and row. Standard.
-- **Suggested edits — DEFERRED TO v2** (2026-04-09, user story research). Fork is valuable; the "suggest edits back upstream" PR-like mechanic (diff format, list UI, accept/reject, cherry-pick) has no current user demand. People want to fork and diverge, not contribute back — yet. Moves to v2 alongside inline diff UI.
+- **Suggested edits — planned for v2** (confirmed 2026-04-10). Fork is valuable for v1; the "suggest edits back upstream" PR-like mechanic (diff format, list UI, accept/reject, cherry-pick) moves to v2 alongside inline diff UI. Unlike other v2 deferrals, this one has explicit intent to build — plan the data model (source_wiki, source_commit, target_wiki, diff) now so the fork schema is forward-compatible.
 - **ZIP download** — `GET /@alice/wiki.zip` returns a zip of the wiki's working tree. Flask dispatches by auth: owner gets the authoritative repo's tree; non-owners get the public mirror's tree. Server implementation: `git archive --format=zip HEAD` streaming.
-- **`/explore`** — mixed discovery surface. The top of the page includes people browsing so the community is browseable as humans, not just as repositories. Wiki discovery continues below with featured/popular/recent sections.
-- **Dedicated `/people` index.** `/people` is the full people directory. `/explore` is the blended overview.
-- **Person page shape.** Clicking a person goes to `/@username`, where the personal wiki renders first and the user's project wikis appear below it. Unlike ListHub, the person page is the personal wiki itself, not a separate profile shell.
+- **People browsing + `/explore`** — mixed discovery surface (updated 2026-04-10):
+  - **`/explore` includes people AND wikis.** The top of the page shows a people strip/grid so identity is browseable, not just repos. This is where ListHub's "people are a first-class browse object" idea carries over.
+  - **Dedicated `/people` index.** `/people` is the complete people directory; `/explore` is the blended overview. Nav exposes both `Explore` and `People`.
+  - **Editorial picks** — admin-curated featured wikis from the official `/@wikihub` wiki. Hand-picked quality content, especially important for cold start when there are zero stars.
+  - **Algorithmic popular** — most-starred wikis, automatic. Provides social proof once the platform has enough activity.
+  - **Recent** — newest public wikis, chronological.
+  - **Person page shape.** Clicking a person goes to `/@username`, which is the user's personal wiki first, then their project wikis underneath. Unlike ListHub, the person page is not a separate social profile shell; it is the personal wiki itself.
+  The official wikihub wiki IS the curated showcase — featured entries are pages in `/@wikihub/wiki` with links to the highlighted user wikis. This solves cold start (editorial content exists from day one), provides editorial control (not just a popularity contest), and means the featured section is itself a wiki page that's editable, versionable, and dog-foods the platform.
 - **Star / fork count, profiles, `/@user` pages** ship in v1.
+- **Wiki history viewer (added 2026-04-10):**
+  - **`/@user/wiki/history`** — web page showing the git commit log for the wiki. Paginated list of commits: author, date, message, changed files. Styled like GitHub's commit list. Auth-dispatched: owner sees full history from the authoritative repo; non-owners see public mirror history (linearized, less useful — but still shows the latest snapshot commit).
+  - **`/@user/wiki/path/to/page/history`** — per-page history. Filters the commit log to commits that touched this file. Shows diffs between versions.
+  - **`GET /api/v1/wikis/:owner/:slug/history?path=&limit=20&offset=0`** — REST endpoint returning commit log as JSON: `{commits: [{sha, author, date, message, files_changed}], total}`. Optional `path` param scopes to a single file. This is the `commit_log` MCP tool's backing endpoint.
+  - Implementation: `git log --format=json` (or parsed `git log --pretty=format:...`) on the appropriate bare repo. Streaming for large histories.
 
 ---
 
@@ -334,7 +386,7 @@ Every error response returns a JSON body: `{"error": "forbidden", "message": "Yo
 - **Cmd+K omnisearch cross-wiki from day one.** Scoped to what the viewer can see. Postgres `tsvector` + GIN index. Global and per-wiki scope options.
 - **Search-or-create fallback.** When cross-wiki search returns zero hits, Cmd+K offers "Create `<query>`" as the first action — creates a new page in the currently-focused wiki with the query as the title and drops the user into the editor. Matches Obsidian and Notion behavior.
 - **Tag filters.** Cmd+K accepts `tag:<name>` prefix to filter by tag. Tags come from frontmatter's `tags:` field (Obsidian-compatible).
-- **Tag index pages — DEFERRED TO v2** (2026-04-09). `/@user/wiki/tag/:name` page rendering deferred; tag search via Cmd+K `tag:<name>` prefix stays in v1 (more valuable access pattern).
+- **Tag index pages — restored to v1** (2026-04-10). `/@user/wiki/tag/:name` renders a list of every page in the wiki with that tag. Tag counts shown on wiki landing page. Tag search via Cmd+K `tag:<name>` prefix also stays.
 
 ---
 
@@ -342,10 +394,26 @@ Every error response returns a JSON body: `{"error": "forbidden", "message": "Yo
 
 - **Content negotiation** on every page URL (see Agent surfaces above).
 - **Wikilinks** `[[Page]]` and `[[path/to/page]]` resolved via the custom markdown-it plugin. Unresolved wikilinks render as red-dashed with a "create" affordance for users with edit permission.
+- **Cross-wiki wikilinks (added 2026-04-10).** `[[/@user/wiki-slug/page]]` resolves across wikis at the platform layer. Syntax: any wikilink target starting with `/@` is treated as an absolute cross-wiki reference. Rendered as a normal link to that URL — no git submodules, no repo embedding. The personal wiki can link to project wikis and vice versa. Resolver checks target page existence across wikis (same DB query, different wiki_id). Unresolved cross-wiki links render as red-dashed like intra-wiki broken links. **Not submodules** — submodules add git complexity (pinned versions, nested auth, agent footguns) for no user benefit. Cross-wiki linking is a platform-layer feature, not a git-layer feature.
 - **Inline images**: standard markdown `![alt](path.png)` AND Obsidian embed syntax `![[image.png]]`, with optional width specifier `![[image.png|300]]` -> 300px. Image paths resolve relative to the page. Covered formats: png, jpg, jpeg, gif, webp, svg, avif.
-- **Folder page layout.** Any subfolder within a wiki can contain an `index.md` (or `README.md` as a fallback). When browsing to `/@user/wiki/folder/`, the renderer shows breadcrumb navigation, renders that file as the folder's landing page, then lists the folder contents below. If no index file exists, an auto-generated file listing is rendered (GitHub-style). Visibility cascades from the folder's ACL glob unless the index file's own frontmatter overrides.
-- **Universal sidebar actions.** Wherever the owner sees the sidebar tree (reader view, folder view, or personal wiki/profile view), the same creation actions appear underneath it: `New page` and `New folder`.
-- **Folder creation is git-native.** There is no separate folder model in Postgres. Creating a folder means creating `<folder>/index.md` through a small web form, then redirecting into the editor for that index page.
+- **Folder page layout (updated 2026-04-10).** When browsing to `/@user/wiki/folder/`:
+  1. **Breadcrumb** — `wiki / brainstorms /` with each segment linked.
+  2. **index.md content** rendered first (if `index.md` exists, or `README.md` as fallback). This is the folder's "page" — primary content, Notion-style.
+  3. **Contents listing** below the rendered content — table/list of files and subfolders in this folder: name, visibility badge, last modified. Subfolders show a folder icon and link to their own folder page. Files link to their reader view.
+  4. **No index.md?** Just show the contents listing (GitHub-style auto-generated directory view).
+  Visibility cascades from the folder's ACL glob unless the index file's own frontmatter overrides.
+- **Sidebar folder behavior (Notion-style, added 2026-04-10).** The sidebar is an expandable tree, not a flat list:
+  - **Toggle arrow** on folders → expand/collapse inline, showing children indented underneath. No page navigation on toggle.
+  - **Click the folder name** (not the arrow) → navigate to the folder page (`/@user/wiki/folder/`, renders index.md or auto-listing).
+  - **Click a page** inside the expanded tree → navigate to that page.
+  - Expand/collapse state persists across navigation (stored in `localStorage`).
+  - Folders with no visible children (all private, viewer has no access) are hidden from the tree.
+  - Deep nesting supported — the tree is recursive. Indent with consistent spacing per level.
+  - **Universal creation affordances.** Wherever the owner sees the sidebar tree (reader view, folder view, personal wiki/profile view), the same creation actions appear underneath it: `New page` and `New folder`.
+- **Folder creation UX (added 2026-04-10).** There is no separate folder model in Postgres. Creating a folder means creating `<folder>/index.md` through a small web form:
+  - The form asks for **folder path** plus **visibility for the folder index page**.
+  - On submit, wikihub scaffolds `<folder>/index.md` with frontmatter + heading and redirects into the editor.
+  - This keeps folders git-native, makes the sidebar universal, and avoids inventing a second content type whose only job would be to proxy to `index.md`.
 - **External links** open in new tab (`target="_blank" rel="noopener noreferrer"`). Internal wikilinks stay in the current tab.
 - **KaTeX** for `$inline$` and `$$display$$` math. **highlight.js** for fenced code blocks. **markdown-it-footnote** for `[^1]` footnotes.
 - **`<!-- private -->...<!-- /private -->` bands** stripped from public-mirror serving and `Accept: text/markdown` responses, but kept in the authoritative repo. Visible UI warning on pages that contain private bands. **Implementation requirement (validated 2026-04-09):** stripping MUST use markdown-it's parsed AST (token stream), NOT raw text regex. Raw regex incorrectly strips markers inside fenced code blocks, frontmatter, and nested HTML comments. AST-based stripping is safe because fenced code content never generates `html_block` tokens. Additional rules: case-insensitive matching (`/<!--\s*private\s*-->/i`), unclosed bands fail closed (everything after the opening marker is private), frontmatter block is excluded from scanning.
@@ -384,7 +452,7 @@ Beads's source of truth is SQLite (structured); wikihub's is git (authored markd
 Lessons worth porting into wikihub:
 - Line-oriented formats for anything under `.wikihub/` that might merge-conflict (CODEOWNERS-pattern ACL already aligned).
 - Hash-based IDs (already aligned via nanoid).
-- ~~`.wikihub/events.jsonl` audit export~~ — **cut from v1** (2026-04-09). Zero user demand. Add when audit trail is needed.
+- **`.wikihub/events.jsonl` audit export — restored to v1** (2026-04-10). Append-only JSONL log of content-and-permission mutations (page create/update/delete, ACL changes, visibility flips, forks). NOT stars/views/reactions (those are Postgres counters). Implementation cost is ~30 lines (one `open(path, 'a')` call per mutation). Events inherit privacy of their resource. Having a git-tracked audit trail from day one means never retroactively reconstructing "who changed what."
 
 ---
 
@@ -405,6 +473,8 @@ Each gets a one-off Python script to scrape/transform and produce a zip we uploa
 ## v2 / v3 deferred list
 
 **v2:**
+- **Split folder into wiki (added 2026-04-10).** Promote a folder from the personal wiki (or any wiki) into its own standalone project wiki. One-time operation: `git subtree split` or equivalent plumbing extracts the folder's history into a new bare repo pair, creates the Wiki row in Postgres, reindexes pages, and optionally replaces the original folder with a cross-wiki link (`[[/@user/new-wiki/index]]`). Use case: a user's personal wiki grows a subtree (`chronicpain/`, `ml-notes/`) that deserves its own ACL, star/fork surface, and clone URL. The inverse ("merge wiki into folder") is deliberately NOT supported in v2 — it's a one-way promotion.
+- **ListHub data migration (added 2026-04-10).** One-time import of ListHub's SQLite items (7K+ items, subfolder structure) into WikiHub. Each ListHub user's items become pages in their personal wiki. ListHub's `file_path` (already has subfolder structure like `startx/lists/file.md`) maps directly to WikiHub page paths. ListHub visibility (`public`/`private`/`unlisted`) maps to WikiHub frontmatter visibility. Timestamps, slugs, and content preserved. Natural project folders can optionally be split into project wikis post-import.
 - Paste-unstructured-text -> LLM generates wiki (server-hosted coding agent with platform key; leaning headless Claude Code over raw Anthropic tool-use)
 - URL / repo connect (import from public git repos)
 - Omni-convert upload (PDF/DOCX/txt/video -> markdown via pandoc/tika/whisper/OCR)
@@ -416,10 +486,11 @@ Each gets a one-off Python script to scrape/transform and produce a zip we uploa
 - Real-time collaborative editing
 - **Anti-abuse machinery** — highlighted v2 priorities from architecture validation: (1) IP rate limit on writes (10/min/IP, infra not moderation), (2) panic button toggle to instantly disable anonymous writes per wiki, (3) "revert last N anonymous edits" button in web UI. Remaining: moderation view, bulk revert, under-attack mode, notifications, quarantine, PoW, CAPTCHA, body caps, honeypot, owner notifications
 - Server-hosted cloud agent (talk-to-an-agent-we-host via web UI, per-user folder sandbox via UNIX permissions)
-- Featured curation admin surface (v1 uses most-starred automatically; admin override is v2)
+- ~~Featured curation admin surface~~ — **moved to v1** (2026-04-10). Three-layer curation: editorial picks from official wiki + most-starred + recent.
 - **Landing page live background** — featured/popular wiki cards slowly drifting, orbiting, or scrolling behind the hero section as a living backdrop. Pure CSS animation (transform + keyframes, no JS). Cards are real data pulled from the featured wikis endpoint. Shows social proof and makes the page feel alive. Requires enough public wikis to look good — ship after dogfood migrations populate the platform. V1 landing page ships with a clean empty background; this replaces it once there's content worth showing.
 - SFTP upload path (session-batched commits, SSH key endpoint, `sshfs`/`rsync` compatible)
 - Link-share token expiry (v1 link tokens are permanent; add expiry syntax or Postgres-side override in v2)
+- **Private page enumeration hardening** — return 404 instead of 403 for unauthorized private page access, so attackers can't discover page names by probing URLs. Low priority; current 403 is correct behavior, just reveals existence.
 - Optimistic locking on REST API (If-Match / ETag / 409 Conflict)
 - **Twitter auth / tweet-to-verify** — signup requires tweeting a specific post (e.g., "I just created my wiki on @wikihub") and pasting the tweet URL to verify. Viral distribution mechanic + lightweight sybil resistance. Agent-compatible: agent tweets via user's Twitter API key or user pastes the link. Similar pattern to Farcaster Frames and various crypto airdrops.
 
@@ -443,21 +514,38 @@ Each gets a one-off Python script to scrape/transform and produce a zip we uploa
 
 ---
 
-## Open questions (remaining after 2026-04-09 session)
+## Open questions
 
-1. **Quartz — style-reference confirmed.** Use as style reference for renderer choices, don't fork. (Proceed-unless-vetoed, not explicitly vetoed.)
-2. **Server deployment.** Domain is wikihub.md (locked). Server: same Lightsail box or new instance? Decide at deploy time.
-3. **Does signup rate-limit-per-IP survive the security strip?** Infra vs moderation classification is ambiguous. Default assumption: stays. Confirm if asked.
+All prior open questions resolved as of 2026-04-10. No open spec questions remain.
+
+### Resolved 2026-04-10
+
+- ~~Quartz~~ → **locked as style reference only.** Don't fork. Use for renderer aesthetic choices.
+- ~~Server deployment~~ → **Lightsail as default**, same box as ListHub if capacity allows. Decide final topology at deploy time. Domain is `wikihub.md` (locked).
+- ~~Signup rate-limit-per-IP~~ → **stays.** It's infra (bot flood protection), not content moderation. ~5 lines of middleware.
 
 ### Resolved in 2026-04-09 session (no longer open)
 
 - ~~Auth providers~~ → Google OAuth + local. Noos dropped.
-- ~~Featured curation~~ → most stars wins automatically. Admin override v2.
+- ~~Featured curation~~ → ~~most stars wins automatically. Admin override v2.~~ **Updated 2026-04-10:** three-layer curation in v1: editorial picks (official wiki) + most-starred + recent. Solves cold start, provides editorial control.
 - ~~Concurrent-edit resolution~~ → true last-write-wins, no optimistic locking v1.
 - ~~Milkdown vs simpler~~ → Milkdown, ported from listhub with wikilink plugin added.
 - ~~Content in DB or git-only~~ → git-only for public content. DB has metadata + search index only.
 - ~~ACL file vs Postgres for link-shares~~ → ACL file for all grants. No expiry in v1.
 - ~~FTP/SFTP~~ → SFTP deferred to v2. Plain FTP killed.
+
+### Resolved in 2026-04-10 session
+
+- ~~Personal wiki~~ → every user gets a default personal wiki on signup, slug = username, can't be deleted, default private ACL, `/@username` resolves to it.
+- ~~Official platform wiki~~ → `/@wikihub` wiki serves as docs, curated showcase, and dogfood exemplar.
+- ~~events.jsonl~~ → restored to v1. Append-only audit of content+permission mutations, ~30 lines.
+- ~~JSON-LD~~ → restored to v1. ~15 lines of Jinja template, zero cost.
+- ~~Suggested edits~~ → confirmed planned for v2 (not just "deferred" — actively intended). Plan data model now.
+- ~~API key management~~ → hashed in DB (GitHub model), but frictionless generation: settings page with generate/copy/revoke UI, `POST /auth/token` for agents with password, `POST /keys` for agents with existing key.
+- ~~Web auth~~ → three login methods (Google OAuth, username+password, API key paste), settings page at `/settings`, logout link in nav.
+- ~~Folder view route~~ → spec'd (Quartz-style index.md in subfolders), has mockup + template, route not yet wired. Implementation gap, not spec gap.
+- ~~Tag index pages~~ → restored to v1. `/@user/wiki/tag/:name` renders tagged page list. Tag counts on wiki landing.
+- ~~Landing page framing~~ → "Drop your files, get a URL" confirmed. Publishing = acquisition hook, agent API = retention hook.
 
 ---
 
@@ -469,6 +557,18 @@ Each gets a one-off Python script to scrape/transform and produce a zip we uploa
 - **API for writes, git pull for reads.** Same split as listhub.
 - **Read liberally, write conservatively** (Postel's Law for frontmatter compatibility).
 - **Trust the agent era on velocity.** No time estimates in weeks/months for coding-agent work.
+
+---
+
+## Developer experience / testing — added 2026-04-10
+
+### Test login buttons
+
+The login page shows one-click "Login as alice" / "Login as bob" buttons when the `TESTING_LOGIN=1` environment variable is set. These buttons:
+
+- POST to `/auth/test-login/<username>`, which auto-creates the account if it doesn't exist and logs in immediately.
+- Are completely hidden when `TESTING_LOGIN` is not set — zero surface area in production.
+- Enable fast manual QA of multi-user flows (permissions, starring, forking) without juggling passwords or API keys.
 
 ---
 

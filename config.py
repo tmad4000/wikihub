@@ -16,3 +16,4 @@ class Config:
     MAX_PAGE_SIZE = 2 * 1024 * 1024  # 2MB per page
     MAX_UPLOAD_FILES = 500  # max files in a single upload/zip
     MAX_WIKIS_PER_USER = 50
+    TESTING_LOGIN = os.environ.get("TESTING_LOGIN", "").lower() in ("1", "true", "yes")

@@ -1,7 +1,7 @@
 from collections import defaultdict, deque
 from time import time
 
-from flask import render_template, redirect, url_for, flash, request, session
+from flask import render_template, redirect, url_for, flash, request, session, current_app, abort
 from flask_login import login_user, logout_user, login_required
 from authlib.integrations.flask_client import OAuth
 
@@ -61,7 +61,23 @@ def login():
         next_page = request.args.get("next", url_for("main.index"))
         return redirect(next_page)
 
-    return render_template("auth/login.html")
+    return render_template("auth/login.html", testing_login=current_app.config.get("TESTING_LOGIN"))
+
+
+@auth_bp.route("/test-login/<username>", methods=["POST"])
+def test_login(username):
+    if not current_app.config.get("TESTING_LOGIN"):
+        abort(404)
+    user = User.query.filter_by(username=username).first()
+    if not user:
+        # auto-create test account
+        user = User(username=username, password_hash=hash_password("test12345"))
+        db.session.add(user)
+        db.session.flush()
+        ensure_personal_wiki(user)
+        db.session.commit()
+    login_user(user)
+    return redirect(request.args.get("next", url_for("main.index")))
 
 
 @auth_bp.route("/signup", methods=["GET", "POST"])

@@ -4,6 +4,8 @@
 
 GitHub for LLM wikis. Flask + Postgres + bare git. Spec: `wikihub-spec-final-2026-04-08.md`.
 
+**When the user describes a feature request or new behavior, always add it to the spec** (`wikihub-spec-final-2026-04-08.md`) in the appropriate section, in addition to implementing it. The spec is the living record of all product decisions.
+
 ## running locally
 
 ```bash
