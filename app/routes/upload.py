@@ -41,6 +41,12 @@ def create_wiki_web():
             flash(f"Wiki '{slug}' already exists")
             return render_template("new_wiki.html"), 409
 
+        from flask import current_app
+        wiki_count = Wiki.query.filter_by(owner_id=current_user.id).count()
+        if wiki_count >= current_app.config["MAX_WIKIS_PER_USER"]:
+            flash(f"You've reached the limit of {current_app.config['MAX_WIKIS_PER_USER']} wikis")
+            return render_template("new_wiki.html"), 429
+
         wiki = Wiki(
             owner_id=current_user.id,
             slug=slug,
@@ -55,7 +61,11 @@ def create_wiki_web():
         # check for uploaded files
         uploaded = request.files.getlist("files")
         if uploaded and uploaded[0].filename:
-            _process_uploads(current_user.username, slug, wiki.id, uploaded)
+            try:
+                _process_uploads(current_user.username, slug, wiki.id, uploaded)
+            except ValueError as e:
+                flash(str(e))
+                return render_template("new_wiki.html"), 413
         else:
             scaffold_wiki(current_user.username, slug)
             _index_repo_pages(current_user.username, slug, wiki.id)
@@ -109,16 +119,24 @@ def _process_uploads(username, slug, wiki_id, files):
 
 def _process_zip(username, slug, wiki_id, zip_file):
     """unpack a zip file and commit all contents."""
+    from flask import current_app
+    max_files = current_app.config["MAX_UPLOAD_FILES"]
+    max_page = current_app.config["MAX_PAGE_SIZE"]
+
     data = zip_file.read()
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
-        for info in zf.infolist():
-            if info.is_dir():
-                continue
-            filepath = info.filename
-            # skip macOS metadata
-            if filepath.startswith("__MACOSX/") or filepath.startswith("."):
-                continue
+        entries = [i for i in zf.infolist() if not i.is_dir()
+                   and not i.filename.startswith("__MACOSX/")
+                   and not i.filename.startswith(".")]
 
+        if len(entries) > max_files:
+            raise ValueError(f"Zip contains {len(entries)} files, max is {max_files}")
+
+        for info in entries:
+            if info.file_size > max_page:
+                continue  # silently skip files over 2MB
+
+            filepath = info.filename
             content = zf.read(info)
             try:
                 text = content.decode("utf-8")

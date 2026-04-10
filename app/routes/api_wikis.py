@@ -102,6 +102,11 @@ def create_wiki():
     if Wiki.query.filter_by(owner_id=user.id, slug=slug).first():
         return {"error": "conflict", "message": f"Wiki '{slug}' already exists"}, 409
 
+    from flask import current_app
+    wiki_count = Wiki.query.filter_by(owner_id=user.id).count()
+    if wiki_count >= current_app.config["MAX_WIKIS_PER_USER"]:
+        return {"error": "too_many", "message": f"You've reached the limit of {current_app.config['MAX_WIKIS_PER_USER']} wikis"}, 429
+
     wiki = Wiki(
         owner_id=user.id,
         slug=slug,
@@ -315,6 +320,11 @@ def create_page(owner, slug):
 
     if not path:
         return {"error": "bad_request", "message": "path is required"}, 400
+
+    from flask import current_app
+    max_page = current_app.config["MAX_PAGE_SIZE"]
+    if len(content.encode("utf-8")) > max_page:
+        return {"error": "too_large", "message": f"Page content exceeds {max_page // (1024*1024)}MB limit"}, 413
 
     if Page.query.filter_by(wiki_id=wiki.id, path=path).first():
         return {"error": "conflict", "message": f"Page '{path}' already exists"}, 409

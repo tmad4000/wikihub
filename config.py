@@ -11,3 +11,7 @@ class Config:
     SERVER_NAME = os.environ.get("SERVER_NAME")  # e.g. wikihub.md
     BASE_URL = os.environ.get("BASE_URL", "http://localhost:5000")
     ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
+    MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB max request size
+    MAX_PAGE_SIZE = 2 * 1024 * 1024  # 2MB per page
+    MAX_UPLOAD_FILES = 500  # max files in a single upload/zip
+    MAX_WIKIS_PER_USER = 50

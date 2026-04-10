@@ -36,4 +36,20 @@ def create_app(config_class="config.Config"):
 
     os.makedirs(app.config["REPOS_DIR"], exist_ok=True)
 
+    from flask import jsonify, request as req
+
+    @app.errorhandler(413)
+    def too_large(e):
+        if req.path.startswith("/api/"):
+            return jsonify({"error": "too_large", "message": "Request too large (50MB max)"}), 413
+        from flask import flash, redirect
+        flash("Upload too large (50MB max)")
+        return redirect(req.referrer or "/"), 413
+
+    @app.errorhandler(429)
+    def rate_limited(e):
+        if req.path.startswith("/api/"):
+            return jsonify({"error": "rate_limited", "message": "Too many requests"}), 429
+        return "Too many requests. Try again later.", 429
+
     return app
