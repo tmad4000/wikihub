@@ -574,10 +574,15 @@ def wiki_index(username, slug):
 @wiki_bp.route("/@<username>/<slug>/<path:page_path>/graph.json")
 def page_graph_json(username, slug, page_path):
     """return wikilink graph data for a page as JSON."""
+    raw_page_path = page_path
     page_path = page_path_from_url_path(page_path)
     owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
-    file_path = page_path if page_path.endswith(".md") else page_path + ".md"
+    raw_file_path = raw_page_path if raw_page_path.endswith(".md") else raw_page_path + ".md"
+    file_path = raw_file_path
     page = Page.query.filter_by(wiki_id=wiki.id, path=file_path).first()
+    if page is None and "_" in raw_page_path:
+        space_path = page_path if page_path.endswith(".md") else page_path + ".md"
+        page = Page.query.filter_by(wiki_id=wiki.id, path=space_path).first()
     from flask import jsonify
     return jsonify(_get_link_graph(page, wiki))
 
@@ -633,9 +638,10 @@ def wiki_history(username, slug):
 
 @wiki_bp.route("/@<username>/<slug>/<path:folder_path>/history")
 def page_history(username, slug, folder_path):
+    raw_folder_path = folder_path
     folder_path = page_path_from_url_path(folder_path)
     owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
-    path = folder_path if folder_path.endswith(".md") else f"{folder_path}.md"
+    path = raw_folder_path if raw_folder_path.endswith(".md") else f"{raw_folder_path}.md"
     commits = _git_history(owner.username, wiki.slug, public=not _is_owner(wiki), path=path)
     return render_template("folder.html", owner=owner, wiki=wiki, items=[], sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=not _is_owner(wiki), current_path=path), folder_path=f"{path} history", rendered_html=None, breadcrumb=[("History", None)], history_commits=commits)
 
@@ -762,16 +768,18 @@ def wiki_page(username, slug, page_path):
             sibling_wikis=siblings,
         )
 
-    file_path = page_path if page_path.endswith(".md") else page_path + ".md"
+    # Try literal URL path first (preserves underscores in filenames),
+    # then fall back to underscore→space (Wikipedia-style convenience).
+    # This matches Gollum 5.0's approach: exact match first, lenient fallback second.
+    raw_file_path = raw_page_path if raw_page_path.endswith(".md") else raw_page_path + ".md"
+    file_path = raw_file_path
     page = Page.query.filter_by(wiki_id=wiki.id, path=file_path).first()
 
-    # Fallback: if underscore→space conversion didn't find a page, try the raw URL path
-    # (files may use underscores in their actual names, not spaces)
     if page is None and "_" in raw_page_path:
-        raw_file_path = raw_page_path if raw_page_path.endswith(".md") else raw_page_path + ".md"
-        page = Page.query.filter_by(wiki_id=wiki.id, path=raw_file_path).first()
+        space_path = page_path if page_path.endswith(".md") else page_path + ".md"
+        page = Page.query.filter_by(wiki_id=wiki.id, path=space_path).first()
         if page:
-            file_path = raw_file_path
+            file_path = space_path
 
     acl_rules = load_acl_rules(owner.username, wiki.slug)
     user_name = current_user.username if current_user.is_authenticated else None
@@ -837,11 +845,17 @@ def preview_page(username, slug):
 
 @wiki_bp.route("/@<username>/<slug>/<path:page_path>/edit", methods=["GET", "POST"])
 def edit_page(username, slug, page_path):
-    # Normalize: underscores in URL → spaces for filesystem lookup
+    raw_page_path = page_path
     page_path = page_path_from_url_path(page_path)
     owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
-    file_path = page_path if page_path.endswith(".md") else page_path + ".md"
+    raw_file_path = raw_page_path if raw_page_path.endswith(".md") else raw_page_path + ".md"
+    file_path = raw_file_path
     page = Page.query.filter_by(wiki_id=wiki.id, path=file_path).first()
+    if page is None and "_" in raw_page_path:
+        space_path = page_path if page_path.endswith(".md") else page_path + ".md"
+        page = Page.query.filter_by(wiki_id=wiki.id, path=space_path).first()
+        if page:
+            file_path = space_path
     acl_rules = load_acl_rules(owner.username, wiki.slug)
     is_owner = _is_owner(wiki)
     username_for_acl = current_user.username if current_user.is_authenticated else None

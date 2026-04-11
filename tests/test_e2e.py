@@ -462,6 +462,19 @@ def test_wikipedia_urls(client, api_key):
     r = client.get("/@agent1/test-wiki/wiki/My_Great_Page/history")
     assert r.status_code == 200
 
+    # create a page with literal underscores in the filename
+    r = client.post("/api/v1/wikis/agent1/test-wiki/pages", json={
+        "path": "wiki/kbhconvex_optimization.md",
+        "content": "---\ntitle: Convex Optimization\nvisibility: public\n---\n\n# Convex Optimization",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201
+
+    # access via literal underscore URL — should find the underscore file, not space fallback
+    r = client.get("/@agent1/test-wiki/wiki/kbhconvex_optimization")
+    assert r.status_code == 200
+    assert b"Convex Optimization" in r.data
+
 
 def test_sharing_lifecycle(client, api_key):
     """share a private page with another user, verify access, revoke, verify no access"""
