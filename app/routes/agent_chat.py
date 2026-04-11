@@ -450,8 +450,11 @@ def agent_chat():
     api_key = get_user_llm_key(user) or os.environ.get("ANTHROPIC_API_KEY")
 
     # Check for Claude subscription credentials if no API key
-    if not api_key:
-        config_dir = _claude_config_dir(user.id)
+    # 1. Per-user Claude config
+    # 2. Server-wide Claude config (shared login for all users)
+    for config_dir in [_claude_config_dir(user.id), os.path.join(current_app.root_path, "..", "claude-config")]:
+        if api_key:
+            break
         creds_file = os.path.join(config_dir, ".credentials.json")
         if os.path.exists(creds_file):
             try:
