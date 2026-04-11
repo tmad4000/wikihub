@@ -1,9 +1,10 @@
 import os
 import subprocess
 from datetime import timezone
-from urllib.parse import quote
 
 from flask import Response, abort, jsonify, redirect, render_template, request, url_for
+
+from app.url_utils import page_path_from_url_path, url_path_from_page_path
 from flask_login import current_user
 
 from app import db
@@ -47,7 +48,7 @@ def _get_link_graph(page, wiki):
 
     nodes = {}
     links = []
-    page_url = f"/@{wiki.owner.username}/{wiki.slug}/{page.path.replace('.md', '')}"
+    page_url = _page_url(wiki.owner.username, wiki.slug, page.path)
     nodes[page.id] = {"id": page.id, "title": page.title or page.path.replace('.md', ''), "url": page_url, "current": True}
 
     # outgoing links
@@ -56,7 +57,7 @@ def _get_link_graph(page, wiki):
         if wl.target_page_id and wl.target_page_id not in nodes:
             tgt = db.session.get(Page, wl.target_page_id)
             if tgt:
-                nodes[tgt.id] = {"id": tgt.id, "title": tgt.title or tgt.path.replace('.md', ''), "url": f"/@{wiki.owner.username}/{wiki.slug}/{tgt.path.replace('.md', '')}", "current": False}
+                nodes[tgt.id] = {"id": tgt.id, "title": tgt.title or tgt.path.replace('.md', ''), "url": _page_url(wiki.owner.username, wiki.slug, tgt.path), "current": False}
         if wl.target_page_id:
             links.append({"source": page.id, "target": wl.target_page_id})
 
@@ -66,7 +67,7 @@ def _get_link_graph(page, wiki):
         if wl.source_page_id not in nodes:
             src = db.session.get(Page, wl.source_page_id)
             if src:
-                nodes[src.id] = {"id": src.id, "title": src.title or src.path.replace('.md', ''), "url": f"/@{wiki.owner.username}/{wiki.slug}/{src.path.replace('.md', '')}", "current": False}
+                nodes[src.id] = {"id": src.id, "title": src.title or src.path.replace('.md', ''), "url": _page_url(wiki.owner.username, wiki.slug, src.path), "current": False}
         links.append({"source": wl.source_page_id, "target": page.id})
 
     return {"nodes": list(nodes.values()), "links": links}
@@ -81,7 +82,7 @@ def _get_full_graph(wiki):
     nodes = {}
     index_ids = set()
     for p in pages:
-        url = f"/@{owner.username}/{wiki.slug}/{p.path.replace('.md', '')}"
+        url = _page_url(owner.username, wiki.slug, p.path)
         dir_path = p.path.rsplit("/", 1)[0] if "/" in p.path else ""
         nodes[p.id] = {
             "id": p.id,
@@ -187,11 +188,11 @@ def _folder_url(username, slug, folder_path):
     clean = folder_path.strip("/")
     if not clean:
         return f"/@{username}/{slug}"
-    return f"/@{username}/{slug}/{quote(clean, safe='/')}/"
+    return f"/@{username}/{slug}/{url_path_from_page_path(clean, strip_md=False)}/"
 
 
 def _page_url(username, slug, page_path):
-    return f"/@{username}/{slug}/{quote(page_path.replace('.md', ''), safe='/')}"
+    return f"/@{username}/{slug}/{url_path_from_page_path(page_path, strip_md=True)}"
 
 
 def _build_sidebar_tree(username, slug, wiki, public=False, current_path=None):
@@ -478,7 +479,7 @@ def wiki_llms_txt(username, slug):
     ).order_by(Page.path).all()
 
     for p in pages:
-        url = f"/@{owner.username}/{wiki.slug}/{p.path.replace('.md', '')}"
+        url = _page_url(owner.username, wiki.slug, p.path)
         lines.append(f"- [{p.title or p.path}]({url})")
 
     if not pages:
@@ -573,6 +574,7 @@ def wiki_index(username, slug):
 @wiki_bp.route("/@<username>/<slug>/<path:page_path>/graph.json")
 def page_graph_json(username, slug, page_path):
     """return wikilink graph data for a page as JSON."""
+    page_path = page_path_from_url_path(page_path)
     owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
     file_path = page_path if page_path.endswith(".md") else page_path + ".md"
     page = Page.query.filter_by(wiki_id=wiki.id, path=file_path).first()
@@ -631,6 +633,7 @@ def wiki_history(username, slug):
 
 @wiki_bp.route("/@<username>/<slug>/<path:folder_path>/history")
 def page_history(username, slug, folder_path):
+    folder_path = page_path_from_url_path(folder_path)
     owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
     path = folder_path if folder_path.endswith(".md") else f"{folder_path}.md"
     commits = _git_history(owner.username, wiki.slug, public=not _is_owner(wiki), path=path)
@@ -685,13 +688,27 @@ def wiki_commit(username, slug, sha):
 
 @wiki_bp.route("/@<username>/<slug>/<path:page_path>", strict_slashes=False)
 def wiki_page(username, slug, page_path):
+    raw_page_path = page_path
+
+    # Wikipedia-style URLs: redirect space-encoded URLs to underscore form.
+    if " " in raw_page_path:
+        canonical_path = url_path_from_page_path(raw_page_path, strip_md=False)
+        canonical_url = f"/@{username}/{slug}/{canonical_path}"
+        if request.path.endswith("/"):
+            canonical_url += "/"
+        return redirect(canonical_url, code=301)
+
+    # Normalize: underscores in URL → spaces for filesystem lookup
+    page_path = page_path_from_url_path(raw_page_path)
+
     # root index/README should be served by wiki_index, not as a standalone page
     if page_path.rstrip("/") in ("index", "index.md", "README", "README.md"):
         return redirect(url_for("wiki.wiki_index", username=username, slug=slug), code=302)
 
     owner, wiki, redirect_row = _get_owner_and_wiki_or_404(username, slug)
     if redirect_row:
-        return redirect(url_for("wiki.wiki_page", username=owner.username, slug=slug, page_path=page_path), code=302)
+        redirect_path = url_path_from_page_path(page_path, strip_md=False)
+        return redirect(f"/@{owner.username}/{slug}/{redirect_path}", code=302)
 
     siblings = _sibling_wikis(owner, wiki)
 
@@ -762,13 +779,15 @@ def wiki_page(username, slug, page_path):
         abort(404)
 
     wants_markdown = "text/markdown" in request.headers.get("Accept", "")
+    html_url_path = url_path_from_page_path(page_path, strip_md=True)
+    md_url_path = url_path_from_page_path(file_path, strip_md=False)
     if wants_markdown or page_path.endswith(".md"):
         return Response(
             content,
             content_type="text/markdown; charset=utf-8",
             headers={
                 "Vary": "Accept",
-                "Link": f'</@{owner.username}/{wiki.slug}/{quote(page_path.replace(".md", ""), safe="/")}>; rel="alternate"; type="text/html"',
+                "Link": f'</@{owner.username}/{wiki.slug}/{html_url_path}>; rel="alternate"; type="text/html"',
             },
         )
 
@@ -792,7 +811,7 @@ def wiki_page(username, slug, page_path):
         sibling_wikis=siblings,
     ), 200, {
         "Vary": "Accept",
-        "Link": f'</@{owner.username}/{wiki.slug}/{quote(page_path, safe="/")}.md>; rel="alternate"; type="text/markdown"',
+        "Link": f'</@{owner.username}/{wiki.slug}/{md_url_path}>; rel="alternate"; type="text/markdown"',
     }
 
 
@@ -807,6 +826,8 @@ def preview_page(username, slug):
 
 @wiki_bp.route("/@<username>/<slug>/<path:page_path>/edit", methods=["GET", "POST"])
 def edit_page(username, slug, page_path):
+    # Normalize: underscores in URL → spaces for filesystem lookup
+    page_path = page_path_from_url_path(page_path)
     owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
     file_path = page_path if page_path.endswith(".md") else page_path + ".md"
     page = Page.query.filter_by(wiki_id=wiki.id, path=file_path).first()
@@ -852,7 +873,7 @@ def edit_page(username, slug, page_path):
         sync_page_to_repo(owner.username, wiki.slug, target_path, content, message=msg, author_name=author_name, author_email=author_email)
         regenerate_public_mirror(owner.username, wiki.slug, acl_rules)
         db.session.commit()
-        return redirect(url_for("wiki.wiki_page", username=owner.username, slug=wiki.slug, page_path=target_path.replace(".md", "")))
+        return redirect(_page_url(owner.username, wiki.slug, target_path))
 
     content = read_file_from_repo(owner.username, wiki.slug, file_path, public=False) or ""
     visibility = page.visibility if page else resolve_visibility(file_path, acl_rules)
@@ -899,7 +920,7 @@ def new_page(username, slug):
         sync_page_to_repo(owner.username, wiki.slug, page_path, content, message=f"Create {page_path}", author_name=author_name, author_email=author_email)
         regenerate_public_mirror(owner.username, wiki.slug, acl_rules)
         db.session.commit()
-        return redirect(url_for("wiki.wiki_page", username=owner.username, slug=wiki.slug, page_path=page_path.replace(".md", "")))
+        return redirect(_page_url(owner.username, wiki.slug, page_path))
 
     acl_rules = load_acl_rules(owner.username, wiki.slug)
     requested_path = request.args.get("path", "").strip()
@@ -931,7 +952,7 @@ def new_folder(username, slug):
         return render_template("permission_error.html", owner=owner, wiki=wiki), 403
 
     acl_rules = load_acl_rules(owner.username, wiki.slug)
-    parent_path = request.values.get("parent", "").strip().strip("/")
+    parent_path = page_path_from_url_path(request.values.get("parent", "").strip().strip("/"))
 
     if request.method == "POST":
         folder_path = _normalize_folder_path(request.form.get("folder_path"))
@@ -948,7 +969,8 @@ def new_folder(username, slug):
         file_path = f"{folder_path}/index.md"
         existing_content = read_file_from_repo(owner.username, wiki.slug, file_path, public=False)
         if existing_content is not None:
-            return redirect(url_for("wiki.edit_page", username=owner.username, slug=wiki.slug, page_path=f"{folder_path}/index"))
+            edit_path = url_path_from_page_path(f"{folder_path}/index", strip_md=True)
+            return redirect(f"/@{owner.username}/{wiki.slug}/{edit_path}/edit")
 
         visibility = request.form.get("visibility") or resolve_visibility(file_path, acl_rules)
         folder_title = folder_path.split("/")[-1].replace("-", " ").replace("_", " ").title()
@@ -982,7 +1004,8 @@ def new_folder(username, slug):
         )
         regenerate_public_mirror(owner.username, wiki.slug, acl_rules)
         db.session.commit()
-        return redirect(url_for("wiki.edit_page", username=owner.username, slug=wiki.slug, page_path=f"{folder_path}/index"))
+        edit_path = url_path_from_page_path(f"{folder_path}/index", strip_md=True)
+        return redirect(f"/@{owner.username}/{wiki.slug}/{edit_path}/edit")
 
     default_target = f"{(parent_path + '/' if parent_path else '')}new-folder/index.md"
     return render_template(

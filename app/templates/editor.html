@@ -113,7 +113,7 @@
       {% else %}
       <span style="font-size:0.75rem;color:var(--text-muted);">{{ visibility }}</span>
       {% endif %}
-      <a href="{% if content %}/@{{ owner.username }}/{{ wiki.slug }}/{{ page_path.replace('.md', '') }}{% else %}/@{{ owner.username }}/{{ wiki.slug }}{% endif %}" class="btn-sm btn-cancel">Cancel</a>
+      <a href="{% if content %}/@{{ owner.username }}/{{ wiki.slug }}/{{ page_path | page_url }}{% else %}/@{{ owner.username }}/{{ wiki.slug }}{% endif %}" class="btn-sm btn-cancel">Cancel</a>
       <button type="submit" class="btn-sm btn-save">Save</button>
     </div>
   </div>

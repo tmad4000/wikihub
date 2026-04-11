@@ -73,7 +73,7 @@
 
       <div class="form-actions">
         <button type="submit" class="btn btn-primary">Create folder</button>
-        <a href="/@{{ owner.username }}/{{ wiki.slug }}{% if parent_path %}/{{ parent_path }}{% endif %}{% if parent_path %}/{% endif %}" class="btn btn-secondary">Cancel</a>
+        <a href="/@{{ owner.username }}/{{ wiki.slug }}{% if parent_path %}/{{ parent_path | page_url }}{% endif %}{% if parent_path %}/{% endif %}" class="btn btn-secondary">Cancel</a>
       </div>
     </form>
   </div>

@@ -462,7 +462,7 @@
     <div class="sidebar-section" style="border-top:1px solid var(--border-default);padding-top:12px;">
       <div class="sidebar-heading">Recently updated</div>
       {% for rp in recently_updated[:6] %}
-      <a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ rp.path.replace('.md', '') }}" class="sidebar-item" title="{{ rp.updated_at.strftime('%Y-%m-%d') if rp.updated_at else '' }}">
+      <a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ rp.path | page_url }}" class="sidebar-item" title="{{ rp.updated_at.strftime('%Y-%m-%d') if rp.updated_at else '' }}">
         <span class="sidebar-icon" style="color:var(--text-muted);font-size:0.6875rem;font-family:var(--font-mono);min-width:38px;">{{ rp.updated_at.strftime('%m/%d') if rp.updated_at else '' }}</span>
         {{ rp.title or rp.path.replace('.md', '').split('/')[-1] }}
       </a>
@@ -499,7 +499,7 @@
         <span style="color:var(--accent);margin:0 4px;font-size:1em">›</span>
         {% for part in parts %}
           {% if not loop.first %}/{% endif %}
-          {% if not loop.last %}<a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ '/'.join(parts[:loop.index]) }}/">{{ part }}</a>{% else %}{{ part }}{% endif %}
+          {% if not loop.last %}<a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ '/'.join(parts[:loop.index]) | page_url }}/">{{ part }}</a>{% else %}{{ part }}{% endif %}
         {% endfor %}
       {% endif %}
     </div>
@@ -518,7 +518,7 @@
 
       <div class="actions-spacer"></div>
 
-      <a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ page.path.replace('.md', '') }}/history" class="action-btn-mini" title="Page history">
+      <a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ page.path | page_url }}/history" class="action-btn-mini" title="Page history">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
       </a>
 
@@ -552,7 +552,7 @@
       </div>
 
       {% if current_user.is_authenticated and current_user.id == wiki.owner_id %}
-      <a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ page.path.replace('.md', '') }}/edit" class="action-btn">
+      <a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ page.path | page_url }}/edit" class="action-btn">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
         Edit
       </a>
@@ -575,7 +575,7 @@
         Reindex
       </button>
       {% elif page.visibility in ('public-edit', 'unlisted-edit') %}
-      <a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ page.path.replace('.md', '') }}/edit" class="action-btn">
+      <a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ page.path | page_url }}/edit" class="action-btn">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
         Edit
       </a>
@@ -673,7 +673,7 @@
       </div>
       <ul class="backlinks-list">
         {% for bl in backlinks %}
-        <li><a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ bl.path.replace('.md', '') }}">{{ bl.title or bl.path.replace('.md', '') }}</a></li>
+        <li><a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ bl.path | page_url }}">{{ bl.title or bl.path.replace('.md', '') }}</a></li>
         {% endfor %}
       </ul>
     </nav>
@@ -704,7 +704,7 @@
         </div>
         <ul class="backlinks-list">
           {% for bl in backlinks %}
-          <li><a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ bl.path.replace('.md', '') }}">{{ bl.title or bl.path.replace('.md', '') }}</a></li>
+          <li><a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ bl.path | page_url }}">{{ bl.title or bl.path.replace('.md', '') }}</a></li>
           {% endfor %}
         </ul>
       </nav>

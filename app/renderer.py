@@ -290,7 +290,7 @@ def render_page(content, wiki_owner=None, wiki_slug=None):
         target_clean = target.strip("/")
         if not target_clean.endswith(".md"):
             target_clean += ".md"
-        from urllib.parse import quote
+        from app.url_utils import url_path_from_page_path
         # try: exact path → raw target → basename → title
         matched = (
             known_pages.get(target_clean)
@@ -300,9 +300,9 @@ def render_page(content, wiki_owner=None, wiki_slug=None):
             or title_aliases.get(target)
         )
         if matched:
-            url = f"/@{wiki_owner}/{wiki_slug}/{quote(matched.path.replace('.md', ''), safe='/')}"
+            url = f"/@{wiki_owner}/{wiki_slug}/{url_path_from_page_path(matched.path, strip_md=True)}"
         else:
-            url = f"/@{wiki_owner}/{wiki_slug}/{quote(target_clean.replace('.md', ''), safe='/')}" if wiki_owner else f"#{target}"
+            url = f"/@{wiki_owner}/{wiki_slug}/{url_path_from_page_path(target_clean, strip_md=True)}" if wiki_owner else f"#{target}"
         return url, matched is not None
 
     return render_markdown(content, resolve_wikilinks=resolver if wiki_owner else None)

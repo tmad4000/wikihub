@@ -15,6 +15,7 @@ from flask import Response, current_app, jsonify, render_template, request
 
 from app.models import Wiki, Page, User
 from app.routes import main_bp
+from app.url_utils import url_path_from_page_path
 
 
 MCP_TOOLS = [
@@ -89,8 +90,7 @@ def llms_full_txt():
         if wiki_key != current_wiki:
             lines.append(f"\n## @{wiki_key}")
             current_wiki = wiki_key
-        from urllib.parse import quote
-        url = f"/@{wiki_key}/{quote(p.path.replace('.md', ''), safe='/')}"
+        url = f"/@{wiki_key}/{url_path_from_page_path(p.path, strip_md=True)}"
         lines.append(f"- [{p.title or p.path}]({url})")
 
     return Response("\n".join(lines), content_type="text/plain; charset=utf-8")
@@ -258,7 +258,7 @@ def wiki_llms_txt(username, slug):
         "## Pages",
     ]
     for page in pages:
-        page_url = f"/@{owner.username}/{wiki.slug}/{page.path.replace('.md', '')}"
+        page_url = f"/@{owner.username}/{wiki.slug}/{url_path_from_page_path(page.path, strip_md=True)}"
         lines.append(f"- [{page.title or page.path}]({page_url})")
     return Response("\n".join(lines), content_type="text/plain; charset=utf-8")
 
@@ -277,7 +277,7 @@ def wiki_llms_full_txt(username, slug):
     for page in pages:
         lines.append(f"## {page.title or page.path}")
         lines.append(f"- Path: {page.path}")
-        lines.append(f"- URL: /@{owner.username}/{wiki.slug}/{page.path.replace('.md', '')}")
+        lines.append(f"- URL: /@{owner.username}/{wiki.slug}/{url_path_from_page_path(page.path, strip_md=True)}")
         if page.excerpt:
             lines.append(f"- Excerpt: {page.excerpt}")
         lines.append("")

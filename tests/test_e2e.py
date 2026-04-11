@@ -436,6 +436,33 @@ def test_new_folder_ui(client):
     assert b"plans/2026" in r.data or b"2026" in r.data
 
 
+def test_wikipedia_urls(client, api_key):
+    """Wikipedia-style URLs: underscores instead of %20, redirect %20 to underscore"""
+    h = {"Authorization": f"Bearer {api_key}"}
+
+    # create a page with spaces in the name
+    r = client.post("/api/v1/wikis/agent1/test-wiki/pages", json={
+        "path": "wiki/My Great Page.md",
+        "content": "---\ntitle: My Great Page\nvisibility: public\n---\n\n# Hello",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201
+
+    # access via underscore URL (Wikipedia-style)
+    r = client.get("/@agent1/test-wiki/wiki/My_Great_Page")
+    assert r.status_code == 200
+    assert b"Hello" in r.data
+
+    # access via %20 URL should 301 redirect to underscore URL
+    r = client.get("/@agent1/test-wiki/wiki/My%20Great%20Page", follow_redirects=False)
+    assert r.status_code == 301
+    assert "My_Great_Page" in r.headers["Location"]
+
+    # history via underscore URL (public, no auth needed)
+    r = client.get("/@agent1/test-wiki/wiki/My_Great_Page/history")
+    assert r.status_code == 200
+
+
 def run_all():
     app = setup()
 
@@ -468,6 +495,7 @@ def run_all():
             ("anonymous public edit", lambda: test_anonymous_public_edit(client, key)),
             ("people directory + profiles", lambda: test_people_directory_and_profiles(client, key)),
             ("new folder UI", lambda: test_new_folder_ui(client)),
+            ("wikipedia-style URLs", lambda: test_wikipedia_urls(client, key)),
         ]
 
         passed = 1  # account creation already passed

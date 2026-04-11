@@ -5,9 +5,10 @@ wiki + page REST API endpoints.
 import json
 import os
 import subprocess
-from urllib.parse import quote
 
 from flask import Response, current_app, jsonify, request
+
+from app.url_utils import url_path_from_page_path
 
 from app import db
 from app.models import User, Wiki, Page, Star, Fork, Wikilink, utcnow
@@ -39,6 +40,7 @@ from app.wiki_ops import (
     sync_wiki_counters,
     update_page_metadata,
 )
+from app.url_utils import page_path_from_url_path, url_path_from_page_path
 
 
 def _resolve_owner_username(username):
@@ -77,6 +79,10 @@ def _current_author():
 def _current_username():
     user = getattr(request, "current_user", None)
     return user.username if user else None
+
+
+def _normalize_page_path_param(page_path):
+    return page_path_from_url_path(page_path)
 
 
 def _load_page_content(owner, slug, page_path, public=False):
@@ -360,7 +366,7 @@ def create_page(owner, slug):
         "path": page.path,
         "title": page.title,
         "visibility": page.visibility,
-        "url": f"/@{owner_user.username}/{wiki.slug}/{quote(path.replace('.md', ''), safe='/')}",
+        "url": f"/@{owner_user.username}/{wiki.slug}/{url_path_from_page_path(path, strip_md=True)}",
     }), 201
 
 
@@ -394,6 +400,8 @@ def read_page(owner, slug, page_path):
     owner_user, wiki, err = _get_wiki_or_404(owner, slug)
     if err:
         return err
+
+    page_path = _normalize_page_path_param(page_path)
 
     # try with and without .md extension
     page = Page.query.filter_by(wiki_id=wiki.id, path=page_path).first()
@@ -452,6 +460,8 @@ def replace_page(owner, slug, page_path):
     if err:
         return err
 
+    page_path = _normalize_page_path_param(page_path)
+
     page = Page.query.filter_by(wiki_id=wiki.id, path=page_path).first()
     if not page:
         return {"error": "not_found", "message": "Page not found"}, 404
@@ -500,6 +510,8 @@ def patch_page(owner, slug, page_path):
     owner_user, wiki, err = _get_wiki_or_404(owner, slug)
     if err:
         return err
+
+    page_path = _normalize_page_path_param(page_path)
 
     page = Page.query.filter_by(wiki_id=wiki.id, path=page_path).first()
     if not page:
@@ -616,6 +628,8 @@ def delete_page(owner, slug, page_path):
     if err:
         return err
 
+    page_path = _normalize_page_path_param(page_path)
+
     page = Page.query.filter_by(wiki_id=wiki.id, path=page_path).first()
     if not page:
         return {"error": "not_found", "message": "Page not found"}, 404
@@ -642,6 +656,8 @@ def set_page_visibility(owner, slug, page_path):
         return err
     if request.current_user.id != wiki.owner_id:
         return {"error": "forbidden", "message": "Only the owner can change visibility"}, 403
+
+    page_path = _normalize_page_path_param(page_path)
 
     page = Page.query.filter_by(wiki_id=wiki.id, path=page_path).first()
     if not page:
@@ -775,6 +791,8 @@ def share_page(owner, slug, page_path):
     if request.current_user.id != wiki.owner_id:
         return {"error": "forbidden", "message": "Only the owner can manage sharing"}, 403
 
+    page_path = _normalize_page_path_param(page_path)
+
     data = request.get_json(silent=True) or {}
     username = (data.get("username") or "").strip().lower()
     role = (data.get("role") or "").strip().lower()
@@ -797,6 +815,8 @@ def share_page(owner, slug, page_path):
 @api_bp.route("/wikis/<owner>/<slug>/pages/<path:page_path>/append-section", methods=["POST"])
 @api_auth_optional
 def append_section(owner, slug, page_path):
+    page_path = _normalize_page_path_param(page_path)
+    canonical_path = url_path_from_page_path(page_path, strip_md=False)
     payload = request.get_json(silent=True) or {}
     patch_payload = {
         "heading": payload.get("heading"),
@@ -808,7 +828,7 @@ def append_section(owner, slug, page_path):
         headers["Authorization"] = auth
     with current_app.test_client() as client:
         resp = client.patch(
-            f"/api/v1/wikis/{owner}/{slug}/pages/{page_path}",
+            f"/api/v1/wikis/{owner}/{slug}/pages/{canonical_path}",
             json={"append_section": patch_payload},
             headers=headers,
         )

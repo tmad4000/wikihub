@@ -99,7 +99,7 @@
     <div class="sidebar-section" style="border-top:1px solid var(--border-default);padding-top:12px;margin-top:12px;">
       <div class="sidebar-heading">Recently updated</div>
       {% for rp in recently_updated[:6] %}
-      <a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ rp.path.replace('.md', '') }}" class="sidebar-item" title="{{ rp.updated_at.strftime('%Y-%m-%d') if rp.updated_at else '' }}">
+      <a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ rp.path | page_url }}" class="sidebar-item" title="{{ rp.updated_at.strftime('%Y-%m-%d') if rp.updated_at else '' }}">
         <span style="color:var(--text-muted);font-size:0.6875rem;font-family:var(--font-mono);min-width:38px;">{{ rp.updated_at.strftime('%m/%d') if rp.updated_at else '' }}</span>
         {{ rp.title or rp.path.replace('.md', '').split('/')[-1] }}
       </a>

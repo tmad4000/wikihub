@@ -40,6 +40,12 @@ def create_app(config_class="config.Config"):
     from app.routes.auth import init_oauth
     init_oauth(app)
 
+    from app.url_utils import url_path_from_page_path
+
+    @app.template_filter("page_url")
+    def page_url_filter(value):
+        return url_path_from_page_path(value, strip_md=True)
+
     os.makedirs(app.config["REPOS_DIR"], exist_ok=True)
 
     with app.app_context():
