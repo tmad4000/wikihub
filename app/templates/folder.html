@@ -11,7 +11,7 @@
 .sidebar-folder-toggle { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border: none; background: transparent; color: var(--text-muted); cursor: pointer; padding: 0; flex-shrink: 0; border-radius: var(--radius-sm); }
 .sidebar-folder-toggle:hover { background: var(--control-bg-hover); }
 .sidebar-folder.open > .sidebar-folder-row .sidebar-folder-toggle svg { transform: rotate(90deg); }
-.sidebar-children { display: none; padding-left: 12px; }
+.sidebar-children { display: none; padding-left: 20px; }
 .sidebar-folder.open > .sidebar-children { display: block; }
 .sidebar-item { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: var(--radius-sm); font-size: 0.8125rem; color: var(--text-tertiary); text-decoration: none; margin-bottom: 1px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sidebar-item:hover { color: var(--text-primary); background: var(--accent-subtle); text-decoration: none; }
@@ -114,7 +114,7 @@
     <div class="sidebar-section" style="margin-top: 16px; border-top: 1px solid var(--border-default); padding-top: 12px;">
       <div class="sidebar-heading">{{ owner.display_name or owner.username }}'s Wikis</div>
       {% for w in sibling_wikis %}
-      <a href="/@{{ owner.username }}/{{ w.slug }}" class="sidebar-item" style="padding-left: 12px;">
+      <a href="/@{{ owner.username }}/{{ w.slug }}" class="sidebar-item" style="padding-left: 20px;">
         <span class="sidebar-icon" style="display:inline-flex;margin-right:6px;color:var(--text-muted);">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
         </span>
