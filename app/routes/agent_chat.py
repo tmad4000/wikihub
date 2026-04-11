@@ -452,7 +452,7 @@ def agent_chat():
     # Check for Claude subscription credentials if no API key
     # 1. Per-user Claude config
     # 2. Server-wide Claude config (shared login for all users)
-    for config_dir in [_claude_config_dir(user.id), os.path.join(current_app.root_path, "..", "claude-config")]:
+    for config_dir in [_claude_config_dir(user.id), SERVER_CONFIG_DIR]:
         if api_key:
             break
         creds_file = os.path.join(config_dir, ".credentials.json")
@@ -691,3 +691,251 @@ def claude_auth_logout():
     if os.path.exists(creds_file):
         os.unlink(creds_file)
     return jsonify({"loggedIn": False})
+
+
+# --- Admin Claude auth (server-wide, token-protected) ---
+
+# Background login process state
+_admin_login = {"proc": None, "output": [], "status": "idle", "lock": threading.Lock()}
+
+SERVER_CONFIG_DIR = "/opt/wikihub-app/claude-config"
+
+
+def _check_admin_token(req):
+    token = req.args.get("token") or req.headers.get("X-Admin-Token") or ""
+    expected = current_app.config.get("ADMIN_TOKEN", "")
+    return bool(expected and token == expected)
+
+
+@agent_chat_bp.route("/admin/claude-auth", methods=["GET"])
+def admin_claude_auth_page():
+    """Admin page for server-wide Claude auth. Token required."""
+    from flask import render_template_string
+    return render_template_string(ADMIN_AUTH_PAGE)
+
+
+@agent_chat_bp.route("/admin/claude-auth/status", methods=["GET"])
+def admin_claude_auth_status():
+    if not _check_admin_token(request):
+        return {"error": "unauthorized"}, 401
+    os.makedirs(SERVER_CONFIG_DIR, exist_ok=True)
+    try:
+        result = subprocess.run(
+            ["claude", "auth", "status"],
+            capture_output=True, text=True, timeout=10,
+            env={**os.environ, "CLAUDE_CONFIG_DIR": SERVER_CONFIG_DIR},
+        )
+        data = json.loads(result.stdout) if result.stdout.strip() else {}
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({"loggedIn": False, "error": str(e)})
+
+
+@agent_chat_bp.route("/admin/claude-auth/start", methods=["POST"])
+def admin_claude_auth_start():
+    """Start the claude auth login process in background."""
+    if not _check_admin_token(request):
+        return {"error": "unauthorized"}, 401
+
+    with _admin_login["lock"]:
+        # Kill any existing process
+        if _admin_login["proc"] and _admin_login["proc"].poll() is None:
+            _admin_login["proc"].terminate()
+
+        _admin_login["output"] = []
+        _admin_login["status"] = "waiting"
+        os.makedirs(SERVER_CONFIG_DIR, exist_ok=True)
+
+        proc = subprocess.Popen(
+            ["claude", "auth", "login"],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1,
+            env={**os.environ, "CLAUDE_CONFIG_DIR": SERVER_CONFIG_DIR},
+        )
+        _admin_login["proc"] = proc
+
+        # Reader thread — collects output without blocking
+        def reader():
+            for line in iter(proc.stdout.readline, ""):
+                _admin_login["output"].append(line.rstrip("\n"))
+                # Check if credentials appeared
+                if os.path.exists(os.path.join(SERVER_CONFIG_DIR, ".credentials.json")):
+                    _admin_login["status"] = "success"
+                    proc.terminate()
+                    return
+            proc.wait()
+            if os.path.exists(os.path.join(SERVER_CONFIG_DIR, ".credentials.json")):
+                _admin_login["status"] = "success"
+            else:
+                _admin_login["status"] = "failed"
+
+        t = threading.Thread(target=reader, daemon=True)
+        t.start()
+
+    return jsonify({"started": True})
+
+
+@agent_chat_bp.route("/admin/claude-auth/poll", methods=["GET"])
+def admin_claude_auth_poll():
+    """Poll for login output. Returns accumulated lines and status."""
+    if not _check_admin_token(request):
+        return {"error": "unauthorized"}, 401
+    return jsonify({
+        "output": _admin_login["output"],
+        "status": _admin_login["status"],
+    })
+
+
+@agent_chat_bp.route("/admin/claude-auth/logout", methods=["POST"])
+def admin_claude_auth_revoke():
+    if not _check_admin_token(request):
+        return {"error": "unauthorized"}, 401
+    creds = os.path.join(SERVER_CONFIG_DIR, ".credentials.json")
+    if os.path.exists(creds):
+        os.unlink(creds)
+    return jsonify({"loggedIn": False})
+
+
+ADMIN_AUTH_PAGE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WikiHub Admin — Claude Auth</title>
+<style>
+  :root { --bg: #0f0e0c; --surface: #191714; --border: rgba(200,180,150,0.12); --text: #e8e0d4; --muted: #887d6e; --accent: #d4a04a; --success: #7a9e6b; --error: #c45c3c; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'IBM Plex Mono', monospace; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 32px; max-width: 560px; width: 100%; }
+  h1 { font-size: 1.25rem; margin-bottom: 8px; }
+  .sub { color: var(--muted); font-size: 0.8125rem; margin-bottom: 24px; }
+  label { display: block; font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+  input { width: 100%; padding: 10px 12px; background: rgba(0,0,0,0.3); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-family: inherit; font-size: 0.875rem; margin-bottom: 16px; }
+  input:focus { outline: none; border-color: var(--accent); }
+  button { padding: 10px 20px; background: var(--accent); color: #0f0e0c; border: none; border-radius: 4px; font-family: inherit; font-weight: 600; cursor: pointer; font-size: 0.875rem; }
+  button:hover { opacity: 0.9; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.secondary { background: transparent; color: var(--error); border: 1px solid rgba(196,92,60,0.3); }
+  .status { margin: 16px 0 8px; font-size: 0.8125rem; }
+  .status.success { color: var(--success); }
+  .status.error { color: var(--error); }
+  .terminal { background: #0a0a08; border: 1px solid var(--border); border-radius: 4px; padding: 12px; font-size: 0.75rem; color: var(--success); max-height: 200px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; margin: 12px 0; display: none; }
+  .terminal a { color: var(--accent); }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  #auth-section { display: none; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>[[wikihub]] Claude Auth</h1>
+  <p class="sub">Server-wide Claude subscription for the Curator agent.</p>
+
+  <div id="token-section">
+    <label>Admin Token</label>
+    <input type="password" id="token" placeholder="Enter admin token..." autocomplete="off">
+    <button onclick="authenticate()">Authenticate</button>
+    <div id="token-error" class="status error" style="display:none;"></div>
+  </div>
+
+  <div id="auth-section">
+    <div id="current-status" class="status">Checking...</div>
+    <div class="terminal" id="terminal"></div>
+    <div class="actions">
+      <button id="login-btn" onclick="startLogin()">Login with Claude</button>
+      <button id="logout-btn" class="secondary" onclick="logout()" style="display:none;">Disconnect</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let token = '';
+let pollInterval = null;
+
+async function authenticate() {
+  token = document.getElementById('token').value.trim();
+  if (!token) return;
+  const resp = await fetch('/api/v1/admin/claude-auth/status?token=' + encodeURIComponent(token));
+  if (resp.status === 401) {
+    document.getElementById('token-error').style.display = 'block';
+    document.getElementById('token-error').textContent = 'Invalid token';
+    return;
+  }
+  document.getElementById('token-section').style.display = 'none';
+  document.getElementById('auth-section').style.display = 'block';
+  const data = await resp.json();
+  updateStatus(data);
+}
+
+function updateStatus(data) {
+  const el = document.getElementById('current-status');
+  const loginBtn = document.getElementById('login-btn');
+  const logoutBtn = document.getElementById('logout-btn');
+  if (data.loggedIn) {
+    el.textContent = 'Connected — Claude subscription active';
+    el.className = 'status success';
+    loginBtn.style.display = 'none';
+    logoutBtn.style.display = 'inline-block';
+  } else {
+    el.textContent = 'Not connected';
+    el.className = 'status';
+    loginBtn.style.display = 'inline-block';
+    logoutBtn.style.display = 'none';
+  }
+}
+
+async function startLogin() {
+  const term = document.getElementById('terminal');
+  const btn = document.getElementById('login-btn');
+  term.style.display = 'block';
+  term.innerHTML = 'Starting login...\\n';
+  btn.disabled = true;
+  btn.textContent = 'Waiting for auth...';
+
+  await fetch('/api/v1/admin/claude-auth/start?token=' + encodeURIComponent(token), {method: 'POST'});
+
+  // Poll for output
+  let lastLen = 0;
+  pollInterval = setInterval(async () => {
+    const resp = await fetch('/api/v1/admin/claude-auth/poll?token=' + encodeURIComponent(token));
+    const data = await resp.json();
+
+    if (data.output.length > lastLen) {
+      for (let i = lastLen; i < data.output.length; i++) {
+        const line = data.output[i].replace(/(https:\\/\\/[^\\s]+)/g, '<a href="$1" target="_blank">$1</a>');
+        term.innerHTML += line + '\\n';
+      }
+      lastLen = data.output.length;
+      term.scrollTop = term.scrollHeight;
+    }
+
+    if (data.status === 'success') {
+      clearInterval(pollInterval);
+      term.innerHTML += '\\n<span style="color:var(--success);">Login successful!</span>\\n';
+      btn.disabled = false;
+      btn.textContent = 'Login with Claude';
+      // Refresh status
+      const sr = await fetch('/api/v1/admin/claude-auth/status?token=' + encodeURIComponent(token));
+      updateStatus(await sr.json());
+    } else if (data.status === 'failed') {
+      clearInterval(pollInterval);
+      term.innerHTML += '\\n<span style="color:var(--error);">Login failed or timed out.</span>\\n';
+      btn.disabled = false;
+      btn.textContent = 'Login with Claude';
+    }
+  }, 1500);
+}
+
+async function logout() {
+  await fetch('/api/v1/admin/claude-auth/logout?token=' + encodeURIComponent(token), {method: 'POST'});
+  const resp = await fetch('/api/v1/admin/claude-auth/status?token=' + encodeURIComponent(token));
+  updateStatus(await resp.json());
+  document.getElementById('terminal').style.display = 'none';
+}
+
+// Allow Enter to submit token
+document.getElementById('token').addEventListener('keydown', e => {
+  if (e.key === 'Enter') authenticate();
+});
+</script>
+</body>
+</html>"""
