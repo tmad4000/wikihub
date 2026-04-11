@@ -8,7 +8,7 @@ from app.url_utils import page_path_from_url_path, url_path_from_page_path
 from flask_login import current_user
 
 from app import db
-from app.acl import can_read, can_write, resolve_grants, resolve_visibility
+from app.acl import can_read, can_write, grants_for_user, resolve_grants, resolve_visibility
 from app.content_utils import has_private_bands, parse_markdown_document, set_visibility_in_content
 from app.discovery import discoverable_page_for_wiki, visible_wikis_for_owner
 from app.git_backend import _repo_path
@@ -149,6 +149,32 @@ def _is_owner(wiki):
     return current_user.is_authenticated and current_user.id == wiki.owner_id
 
 
+def _use_public_repo(wiki, acl_rules=None):
+    """Should we read from the public mirror? False if owner or has ACL grants."""
+    if _is_owner(wiki):
+        return False
+    if current_user.is_authenticated and acl_rules:
+        if grants_for_user(acl_rules, current_user.username):
+            return False
+    return True
+
+
+def _repo_access(wiki, acl_rules=None):
+    """Return (use_public, acl_filter_user) tuple for repo reads.
+
+    - Owner: (False, None) — full access to authoritative repo
+    - ACL grantee: (False, username) — authoritative repo, filtered by can_read
+    - Everyone else: (True, None) — public mirror only
+    """
+    if _is_owner(wiki):
+        return False, None
+    if current_user.is_authenticated and acl_rules:
+        uname = current_user.username
+        if grants_for_user(acl_rules, uname):
+            return False, uname
+    return True, None
+
+
 def _sibling_wikis(owner, current_wiki):
     """other wikis by the same owner, for cross-wiki nav in sidebar."""
     from app.discovery import visible_wikis_for_owner
@@ -165,10 +191,30 @@ def _normalize_folder_path(raw_path):
     return "/".join(segments)
 
 
-def _visible_files(username, slug, wiki, public=False):
+def _visible_files(username, slug, wiki, public=False, acl_filter_user=None):
+    """List visible files in a wiki repo.
+
+    Args:
+        public: If True, read from public mirror.
+        acl_filter_user: If set, read from authoritative repo but filter
+            through can_read for this username (for ACL grantees who aren't owners).
+    """
     files = list_files_in_repo(username, slug, public=public)
-    if not public:
+    if not public and not acl_filter_user:
+        # owner view — everything
         return [path for path in files if not path.startswith(".wikihub/") and not path.endswith(".gitkeep")]
+
+    if acl_filter_user:
+        # non-owner with ACL grants — read authoritative repo, filter by can_read
+        acl_rules = load_acl_rules(username, slug)
+        pages_by_path = {p.path: p for p in Page.query.filter_by(wiki_id=wiki.id).all()}
+        return [
+            path
+            for path in files
+            if not path.startswith(".wikihub/")
+            and not path.endswith(".gitkeep")
+            and can_read(path, acl_rules, acl_filter_user, (pages_by_path[path].visibility if path in pages_by_path else None))
+        ]
 
     discoverable = {
         page.path
@@ -195,10 +241,10 @@ def _page_url(username, slug, page_path):
     return f"/@{username}/{slug}/{url_path_from_page_path(page_path, strip_md=True)}"
 
 
-def _build_sidebar_tree(username, slug, wiki, public=False, current_path=None):
+def _build_sidebar_tree(username, slug, wiki, public=False, current_path=None, acl_filter_user=None):
     root = {"children": {}}
 
-    for path in sorted(_visible_files(username, slug, wiki, public=public)):
+    for path in sorted(_visible_files(username, slug, wiki, public=public, acl_filter_user=acl_filter_user)):
         parts = path.split("/")
         cursor = root["children"]
         for depth, part in enumerate(parts[:-1]):
@@ -240,9 +286,9 @@ def _build_sidebar_tree(username, slug, wiki, public=False, current_path=None):
     return normalize(root["children"])
 
 
-def _folder_listing(username, slug, wiki, folder_path="", public=False):
+def _folder_listing(username, slug, wiki, folder_path="", public=False, acl_filter_user=None):
     prefix = folder_path.strip("/")
-    files = _visible_files(username, slug, wiki, public=public)
+    files = _visible_files(username, slug, wiki, public=public, acl_filter_user=acl_filter_user)
     pages_by_path = {page.path: page for page in Page.query.filter_by(wiki_id=wiki.id).all()}
     seen = set()
     items = []
@@ -524,13 +570,13 @@ def wiki_index(username, slug):
     if slug == owner.username:
         return redirect(url_for("wiki.user_profile", username=owner.username), code=302)
 
-    is_owner = _is_owner(wiki)
-    use_public = not is_owner
-    recently_updated = _recently_updated_pages(wiki, public_only=use_public)
+    acl_rules = load_acl_rules(owner.username, wiki.slug)
+    use_public, acl_filter_user = _repo_access(wiki, acl_rules)
+    recently_updated = _recently_updated_pages(wiki, public_only=use_public and not acl_filter_user)
     page_path, content = _folder_index_content(owner.username, wiki.slug, "", public=use_public)
     siblings = _sibling_wikis(owner, wiki)
     if content is None:
-        items = _folder_listing(owner.username, wiki.slug, wiki, "", public=use_public)
+        items = _folder_listing(owner.username, wiki.slug, wiki, "", public=use_public, acl_filter_user=acl_filter_user)
         if use_public and not items:
             return render_template("permission_error.html", owner=owner, wiki=wiki), 404
         return render_template(
@@ -538,7 +584,7 @@ def wiki_index(username, slug):
             owner=owner,
             wiki=wiki,
             items=items,
-            sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=use_public),
+            sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=use_public, acl_filter_user=acl_filter_user),
             folder_path="",
             rendered_html=None,
             breadcrumb=[],
@@ -563,7 +609,7 @@ def wiki_index(username, slug):
         link_graph=_get_full_graph(wiki),
         full_graph_url=f"/@{owner.username}/{wiki.slug}/graph",
         recently_updated=recently_updated,
-        sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=use_public, current_path=page_path),
+        sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=use_public, current_path=page_path, acl_filter_user=acl_filter_user),
         private_band_warning=not use_public and has_private_bands(content),
         json_ld_author=owner.display_name or owner.username,
         management_items=management_items,
@@ -730,9 +776,11 @@ def wiki_page(username, slug, page_path):
         file_vis = resolve_visibility(page_path, acl_rules)
         if not is_owner and not can_read(page_path, acl_rules, user_name, file_vis):
             abort(404)
-        use_public = not is_owner
+        use_public = _use_public_repo(wiki, acl_rules)
         data = read_file_bytes_from_repo(owner.username, wiki.slug, page_path, public=use_public)
-        if data is None and is_owner:
+        if data is None and not use_public:
+            pass  # already tried authoritative repo
+        elif data is None:
             data = read_file_bytes_from_repo(owner.username, wiki.slug, page_path, public=False)
         if data is None:
             abort(404)
@@ -743,9 +791,10 @@ def wiki_page(username, slug, page_path):
         return Response(data, content_type=content_type, headers=headers)
 
     if request.path.endswith("/"):
-        use_public = not _is_owner(wiki)
+        acl_rules = load_acl_rules(owner.username, wiki.slug)
+        use_public, acl_filter_user = _repo_access(wiki, acl_rules)
         content_path, content = _folder_index_content(owner.username, wiki.slug, page_path, public=use_public)
-        items = _folder_listing(owner.username, wiki.slug, wiki, page_path, public=use_public)
+        items = _folder_listing(owner.username, wiki.slug, wiki, page_path, public=use_public, acl_filter_user=acl_filter_user)
         if use_public and not content and not items:
             return render_template("permission_error.html", owner=owner, wiki=wiki), 404
         breadcrumb = []
@@ -760,7 +809,7 @@ def wiki_page(username, slug, page_path):
             owner=owner,
             wiki=wiki,
             items=items,
-            sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=use_public, current_path=page_path.strip("/")),
+            sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=use_public, current_path=page_path.strip("/"), acl_filter_user=acl_filter_user),
             folder_path=page_path.strip("/"),
             rendered_html=render_page(content, owner.username, wiki.slug) if content else None,
             breadcrumb=breadcrumb,
@@ -788,9 +837,19 @@ def wiki_page(username, slug, page_path):
     if page and not is_owner and not can_read(page.path, acl_rules, user_name, page.visibility):
         return render_template("permission_error.html", owner=owner, wiki=wiki), 404
 
-    use_public = not is_owner and (page.visibility if page else "public") != "private"
-    content = read_file_from_repo(owner.username, wiki.slug, file_path, public=use_public)
-    if content is None and page and page.visibility == "private" and current_user.is_authenticated:
+    use_public, acl_filter_user = _repo_access(wiki, acl_rules)
+    # For individual pages: if the page is private, always read from authoritative repo
+    if not use_public:
+        content = read_file_from_repo(owner.username, wiki.slug, file_path, public=False)
+    else:
+        page_vis = page.visibility if page else "public"
+        if page_vis == "private":
+            # Private page but user passed can_read above — read from authoritative repo
+            content = read_file_from_repo(owner.username, wiki.slug, file_path, public=False)
+        else:
+            content = read_file_from_repo(owner.username, wiki.slug, file_path, public=True)
+    if content is None:
+        # fallback: try authoritative repo (handles edge cases)
         content = read_file_from_repo(owner.username, wiki.slug, file_path, public=False)
     if content is None:
         abort(404)
@@ -822,8 +881,8 @@ def wiki_page(username, slug, page_path):
         toc=extract_toc(rendered_html),
         backlinks=_get_backlinks(page),
         link_graph=_get_link_graph(page, wiki),
-        recently_updated=_recently_updated_pages(wiki, public_only=not is_owner),
-        sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=use_public, current_path=file_path),
+        recently_updated=_recently_updated_pages(wiki, public_only=use_public and not acl_filter_user),
+        sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=use_public, current_path=file_path, acl_filter_user=acl_filter_user),
         private_band_warning=not use_public and has_private_bands(content),
         json_ld_author=owner.display_name or owner.username,
         sibling_wikis=siblings,

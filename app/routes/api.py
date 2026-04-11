@@ -267,3 +267,24 @@ def list_keys():
         "agent_name": k.agent_name,
         "created_at": k.created_at.isoformat(),
     } for k in keys])
+
+
+@api_bp.route("/users/search", methods=["GET"])
+def search_users():
+    """search users by username, email prefix, or display name.
+    GET /api/v1/users/search?q=<query>
+    -> {users: [{username, display_name}]}"""
+    q = request.args.get("q", "").strip().lower()
+    if len(q) < 2:
+        return jsonify({"users": []})
+    users = User.query.filter(
+        db.or_(
+            User.username.ilike(f"{q}%"),
+            User.email.ilike(f"{q}%"),
+            User.display_name.ilike(f"%{q}%"),
+        )
+    ).limit(10).all()
+    return jsonify({"users": [
+        {"username": u.username, "display_name": u.display_name}
+        for u in users
+    ]})

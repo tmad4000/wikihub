@@ -795,9 +795,15 @@ def share_page(owner, slug, page_path):
 
     data = request.get_json(silent=True) or {}
     username = (data.get("username") or "").strip().lower()
+    email = (data.get("email") or "").strip().lower()
     role = (data.get("role") or "").strip().lower()
+    if not username and email:
+        target = User.query.filter_by(email=email).first()
+        if not target:
+            return {"error": "not_found", "message": f"No user found with email '{email}'"}, 404
+        username = target.username
     if not username or role not in {"read", "edit"}:
-        return {"error": "bad_request", "message": "username and role (read|edit) are required"}, 400
+        return {"error": "bad_request", "message": "username (or email) and role (read|edit) are required"}, 400
 
     acl_text = read_file_from_repo(owner_user.username, wiki.slug, ".wikihub/acl", public=False) or "* private\n"
     acl_line = f"{page_path} @{username}:{role}"
@@ -828,9 +834,15 @@ def share_wiki(owner, slug):
     data = request.get_json(silent=True) or {}
     pattern = (data.get("pattern") or "").strip()
     username = (data.get("username") or "").strip().lower()
+    email = (data.get("email") or "").strip().lower()
     role = (data.get("role") or "").strip().lower()
+    if not username and email:
+        target = User.query.filter_by(email=email).first()
+        if not target:
+            return {"error": "not_found", "message": f"No user found with email '{email}'"}, 404
+        username = target.username
     if not pattern or not username or role not in {"read", "edit"}:
-        return {"error": "bad_request", "message": "pattern, username, and role (read|edit) are required"}, 400
+        return {"error": "bad_request", "message": "pattern, username (or email), and role (read|edit) are required"}, 400
 
     # verify target user exists
     target = User.query.filter_by(username=username).first()
