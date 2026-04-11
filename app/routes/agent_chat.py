@@ -748,6 +748,7 @@ def admin_claude_auth_start():
 
         proc = subprocess.Popen(
             ["claude", "auth", "login"],
+            stdin=subprocess.PIPE,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, bufsize=1,
             env={**os.environ, "CLAUDE_CONFIG_DIR": SERVER_CONFIG_DIR},
@@ -784,6 +785,38 @@ def admin_claude_auth_poll():
         "output": _admin_login["output"],
         "status": _admin_login["status"],
     })
+
+
+@agent_chat_bp.route("/admin/claude-auth/submit-code", methods=["POST"])
+def admin_claude_auth_submit_code():
+    """Submit the OAuth code from the callback page to the waiting process."""
+    if not _check_admin_token(request):
+        return {"error": "unauthorized"}, 401
+    data = request.get_json(silent=True) or {}
+    code = (data.get("code") or "").strip()
+    if not code:
+        return {"error": "bad_request", "message": "code is required"}, 400
+
+    proc = _admin_login.get("proc")
+    if not proc or proc.poll() is not None:
+        return {"error": "no_process", "message": "No login process running. Click 'Login with Claude' first."}, 400
+
+    try:
+        proc.stdin.write(code + "\n")
+        proc.stdin.flush()
+        _admin_login["output"].append(f"Code submitted, waiting for verification...")
+        # Give it a moment to process
+        import time
+        for _ in range(10):
+            time.sleep(1)
+            if os.path.exists(os.path.join(SERVER_CONFIG_DIR, ".credentials.json")):
+                _admin_login["status"] = "success"
+                _admin_login["output"].append("Authentication successful!")
+                proc.terminate()
+                return jsonify({"success": True})
+        return jsonify({"submitted": True, "message": "Code sent. Check status."})
+    except Exception as e:
+        return {"error": "write_error", "message": str(e)}, 500
 
 
 @agent_chat_bp.route("/admin/claude-auth/logout", methods=["POST"])
@@ -840,6 +873,14 @@ ADMIN_AUTH_PAGE = """<!DOCTYPE html>
   <div id="auth-section">
     <div id="current-status" class="status">Checking...</div>
     <div class="terminal" id="terminal"></div>
+    <div id="code-section" style="display:none; margin: 12px 0;">
+      <label>Paste the code from the callback page:</label>
+      <div style="display:flex; gap:8px;">
+        <input type="text" id="auth-code" placeholder="Paste code here..." style="flex:1;">
+        <button onclick="submitCode()">Submit</button>
+      </div>
+      <div id="code-msg" class="status" style="margin-top:4px;"></div>
+    </div>
     <div class="actions">
       <button id="login-btn" onclick="startLogin()">Login with Claude</button>
       <button id="logout-btn" class="secondary" onclick="logout()" style="display:none;">Disconnect</button>
@@ -893,6 +934,11 @@ async function startLogin() {
 
   await fetch('/api/v1/admin/claude-auth/start?token=' + encodeURIComponent(token), {method: 'POST'});
 
+  // Show code input section
+  document.getElementById('code-section').style.display = 'block';
+  document.getElementById('auth-code').value = '';
+  document.getElementById('code-msg').textContent = '';
+
   // Poll for output
   let lastLen = 0;
   pollInterval = setInterval(async () => {
@@ -914,7 +960,7 @@ async function startLogin() {
       term.innerHTML += '\\n<span style="color:var(--success);">Login successful!</span>\\n';
       btn.disabled = false;
       btn.textContent = 'Login with Claude';
-      // Refresh status
+      document.getElementById('code-section').style.display = 'none';
       const sr = await fetch('/api/v1/admin/claude-auth/status?token=' + encodeURIComponent(token));
       updateStatus(await sr.json());
     } else if (data.status === 'failed') {
@@ -925,6 +971,34 @@ async function startLogin() {
     }
   }, 1500);
 }
+
+async function submitCode() {
+  const code = document.getElementById('auth-code').value.trim();
+  const msg = document.getElementById('code-msg');
+  if (!code) { msg.textContent = 'Paste the code first'; return; }
+  msg.textContent = 'Submitting...';
+  const resp = await fetch('/api/v1/admin/claude-auth/submit-code?token=' + encodeURIComponent(token), {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({code}),
+  });
+  const data = await resp.json();
+  if (data.success) {
+    msg.textContent = 'Authenticated!';
+    msg.className = 'status success';
+    document.getElementById('code-section').style.display = 'none';
+  } else if (data.error) {
+    msg.textContent = data.message || 'Error submitting code';
+    msg.className = 'status error';
+  } else {
+    msg.textContent = 'Code sent, waiting...';
+  }
+}
+
+// Enter to submit code
+document.getElementById('auth-code').addEventListener('keydown', e => {
+  if (e.key === 'Enter') submitCode();
+});
 
 async function logout() {
   await fetch('/api/v1/admin/claude-auth/logout?token=' + encodeURIComponent(token), {method: 'POST'});
