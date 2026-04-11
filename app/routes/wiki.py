@@ -764,6 +764,15 @@ def wiki_page(username, slug, page_path):
 
     file_path = page_path if page_path.endswith(".md") else page_path + ".md"
     page = Page.query.filter_by(wiki_id=wiki.id, path=file_path).first()
+
+    # Fallback: if underscore→space conversion didn't find a page, try the raw URL path
+    # (files may use underscores in their actual names, not spaces)
+    if page is None and "_" in raw_page_path:
+        raw_file_path = raw_page_path if raw_page_path.endswith(".md") else raw_page_path + ".md"
+        page = Page.query.filter_by(wiki_id=wiki.id, path=raw_file_path).first()
+        if page:
+            file_path = raw_file_path
+
     acl_rules = load_acl_rules(owner.username, wiki.slug)
     user_name = current_user.username if current_user.is_authenticated else None
     is_owner = _is_owner(wiki)
