@@ -16,7 +16,7 @@ import time
 import uuid
 
 import anthropic
-from flask import Blueprint, Response, current_app, request, stream_with_context
+from flask import Blueprint, Response, current_app, jsonify, request, stream_with_context
 
 from app.auth_utils import get_current_user_from_request
 from app.git_sync import list_files_in_repo, read_file_from_repo
@@ -897,9 +897,10 @@ async function startLogin() {
   let lastLen = 0;
   pollInterval = setInterval(async () => {
     const resp = await fetch('/api/v1/admin/claude-auth/poll?token=' + encodeURIComponent(token));
+    if (!resp.ok) { term.innerHTML += 'Poll error: ' + resp.status + '\\n'; return; }
     const data = await resp.json();
 
-    if (data.output.length > lastLen) {
+    if (data.output && data.output.length > lastLen) {
       for (let i = lastLen; i < data.output.length; i++) {
         const line = data.output[i].replace(/(https:\\/\\/[^\\s]+)/g, '<a href="$1" target="_blank">$1</a>');
         term.innerHTML += line + '\\n';
