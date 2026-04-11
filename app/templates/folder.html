@@ -132,7 +132,7 @@
         / <a href="/@{{ owner.username }}/{{ wiki.slug }}">{{ wiki.slug }}</a>
       {% endif %}
       {% if breadcrumb %}
-        <span style="opacity:0.4;margin:0 2px">›</span>
+        <span style="color:var(--accent);margin:0 4px;font-size:1em">›</span>
       {% endif %}
       {% for label, href in breadcrumb %}
         {% if not loop.first %}/{% endif %}

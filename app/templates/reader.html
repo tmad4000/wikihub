@@ -496,7 +496,7 @@
       {% endif %}
       {% if page.path %}
         {% set parts = page.path.replace('.md', '').split('/') %}
-        <span style="opacity:0.4;margin:0 2px">›</span>
+        <span style="color:var(--accent);margin:0 4px;font-size:1em">›</span>
         {% for part in parts %}
           {% if not loop.first %}/{% endif %}
           {% if not loop.last %}<a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ '/'.join(parts[:loop.index]) }}/">{{ part }}</a>{% else %}{{ part }}{% endif %}
