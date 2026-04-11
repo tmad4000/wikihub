@@ -755,20 +755,37 @@ def admin_claude_auth_start():
         )
         _admin_login["proc"] = proc
 
-        # Reader thread — collects output without blocking
+        # Reader thread — collects output and waits for credentials
         def reader():
-            for line in iter(proc.stdout.readline, ""):
+            # Read initial output (URL etc)
+            while True:
+                line = proc.stdout.readline()
+                if not line:
+                    break
                 _admin_login["output"].append(line.rstrip("\n"))
-                # Check if credentials appeared
-                if os.path.exists(os.path.join(SERVER_CONFIG_DIR, ".credentials.json")):
+
+            # Now wait up to 5 minutes for the user to complete auth
+            creds_path = os.path.join(SERVER_CONFIG_DIR, ".credentials.json")
+            for _ in range(300):  # 5 minutes
+                if proc.poll() is not None:
+                    # Process exited — check if it succeeded
+                    break
+                if os.path.exists(creds_path):
                     _admin_login["status"] = "success"
+                    _admin_login["output"].append("Authentication successful!")
                     proc.terminate()
                     return
-            proc.wait()
-            if os.path.exists(os.path.join(SERVER_CONFIG_DIR, ".credentials.json")):
+                time.sleep(1)
+
+            # Final check
+            if os.path.exists(creds_path):
                 _admin_login["status"] = "success"
+                _admin_login["output"].append("Authentication successful!")
             else:
                 _admin_login["status"] = "failed"
+                _admin_login["output"].append("Timed out waiting for authentication.")
+            if proc.poll() is None:
+                proc.terminate()
 
         t = threading.Thread(target=reader, daemon=True)
         t.start()
