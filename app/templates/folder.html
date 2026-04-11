@@ -3,18 +3,20 @@
 
 {% block extra_css %}
 .folder-shell { display: flex; min-height: calc(100vh - 56px); }
-.sidebar { width: 280px; flex-shrink: 0; border-right: 1px solid var(--border-default); padding: 16px 0; overflow-y: auto; display: none; }
+.sidebar { width: 280px; flex-shrink: 0; border-right: 1px solid var(--border-default); padding: 16px 0; overflow-y: auto; overflow-x: hidden; display: none; }
 @media (min-width: 768px) { .sidebar { display: block; } }
 .sidebar-section { padding: 0 8px; }
 .sidebar-heading { font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); padding: 6px 12px; margin-bottom: 2px; }
-.sidebar-folder-row { display: flex; align-items: center; gap: 4px; }
-.sidebar-folder-toggle { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border: none; background: transparent; color: var(--text-muted); cursor: pointer; padding: 0; }
+.sidebar-folder-row { display: flex; align-items: center; gap: 0; }
+.sidebar-folder-toggle { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border: none; background: transparent; color: var(--text-muted); cursor: pointer; padding: 0; flex-shrink: 0; border-radius: var(--radius-sm); }
+.sidebar-folder-toggle:hover { background: var(--control-bg-hover); }
 .sidebar-folder.open > .sidebar-folder-row .sidebar-folder-toggle svg { transform: rotate(90deg); }
-.sidebar-children { display: none; }
+.sidebar-children { display: none; padding-left: 12px; }
 .sidebar-folder.open > .sidebar-children { display: block; }
-.sidebar-item { display: flex; align-items: center; gap: 8px; padding: 5px 12px; border-radius: var(--radius-sm); font-size: 0.8125rem; color: var(--text-tertiary); text-decoration: none; margin-bottom: 1px; }
+.sidebar-item { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: var(--radius-sm); font-size: 0.8125rem; color: var(--text-tertiary); text-decoration: none; margin-bottom: 1px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sidebar-item:hover { color: var(--text-primary); background: var(--accent-subtle); text-decoration: none; }
 .sidebar-item.active { color: var(--text-primary); background: var(--accent-subtle); }
+.sidebar-folder-row .sidebar-item { flex: 1; min-width: 0; }
 .hamburger {
   display: inline-flex; align-items: center; justify-content: center;
   width: 32px; height: 32px; background: none; border: none;
@@ -65,7 +67,8 @@
         <button type="button" class="sidebar-folder-toggle" onclick="toggleFolder('{{ item.path }}')">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
         </button>
-        <a href="{{ item.url }}" class="sidebar-item {{ 'active' if item.active else '' }}" style="padding-left: {{ 12 + (level * 16) }}px;">
+        <a href="{{ item.url }}" class="sidebar-item {{ 'active' if item.active else '' }}">
+          <span class="sidebar-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h5l2 2h11v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg></span>
           <span>{{ item.name }}</span>
         </a>
       </div>
@@ -74,7 +77,8 @@
       </div>
     </div>
     {% else %}
-    <a href="{{ item.url }}" class="sidebar-item {{ 'active' if item.active else '' }}" style="padding-left: {{ 40 + (level * 16) }}px;">
+    <a href="{{ item.url }}" class="sidebar-item {{ 'active' if item.active else '' }}">
+      <span class="sidebar-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>
       <span>{{ item.name }}</span>
     </a>
     {% endif %}

@@ -5,7 +5,7 @@
 .profile-shell { display: flex; min-height: calc(100vh - 56px); }
 .profile-sidebar {
   width: 240px; flex-shrink: 0; border-right: 1px solid var(--border-default);
-  padding: 16px 0; overflow-y: auto; display: none;
+  padding: 16px 0; overflow-y: auto; overflow-x: hidden; display: none;
 }
 @media (min-width: 768px) { .profile-sidebar { display: block; } }
 .profile-sidebar .sidebar-section { padding: 0 8px; }
@@ -13,22 +13,25 @@
   font-size: 0.6875rem; font-weight: 600; text-transform: uppercase;
   letter-spacing: 0.06em; color: var(--text-muted); padding: 6px 12px; margin-bottom: 2px;
 }
-.sidebar-folder-row { display: flex; align-items: center; gap: 4px; }
+.sidebar-folder-row { display: flex; align-items: center; gap: 0; }
 .sidebar-folder-toggle {
   display: inline-flex; align-items: center; justify-content: center;
   width: 20px; height: 20px; border: none; background: transparent;
-  color: var(--text-muted); cursor: pointer; padding: 0;
+  color: var(--text-muted); cursor: pointer; padding: 0; flex-shrink: 0; border-radius: var(--radius-sm);
 }
+.sidebar-folder-toggle:hover { background: var(--control-bg-hover); }
 .sidebar-folder.open > .sidebar-folder-row .sidebar-folder-toggle svg { transform: rotate(90deg); }
-.sidebar-children { display: none; }
+.sidebar-children { display: none; padding-left: 12px; }
 .sidebar-folder.open > .sidebar-children { display: block; }
 .sidebar-item {
-  display: flex; align-items: center; gap: 8px; padding: 5px 12px;
+  display: flex; align-items: center; gap: 8px; padding: 5px 8px;
   border-radius: var(--radius-sm); font-size: 0.8125rem; color: var(--text-tertiary);
   text-decoration: none; margin-bottom: 1px; border-left: 2px solid transparent;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .sidebar-item:hover { color: var(--text-primary); background: var(--accent-subtle); text-decoration: none; }
 .sidebar-item.active { color: var(--text-primary); background: var(--accent-subtle); border-left-color: var(--accent); }
+.sidebar-folder-row .sidebar-item { flex: 1; min-width: 0; }
 .profile-main { flex: 1; min-width: 0; padding: 32px 16px 64px; }
 @media (min-width: 640px) { .profile-main { padding: 48px 24px 72px; } }
 .profile-header {
