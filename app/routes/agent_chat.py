@@ -696,7 +696,7 @@ def claude_auth_logout():
 # --- Admin Claude auth (server-wide, token-protected) ---
 
 # Background login process state
-_admin_login = {"proc": None, "output": [], "status": "idle", "lock": threading.Lock()}
+_admin_login = {"proc": None, "master_fd": None, "output": [], "status": "idle", "lock": threading.Lock()}
 
 SERVER_CONFIG_DIR = "/opt/wikihub-app/claude-config"
 
@@ -733,7 +733,8 @@ def admin_claude_auth_status():
 
 @agent_chat_bp.route("/admin/claude-auth/start", methods=["POST"])
 def admin_claude_auth_start():
-    """Start the claude auth login process in background."""
+    """Start the claude auth login process in background using PTY."""
+    import pty, select
     if not _check_admin_token(request):
         return {"error": "unauthorized"}, 401
 
@@ -741,41 +742,63 @@ def admin_claude_auth_start():
         # Kill any existing process
         if _admin_login["proc"] and _admin_login["proc"].poll() is None:
             _admin_login["proc"].terminate()
+        if _admin_login.get("master_fd"):
+            try:
+                os.close(_admin_login["master_fd"])
+            except OSError:
+                pass
 
         _admin_login["output"] = []
         _admin_login["status"] = "waiting"
+        _admin_login["master_fd"] = None
         os.makedirs(SERVER_CONFIG_DIR, exist_ok=True)
 
+        # Use PTY so the process thinks it has a real terminal
+        master_fd, slave_fd = pty.openpty()
         proc = subprocess.Popen(
             ["claude", "auth", "login"],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, bufsize=1,
+            stdin=slave_fd, stdout=slave_fd, stderr=slave_fd,
             env={**os.environ, "CLAUDE_CONFIG_DIR": SERVER_CONFIG_DIR},
+            close_fds=True,
         )
+        os.close(slave_fd)  # Parent doesn't need slave end
         _admin_login["proc"] = proc
+        _admin_login["master_fd"] = master_fd
 
-        # Reader thread — collects output and waits for credentials
+        # Reader thread — reads PTY output and watches for credentials
         def reader():
-            # Read initial output (URL etc)
-            while True:
-                line = proc.stdout.readline()
-                if not line:
-                    break
-                _admin_login["output"].append(line.rstrip("\n"))
-
-            # Now wait up to 5 minutes for the user to complete auth
             creds_path = os.path.join(SERVER_CONFIG_DIR, ".credentials.json")
-            for _ in range(300):  # 5 minutes
-                if proc.poll() is not None:
-                    # Process exited — check if it succeeded
+            buf = ""
+            for _ in range(300):  # 5 minutes max
+                try:
+                    r, _, _ = select.select([master_fd], [], [], 1.0)
+                    if r:
+                        data = os.read(master_fd, 4096).decode("utf-8", errors="replace")
+                        buf += data
+                        # Split into lines
+                        while "\n" in buf:
+                            line, buf = buf.split("\n", 1)
+                            line = line.strip()
+                            if line:
+                                _admin_login["output"].append(line)
+                        # Also add partial line if it looks complete
+                        if buf.strip() and "\r" in buf:
+                            for part in buf.split("\r"):
+                                part = part.strip()
+                                if part:
+                                    _admin_login["output"].append(part)
+                            buf = ""
+                except OSError:
                     break
+
                 if os.path.exists(creds_path):
                     _admin_login["status"] = "success"
                     _admin_login["output"].append("Authentication successful!")
                     proc.terminate()
                     return
-                time.sleep(1)
+
+                if proc.poll() is not None:
+                    break
 
             # Final check
             if os.path.exists(creds_path):
@@ -786,6 +809,10 @@ def admin_claude_auth_start():
                 _admin_login["output"].append("Timed out waiting for authentication.")
             if proc.poll() is None:
                 proc.terminate()
+            try:
+                os.close(master_fd)
+            except OSError:
+                pass
 
         t = threading.Thread(target=reader, daemon=True)
         t.start()
@@ -814,17 +841,16 @@ def admin_claude_auth_submit_code():
     if not code:
         return {"error": "bad_request", "message": "code is required"}, 400
 
+    master_fd = _admin_login.get("master_fd")
     proc = _admin_login.get("proc")
-    if not proc or proc.poll() is not None:
+    if not proc or proc.poll() is not None or not master_fd:
         return {"error": "no_process", "message": "No login process running. Click 'Login with Claude' first."}, 400
 
     try:
-        proc.stdin.write(code + "\n")
-        proc.stdin.flush()
-        _admin_login["output"].append(f"Code submitted, waiting for verification...")
+        os.write(master_fd, (code + "\n").encode())
+        _admin_login["output"].append("Code submitted, waiting for verification...")
         # Give it a moment to process
-        import time
-        for _ in range(10):
+        for _ in range(15):
             time.sleep(1)
             if os.path.exists(os.path.join(SERVER_CONFIG_DIR, ".credentials.json")):
                 _admin_login["status"] = "success"
@@ -844,6 +870,28 @@ def admin_claude_auth_revoke():
     if os.path.exists(creds):
         os.unlink(creds)
     return jsonify({"loggedIn": False})
+
+
+@agent_chat_bp.route("/admin/claude-auth/exec", methods=["POST"])
+def admin_exec():
+    """Run a command on the server (admin only). For claude auth troubleshooting."""
+    if not _check_admin_token(request):
+        return {"error": "unauthorized"}, 401
+    data = request.get_json(silent=True) or {}
+    cmd = (data.get("command") or "").strip()
+    if not cmd:
+        return {"error": "bad_request", "message": "command required"}, 400
+    # Only allow claude commands for safety
+    if not cmd.startswith("claude ") and cmd != "claude":
+        return {"error": "forbidden", "message": "Only 'claude' commands are allowed"}, 403
+    try:
+        result = subprocess.run(
+            cmd, shell=True, capture_output=True, text=True, timeout=30,
+            env={**os.environ, "CLAUDE_CONFIG_DIR": SERVER_CONFIG_DIR},
+        )
+        return jsonify({"stdout": result.stdout, "stderr": result.stderr, "exit_code": result.returncode})
+    except subprocess.TimeoutExpired:
+        return jsonify({"stdout": "", "stderr": "Command timed out", "exit_code": -1})
 
 
 ADMIN_AUTH_PAGE = """<!DOCTYPE html>
@@ -901,6 +949,20 @@ ADMIN_AUTH_PAGE = """<!DOCTYPE html>
     <div class="actions">
       <button id="login-btn" onclick="startLogin()">Login with Claude</button>
       <button id="logout-btn" class="secondary" onclick="logout()" style="display:none;">Disconnect</button>
+    </div>
+
+    <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border);">
+      <details>
+        <summary style="cursor:pointer; color: var(--muted); font-size: 0.8125rem;">Mini terminal (fallback)</summary>
+        <div style="margin-top: 8px;">
+          <div id="mini-term" style="background: #0a0a08; border: 1px solid var(--border); border-radius: 4px; padding: 12px; font-size: 0.75rem; color: var(--success); max-height: 200px; overflow-y: auto; white-space: pre-wrap; margin-bottom: 8px;">$ </div>
+          <div style="display:flex; gap:8px;">
+            <input type="text" id="mini-cmd" placeholder="claude auth status" style="flex:1; font-size: 0.8125rem;" value="claude auth status">
+            <button onclick="runCmd()">Run</button>
+          </div>
+          <p style="font-size:0.6875rem; color:var(--muted); margin-top:4px;">Only <code>claude</code> commands allowed. Use <code>claude auth login</code> interactively via SSH if the button flow doesn't work.</p>
+        </div>
+      </details>
     </div>
   </div>
 </div>
@@ -1015,6 +1077,33 @@ async function submitCode() {
 // Enter to submit code
 document.getElementById('auth-code').addEventListener('keydown', e => {
   if (e.key === 'Enter') submitCode();
+});
+
+// Mini terminal
+async function runCmd() {
+  const cmd = document.getElementById('mini-cmd').value.trim();
+  const term = document.getElementById('mini-term');
+  if (!cmd) return;
+  term.innerHTML += '$ ' + cmd + '\\n';
+  const resp = await fetch('/api/v1/admin/claude-auth/exec?token=' + encodeURIComponent(token), {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({command: cmd}),
+  });
+  const data = await resp.json();
+  if (data.stdout) term.innerHTML += data.stdout;
+  if (data.stderr) term.innerHTML += '<span style="color:var(--error);">' + data.stderr + '</span>';
+  if (data.error) term.innerHTML += '<span style="color:var(--error);">' + (data.message || data.error) + '</span>\\n';
+  term.innerHTML += '\\n';
+  term.scrollTop = term.scrollHeight;
+  // Refresh auth status after commands
+  if (cmd.includes('auth')) {
+    const sr = await fetch('/api/v1/admin/claude-auth/status?token=' + encodeURIComponent(token));
+    if (sr.ok) updateStatus(await sr.json());
+  }
+}
+document.getElementById('mini-cmd').addEventListener('keydown', e => {
+  if (e.key === 'Enter') runCmd();
 });
 
 async function logout() {
