@@ -239,7 +239,7 @@ a:hover { text-decoration: underline; }
 {% include '_nav.html' %}
 
 <div class="search-overlay" id="search-overlay"></div>
-<div class="search-modal" id="search-modal">
+<div class="search-modal" id="search-modal"{% if current_user and current_user.is_authenticated %} data-username="{{ current_user.username }}"{% endif %}>
   <input type="text" class="search-input" id="search-input" placeholder="Search wikis..." autocomplete="off">
   <div id="search-results"></div>
 </div>

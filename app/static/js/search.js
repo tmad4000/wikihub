@@ -120,12 +120,15 @@
           results.appendChild(empty);
         }
 
-        // always show create option if logged in and in a wiki context
-        if (document.querySelector('.nav-avatar')) {
-          const match = window.location.pathname.match(/\/@([\w-]+)\/([\w-]+)/);
-          if (match) {
-            const slug = q.replace(/\s+/g, '-').toLowerCase().replace(/[^a-z0-9\-\/]/g, '').replace(/-+/g, '-').replace(/^-|-$/g, '');
-            if (!slug) return; // nothing left after cleaning
+        // show create option if logged in
+        const username = modal.dataset.username;
+        if (username) {
+          const slug = q.replace(/\s+/g, '-').toLowerCase().replace(/[^a-z0-9\-\/]/g, '').replace(/-+/g, '-').replace(/^-|-$/g, '');
+          if (slug) {
+            // if inside a wiki, create in that wiki; otherwise create in personal wiki
+            const match = window.location.pathname.match(/\/@([\w-]+)\/([\w-]+)/);
+            const wikiOwner = match ? match[1] : username;
+            const wikiSlug = match ? match[2] : username;
 
             const create = document.createElement('a');
             create.className = 'search-result search-create';
@@ -138,12 +141,12 @@
 
             const createPath = document.createElement('div');
             createPath.className = 'search-result-path';
-            createPath.textContent = 'wiki/' + slug + '.md → @' + match[1] + '/' + match[2];
+            createPath.textContent = 'wiki/' + slug + '.md → @' + wikiOwner + '/' + wikiSlug;
             create.appendChild(createPath);
 
             create.addEventListener('click', (e) => {
               e.preventDefault();
-              window.location.href = '/@' + match[1] + '/' + match[2] +
+              window.location.href = '/@' + wikiOwner + '/' + wikiSlug +
                 '/new?path=wiki/' + encodeURIComponent(slug);
               close();
             });
