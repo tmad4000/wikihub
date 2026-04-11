@@ -710,8 +710,8 @@ def _check_admin_token(req):
 @agent_chat_bp.route("/admin/claude-auth", methods=["GET"])
 def admin_claude_auth_page():
     """Admin page for server-wide Claude auth. Token required."""
-    from flask import render_template_string
-    return render_template_string(ADMIN_AUTH_PAGE)
+    from flask import render_template
+    return render_template("admin_claude_auth.html")
 
 
 @agent_chat_bp.route("/admin/claude-auth/status", methods=["GET"])
@@ -872,251 +872,105 @@ def admin_claude_auth_revoke():
     return jsonify({"loggedIn": False})
 
 
-@agent_chat_bp.route("/admin/claude-auth/exec", methods=["POST"])
-def admin_exec():
-    """Run a command on the server (admin only). For claude auth troubleshooting."""
+# --- Admin interactive terminal (PTY + polling) ---
+
+_admin_term = {"master_fd": None, "pid": None, "output_buf": b"", "lock": threading.Lock()}
+
+
+@agent_chat_bp.route("/admin/terminal/start", methods=["POST"])
+def admin_terminal_start():
+    """Start an interactive PTY shell session."""
+    import pty as pty_mod
+    if not _check_admin_token(request):
+        return {"error": "unauthorized"}, 401
+
+    with _admin_term["lock"]:
+        # Kill existing session
+        if _admin_term["pid"]:
+            try:
+                os.kill(_admin_term["pid"], 9)
+                os.waitpid(_admin_term["pid"], os.WNOHANG)
+            except (OSError, ChildProcessError):
+                pass
+        if _admin_term["master_fd"]:
+            try:
+                os.close(_admin_term["master_fd"])
+            except OSError:
+                pass
+
+        os.makedirs(SERVER_CONFIG_DIR, exist_ok=True)
+        env = {**os.environ, "CLAUDE_CONFIG_DIR": SERVER_CONFIG_DIR, "TERM": "xterm-256color"}
+        pid, master_fd = pty_mod.fork()
+        if pid == 0:
+            # Child — exec bash
+            os.execvpe("/bin/bash", ["/bin/bash", "--norc", "-i"], env)
+        else:
+            _admin_term["master_fd"] = master_fd
+            _admin_term["pid"] = pid
+            _admin_term["output_buf"] = b""
+
+            # Non-blocking reads
+            import fcntl
+            flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
+            fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+
+    return jsonify({"started": True})
+
+
+@agent_chat_bp.route("/admin/terminal/input", methods=["POST"])
+def admin_terminal_input():
+    """Send keystrokes to the PTY."""
     if not _check_admin_token(request):
         return {"error": "unauthorized"}, 401
     data = request.get_json(silent=True) or {}
-    cmd = (data.get("command") or "").strip()
-    if not cmd:
-        return {"error": "bad_request", "message": "command required"}, 400
-    # Only allow claude commands for safety
-    if not cmd.startswith("claude ") and cmd != "claude":
-        return {"error": "forbidden", "message": "Only 'claude' commands are allowed"}, 403
+    keys = data.get("data", "")
+    if not keys or not _admin_term["master_fd"]:
+        return jsonify({"ok": False})
     try:
-        result = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True, timeout=30,
-            env={**os.environ, "CLAUDE_CONFIG_DIR": SERVER_CONFIG_DIR},
-        )
-        return jsonify({"stdout": result.stdout, "stderr": result.stderr, "exit_code": result.returncode})
-    except subprocess.TimeoutExpired:
-        return jsonify({"stdout": "", "stderr": "Command timed out", "exit_code": -1})
+        os.write(_admin_term["master_fd"], keys.encode("utf-8"))
+        return jsonify({"ok": True})
+    except OSError:
+        return jsonify({"ok": False, "error": "session ended"})
 
 
-ADMIN_AUTH_PAGE = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WikiHub Admin — Claude Auth</title>
-<style>
-  :root { --bg: #0f0e0c; --surface: #191714; --border: rgba(200,180,150,0.12); --text: #e8e0d4; --muted: #887d6e; --accent: #d4a04a; --success: #7a9e6b; --error: #c45c3c; }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--text); font-family: 'IBM Plex Mono', monospace; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
-  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 32px; max-width: 560px; width: 100%; }
-  h1 { font-size: 1.25rem; margin-bottom: 8px; }
-  .sub { color: var(--muted); font-size: 0.8125rem; margin-bottom: 24px; }
-  label { display: block; font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
-  input { width: 100%; padding: 10px 12px; background: rgba(0,0,0,0.3); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-family: inherit; font-size: 0.875rem; margin-bottom: 16px; }
-  input:focus { outline: none; border-color: var(--accent); }
-  button { padding: 10px 20px; background: var(--accent); color: #0f0e0c; border: none; border-radius: 4px; font-family: inherit; font-weight: 600; cursor: pointer; font-size: 0.875rem; }
-  button:hover { opacity: 0.9; }
-  button:disabled { opacity: 0.5; cursor: not-allowed; }
-  button.secondary { background: transparent; color: var(--error); border: 1px solid rgba(196,92,60,0.3); }
-  .status { margin: 16px 0 8px; font-size: 0.8125rem; }
-  .status.success { color: var(--success); }
-  .status.error { color: var(--error); }
-  .terminal { background: #0a0a08; border: 1px solid var(--border); border-radius: 4px; padding: 12px; font-size: 0.75rem; color: var(--success); max-height: 200px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; margin: 12px 0; display: none; }
-  .terminal a { color: var(--accent); }
-  .actions { display: flex; gap: 8px; flex-wrap: wrap; }
-  #auth-section { display: none; }
-</style>
-</head>
-<body>
-<div class="card">
-  <h1>[[wikihub]] Claude Auth</h1>
-  <p class="sub">Server-wide Claude subscription for the Curator agent.</p>
+@agent_chat_bp.route("/admin/terminal/output", methods=["GET"])
+def admin_terminal_output():
+    """Read pending output from the PTY."""
+    if not _check_admin_token(request):
+        return {"error": "unauthorized"}, 401
+    if not _admin_term["master_fd"]:
+        return jsonify({"data": "", "alive": False})
+    try:
+        data = os.read(_admin_term["master_fd"], 8192)
+        alive = True
+    except BlockingIOError:
+        data = b""
+        alive = True
+    except OSError:
+        data = b""
+        alive = False
+    return jsonify({"data": data.decode("utf-8", errors="replace"), "alive": alive})
 
-  <div id="token-section">
-    <label>Admin Token</label>
-    <input type="password" id="token" placeholder="Enter admin token..." autocomplete="off">
-    <button onclick="authenticate()">Authenticate</button>
-    <div id="token-error" class="status error" style="display:none;"></div>
-  </div>
 
-  <div id="auth-section">
-    <div id="current-status" class="status">Checking...</div>
-    <div class="terminal" id="terminal"></div>
-    <div id="code-section" style="display:none; margin: 12px 0;">
-      <label>Paste the code from the callback page:</label>
-      <div style="display:flex; gap:8px;">
-        <input type="text" id="auth-code" placeholder="Paste code here..." style="flex:1;">
-        <button onclick="submitCode()">Submit</button>
-      </div>
-      <div id="code-msg" class="status" style="margin-top:4px;"></div>
-    </div>
-    <div class="actions">
-      <button id="login-btn" onclick="startLogin()">Login with Claude</button>
-      <button id="logout-btn" class="secondary" onclick="logout()" style="display:none;">Disconnect</button>
-    </div>
+@agent_chat_bp.route("/admin/terminal/stop", methods=["POST"])
+def admin_terminal_stop():
+    """Kill the PTY session."""
+    if not _check_admin_token(request):
+        return {"error": "unauthorized"}, 401
+    with _admin_term["lock"]:
+        if _admin_term["pid"]:
+            try:
+                os.kill(_admin_term["pid"], 9)
+                os.waitpid(_admin_term["pid"], os.WNOHANG)
+            except (OSError, ChildProcessError):
+                pass
+            _admin_term["pid"] = None
+        if _admin_term["master_fd"]:
+            try:
+                os.close(_admin_term["master_fd"])
+            except OSError:
+                pass
+            _admin_term["master_fd"] = None
+    return jsonify({"stopped": True})
 
-    <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border);">
-      <details>
-        <summary style="cursor:pointer; color: var(--muted); font-size: 0.8125rem;">Mini terminal (fallback)</summary>
-        <div style="margin-top: 8px;">
-          <div id="mini-term" style="background: #0a0a08; border: 1px solid var(--border); border-radius: 4px; padding: 12px; font-size: 0.75rem; color: var(--success); max-height: 200px; overflow-y: auto; white-space: pre-wrap; margin-bottom: 8px;">$ </div>
-          <div style="display:flex; gap:8px;">
-            <input type="text" id="mini-cmd" placeholder="claude auth status" style="flex:1; font-size: 0.8125rem;" value="claude auth status">
-            <button onclick="runCmd()">Run</button>
-          </div>
-          <p style="font-size:0.6875rem; color:var(--muted); margin-top:4px;">Only <code>claude</code> commands allowed. Use <code>claude auth login</code> interactively via SSH if the button flow doesn't work.</p>
-        </div>
-      </details>
-    </div>
-  </div>
-</div>
 
-<script>
-let token = '';
-let pollInterval = null;
-
-async function authenticate() {
-  token = document.getElementById('token').value.trim();
-  if (!token) return;
-  const resp = await fetch('/api/v1/admin/claude-auth/status?token=' + encodeURIComponent(token));
-  if (resp.status === 401) {
-    document.getElementById('token-error').style.display = 'block';
-    document.getElementById('token-error').textContent = 'Invalid token';
-    return;
-  }
-  document.getElementById('token-section').style.display = 'none';
-  document.getElementById('auth-section').style.display = 'block';
-  const data = await resp.json();
-  updateStatus(data);
-}
-
-function updateStatus(data) {
-  const el = document.getElementById('current-status');
-  const loginBtn = document.getElementById('login-btn');
-  const logoutBtn = document.getElementById('logout-btn');
-  if (data.loggedIn) {
-    el.textContent = 'Connected — Claude subscription active';
-    el.className = 'status success';
-    loginBtn.style.display = 'none';
-    logoutBtn.style.display = 'inline-block';
-  } else {
-    el.textContent = 'Not connected';
-    el.className = 'status';
-    loginBtn.style.display = 'inline-block';
-    logoutBtn.style.display = 'none';
-  }
-}
-
-async function startLogin() {
-  const term = document.getElementById('terminal');
-  const btn = document.getElementById('login-btn');
-  term.style.display = 'block';
-  term.innerHTML = 'Starting login...\\n';
-  btn.disabled = true;
-  btn.textContent = 'Waiting for auth...';
-
-  await fetch('/api/v1/admin/claude-auth/start?token=' + encodeURIComponent(token), {method: 'POST'});
-
-  // Show code input section
-  document.getElementById('code-section').style.display = 'block';
-  document.getElementById('auth-code').value = '';
-  document.getElementById('code-msg').textContent = '';
-
-  // Poll for output
-  let lastLen = 0;
-  pollInterval = setInterval(async () => {
-    const resp = await fetch('/api/v1/admin/claude-auth/poll?token=' + encodeURIComponent(token));
-    if (!resp.ok) { term.innerHTML += 'Poll error: ' + resp.status + '\\n'; return; }
-    const data = await resp.json();
-
-    if (data.output && data.output.length > lastLen) {
-      for (let i = lastLen; i < data.output.length; i++) {
-        const line = data.output[i].replace(/(https:\\/\\/[^\\s]+)/g, '<a href="$1" target="_blank">$1</a>');
-        term.innerHTML += line + '\\n';
-      }
-      lastLen = data.output.length;
-      term.scrollTop = term.scrollHeight;
-    }
-
-    if (data.status === 'success') {
-      clearInterval(pollInterval);
-      term.innerHTML += '\\n<span style="color:var(--success);">Login successful!</span>\\n';
-      btn.disabled = false;
-      btn.textContent = 'Login with Claude';
-      document.getElementById('code-section').style.display = 'none';
-      const sr = await fetch('/api/v1/admin/claude-auth/status?token=' + encodeURIComponent(token));
-      updateStatus(await sr.json());
-    } else if (data.status === 'failed') {
-      clearInterval(pollInterval);
-      term.innerHTML += '\\n<span style="color:var(--error);">Login failed or timed out.</span>\\n';
-      btn.disabled = false;
-      btn.textContent = 'Login with Claude';
-    }
-  }, 1500);
-}
-
-async function submitCode() {
-  const code = document.getElementById('auth-code').value.trim();
-  const msg = document.getElementById('code-msg');
-  if (!code) { msg.textContent = 'Paste the code first'; return; }
-  msg.textContent = 'Submitting...';
-  const resp = await fetch('/api/v1/admin/claude-auth/submit-code?token=' + encodeURIComponent(token), {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({code}),
-  });
-  const data = await resp.json();
-  if (data.success) {
-    msg.textContent = 'Authenticated!';
-    msg.className = 'status success';
-    document.getElementById('code-section').style.display = 'none';
-  } else if (data.error) {
-    msg.textContent = data.message || 'Error submitting code';
-    msg.className = 'status error';
-  } else {
-    msg.textContent = 'Code sent, waiting...';
-  }
-}
-
-// Enter to submit code
-document.getElementById('auth-code').addEventListener('keydown', e => {
-  if (e.key === 'Enter') submitCode();
-});
-
-// Mini terminal
-async function runCmd() {
-  const cmd = document.getElementById('mini-cmd').value.trim();
-  const term = document.getElementById('mini-term');
-  if (!cmd) return;
-  term.innerHTML += '$ ' + cmd + '\\n';
-  const resp = await fetch('/api/v1/admin/claude-auth/exec?token=' + encodeURIComponent(token), {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({command: cmd}),
-  });
-  const data = await resp.json();
-  if (data.stdout) term.innerHTML += data.stdout;
-  if (data.stderr) term.innerHTML += '<span style="color:var(--error);">' + data.stderr + '</span>';
-  if (data.error) term.innerHTML += '<span style="color:var(--error);">' + (data.message || data.error) + '</span>\\n';
-  term.innerHTML += '\\n';
-  term.scrollTop = term.scrollHeight;
-  // Refresh auth status after commands
-  if (cmd.includes('auth')) {
-    const sr = await fetch('/api/v1/admin/claude-auth/status?token=' + encodeURIComponent(token));
-    if (sr.ok) updateStatus(await sr.json());
-  }
-}
-document.getElementById('mini-cmd').addEventListener('keydown', e => {
-  if (e.key === 'Enter') runCmd();
-});
-
-async function logout() {
-  await fetch('/api/v1/admin/claude-auth/logout?token=' + encodeURIComponent(token), {method: 'POST'});
-  const resp = await fetch('/api/v1/admin/claude-auth/status?token=' + encodeURIComponent(token));
-  updateStatus(await resp.json());
-  document.getElementById('terminal').style.display = 'none';
-}
-
-// Allow Enter to submit token
-document.getElementById('token').addEventListener('keydown', e => {
-  if (e.key === 'Enter') authenticate();
-});
-</script>
-</body>
-</html>"""

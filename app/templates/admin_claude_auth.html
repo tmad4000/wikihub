@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WikiHub Admin — Claude Auth</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+<style>
+  :root { --bg: #0f0e0c; --surface: #191714; --border: rgba(200,180,150,0.12); --text: #e8e0d4; --muted: #887d6e; --accent: #d4a04a; --success: #7a9e6b; --error: #c45c3c; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'IBM Plex Mono', monospace; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 32px; max-width: 700px; width: 100%; }
+  h1 { font-size: 1.25rem; margin-bottom: 8px; }
+  .sub { color: var(--muted); font-size: 0.8125rem; margin-bottom: 24px; }
+  label { display: block; font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+  input { width: 100%; padding: 10px 12px; background: rgba(0,0,0,0.3); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-family: inherit; font-size: 0.875rem; margin-bottom: 16px; }
+  input:focus { outline: none; border-color: var(--accent); }
+  button { padding: 10px 20px; background: var(--accent); color: #0f0e0c; border: none; border-radius: 4px; font-family: inherit; font-weight: 600; cursor: pointer; font-size: 0.875rem; }
+  button:hover { opacity: 0.9; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.secondary { background: transparent; color: var(--error); border: 1px solid rgba(196,92,60,0.3); }
+  button.outline { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  .status { margin: 12px 0 8px; font-size: 0.8125rem; }
+  .status.success { color: var(--success); }
+  .status.error { color: var(--error); }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  #auth-section { display: none; }
+  #xterm-container { margin: 16px 0; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; display: none; }
+  .xterm { padding: 8px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>[[wikihub]] Claude Auth</h1>
+  <p class="sub">Server-wide Claude subscription for the Curator agent.</p>
+
+  <div id="token-section">
+    <label>Admin Token</label>
+    <input type="password" id="token-input" placeholder="Enter admin token..." autocomplete="off">
+    <button onclick="authenticate()">Authenticate</button>
+    <div id="token-error" class="status error" style="display:none;"></div>
+  </div>
+
+  <div id="auth-section">
+    <div id="current-status" class="status">Checking...</div>
+    <div id="xterm-container"></div>
+    <div class="actions">
+      <button id="login-btn" onclick="startLogin()">Login with Claude</button>
+      <button id="term-btn" class="outline" onclick="openTerminal()">Open Terminal</button>
+      <button id="logout-btn" class="secondary" onclick="doLogout()" style="display:none;">Disconnect</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+<script>
+let token = '';
+let term = null;
+let termPollId = null;
+let loginPollId = null;
+
+// Check URL params for token
+const urlToken = new URLSearchParams(window.location.search).get('token');
+if (urlToken) {
+  document.getElementById('token-input').value = urlToken;
+  setTimeout(authenticate, 200);
+}
+
+async function authenticate() {
+  token = document.getElementById('token-input').value.trim();
+  if (!token) return;
+  const resp = await fetch('/api/v1/admin/claude-auth/status?token=' + encodeURIComponent(token));
+  if (resp.status === 401) {
+    document.getElementById('token-error').style.display = 'block';
+    document.getElementById('token-error').textContent = 'Invalid token';
+    return;
+  }
+  document.getElementById('token-section').style.display = 'none';
+  document.getElementById('auth-section').style.display = 'block';
+  updateStatus(await resp.json());
+}
+
+function updateStatus(data) {
+  const el = document.getElementById('current-status');
+  const loginBtn = document.getElementById('login-btn');
+  const logoutBtn = document.getElementById('logout-btn');
+  if (data.loggedIn) {
+    el.textContent = 'Connected — Claude subscription active';
+    el.className = 'status success';
+    loginBtn.style.display = 'none';
+    logoutBtn.style.display = 'inline-block';
+  } else {
+    el.textContent = 'Not connected';
+    el.className = 'status';
+    loginBtn.style.display = 'inline-block';
+    logoutBtn.style.display = 'none';
+  }
+}
+
+function initTerminal() {
+  if (term) return;
+  const container = document.getElementById('xterm-container');
+  container.style.display = 'block';
+  term = new window.Terminal({
+    cursorBlink: true, fontSize: 13, fontFamily: "'IBM Plex Mono', monospace",
+    theme: { background: '#0a0a08', foreground: '#e8e0d4', cursor: '#d4a04a', selectionBackground: 'rgba(212,160,74,0.3)' },
+    rows: 14, cols: 80,
+  });
+  const fitAddon = new window.FitAddon.FitAddon();
+  term.loadAddon(fitAddon);
+  term.open(container);
+  fitAddon.fit();
+  window.addEventListener('resize', () => fitAddon.fit());
+
+  // Send keystrokes to server
+  term.onData(data => {
+    fetch('/api/v1/admin/terminal/input?token=' + encodeURIComponent(token), {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({data}),
+    });
+  });
+}
+
+function startTermPoll() {
+  if (termPollId) return;
+  termPollId = setInterval(async () => {
+    try {
+      const resp = await fetch('/api/v1/admin/terminal/output?token=' + encodeURIComponent(token));
+      if (!resp.ok) return;
+      const data = await resp.json();
+      if (data.data) term.write(data.data);
+      if (!data.alive) {
+        clearInterval(termPollId);
+        termPollId = null;
+        term.write('\r\n\x1b[33m[session ended]\x1b[0m\r\n');
+      }
+    } catch (e) {}
+  }, 100);
+}
+
+async function openTerminal() {
+  initTerminal();
+  await fetch('/api/v1/admin/terminal/start?token=' + encodeURIComponent(token), {method: 'POST'});
+  startTermPoll();
+  term.focus();
+  term.write('\x1b[32mTerminal ready. Run: claude auth login\x1b[0m\r\n');
+}
+
+async function startLogin() {
+  // Use the interactive terminal for login
+  await openTerminal();
+  // Type the login command automatically
+  setTimeout(() => {
+    fetch('/api/v1/admin/terminal/input?token=' + encodeURIComponent(token), {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({data: 'claude auth login\n'}),
+    });
+  }, 500);
+
+  // Poll for credentials in background
+  if (loginPollId) clearInterval(loginPollId);
+  loginPollId = setInterval(async () => {
+    const resp = await fetch('/api/v1/admin/claude-auth/status?token=' + encodeURIComponent(token));
+    if (!resp.ok) return;
+    const data = await resp.json();
+    if (data.loggedIn) {
+      clearInterval(loginPollId);
+      loginPollId = null;
+      updateStatus(data);
+      if (term) term.write('\r\n\x1b[32m✓ Authentication successful!\x1b[0m\r\n');
+    }
+  }, 2000);
+}
+
+async function doLogout() {
+  await fetch('/api/v1/admin/claude-auth/logout?token=' + encodeURIComponent(token), {method: 'POST'});
+  const resp = await fetch('/api/v1/admin/claude-auth/status?token=' + encodeURIComponent(token));
+  updateStatus(await resp.json());
+}
+
+document.getElementById('token-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') authenticate();
+});
+</script>
+</body>
+</html>
