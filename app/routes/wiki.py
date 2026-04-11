@@ -8,7 +8,7 @@ from app.url_utils import page_path_from_url_path, url_path_from_page_path
 from flask_login import current_user
 
 from app import db
-from app.acl import can_read, can_write, resolve_visibility
+from app.acl import can_read, can_write, resolve_grants, resolve_visibility
 from app.content_utils import has_private_bands, parse_markdown_document, set_visibility_in_content
 from app.discovery import discoverable_page_for_wiki, visible_wikis_for_owner
 from app.git_backend import _repo_path
@@ -804,6 +804,7 @@ def wiki_page(username, slug, page_path):
         page = type("Page", (), {"path": file_path, "title": os.path.basename(file_path).replace(".md", ""), "visibility": resolve_visibility(file_path, acl_rules), "updated_at": wiki.updated_at})()
 
     rendered_html = render_page(content, owner.username, wiki.slug)
+    page_grants = resolve_grants(file_path, acl_rules) if is_owner else []
     return render_template(
         "reader.html",
         owner=owner,
@@ -818,6 +819,7 @@ def wiki_page(username, slug, page_path):
         private_band_warning=not use_public and has_private_bands(content),
         json_ld_author=owner.display_name or owner.username,
         sibling_wikis=siblings,
+        page_grants=page_grants,
     ), 200, {
         "Vary": "Accept",
         "Link": f'</@{owner.username}/{wiki.slug}/{md_url_path}>; rel="alternate"; type="text/markdown"',

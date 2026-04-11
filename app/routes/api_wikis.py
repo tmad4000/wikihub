@@ -23,7 +23,7 @@ from app.git_sync import (
     remove_page_from_repo,
     sync_page_to_repo,
 )
-from app.acl import can_read, can_write, resolve_visibility
+from app.acl import can_read, can_write, list_all_grants, remove_grant, resolve_grants, resolve_visibility
 from app.content_utils import (
     page_reference_aliases,
     parse_markdown_document,
@@ -810,6 +810,139 @@ def share_page(owner, slug, page_path):
         db.session.commit()
 
     return jsonify({"path": page_path, "grant": f"@{username}:{role}"})
+
+
+# --- general share / unshare / list-grants -----------------------------------
+
+@api_bp.route("/wikis/<owner>/<slug>/share", methods=["POST"])
+@api_auth_required
+def share_wiki(owner, slug):
+    """grant access at page, folder, or wiki level.
+    body: {"pattern": "*"|"folder/*"|"page.md", "username": "...", "role": "read|edit"}"""
+    owner_user, wiki, err = _get_wiki_or_404(owner, slug)
+    if err:
+        return err
+    if request.current_user.id != wiki.owner_id:
+        return {"error": "forbidden", "message": "Only the owner can manage sharing"}, 403
+
+    data = request.get_json(silent=True) or {}
+    pattern = (data.get("pattern") or "").strip()
+    username = (data.get("username") or "").strip().lower()
+    role = (data.get("role") or "").strip().lower()
+    if not pattern or not username or role not in {"read", "edit"}:
+        return {"error": "bad_request", "message": "pattern, username, and role (read|edit) are required"}, 400
+
+    # verify target user exists
+    target = User.query.filter_by(username=username).first()
+    if not target:
+        return {"error": "not_found", "message": f"User '{username}' not found"}, 404
+
+    acl_text = read_file_from_repo(owner_user.username, wiki.slug, ".wikihub/acl", public=False) or "* private\n"
+    acl_line = f"{pattern} @{username}:{role}"
+    if acl_line not in acl_text.splitlines():
+        acl_text = acl_text.rstrip() + f"\n{acl_line}\n"
+        sync_page_to_repo(owner_user.username, wiki.slug, ".wikihub/acl", acl_text,
+                          message=f"Share {pattern} with @{username}:{role}")
+        append_event_to_repo(owner_user.username, wiki.slug, "page.share",
+                             pattern=pattern, grant=f"@{username}:{role}",
+                             actor=request.current_user.username)
+        index_repo_pages(owner_user.username, wiki.slug, wiki, reset=True)
+        regenerate_public_mirror(owner_user.username, wiki.slug, load_acl_rules(owner_user.username, wiki.slug))
+        db.session.commit()
+
+    return jsonify({"pattern": pattern, "grant": f"@{username}:{role}"})
+
+
+@api_bp.route("/wikis/<owner>/<slug>/share", methods=["DELETE"])
+@api_bp.route("/wikis/<owner>/<slug>/pages/<path:page_path>/share", methods=["DELETE"])
+@api_auth_required
+def unshare(owner, slug, page_path=None):
+    """revoke a user's grant. body: {"username": "..."} (and optionally "pattern" for wiki-level endpoint)."""
+    owner_user, wiki, err = _get_wiki_or_404(owner, slug)
+    if err:
+        return err
+    if request.current_user.id != wiki.owner_id:
+        return {"error": "forbidden", "message": "Only the owner can manage sharing"}, 403
+
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip().lower()
+    if not username:
+        return {"error": "bad_request", "message": "username is required"}, 400
+
+    if page_path is not None:
+        pattern = _normalize_page_path_param(page_path)
+    else:
+        pattern = (data.get("pattern") or "").strip()
+        if not pattern:
+            return {"error": "bad_request", "message": "pattern is required"}, 400
+
+    acl_text = read_file_from_repo(owner_user.username, wiki.slug, ".wikihub/acl", public=False)
+    if not acl_text:
+        return {"error": "not_found", "message": "No ACL file"}, 404
+
+    new_acl = remove_grant(acl_text, pattern, username)
+    if new_acl != acl_text:
+        sync_page_to_repo(owner_user.username, wiki.slug, ".wikihub/acl", new_acl,
+                          message=f"Unshare {pattern} from @{username}")
+        append_event_to_repo(owner_user.username, wiki.slug, "page.unshare",
+                             pattern=pattern, target_user=username,
+                             actor=request.current_user.username)
+        index_repo_pages(owner_user.username, wiki.slug, wiki, reset=True)
+        regenerate_public_mirror(owner_user.username, wiki.slug, load_acl_rules(owner_user.username, wiki.slug))
+        db.session.commit()
+
+    return jsonify({"pattern": pattern, "username": username, "revoked": new_acl != acl_text})
+
+
+@api_bp.route("/wikis/<owner>/<slug>/grants", methods=["GET"])
+@api_bp.route("/wikis/<owner>/<slug>/pages/<path:page_path>/grants", methods=["GET"])
+@api_auth_required
+def list_grants(owner, slug, page_path=None):
+    """list grants for a wiki or a specific page."""
+    owner_user, wiki, err = _get_wiki_or_404(owner, slug)
+    if err:
+        return err
+    if request.current_user.id != wiki.owner_id:
+        return {"error": "forbidden", "message": "Only the owner can view grants"}, 403
+
+    acl_rules = load_acl_rules(owner_user.username, wiki.slug)
+
+    if page_path is not None:
+        page_path = _normalize_page_path_param(page_path)
+        grants = resolve_grants(page_path, acl_rules)
+        return jsonify({"path": page_path, "grants": [{"username": u, "role": r} for u, r in grants]})
+
+    all_grants = list_all_grants(acl_rules)
+    return jsonify({"grants": [{"pattern": p, "username": u, "role": r} for p, u, r in all_grants]})
+
+
+@api_bp.route("/shared-with-me", methods=["GET"])
+@api_auth_required
+def shared_with_me():
+    """list wikis/pages shared with the current user."""
+    from app.acl import grants_for_user, parse_acl
+    username = request.current_user.username
+    results = []
+    wikis = Wiki.query.join(User, Wiki.owner_id == User.id).filter(
+        Wiki.owner_id != request.current_user.id
+    ).all()
+    for wiki in wikis:
+        wiki_owner = db.session.get(User, wiki.owner_id)
+        if not wiki_owner:
+            continue
+        acl_text = read_file_from_repo(wiki_owner.username, wiki.slug, ".wikihub/acl", public=False)
+        if not acl_text:
+            continue
+        rules = parse_acl(acl_text)
+        user_grants = grants_for_user(rules, username)
+        if user_grants:
+            results.append({
+                "wiki": f"{wiki_owner.username}/{wiki.slug}",
+                "wiki_title": wiki.title or wiki.slug,
+                "owner": wiki_owner.username,
+                "grants": [{"pattern": p, "role": r} for p, r in user_grants],
+            })
+    return jsonify({"shared": results})
 
 
 @api_bp.route("/wikis/<owner>/<slug>/pages/<path:page_path>/append-section", methods=["POST"])

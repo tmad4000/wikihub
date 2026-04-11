@@ -28,7 +28,10 @@ MCP_TOOLS = [
     {"name": "append_section", "description": "Append a section to a page"},
     {"name": "delete_page", "description": "Delete a page"},
     {"name": "set_visibility", "description": "Set page visibility"},
-    {"name": "share", "description": "Grant page read/edit access"},
+    {"name": "share", "description": "Grant page/folder/wiki read/edit access"},
+    {"name": "unshare", "description": "Revoke page/folder/wiki read/edit access"},
+    {"name": "list_grants", "description": "List all sharing grants for a wiki"},
+    {"name": "shared_with_me", "description": "List wikis/pages shared with the current user"},
     {"name": "create_wiki", "description": "Create a wiki"},
     {"name": "fork_wiki", "description": "Fork a wiki"},
     {"name": "commit_log", "description": "Read wiki history"},
@@ -319,8 +322,20 @@ def _mcp_tool_result(name, arguments):
         path = arguments.pop("path")
         return _mcp_proxy_request("POST", f"/api/v1/wikis/{arguments['owner']}/{arguments['slug']}/pages/{path}/visibility", arguments)[1]
     if name == "share":
+        owner = arguments.pop("owner")
+        slug = arguments.pop("slug")
+        if "pattern" in arguments:
+            return _mcp_proxy_request("POST", f"/api/v1/wikis/{owner}/{slug}/share", arguments)[1]
         path = arguments.pop("path")
-        return _mcp_proxy_request("POST", f"/api/v1/wikis/{arguments['owner']}/{arguments['slug']}/pages/{path}/share", arguments)[1]
+        return _mcp_proxy_request("POST", f"/api/v1/wikis/{owner}/{slug}/pages/{path}/share", arguments)[1]
+    if name == "unshare":
+        owner = arguments.pop("owner")
+        slug = arguments.pop("slug")
+        return _mcp_proxy_request("DELETE", f"/api/v1/wikis/{owner}/{slug}/share", arguments)[1]
+    if name == "list_grants":
+        return _mcp_proxy_request("GET", f"/api/v1/wikis/{arguments['owner']}/{arguments['slug']}/grants")[1]
+    if name == "shared_with_me":
+        return _mcp_proxy_request("GET", "/api/v1/shared-with-me")[1]
     if name == "create_wiki":
         return _mcp_proxy_request("POST", "/api/v1/wikis", arguments)[1]
     if name == "fork_wiki":

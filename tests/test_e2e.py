@@ -463,6 +463,155 @@ def test_wikipedia_urls(client, api_key):
     assert r.status_code == 200
 
 
+def test_sharing_lifecycle(client, api_key):
+    """share a private page with another user, verify access, revoke, verify no access"""
+    h = {"Authorization": f"Bearer {api_key}"}
+
+    # create a guest user
+    r = client.post("/api/v1/accounts", json={"username": "guest1"})
+    guest_key = r.get_json()["api_key"]
+    hg = {"Authorization": f"Bearer {guest_key}"}
+
+    # create a private page
+    r = client.post("/api/v1/wikis/agent1/test-wiki/pages", json={
+        "path": "sharing-test.md",
+        "content": "# Secret\n\nSharing test content.",
+        "visibility": "private",
+    }, headers=h)
+    assert r.status_code == 201
+
+    # guest cannot read it
+    r = client.get("/api/v1/wikis/agent1/test-wiki/pages/sharing-test.md", headers=hg)
+    assert r.status_code in (403, 404)
+
+    # owner shares with guest (page-level)
+    r = client.post("/api/v1/wikis/agent1/test-wiki/share", json={
+        "pattern": "sharing-test.md",
+        "username": "guest1",
+        "role": "read",
+    }, headers=h)
+    assert r.status_code == 200
+
+    # guest can now read it
+    r = client.get("/api/v1/wikis/agent1/test-wiki/pages/sharing-test.md", headers=hg)
+    assert r.status_code == 200
+    assert "Sharing test content" in r.get_json()["content"]
+
+    # list grants
+    r = client.get("/api/v1/wikis/agent1/test-wiki/grants", headers=h)
+    assert r.status_code == 200
+    grants = r.get_json()["grants"]
+    assert any(g["username"] == "guest1" and g["role"] == "read" for g in grants)
+
+    # page-level grants
+    r = client.get("/api/v1/wikis/agent1/test-wiki/pages/sharing-test.md/grants", headers=h)
+    assert r.status_code == 200
+    assert any(g["username"] == "guest1" for g in r.get_json()["grants"])
+
+    # shared-with-me from guest's perspective
+    r = client.get("/api/v1/shared-with-me", headers=hg)
+    assert r.status_code == 200
+    shared = r.get_json()["shared"]
+    assert any(s["wiki"] == "agent1/test-wiki" for s in shared)
+
+    # owner revokes
+    r = client.delete("/api/v1/wikis/agent1/test-wiki/share", json={
+        "pattern": "sharing-test.md",
+        "username": "guest1",
+    }, headers=h)
+    assert r.status_code == 200
+    assert r.get_json()["revoked"] is True
+
+    # guest can no longer read it
+    r = client.get("/api/v1/wikis/agent1/test-wiki/pages/sharing-test.md", headers=hg)
+    assert r.status_code in (403, 404)
+
+
+def test_wiki_level_sharing(client, api_key):
+    """wiki-level grant (*) gives access to all pages"""
+    h = {"Authorization": f"Bearer {api_key}"}
+
+    r = client.post("/api/v1/accounts", json={"username": "wikiguest"})
+    guest_key = r.get_json()["api_key"]
+    hg = {"Authorization": f"Bearer {guest_key}"}
+
+    # create two private pages
+    for name in ("wiki-share-a.md", "wiki-share-b.md"):
+        r = client.post("/api/v1/wikis/agent1/test-wiki/pages", json={
+            "path": name,
+            "content": f"# {name}\n\nPrivate content.",
+            "visibility": "private",
+        }, headers=h)
+        assert r.status_code == 201
+
+    # guest can't read either
+    for name in ("wiki-share-a.md", "wiki-share-b.md"):
+        r = client.get(f"/api/v1/wikis/agent1/test-wiki/pages/{name}", headers=hg)
+        assert r.status_code in (403, 404)
+
+    # share entire wiki with guest
+    r = client.post("/api/v1/wikis/agent1/test-wiki/share", json={
+        "pattern": "*",
+        "username": "wikiguest",
+        "role": "read",
+    }, headers=h)
+    assert r.status_code == 200
+
+    # guest can now read both
+    for name in ("wiki-share-a.md", "wiki-share-b.md"):
+        r = client.get(f"/api/v1/wikis/agent1/test-wiki/pages/{name}", headers=hg)
+        assert r.status_code == 200
+
+    # revoke wiki-level grant
+    r = client.delete("/api/v1/wikis/agent1/test-wiki/share", json={
+        "pattern": "*",
+        "username": "wikiguest",
+    }, headers=h)
+    assert r.status_code == 200
+
+    # guest can't read again
+    for name in ("wiki-share-a.md", "wiki-share-b.md"):
+        r = client.get(f"/api/v1/wikis/agent1/test-wiki/pages/{name}", headers=hg)
+        assert r.status_code in (403, 404)
+
+
+def test_folder_level_sharing(client, api_key):
+    """folder-level grant (folder/*) gives access to folder pages only"""
+    h = {"Authorization": f"Bearer {api_key}"}
+
+    r = client.post("/api/v1/accounts", json={"username": "folderguest"})
+    guest_key = r.get_json()["api_key"]
+    hg = {"Authorization": f"Bearer {guest_key}"}
+
+    # create pages in and outside folder
+    client.post("/api/v1/wikis/agent1/test-wiki/pages", json={
+        "path": "research/paper.md",
+        "content": "# Paper\n\nResearch content.",
+        "visibility": "private",
+    }, headers=h)
+    client.post("/api/v1/wikis/agent1/test-wiki/pages", json={
+        "path": "notes.md",
+        "content": "# Notes\n\nPersonal notes.",
+        "visibility": "private",
+    }, headers=h)
+
+    # share research folder only
+    r = client.post("/api/v1/wikis/agent1/test-wiki/share", json={
+        "pattern": "research/*",
+        "username": "folderguest",
+        "role": "read",
+    }, headers=h)
+    assert r.status_code == 200
+
+    # guest can read research/paper.md
+    r = client.get("/api/v1/wikis/agent1/test-wiki/pages/research/paper.md", headers=hg)
+    assert r.status_code == 200
+
+    # guest cannot read notes.md
+    r = client.get("/api/v1/wikis/agent1/test-wiki/pages/notes.md", headers=hg)
+    assert r.status_code in (403, 404)
+
+
 def run_all():
     app = setup()
 
@@ -496,6 +645,9 @@ def run_all():
             ("people directory + profiles", lambda: test_people_directory_and_profiles(client, key)),
             ("new folder UI", lambda: test_new_folder_ui(client)),
             ("wikipedia-style URLs", lambda: test_wikipedia_urls(client, key)),
+            ("sharing lifecycle", lambda: test_sharing_lifecycle(client, key)),
+            ("wiki-level sharing", lambda: test_wiki_level_sharing(client, key)),
+            ("folder-level sharing", lambda: test_folder_level_sharing(client, key)),
         ]
 
         passed = 1  # account creation already passed

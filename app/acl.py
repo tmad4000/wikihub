@@ -143,3 +143,57 @@ def is_discoverable(path, rules, frontmatter_visibility=None):
     """check if a file appears in listings/search."""
     vis = resolve_visibility(path, rules, frontmatter_visibility)
     return vis in ("public", "public-edit")
+
+
+def list_all_grants(rules):
+    """extract all grants from parsed rules.
+    returns a list of (pattern, username, role) tuples."""
+    grants = []
+    for pattern, directive in rules:
+        m = GRANT_RE.match(directive)
+        if m:
+            grants.append((pattern, m.group(1), m.group(2)))
+    return grants
+
+
+def grants_for_user(rules, username):
+    """return all grants for a specific user.
+    returns a list of (pattern, role) tuples."""
+    result = []
+    for pattern, directive in rules:
+        m = GRANT_RE.match(directive)
+        if m and m.group(1) == username:
+            result.append((pattern, m.group(2)))
+    return result
+
+
+def remove_grant(acl_text, pattern, username):
+    """remove a specific user's grant(s) from raw ACL text for a given pattern.
+    handles multi-directive lines: 'research/* @alice:read @bob:edit'
+    removing alice produces 'research/* @bob:edit'.
+    returns the modified ACL text."""
+    out_lines = []
+    for line in acl_text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            out_lines.append(line)
+            continue
+        parts = stripped.split()
+        if len(parts) < 2:
+            out_lines.append(line)
+            continue
+        line_pattern = parts[0]
+        if line_pattern != pattern:
+            out_lines.append(line)
+            continue
+        # filter out grants for this username
+        kept = [line_pattern]
+        for directive in parts[1:]:
+            m = GRANT_RE.match(directive)
+            if m and m.group(1) == username:
+                continue  # drop this grant
+            kept.append(directive)
+        if len(kept) > 1:  # pattern + at least one directive
+            out_lines.append(" ".join(kept))
+        # else: line had only grants for this user, drop it entirely
+    return "\n".join(out_lines) + ("\n" if acl_text.endswith("\n") else "")
