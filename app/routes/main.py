@@ -22,11 +22,25 @@ def roadmap():
 
 @main_bp.route("/explore")
 def explore():
-    editorial = (
-        Wiki.query.join(User, Wiki.owner_id == User.id)
-        .filter(User.username == "wikihub", Wiki.slug == "wikihub")
-        .all()
-    )
+    # Editorial picks: curated wikis that represent the best of wikihub
+    _EDITORIAL_PICKS = [
+        ("wikihub", "wikihub"),
+        ("jacobcole", "ideas"),
+        ("jacobcole", "quotes"),
+        ("jacobcole", "rsi-wiki"),
+        ("jacobcole", "admitsphere"),
+        ("jacobcole", "llm-wiki-ecosystem"),
+        ("harrisonqian", "tools-stack"),
+    ]
+    editorial = []
+    for owner_name, slug in _EDITORIAL_PICKS:
+        wiki = (
+            Wiki.query.join(User, Wiki.owner_id == User.id)
+            .filter(User.username == owner_name, Wiki.slug == slug)
+            .first()
+        )
+        if wiki:
+            editorial.append(wiki)
     # All wikis with at least one public page, excluding editorial
     editorial_ids = {wiki.id for wiki in editorial}
     all_wikis = (
