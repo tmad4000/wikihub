@@ -37,7 +37,10 @@
   <div id="token-section">
     <label>Admin Token</label>
     <input type="password" id="token-input" placeholder="Enter admin token..." autocomplete="off">
-    <button onclick="authenticate()">Authenticate</button>
+    <div style="display:flex; gap:8px; margin-top:-8px;">
+      <button onclick="authenticate()">Authenticate</button>
+      <button class="outline" onclick="copyLink()" id="copy-link-btn" style="font-size:0.75rem; padding:8px 14px;">Copy link with token</button>
+    </div>
     <div id="token-error" class="status error" style="display:none;"></div>
   </div>
 
@@ -67,6 +70,17 @@ if (urlToken) {
   setTimeout(authenticate, 200);
 }
 
+function copyLink() {
+  const t = document.getElementById('token-input').value.trim();
+  if (!t) { document.getElementById('token-error').style.display = 'block'; document.getElementById('token-error').textContent = 'Enter token first'; return; }
+  const url = window.location.origin + window.location.pathname + '?token=' + encodeURIComponent(t);
+  navigator.clipboard.writeText(url).then(() => {
+    const btn = document.getElementById('copy-link-btn');
+    btn.textContent = 'Copied!';
+    setTimeout(() => { btn.textContent = 'Copy link with token'; }, 2000);
+  });
+}
+
 async function authenticate() {
   token = document.getElementById('token-input').value.trim();
   if (!token) return;
@@ -76,6 +90,10 @@ async function authenticate() {
     document.getElementById('token-error').textContent = 'Invalid token';
     return;
   }
+  // Update URL so it's bookmarkable/shareable
+  const url = new URL(window.location);
+  url.searchParams.set('token', token);
+  history.replaceState(null, '', url);
   document.getElementById('token-section').style.display = 'none';
   document.getElementById('auth-section').style.display = 'block';
   updateStatus(await resp.json());
