@@ -1,4 +1,4 @@
-from flask import current_app, jsonify, render_template, request
+from flask import current_app, jsonify, redirect, render_template, request, url_for
 from flask_login import login_required, logout_user, current_user
 
 from app import db
@@ -12,6 +12,8 @@ from app.wiki_ops import delete_wiki_repos
 
 @main_bp.route("/")
 def index():
+    if current_user.is_authenticated:
+        return redirect(url_for("main.explore"))
     return render_template("landing.html")
 
 
