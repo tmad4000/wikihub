@@ -154,3 +154,19 @@ class UsernameRedirect(db.Model):
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
 
     user = db.relationship("User")
+
+
+class WikiSlugRedirect(db.Model):
+    __tablename__ = "wiki_slug_redirects"
+
+    id = db.Column(db.Integer, primary_key=True)
+    owner_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    old_slug = db.Column(db.String(128), nullable=False, index=True)
+    wiki_id = db.Column(db.Integer, db.ForeignKey("wikis.id"), nullable=False)
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
+
+    __table_args__ = (
+        db.UniqueConstraint("owner_id", "old_slug", name="uq_slug_redirect_owner_slug"),
+    )
+
+    wiki = db.relationship("Wiki")

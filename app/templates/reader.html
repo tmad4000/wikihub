@@ -742,7 +742,8 @@
         <button style="padding:4px 10px;border-radius:var(--radius-sm);font-size:0.8125rem;font-weight:600;border:1px solid rgba(196,92,60,0.3);cursor:pointer;background:rgba(196,92,60,0.1);color:var(--color-private);font-family:var(--font-body);" onclick="mgmtBulkDel()">Delete</button>
       </div>
       {% if wiki.slug != owner.username %}
-      <div style="margin-top:12px;text-align:right;">
+      <div style="margin-top:12px;display:flex;justify-content:space-between;align-items:center;">
+        <button style="font-size:0.75rem;padding:4px 10px;border-radius:var(--radius-sm);border:1px solid var(--border-emphasis);background:transparent;color:var(--text-secondary);cursor:pointer;font-family:var(--font-body);font-weight:600;" onclick="renameWiki()">Rename wiki</button>
         <button style="font-size:0.75rem;padding:4px 10px;border-radius:var(--radius-sm);border:1px solid rgba(196,92,60,0.3);background:rgba(196,92,60,0.1);color:var(--color-private);cursor:pointer;font-family:var(--font-body);font-weight:600;" onclick="deleteWiki()">Delete wiki</button>
       </div>
       {% endif %}
@@ -941,6 +942,21 @@ function deletePage() {
   setButtonLoading(btn, 'Deleting...');
   fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}/pages/{{ page.path }}', {method: 'DELETE'})
     .then(r => { if (r.ok) location.href = '/@{{ owner.username }}/{{ wiki.slug }}'; else { btn.classList.remove('btn-loading'); btn.textContent = 'Delete'; alert('Delete failed'); } });
+}
+
+function renameWiki() {
+  var newSlug = prompt('New slug for this wiki (URL-safe, lowercase):', '{{ wiki.slug }}');
+  if (!newSlug || newSlug === '{{ wiki.slug }}') return;
+  newSlug = newSlug.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '-');
+  if (!confirm('Rename "{{ wiki.slug }}" to "' + newSlug + '"? Old URLs will redirect.')) return;
+  fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}/rename', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({slug: newSlug})
+  }).then(r => r.json().then(d => {
+    if (r.ok) { location.href = d.url; }
+    else { alert(d.message || 'Rename failed'); }
+  }));
 }
 
 function deleteWiki() {

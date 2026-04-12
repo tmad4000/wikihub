@@ -13,7 +13,7 @@ from app.content_utils import has_private_bands, parse_markdown_document, set_vi
 from app.discovery import discoverable_page_for_wiki, visible_wikis_for_owner
 from app.git_backend import _repo_path
 from app.git_sync import read_file_from_repo, read_file_bytes_from_repo, list_files_in_repo, regenerate_public_mirror, remove_page_from_repo, sync_page_to_repo, update_mirror_page
-from app.models import Page, User, UsernameRedirect, Wiki, Wikilink, utcnow
+from app.models import Page, User, UsernameRedirect, Wiki, WikiSlugRedirect, Wikilink, utcnow
 from app.renderer import extract_toc, render_page
 from app.routes import wiki_bp
 from app.wiki_ops import index_repo_pages, load_acl_rules, refresh_wikilinks_for_page, sync_wiki_counters, update_page_metadata
@@ -141,6 +141,10 @@ def _get_owner_and_wiki_or_404(username, slug):
         abort(404)
     wiki = Wiki.query.filter_by(owner_id=owner.id, slug=slug).first()
     if not wiki:
+        # check for slug redirect
+        slug_redir = WikiSlugRedirect.query.filter_by(owner_id=owner.id, old_slug=slug).first()
+        if slug_redir and slug_redir.wiki:
+            return owner, slug_redir.wiki, slug_redir
         abort(404)
     return owner, wiki, redirect_row
 
@@ -548,7 +552,7 @@ def wiki_llms_txt(username, slug):
 def wiki_zip(username, slug):
     owner, wiki, redirect_row = _get_owner_and_wiki_or_404(username, slug)
     if redirect_row:
-        return redirect(url_for("wiki.wiki_zip", username=owner.username, slug=slug), code=302)
+        return redirect(url_for("wiki.wiki_zip", username=owner.username, slug=wiki.slug), code=302)
 
     from app.git_backend import _repo_path
 
@@ -571,7 +575,7 @@ def wiki_zip(username, slug):
 def wiki_index(username, slug):
     owner, wiki, redirect_row = _get_owner_and_wiki_or_404(username, slug)
     if redirect_row:
-        return redirect(url_for("wiki.wiki_index", username=owner.username, slug=slug), code=302)
+        return redirect(url_for("wiki.wiki_index", username=owner.username, slug=wiki.slug), code=302)
 
     # Personal wiki: redirect to profile page
     if slug == owner.username:
@@ -772,7 +776,7 @@ def wiki_page(username, slug, page_path):
     owner, wiki, redirect_row = _get_owner_and_wiki_or_404(username, slug)
     if redirect_row:
         redirect_path = url_path_from_page_path(page_path, strip_md=False)
-        return redirect(f"/@{owner.username}/{slug}/{redirect_path}", code=302)
+        return redirect(f"/@{owner.username}/{wiki.slug}/{redirect_path}", code=302)
 
     siblings = _sibling_wikis(owner, wiki)
 

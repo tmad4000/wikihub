@@ -11,7 +11,7 @@ from flask import Response, current_app, jsonify, request
 from app.url_utils import url_path_from_page_path
 
 from app import db
-from app.models import User, Wiki, Page, Star, Fork, Wikilink, utcnow
+from app.models import User, Wiki, Page, Star, Fork, Wikilink, WikiSlugRedirect, utcnow
 from app.auth_utils import api_auth_optional, api_auth_required, rate_limit_writes
 from app.git_backend import init_wiki_repo
 from app.git_sync import (
@@ -196,6 +196,64 @@ def delete_wiki(owner, slug):
     db.session.commit()
     delete_wiki_repos(owner_user.username, wiki.slug)
     return "", 204
+
+
+@api_bp.route("/wikis/<owner>/<slug>/rename", methods=["POST"])
+@api_auth_required
+@rate_limit_writes()
+def rename_wiki(owner, slug):
+    owner_user, wiki, err = _get_wiki_or_404(owner, slug)
+    if err:
+        return err
+    if request.current_user.id != wiki.owner_id:
+        return {"error": "forbidden", "message": "Only the owner can rename a wiki"}, 403
+    if wiki.slug == owner_user.username:
+        return {"error": "forbidden", "message": "Personal wikis cannot be renamed"}, 403
+
+    data = request.get_json(silent=True) or {}
+    new_slug = data.get("slug", "").strip().lower()
+    new_slug = "".join(c for c in new_slug if c.isalnum() or c in "-_")
+    if not new_slug or len(new_slug) < 2:
+        return {"error": "invalid", "message": "Slug must be at least 2 characters"}, 400
+    if new_slug == wiki.slug:
+        return {"error": "invalid", "message": "New slug is the same as the current one"}, 400
+    if Wiki.query.filter_by(owner_id=wiki.owner_id, slug=new_slug).first():
+        return {"error": "conflict", "message": f"Wiki '{new_slug}' already exists"}, 409
+    # clear redirect if it points to this same wiki (renaming back)
+    existing_redir = WikiSlugRedirect.query.filter_by(owner_id=wiki.owner_id, old_slug=new_slug).first()
+    if existing_redir:
+        if existing_redir.wiki_id == wiki.id:
+            db.session.delete(existing_redir)
+        else:
+            return {"error": "conflict", "message": f"Slug '{new_slug}' is reserved by another wiki's redirect"}, 409
+
+    old_slug = wiki.slug
+    repos_dir = current_app.config["REPOS_DIR"]
+    safe_user = "".join(c for c in owner_user.username if c.isalnum() or c in "-_")
+
+    # rename git repos on disk
+    for suffix in ["", "-public"]:
+        old_path = os.path.join(repos_dir, safe_user, f"{old_slug}{suffix}.git")
+        new_path = os.path.join(repos_dir, safe_user, f"{new_slug}{suffix}.git")
+        if os.path.isdir(old_path):
+            os.rename(old_path, new_path)
+            # update hook config if present
+            hook_conf = os.path.join(new_path, "hooks", "wikihub.conf")
+            if os.path.exists(hook_conf):
+                with open(hook_conf, "w") as f:
+                    f.write(f"username={owner_user.username}\nslug={new_slug}\n")
+
+    # update DB
+    wiki.slug = new_slug
+    if data.get("title"):
+        wiki.title = data["title"]
+
+    # create redirect from old slug
+    WikiSlugRedirect.query.filter_by(owner_id=wiki.owner_id, old_slug=old_slug).delete()
+    db.session.add(WikiSlugRedirect(owner_id=wiki.owner_id, old_slug=old_slug, wiki_id=wiki.id))
+    db.session.commit()
+
+    return jsonify({"slug": wiki.slug, "old_slug": old_slug, "url": f"/@{owner_user.username}/{wiki.slug}"})
 
 
 # --- fork / star ---
