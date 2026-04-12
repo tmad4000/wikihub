@@ -4,7 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>wikihub — GitHub for LLM wikis</title>
-  <meta name="csrf-token" content="{{ csrf_token() }}">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -978,25 +977,6 @@
     </div>
   </footer>
 
-<script>
-(function() {
-  var csrfToken = document.querySelector('meta[name="csrf-token"]');
-  if (!csrfToken) return;
-  var origFetch = window.fetch;
-  window.fetch = function(url, opts) {
-    opts = opts || {};
-    var method = (opts.method || 'GET').toUpperCase();
-    if (method !== 'GET' && method !== 'HEAD') {
-      var urlStr = typeof url === 'string' ? url : url.url || '';
-      if (!urlStr.startsWith('/api/')) {
-        opts.headers = opts.headers || {};
-        if (!opts.headers['X-CSRFToken']) opts.headers['X-CSRFToken'] = csrfToken.content;
-      }
-    }
-    return origFetch.call(this, url, opts);
-  };
-})();
-</script>
 <script>
 // prevent browser from opening dropped files anywhere on the page
 document.addEventListener('dragover', (e) => { e.preventDefault(); });
