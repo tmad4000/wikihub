@@ -70,18 +70,22 @@ RESTRUCTURE_MAP = {
     "infrastructure/templates.md": "worldquestguild/infrastructure/templates.md",
     "autodidacts.md": "worldquestguild/autodidacts.md",
 
-    # Junk/meta — mark for deletion
-    "codex-listhub-sync-probe-1770905898.md": None,
-    "test-from-beta.md": None,
-    "review-todo-imported-items.md": None,
-    "ticket-default-project.md": None,
-    "skill-installation-plan.md": None,
-    "beads-how-to-create-ticket.md": None,
-    "silence-behavior.md": None,
-    "note-trigger-phrases.md": None,
-    "notes-storage-preference.md": None,
-    "notes-daily-log-format.md": None,
-    "note-technology-better-more-organized.md": None,
+    # Junk/meta — move to _trash/
+    "codex-listhub-sync-probe-1770905898.md": "_trash/codex-listhub-sync-probe.md",
+    "test-from-beta.md": "_trash/test-from-beta.md",
+    "review-todo-imported-items.md": "_trash/review-todo-imported-items.md",
+    "ticket-default-project.md": "_trash/ticket-default-project.md",
+    "skill-installation-plan.md": "_trash/skill-installation-plan.md",
+    "beads-how-to-create-ticket.md": "_trash/beads-how-to-create-ticket.md",
+    "silence-behavior.md": "_trash/silence-behavior.md",
+    "note-trigger-phrases.md": "_trash/note-trigger-phrases.md",
+    "notes-storage-preference.md": "_trash/notes-storage-preference.md",
+    "notes-daily-log-format.md": "_trash/notes-daily-log-format.md",
+    "note-technology-better-more-organized.md": "_trash/note-technology-better-more-organized.md",
+
+    # SI joint dupes — move to _trash/ instead of deleting
+    "chronicpain/backpain.md": "_trash/chronicpain-backpain-dupe.md",
+    "chronicpain/sijointpain.md": "_trash/chronicpain-sijointpain-dupe.md",
 }
 
 # Path rules for @jacobcole items being moved to @jacobreal
@@ -404,32 +408,23 @@ def main():
     # ── PHASE 2: Restructure existing @jacobreal items ──
     print("\n=== PHASE 2: Restructure @jacobreal paths ===", file=sys.stderr)
     to_restructure = []
-    to_delete = []
 
     for item in jr_items:
         fp = item['file_path'] or f"{item['slug']}.md"
         if fp in RESTRUCTURE_MAP:
             new_path = RESTRUCTURE_MAP[fp]
-            if new_path is None:
-                to_delete.append((item, fp))
-            else:
+            if new_path is not None:
                 to_restructure.append((item, fp, new_path))
 
     print(f"\n  To restructure: {len(to_restructure)}", file=sys.stderr)
     for item, old, new in to_restructure:
         print(f"    {old} → {new}  [{item['title']}]", file=sys.stderr)
 
-    print(f"\n  To delete (dupes/junk): {len(to_delete)}", file=sys.stderr)
-    for item, fp in to_delete:
-        print(f"    DELETE: {fp}  [{item['title']}]", file=sys.stderr)
-
     if DRY_RUN:
         print("\n=== DRY RUN — no changes made ===", file=sys.stderr)
-        # Output JSON summary
         print(json.dumps({
             "migrate": [(i['title'], i['file_path'], np) for i, np in to_migrate],
             "restructure": [(i['title'], old, new) for i, old, new in to_restructure],
-            "delete": [(i['title'], fp) for i, fp in to_delete],
             "skipped_dupes": len(skipped_dupes),
             "skipped_junk": len(skipped_junk),
         }, indent=2))
@@ -482,27 +477,10 @@ def main():
     conn.commit()
     print(f"\n  Restructured: {restructured}", file=sys.stderr)
 
-    # ── EXECUTE PHASE 3: Delete dupes/junk ──
-    print("\n=== EXECUTING PHASE 3: Delete dupes/junk ===", file=sys.stderr)
-    deleted = 0
-
-    for item, fp in to_delete:
-        # Delete from DB
-        conn.execute("DELETE FROM item_tag WHERE item_id = ?", (item['id'],))
-        conn.execute("DELETE FROM item WHERE id = ?", (item['id'],))
-        # Remove from git
-        git_remove_file(repo_path, fp)
-        deleted += 1
-        print(f"  DEL: {fp}", file=sys.stderr)
-
-    conn.commit()
-    print(f"\n  Deleted: {deleted}", file=sys.stderr)
-
     # ── Summary ──
     print(f"\n=== DONE ===", file=sys.stderr)
     print(f"  Migrated from @jacobcole: {migrated}", file=sys.stderr)
     print(f"  Restructured paths: {restructured}", file=sys.stderr)
-    print(f"  Deleted dupes/junk: {deleted}", file=sys.stderr)
 
     # Verify final count
     final_items = get_items(conn, "jacobreal")

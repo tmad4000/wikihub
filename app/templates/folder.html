@@ -34,8 +34,8 @@
 .breadcrumb { font-size: 0.8125rem; color: var(--text-tertiary); margin-bottom: 16px; font-family: var(--font-mono); display: flex; align-items: center; flex-wrap: wrap; }
 .breadcrumb a { color: var(--text-tertiary); }
 .folder-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
-.download-menu.open .download-dropdown { display: block !important; }
-.download-dropdown::before { content: ''; position: absolute; top: -8px; left: 0; right: 0; height: 8px; }
+.download-menu:hover .download-dropdown,
+.download-menu:focus-within .download-dropdown { display: block !important; }
 .download-dropdown a:hover, .download-dropdown button:hover { background: var(--accent-subtle); color: var(--text-primary); }
 .folder-title { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.02em; }
 .folder-copy { max-width: 760px; margin-bottom: 28px; }
@@ -51,7 +51,6 @@
 .vis-pill.public, .vis-pill.public-edit { color: var(--color-public); border-color: rgba(122, 158, 107, 0.2); }
 .vis-pill.private { color: var(--color-private); border-color: rgba(196, 92, 60, 0.2); }
 .vis-pill.unlisted, .vis-pill.unlisted-edit { color: var(--color-unlisted); border-color: rgba(184, 173, 158, 0.2); }
-.vis-pill.mixed { color: var(--text-muted); border-color: rgba(184, 173, 158, 0.2); font-style: italic; }
 .history-list { display: grid; gap: 10px; }
 .history-card { border: 1px solid var(--border-default); border-radius: var(--radius-md); padding: 14px 16px; background: var(--bg-surface); transition: border-color 0.15s ease; }
 .history-card:hover { border-color: var(--border-accent); }
@@ -92,7 +91,7 @@
 {% endmacro %}
 
 <div class="folder-shell">
-  <aside class="sidebar thin-scroll">
+  <aside class="sidebar">
     <div class="sidebar-section">
       {% if wiki.slug == owner.username %}
       <a href="/@{{ owner.username }}" class="sidebar-heading" style="text-decoration:none;display:block;">{{ owner.display_name or owner.username }}</a>
@@ -153,7 +152,7 @@
     <div class="folder-header">
       <div class="folder-title">{{ folder_path or wiki.title or wiki.slug }}</div>
       <div class="download-menu" style="position:relative;display:inline-flex;">
-        <button style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;color:var(--text-muted);border:none;background:transparent;cursor:pointer;border-radius:var(--radius-sm);" title="Download / Clone" onclick="event.stopPropagation(); this.parentElement.classList.toggle('open')">
+        <button style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;color:var(--text-muted);border:none;background:transparent;cursor:pointer;border-radius:var(--radius-sm);" title="Download / Clone">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         </button>
         <div class="download-dropdown" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;min-width:340px;padding:4px;border-radius:var(--radius-md);border:1px solid var(--border-emphasis);background:rgba(25,23,20,0.98);backdrop-filter:blur(12px);z-index:50;">
@@ -177,14 +176,13 @@
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <a href="/@{{ owner.username }}/{{ wiki.slug }}/new" style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;min-height:36px;background:var(--accent);color:#0f0e0c;border-radius:var(--radius-sm);font-size:0.8125rem;font-weight:600;text-decoration:none;">New page</a>
         <a href="/@{{ owner.username }}/{{ wiki.slug }}/new-folder{% if folder_path %}?parent={{ folder_path | urlencode }}{% endif %}" style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;min-height:36px;border:1px solid var(--border-emphasis);color:var(--text-secondary);border-radius:var(--radius-sm);font-size:0.8125rem;font-weight:600;text-decoration:none;">New folder</a>
-        <button onclick="reindexWiki(this)" style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;min-height:36px;border:1px solid var(--border-emphasis);color:var(--text-secondary);border-radius:var(--radius-sm);font-size:0.8125rem;font-weight:600;background:transparent;cursor:pointer;">Reindex</button>
       </div>
       {% endif %}
     </div>
 
     {% if private_band_warning %}
     <div class="private-band-warning">
-      This page has sections visible only to editors; not a security boundary. Don't use private bands for real secrets.
+      This page has sections visible only to editors; not a security boundary. Don’t use private bands for real secrets.
     </div>
     {% endif %}
 
@@ -225,7 +223,7 @@
           {% endif %}
           <span>{{ item.name }}</span>
         </div>
-        <span class="vis-pill {{ item.visibility }}">{{ item.visibility | replace('mixed', 'Mixed') | replace('public-edit', 'Public Edit') | replace('unlisted-edit', 'Unlisted Edit') | replace('public', 'Public View') | replace('private', 'Private') | replace('unlisted', 'Unlisted') }}</span>
+        <span class="vis-pill {{ item.visibility }}">{{ item.visibility | replace('public-edit', 'Public Edit') | replace('unlisted-edit', 'Unlisted Edit') | replace('public', 'Public View') | replace('private', 'Private') | replace('unlisted', 'Unlisted') }}</span>
         <span class="contents-meta">{{ item.updated_at.strftime('%Y-%m-%d') if item.updated_at else '' }}</span>
       </a>
       {% else %}
@@ -271,20 +269,5 @@ requestAnimationFrame(() => {
   const active = document.querySelector('.sidebar-item.active');
   if (active) active.scrollIntoView({ block: 'nearest', behavior: 'instant' });
 });
-
-document.addEventListener('click', () => {
-  document.querySelectorAll('.download-menu.open').forEach(m => m.classList.remove('open'));
-});
-
-async function reindexWiki(btn) {
-  const orig = btn.textContent;
-  btn.disabled = true;
-  btn.textContent = 'Reindexing…';
-  try {
-    const resp = await fetch('/@{{ owner.username }}/{{ wiki.slug }}/reindex', {method: 'POST'});
-    if (resp.ok) { btn.textContent = 'Done ✓'; setTimeout(() => location.reload(), 800); }
-    else { btn.textContent = 'Failed'; setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 2000); }
-  } catch (e) { btn.textContent = 'Error'; setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 2000); }
-}
 </script>
 {% endblock %}

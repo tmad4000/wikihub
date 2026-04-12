@@ -2,7 +2,9 @@ from flask import current_app, jsonify, render_template, request
 from flask_login import login_required, logout_user, current_user
 
 from app import db
+from app.acl import grants_for_user, list_all_grants, parse_acl
 from app.discovery import discoverable_page_for_wiki, visible_wikis_for_owner
+from app.git_sync import read_file_from_repo
 from app.models import Wiki, Page, ApiKey, User, Star, Fork, MagicLoginToken, UsernameRedirect
 from app.routes import main_bp
 import os
@@ -87,6 +89,58 @@ def claim_email_web():
     if request.is_json:
         return jsonify({"email": current_user.email})
     return jsonify({"email": current_user.email})
+
+
+@main_bp.route("/shared")
+@login_required
+def shared():
+    username = current_user.username
+
+    # --- Shared by me: grants I've given + my unlisted pages ---
+    shared_by_me = []
+    my_wikis = Wiki.query.filter_by(owner_id=current_user.id).all()
+    for wiki in my_wikis:
+        acl_text = read_file_from_repo(username, wiki.slug, ".wikihub/acl", public=False)
+        rules = parse_acl(acl_text) if acl_text else []
+        grants = list_all_grants(rules)
+        # unlisted pages
+        unlisted = Page.query.filter(
+            Page.wiki_id == wiki.id,
+            Page.visibility.in_(("unlisted", "unlisted-edit")),
+        ).all()
+        if grants or unlisted:
+            shared_by_me.append({
+                "wiki": wiki,
+                "grants": [{"pattern": p, "username": u, "role": r} for p, u, r in grants],
+                "unlisted": unlisted,
+            })
+
+    # --- Shared with me: grants others have given me ---
+    shared_with_me = []
+    other_wikis = Wiki.query.join(User, Wiki.owner_id == User.id).filter(
+        Wiki.owner_id != current_user.id
+    ).all()
+    for wiki in other_wikis:
+        wiki_owner = db.session.get(User, wiki.owner_id)
+        if not wiki_owner:
+            continue
+        acl_text = read_file_from_repo(wiki_owner.username, wiki.slug, ".wikihub/acl", public=False)
+        if not acl_text:
+            continue
+        rules = parse_acl(acl_text)
+        user_grants = grants_for_user(rules, username)
+        if user_grants:
+            shared_with_me.append({
+                "wiki": wiki,
+                "owner": wiki_owner,
+                "grants": [{"pattern": p, "role": r} for p, r in user_grants],
+            })
+
+    return render_template(
+        "shared.html",
+        shared_by_me=shared_by_me,
+        shared_with_me=shared_with_me,
+    )
 
 
 @main_bp.route("/delete-account", methods=["POST"])
