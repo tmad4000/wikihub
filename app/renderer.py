@@ -279,25 +279,26 @@ def render_page(content, wiki_owner=None, wiki_slug=None):
         known_pages = {page.path: page for page in pages}
         basename_pages = {}
         for page in pages:
-            title_aliases[page.title] = page
+            if page.title:
+                title_aliases[page.title.lower()] = page
             # basename lookup: "page-name" and "page-name.md" both resolve
             bname = page.path.rsplit("/", 1)[-1]
-            basename_pages.setdefault(bname, page)
+            basename_pages.setdefault(bname.lower(), page)
             if bname.endswith(".md"):
-                basename_pages.setdefault(bname[:-3], page)
+                basename_pages.setdefault(bname[:-3].lower(), page)
 
     def resolver(target):
         target_clean = target.strip("/")
         if not target_clean.endswith(".md"):
             target_clean += ".md"
         from app.url_utils import url_path_from_page_path
-        # try: exact path → raw target → basename → title
+        # try: exact path → raw target → basename (case-insensitive) → title (case-insensitive)
         matched = (
             known_pages.get(target_clean)
             or known_pages.get(target)
-            or basename_pages.get(target_clean)
-            or basename_pages.get(target.strip("/"))
-            or title_aliases.get(target)
+            or basename_pages.get(target_clean.lower())
+            or basename_pages.get(target.strip("/").lower())
+            or title_aliases.get(target.lower())
         )
         if matched:
             url = f"/@{wiki_owner}/{wiki_slug}/{url_path_from_page_path(matched.path, strip_md=True)}"
