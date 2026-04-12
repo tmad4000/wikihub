@@ -25,7 +25,7 @@
   .status.error { color: var(--error); }
   .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
   #auth-section { display: none; }
-  #xterm-container { margin: 16px 0; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; display: none; }
+  #xterm-container { margin: 16px 0; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; display: none; height: 340px; }
   .xterm { padding: 8px; }
 </style>
 </head>
@@ -123,7 +123,7 @@ function initTerminal() {
   term = new window.Terminal({
     cursorBlink: true, fontSize: 13, fontFamily: "'IBM Plex Mono', monospace",
     theme: { background: '#0a0a08', foreground: '#e8e0d4', cursor: '#d4a04a', selectionBackground: 'rgba(212,160,74,0.3)' },
-    rows: 14, cols: 80,
+    rows: 20, cols: 80,
   });
   const fitAddon = new window.FitAddon.FitAddon();
   term.loadAddon(fitAddon);
