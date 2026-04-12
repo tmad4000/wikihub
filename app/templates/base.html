@@ -96,6 +96,8 @@ a:hover { text-decoration: underline; }
   background: var(--accent-subtle);
   border-color: var(--border-default);
 }
+.nav-avatar-link { text-decoration: none; display: flex; }
+.nav-avatar-link:hover { text-decoration: none; }
 .nav-avatar {
   width: 32px; height: 32px; border-radius: 50%;
   background: var(--accent-muted); border: 1px solid var(--border-accent);
@@ -103,6 +105,7 @@ a:hover { text-decoration: underline; }
   font-family: var(--font-mono); font-size: 0.75rem; color: var(--accent);
   text-decoration: none;
 }
+.nav-avatar-link:hover .nav-avatar { border-color: var(--accent); }
 .nav-account-chevron {
   color: var(--text-muted);
   transition: transform 0.14s ease;

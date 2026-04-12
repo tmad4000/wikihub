@@ -10,6 +10,9 @@
   <a href="/agents" class="nav-link nav-agents">For Agents</a>
   {% if current_user and current_user.is_authenticated %}
     <div class="nav-account" data-account-menu>
+      <a href="/@{{ current_user.username }}" class="nav-avatar-link" title="Your profile">
+        <span class="nav-avatar">{{ current_user.username[0]|upper }}</span>
+      </a>
       <button
         type="button"
         class="nav-account-trigger"
@@ -18,7 +21,6 @@
         aria-label="Account menu"
         data-account-trigger
       >
-        <span class="nav-avatar">{{ current_user.username[0]|upper }}</span>
         <svg class="nav-account-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="m6 9 6 6 6-6"/>
         </svg>
