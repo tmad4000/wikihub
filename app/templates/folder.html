@@ -98,7 +98,13 @@
       {% else %}
       <a href="/@{{ owner.username }}/{{ wiki.slug }}" class="sidebar-heading" style="text-decoration:none;display:block;">{{ wiki.title or wiki.slug }}</a>
       {% endif %}
+      {% if sidebar_items %}
       {{ render_sidebar(sidebar_items or []) }}
+      {% else %}
+      <div id="async-sidebar" data-url="/@{{ owner.username }}/{{ wiki.slug }}/sidebar.json">
+        <div style="padding:8px 12px;color:var(--text-muted);font-size:0.8125rem;">Loading...</div>
+      </div>
+      {% endif %}
       {% if current_user.is_authenticated and current_user.id == wiki.owner_id %}
       <a href="/@{{ owner.username }}/{{ wiki.slug }}/new" class="sidebar-item" style="color:var(--accent);margin-top:8px;">New page</a>
       <a href="/@{{ owner.username }}/{{ wiki.slug }}/new-folder{% if folder_path %}?parent={{ folder_path | urlencode }}{% endif %}" class="sidebar-item" style="color:var(--accent);">New folder</a>
@@ -269,5 +275,47 @@ requestAnimationFrame(() => {
   const active = document.querySelector('.sidebar-item.active');
   if (active) active.scrollIntoView({ block: 'nearest', behavior: 'instant' });
 });
+
+// async sidebar for large wikis
+(function() {
+  const el = document.getElementById('async-sidebar');
+  if (!el) return;
+  const url = el.dataset.url;
+
+  function renderItem(item, level) {
+    if (item.kind === 'folder') {
+      const isActive = item.active ? ' open' : '';
+      let html = `<div class="sidebar-folder${isActive}" data-folder-path="${item.path}">`;
+      html += `<div class="sidebar-folder-row">`;
+      html += `<button type="button" class="sidebar-folder-toggle" onclick="toggleFolder('${item.path}')">`;
+      html += `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>`;
+      html += `</button>`;
+      html += `<a href="${item.url}" class="sidebar-item${item.active ? ' active' : ''}">`;
+      html += `<span class="sidebar-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h5l2 2h11v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg></span>`;
+      html += `<span>${item.name}</span></a></div>`;
+      html += `<div class="sidebar-children">${(item.children || []).map(c => renderItem(c, level + 1)).join('')}</div>`;
+      html += `</div>`;
+      return html;
+    } else {
+      return `<a href="${item.url}" class="sidebar-item"><span class="sidebar-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span><span>${item.name}</span></a>`;
+    }
+  }
+
+  fetch(url)
+    .then(r => r.json())
+    .then(items => {
+      el.innerHTML = items.map(item => renderItem(item, 0)).join('');
+      // re-apply folder state
+      const state = loadFolders();
+      document.querySelectorAll('.sidebar-folder').forEach(folder => {
+        const path = folder.dataset.folderPath;
+        if (state[path] === false) folder.classList.remove('open');
+        else if (state[path] === true || folder.classList.contains('open')) folder.classList.add('open');
+      });
+    })
+    .catch(() => {
+      el.innerHTML = '<div style="padding:8px 12px;color:var(--text-muted);font-size:0.75rem;">Search to navigate</div>';
+    });
+})();
 </script>
 {% endblock %}

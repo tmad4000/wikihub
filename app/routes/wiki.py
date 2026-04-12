@@ -571,6 +571,26 @@ def wiki_zip(username, slug):
     )
 
 
+SIDEBAR_ASYNC_THRESHOLD = 200  # wikis with more pages than this get client-side sidebar
+
+
+def _sidebar_for_wiki(username, slug, wiki, public=False, current_path=None, acl_filter_user=None):
+    """return sidebar items, or None if the wiki is too large (use sidebar.json instead)."""
+    page_count = Page.query.filter_by(wiki_id=wiki.id).count()
+    if page_count > SIDEBAR_ASYNC_THRESHOLD:
+        return None  # template will fetch sidebar.json client-side
+    return _build_sidebar_tree(username, slug, wiki, public=public, current_path=current_path, acl_filter_user=acl_filter_user)
+
+
+@wiki_bp.route("/@<username>/<slug>/sidebar.json")
+def sidebar_json(username, slug):
+    """lightweight JSON manifest for client-side sidebar rendering."""
+    owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
+    use_public = not _is_owner(wiki)
+    tree = _build_sidebar_tree(owner.username, wiki.slug, wiki, public=use_public)
+    return jsonify(tree)
+
+
 @wiki_bp.route("/@<username>/<slug>", strict_slashes=False)
 def wiki_index(username, slug):
     owner, wiki, redirect_row = _get_owner_and_wiki_or_404(username, slug)
@@ -595,7 +615,7 @@ def wiki_index(username, slug):
             owner=owner,
             wiki=wiki,
             items=items,
-            sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=use_public, acl_filter_user=acl_filter_user),
+            sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, public=use_public, acl_filter_user=acl_filter_user),
             folder_path="",
             rendered_html=None,
             breadcrumb=[],
@@ -620,7 +640,7 @@ def wiki_index(username, slug):
         link_graph=_get_full_graph(wiki),
         full_graph_url=f"/@{owner.username}/{wiki.slug}/graph",
         recently_updated=recently_updated,
-        sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=use_public, current_path=page_path, acl_filter_user=acl_filter_user),
+        sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, public=use_public, current_path=page_path, acl_filter_user=acl_filter_user),
         private_band_warning=not use_public and has_private_bands(content),
         json_ld_author=owner.display_name or owner.username,
         management_items=management_items,
@@ -683,7 +703,7 @@ def wiki_tag_index(username, slug, tag_name):
             "updated_at": page.updated_at,
         }
         for page in pages
-    ], sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=not _is_owner(wiki)), folder_path=f"tag:{tag_name}", rendered_html=None, breadcrumb=[("Tags", None), (tag_name, None)])
+    ], sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, public=not _is_owner(wiki)), folder_path=f"tag:{tag_name}", rendered_html=None, breadcrumb=[("Tags", None), (tag_name, None)])
 
 
 @wiki_bp.route("/@<username>/<slug>/history")
@@ -693,7 +713,7 @@ def wiki_history(username, slug):
     raw_commits = _git_history(owner.username, wiki.slug, public=False)
     # filter out internal event log commits (noise)
     commits = [c for c in raw_commits if not c["message"].startswith("Log ")]
-    return render_template("folder.html", owner=owner, wiki=wiki, items=[], sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=not _is_owner(wiki)), folder_path="history", rendered_html=None, breadcrumb=[("History", None)], history_commits=commits)
+    return render_template("folder.html", owner=owner, wiki=wiki, items=[], sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, public=not _is_owner(wiki)), folder_path="history", rendered_html=None, breadcrumb=[("History", None)], history_commits=commits)
 
 
 @wiki_bp.route("/@<username>/<slug>/<path:folder_path>/history")
@@ -705,7 +725,7 @@ def page_history(username, slug, folder_path):
     # always read from authoritative repo
     raw_commits = _git_history(owner.username, wiki.slug, public=False, path=path)
     commits = [c for c in raw_commits if not c["message"].startswith("Log ")]
-    return render_template("folder.html", owner=owner, wiki=wiki, items=[], sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=not _is_owner(wiki), current_path=path), folder_path=f"{path} history", rendered_html=None, breadcrumb=[("History", None)], history_commits=commits)
+    return render_template("folder.html", owner=owner, wiki=wiki, items=[], sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, public=not _is_owner(wiki), current_path=path), folder_path=f"{path} history", rendered_html=None, breadcrumb=[("History", None)], history_commits=commits)
 
 
 @wiki_bp.route("/@<username>/<slug>/commit/<sha>")
@@ -750,7 +770,7 @@ def wiki_commit(username, slug, sha):
         sha=sha,
         commit=commit,
         diff_lines=diff_lines,
-        sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=use_public),
+        sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, public=use_public),
     )
 
 
@@ -825,7 +845,7 @@ def wiki_page(username, slug, page_path):
             owner=owner,
             wiki=wiki,
             items=items,
-            sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=use_public, current_path=page_path.strip("/"), acl_filter_user=acl_filter_user),
+            sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, public=use_public, current_path=page_path.strip("/"), acl_filter_user=acl_filter_user),
             folder_path=page_path.strip("/"),
             rendered_html=render_page(content, owner.username, wiki.slug, current_page_path=content_path) if content else None,
             breadcrumb=breadcrumb,
@@ -904,7 +924,7 @@ def wiki_page(username, slug, page_path):
         backlinks=_get_backlinks(page),
         link_graph=_get_link_graph(page, wiki),
         recently_updated=_recently_updated_pages(wiki, public_only=use_public and not acl_filter_user),
-        sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=use_public, current_path=file_path, acl_filter_user=acl_filter_user),
+        sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, public=use_public, current_path=file_path, acl_filter_user=acl_filter_user),
         private_band_warning=not use_public and has_private_bands(content),
         json_ld_author=owner.display_name or owner.username,
         sibling_wikis=siblings,

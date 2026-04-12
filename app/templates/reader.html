@@ -111,6 +111,8 @@
 .article .external-link::after { content: ' ↗'; font-size: 0.7em; opacity: 0.7; }
 .article .external-link { color: var(--color-external); }
 .article strong { color: var(--text-primary); }
+.article .katex-display { margin: 24px 0; overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
+.article .math.amsmath { margin: 24px 0; overflow-x: auto; overflow-y: hidden; text-align: center; }
 
 .hamburger {
   display: flex; align-items: center; justify-content: center;
@@ -215,7 +217,13 @@
       {% else %}
       <a href="/@{{ owner.username }}/{{ wiki.slug }}" class="sidebar-heading" style="text-decoration:none;display:block;">{{ wiki.title or wiki.slug }}</a>
       {% endif %}
+      {% if sidebar_items %}
       {{ render_sidebar(sidebar_items) }}
+      {% else %}
+      <div id="async-sidebar" data-url="/@{{ owner.username }}/{{ wiki.slug }}/sidebar.json" data-current="{{ page.path }}">
+        <div style="padding:8px 12px;color:var(--text-muted);font-size:0.8125rem;">Loading...</div>
+      </div>
+      {% endif %}
       {% if current_user.is_authenticated and current_user.id == wiki.owner_id %}
       <a href="/@{{ owner.username }}/{{ wiki.slug }}/new" class="sidebar-item" style="color:var(--accent);margin-top:8px;">
         <span class="sidebar-icon" style="color:var(--accent);">
@@ -380,6 +388,45 @@ function forkWiki() {
 }
 
 applyFolderState();
+
+// async sidebar for large wikis
+(function() {
+  const el = document.getElementById('async-sidebar');
+  if (!el) return;
+  const url = el.dataset.url;
+  const currentPath = el.dataset.current;
+
+  function renderItem(item, level) {
+    if (item.kind === 'folder') {
+      const isActive = item.active ? ' open' : '';
+      const indent = 12 + (level * 16);
+      let html = `<div class="sidebar-folder${isActive}" data-folder-path="${item.path}">`;
+      html += `<div class="sidebar-folder-row">`;
+      html += `<button type="button" class="sidebar-folder-toggle" onclick="toggleFolder('${item.path}')">`;
+      html += `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>`;
+      html += `</button>`;
+      html += `<a href="${item.url}" class="sidebar-item${item.active ? ' active' : ''}">`;
+      html += `<span class="sidebar-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h5l2 2h11v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg></span>`;
+      html += `<span>${item.name}</span></a></div>`;
+      html += `<div class="sidebar-children">${(item.children || []).map(c => renderItem(c, level + 1)).join('')}</div>`;
+      html += `</div>`;
+      return html;
+    } else {
+      const isActive = item.path === currentPath ? ' active' : '';
+      return `<a href="${item.url}" class="sidebar-item${isActive}"><span class="sidebar-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span><span>${item.name}</span></a>`;
+    }
+  }
+
+  fetch(url)
+    .then(r => r.json())
+    .then(items => {
+      el.innerHTML = items.map(item => renderItem(item, 0)).join('');
+      applyFolderState();
+    })
+    .catch(() => {
+      el.innerHTML = '<div style="padding:8px 12px;color:var(--text-muted);font-size:0.75rem;">Search to navigate</div>';
+    });
+})();
 </script>
 {% if page and json_ld_author %}
 <script type="application/ld+json">
