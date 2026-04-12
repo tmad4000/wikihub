@@ -263,8 +263,10 @@ def render_markdown(content, resolve_wikilinks=None):
     return html
 
 
-def render_page(content, wiki_owner=None, wiki_slug=None):
-    """render a wiki page with wikilink resolution."""
+def render_page(content, wiki_owner=None, wiki_slug=None, current_page_path=None):
+    """render a wiki page with wikilink resolution.
+    current_page_path: the page's path in the repo (e.g. 'wiki/courses/cs224n.md')
+    used to resolve relative markdown links like ../raw/foo.md"""
     from app.models import Page, User, Wiki
 
     known_pages = {}
@@ -306,4 +308,32 @@ def render_page(content, wiki_owner=None, wiki_slug=None):
             url = f"/@{wiki_owner}/{wiki_slug}/{url_path_from_page_path(target_clean, strip_md=True)}" if wiki_owner else f"#{target}"
         return url, matched is not None
 
-    return render_markdown(content, resolve_wikilinks=resolver if wiki_owner else None)
+    html = render_markdown(content, resolve_wikilinks=resolver if wiki_owner else None)
+
+    # resolve relative markdown links (e.g. ../raw/foo.md) against current page path
+    if wiki_owner and wiki_slug and current_page_path:
+        import posixpath
+        from app.url_utils import url_path_from_page_path
+        page_dir = posixpath.dirname(current_page_path)
+
+        def resolve_relative_link(match):
+            prefix = match.group(1)
+            href = match.group(2)
+            suffix = match.group(3)
+            # only resolve relative .md links (not external URLs, anchors, or absolute paths)
+            if href.startswith(("http://", "https://", "/", "#", "mailto:")):
+                return match.group(0)
+            if not href.endswith(".md"):
+                return match.group(0)
+            # resolve ../path relative to current page's directory
+            resolved = posixpath.normpath(posixpath.join(page_dir, href))
+            # check if this resolves to a known page
+            page = known_pages.get(resolved)
+            if page:
+                url = f"/@{wiki_owner}/{wiki_slug}/{url_path_from_page_path(page.path, strip_md=True)}"
+                return f'{prefix}{url}{suffix}'
+            return match.group(0)
+
+        html = re.sub(r'(href=")([^"]+)(")', resolve_relative_link, html)
+
+    return html

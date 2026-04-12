@@ -607,7 +607,7 @@ def wiki_index(username, slug):
     if page is None:
         page = type("Page", (), {"path": page_path, "title": wiki.title, "visibility": "private", "updated_at": wiki.updated_at})()
 
-    rendered_html = render_page(content, owner.username, wiki.slug)
+    rendered_html = render_page(content, owner.username, wiki.slug, current_page_path=page_path)
     management_items = _folder_listing(owner.username, wiki.slug, wiki, "", public=False) if _is_owner(wiki) else None
     return render_template(
         "reader.html",
@@ -827,7 +827,7 @@ def wiki_page(username, slug, page_path):
             items=items,
             sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=use_public, current_path=page_path.strip("/"), acl_filter_user=acl_filter_user),
             folder_path=page_path.strip("/"),
-            rendered_html=render_page(content, owner.username, wiki.slug) if content else None,
+            rendered_html=render_page(content, owner.username, wiki.slug, current_page_path=content_path) if content else None,
             breadcrumb=breadcrumb,
             private_band_warning=bool(content and not use_public and has_private_bands(content)),
             sibling_wikis=siblings,
@@ -891,7 +891,7 @@ def wiki_page(username, slug, page_path):
     if not page:
         page = type("Page", (), {"path": file_path, "title": os.path.basename(file_path).replace(".md", ""), "visibility": resolve_visibility(file_path, acl_rules), "updated_at": wiki.updated_at})()
 
-    rendered_html = render_page(content, owner.username, wiki.slug)
+    rendered_html = render_page(content, owner.username, wiki.slug, current_page_path=file_path)
     page_grants = resolve_grants(file_path, acl_rules) if is_owner else []
     user_can_edit = is_owner or can_write(file_path, acl_rules, user_name, page.visibility if page else None)
     return render_template(
