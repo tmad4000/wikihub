@@ -43,6 +43,7 @@ textarea { resize: vertical; min-height: 80px; }
   {% endwith %}
 
   <form method="POST" enctype="multipart/form-data" id="wiki-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label for="slug">Slug</label>
     <input type="text" id="slug" name="slug" required pattern="[a-z0-9_-]+" placeholder="my-research-wiki">
 

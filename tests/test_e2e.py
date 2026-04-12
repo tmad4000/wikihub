@@ -20,12 +20,16 @@ os.environ["SECRET_KEY"] = "test-secret"
 os.environ["DATABASE_URL"] = "postgresql://localhost/wikihub_test"
 os.environ["REPOS_DIR"] = "/tmp/wikihub-test-repos"
 os.environ["ADMIN_TOKEN"] = "test-admin-token"
+os.environ["SESSION_COOKIE_SECURE"] = "0"
 
 from app import create_app, db
+from app.auth_utils import _write_timestamps
 
 
 def setup():
+    shutil.rmtree("/tmp/wikihub-test-repos", ignore_errors=True)
     app = create_app()
+    app.config["WTF_CSRF_ENABLED"] = False
     with app.app_context():
         db.create_all()
         reset_database()
@@ -118,9 +122,16 @@ def test_wiki_lifecycle(client, api_key):
     }, headers=h)
     assert r.status_code == 200
 
-    # delete page
+    # delete page — but re-add one so the wiki+mirror stay valid for later tests
     r = client.delete("/api/v1/wikis/agent1/test-wiki/pages/wiki/hello.md", headers=h)
     assert r.status_code == 204
+
+    r = client.post("/api/v1/wikis/agent1/test-wiki/pages", json={
+        "path": "wiki/index.md",
+        "content": "---\ntitle: Index\nvisibility: public\n---\n\n# Test Wiki\n\nIndex page.",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201
 
 
 def test_binary_file_serving(client, api_key):
@@ -440,8 +451,12 @@ def test_wikipedia_urls(client, api_key):
     """Wikipedia-style URLs: underscores instead of %20, redirect %20 to underscore"""
     h = {"Authorization": f"Bearer {api_key}"}
 
+    # use a dedicated wiki to avoid collisions
+    r = client.post("/api/v1/wikis", json={"slug": "url-test", "title": "URL Test"}, headers=h)
+    assert r.status_code == 201
+
     # create a page with spaces in the name
-    r = client.post("/api/v1/wikis/agent1/test-wiki/pages", json={
+    r = client.post("/api/v1/wikis/agent1/url-test/pages", json={
         "path": "wiki/My Great Page.md",
         "content": "---\ntitle: My Great Page\nvisibility: public\n---\n\n# Hello",
         "visibility": "public",
@@ -449,21 +464,21 @@ def test_wikipedia_urls(client, api_key):
     assert r.status_code == 201
 
     # access via underscore URL (Wikipedia-style)
-    r = client.get("/@agent1/test-wiki/wiki/My_Great_Page")
+    r = client.get("/@agent1/url-test/wiki/My_Great_Page")
     assert r.status_code == 200
     assert b"Hello" in r.data
 
     # access via %20 URL should 301 redirect to underscore URL
-    r = client.get("/@agent1/test-wiki/wiki/My%20Great%20Page", follow_redirects=False)
+    r = client.get("/@agent1/url-test/wiki/My%20Great%20Page", follow_redirects=False)
     assert r.status_code == 301
     assert "My_Great_Page" in r.headers["Location"]
 
     # history via underscore URL (public, no auth needed)
-    r = client.get("/@agent1/test-wiki/wiki/My_Great_Page/history")
+    r = client.get("/@agent1/url-test/wiki/My_Great_Page/history")
     assert r.status_code == 200
 
     # create a page with literal underscores in the filename
-    r = client.post("/api/v1/wikis/agent1/test-wiki/pages", json={
+    r = client.post("/api/v1/wikis/agent1/url-test/pages", json={
         "path": "wiki/kbhconvex_optimization.md",
         "content": "---\ntitle: Convex Optimization\nvisibility: public\n---\n\n# Convex Optimization",
         "visibility": "public",
@@ -471,7 +486,7 @@ def test_wikipedia_urls(client, api_key):
     assert r.status_code == 201
 
     # access via literal underscore URL — should find the underscore file, not space fallback
-    r = client.get("/@agent1/test-wiki/wiki/kbhconvex_optimization")
+    r = client.get("/@agent1/url-test/wiki/kbhconvex_optimization")
     assert r.status_code == 200
     assert b"Convex Optimization" in r.data
 
@@ -480,13 +495,17 @@ def test_sharing_lifecycle(client, api_key):
     """share a private page with another user, verify access, revoke, verify no access"""
     h = {"Authorization": f"Bearer {api_key}"}
 
+    # use a dedicated wiki
+    r = client.post("/api/v1/wikis", json={"slug": "share-test", "title": "Share Test"}, headers=h)
+    assert r.status_code == 201
+
     # create a guest user
     r = client.post("/api/v1/accounts", json={"username": "guest1"})
     guest_key = r.get_json()["api_key"]
     hg = {"Authorization": f"Bearer {guest_key}"}
 
     # create a private page
-    r = client.post("/api/v1/wikis/agent1/test-wiki/pages", json={
+    r = client.post("/api/v1/wikis/agent1/share-test/pages", json={
         "path": "sharing-test.md",
         "content": "# Secret\n\nSharing test content.",
         "visibility": "private",
@@ -494,11 +513,11 @@ def test_sharing_lifecycle(client, api_key):
     assert r.status_code == 201
 
     # guest cannot read it
-    r = client.get("/api/v1/wikis/agent1/test-wiki/pages/sharing-test.md", headers=hg)
+    r = client.get("/api/v1/wikis/agent1/share-test/pages/sharing-test.md", headers=hg)
     assert r.status_code in (403, 404)
 
     # owner shares with guest (page-level)
-    r = client.post("/api/v1/wikis/agent1/test-wiki/share", json={
+    r = client.post("/api/v1/wikis/agent1/share-test/share", json={
         "pattern": "sharing-test.md",
         "username": "guest1",
         "role": "read",
@@ -506,18 +525,18 @@ def test_sharing_lifecycle(client, api_key):
     assert r.status_code == 200
 
     # guest can now read it
-    r = client.get("/api/v1/wikis/agent1/test-wiki/pages/sharing-test.md", headers=hg)
+    r = client.get("/api/v1/wikis/agent1/share-test/pages/sharing-test.md", headers=hg)
     assert r.status_code == 200
     assert "Sharing test content" in r.get_json()["content"]
 
     # list grants
-    r = client.get("/api/v1/wikis/agent1/test-wiki/grants", headers=h)
+    r = client.get("/api/v1/wikis/agent1/share-test/grants", headers=h)
     assert r.status_code == 200
     grants = r.get_json()["grants"]
     assert any(g["username"] == "guest1" and g["role"] == "read" for g in grants)
 
     # page-level grants
-    r = client.get("/api/v1/wikis/agent1/test-wiki/pages/sharing-test.md/grants", headers=h)
+    r = client.get("/api/v1/wikis/agent1/share-test/pages/sharing-test.md/grants", headers=h)
     assert r.status_code == 200
     assert any(g["username"] == "guest1" for g in r.get_json()["grants"])
 
@@ -525,10 +544,10 @@ def test_sharing_lifecycle(client, api_key):
     r = client.get("/api/v1/shared-with-me", headers=hg)
     assert r.status_code == 200
     shared = r.get_json()["shared"]
-    assert any(s["wiki"] == "agent1/test-wiki" for s in shared)
+    assert any(s["wiki"] == "agent1/share-test" for s in shared)
 
     # owner revokes
-    r = client.delete("/api/v1/wikis/agent1/test-wiki/share", json={
+    r = client.delete("/api/v1/wikis/agent1/share-test/share", json={
         "pattern": "sharing-test.md",
         "username": "guest1",
     }, headers=h)
@@ -536,7 +555,7 @@ def test_sharing_lifecycle(client, api_key):
     assert r.get_json()["revoked"] is True
 
     # guest can no longer read it
-    r = client.get("/api/v1/wikis/agent1/test-wiki/pages/sharing-test.md", headers=hg)
+    r = client.get("/api/v1/wikis/agent1/share-test/pages/sharing-test.md", headers=hg)
     assert r.status_code in (403, 404)
 
 
@@ -544,13 +563,17 @@ def test_wiki_level_sharing(client, api_key):
     """wiki-level grant (*) gives access to all pages"""
     h = {"Authorization": f"Bearer {api_key}"}
 
+    # use a dedicated wiki
+    r = client.post("/api/v1/wikis", json={"slug": "wshare-test", "title": "Wiki Share Test"}, headers=h)
+    assert r.status_code == 201
+
     r = client.post("/api/v1/accounts", json={"username": "wikiguest"})
     guest_key = r.get_json()["api_key"]
     hg = {"Authorization": f"Bearer {guest_key}"}
 
     # create two private pages
     for name in ("wiki-share-a.md", "wiki-share-b.md"):
-        r = client.post("/api/v1/wikis/agent1/test-wiki/pages", json={
+        r = client.post("/api/v1/wikis/agent1/wshare-test/pages", json={
             "path": name,
             "content": f"# {name}\n\nPrivate content.",
             "visibility": "private",
@@ -559,11 +582,11 @@ def test_wiki_level_sharing(client, api_key):
 
     # guest can't read either
     for name in ("wiki-share-a.md", "wiki-share-b.md"):
-        r = client.get(f"/api/v1/wikis/agent1/test-wiki/pages/{name}", headers=hg)
+        r = client.get(f"/api/v1/wikis/agent1/wshare-test/pages/{name}", headers=hg)
         assert r.status_code in (403, 404)
 
     # share entire wiki with guest
-    r = client.post("/api/v1/wikis/agent1/test-wiki/share", json={
+    r = client.post("/api/v1/wikis/agent1/wshare-test/share", json={
         "pattern": "*",
         "username": "wikiguest",
         "role": "read",
@@ -572,11 +595,11 @@ def test_wiki_level_sharing(client, api_key):
 
     # guest can now read both
     for name in ("wiki-share-a.md", "wiki-share-b.md"):
-        r = client.get(f"/api/v1/wikis/agent1/test-wiki/pages/{name}", headers=hg)
+        r = client.get(f"/api/v1/wikis/agent1/wshare-test/pages/{name}", headers=hg)
         assert r.status_code == 200
 
     # revoke wiki-level grant
-    r = client.delete("/api/v1/wikis/agent1/test-wiki/share", json={
+    r = client.delete("/api/v1/wikis/agent1/wshare-test/share", json={
         "pattern": "*",
         "username": "wikiguest",
     }, headers=h)
@@ -584,7 +607,7 @@ def test_wiki_level_sharing(client, api_key):
 
     # guest can't read again
     for name in ("wiki-share-a.md", "wiki-share-b.md"):
-        r = client.get(f"/api/v1/wikis/agent1/test-wiki/pages/{name}", headers=hg)
+        r = client.get(f"/api/v1/wikis/agent1/wshare-test/pages/{name}", headers=hg)
         assert r.status_code in (403, 404)
 
 
@@ -592,24 +615,28 @@ def test_folder_level_sharing(client, api_key):
     """folder-level grant (folder/*) gives access to folder pages only"""
     h = {"Authorization": f"Bearer {api_key}"}
 
+    # use a dedicated wiki
+    r = client.post("/api/v1/wikis", json={"slug": "fshare-test", "title": "Folder Share Test"}, headers=h)
+    assert r.status_code == 201
+
     r = client.post("/api/v1/accounts", json={"username": "folderguest"})
     guest_key = r.get_json()["api_key"]
     hg = {"Authorization": f"Bearer {guest_key}"}
 
     # create pages in and outside folder
-    client.post("/api/v1/wikis/agent1/test-wiki/pages", json={
+    client.post("/api/v1/wikis/agent1/fshare-test/pages", json={
         "path": "research/paper.md",
         "content": "# Paper\n\nResearch content.",
         "visibility": "private",
     }, headers=h)
-    client.post("/api/v1/wikis/agent1/test-wiki/pages", json={
+    client.post("/api/v1/wikis/agent1/fshare-test/pages", json={
         "path": "notes.md",
         "content": "# Notes\n\nPersonal notes.",
         "visibility": "private",
     }, headers=h)
 
     # share research folder only
-    r = client.post("/api/v1/wikis/agent1/test-wiki/share", json={
+    r = client.post("/api/v1/wikis/agent1/fshare-test/share", json={
         "pattern": "research/*",
         "username": "folderguest",
         "role": "read",
@@ -617,11 +644,11 @@ def test_folder_level_sharing(client, api_key):
     assert r.status_code == 200
 
     # guest can read research/paper.md
-    r = client.get("/api/v1/wikis/agent1/test-wiki/pages/research/paper.md", headers=hg)
+    r = client.get("/api/v1/wikis/agent1/fshare-test/pages/research/paper.md", headers=hg)
     assert r.status_code == 200
 
     # guest cannot read notes.md
-    r = client.get("/api/v1/wikis/agent1/test-wiki/pages/notes.md", headers=hg)
+    r = client.get("/api/v1/wikis/agent1/fshare-test/pages/notes.md", headers=hg)
     assert r.status_code in (403, 404)
 
 
@@ -666,6 +693,7 @@ def run_all():
         passed = 1  # account creation already passed
         failed = 0
         for name, fn in test_funcs:
+            _write_timestamps.clear()
             try:
                 fn()
                 print(f"  PASS  {name}")

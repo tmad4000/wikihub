@@ -4,10 +4,12 @@ import click
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager
+from flask_wtf.csrf import CSRFProtect
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 db = SQLAlchemy()
 login_manager = LoginManager()
+csrf = CSRFProtect()
 
 
 def create_app(config_class="config.Config"):
@@ -18,6 +20,7 @@ def create_app(config_class="config.Config"):
     db.init_app(app)
     login_manager.init_app(app)
     login_manager.login_view = "auth.login"
+    csrf.init_app(app)
 
     from app.models import User
 
@@ -36,6 +39,10 @@ def create_app(config_class="config.Config"):
 
     from app.git_backend import git_bp
     app.register_blueprint(git_bp)
+
+    csrf.exempt(api_bp)
+    csrf.exempt(agent_chat_bp)
+    csrf.exempt(git_bp)
 
     from app.routes.auth import init_oauth
     init_oauth(app)

@@ -1,3 +1,4 @@
+import re
 import os
 import secrets
 import shutil
@@ -14,6 +15,8 @@ from app.git_backend import _repo_path
 from app.routes import api_bp
 from app.wiki_ops import ensure_personal_wiki
 
+_USERNAME_RE = re.compile(r'^[a-z0-9_-]+$')
+
 
 @api_bp.route("/accounts", methods=["POST"])
 def create_account():
@@ -29,6 +32,9 @@ def create_account():
     email = data.get("email", "").strip() or None
     display_name = data.get("display_name", "").strip() or None
     password = data.get("password", "").strip() or None
+
+    if not _USERNAME_RE.match(username) or len(username) > 40:
+        return {"error": "bad_request", "message": "Username must be lowercase letters, numbers, hyphens, or underscores (max 40 chars)"}, 400
 
     if User.query.filter_by(username=username).first():
         return {"error": "conflict", "message": f"Username '{username}' already taken"}, 409

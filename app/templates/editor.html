@@ -85,6 +85,7 @@
 
 {% block body %}
 <form method="POST" class="editor-layout" id="editor-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <div class="editor-topbar">
     <div class="editor-breadcrumb">
       @{{ owner.username }} / {{ wiki.slug }} /

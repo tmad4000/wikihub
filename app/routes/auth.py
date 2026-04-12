@@ -1,5 +1,7 @@
+import re
 from collections import defaultdict, deque
 from time import time
+from urllib.parse import urlparse
 
 from flask import render_template, redirect, url_for, flash, request, session, current_app, abort
 from flask_login import login_user, logout_user, login_required
@@ -12,9 +14,41 @@ from app.routes import auth_bp
 from app.wiki_ops import ensure_personal_wiki
 
 oauth = OAuth()
+
 _SIGNUP_WINDOW_SECONDS = 3600
 _SIGNUP_MAX_PER_IP = 10
 _signup_attempts = defaultdict(deque)
+
+_LOGIN_WINDOW_SECONDS = 300
+_LOGIN_MAX_PER_IP = 20
+_login_attempts = defaultdict(deque)
+
+_USERNAME_RE = re.compile(r'^[a-z0-9_-]+$')
+
+
+def _safe_next_url(fallback=None):
+    """validate the ?next= parameter to prevent open redirects."""
+    target = request.args.get("next", "")
+    if not target:
+        return fallback or url_for("main.index")
+    parsed = urlparse(target)
+    if parsed.scheme or parsed.netloc:
+        return fallback or url_for("main.index")
+    return target
+
+
+def _check_login_rate_limit():
+    """return 429 response if login rate limit exceeded, else None."""
+    ip = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
+    attempts = _login_attempts[ip]
+    now = time()
+    while attempts and now - attempts[0] > _LOGIN_WINDOW_SECONDS:
+        attempts.popleft()
+    if len(attempts) >= _LOGIN_MAX_PER_IP:
+        flash("Too many login attempts. Try again in a few minutes.")
+        return render_template("auth/login.html"), 429
+    attempts.append(now)
+    return None
 
 
 def init_oauth(app):
@@ -32,11 +66,15 @@ def init_oauth(app):
 @auth_bp.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
+        rate_limited = _check_login_rate_limit()
+        if rate_limited:
+            return rate_limited
+
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
         api_key = request.form.get("api_key", "").strip()
 
-        # API key login — paste your key, no username/password needed
+        # API key login
         if api_key:
             key_hash = hash_api_key(api_key)
             key_row = ApiKey.query.filter_by(key_hash=key_hash).first()
@@ -48,8 +86,7 @@ def login():
                 flash("Invalid API key")
                 return render_template("auth/login.html"), 401
             login_user(user)
-            next_page = request.args.get("next", url_for("main.index"))
-            return redirect(next_page)
+            return redirect(_safe_next_url())
 
         # Username + password login
         user = User.query.filter_by(username=username).first()
@@ -58,26 +95,24 @@ def login():
             return render_template("auth/login.html"), 401
 
         login_user(user)
-        next_page = request.args.get("next", url_for("main.index"))
-        return redirect(next_page)
+        return redirect(_safe_next_url())
 
-    return render_template("auth/login.html", testing_login=current_app.config.get("TESTING_LOGIN"))
+    return render_template("auth/login.html", testing_login=current_app.debug and current_app.config.get("TESTING_LOGIN"))
 
 
 @auth_bp.route("/test-login/<username>", methods=["POST"])
 def test_login(username):
-    if not current_app.config.get("TESTING_LOGIN"):
+    if not current_app.config.get("TESTING_LOGIN") or not current_app.debug:
         abort(404)
     user = User.query.filter_by(username=username).first()
     if not user:
-        # auto-create test account
         user = User(username=username, password_hash=hash_password("test12345"))
         db.session.add(user)
         db.session.flush()
         ensure_personal_wiki(user)
         db.session.commit()
     login_user(user)
-    return redirect(request.args.get("next", url_for("main.index")))
+    return redirect(_safe_next_url())
 
 
 @auth_bp.route("/signup", methods=["GET", "POST"])
@@ -97,6 +132,10 @@ def signup():
 
         if not username or not password:
             flash("Username and password required")
+            return render_template("auth/signup.html"), 400
+
+        if not _USERNAME_RE.match(username) or len(username) > 40:
+            flash("Username must be lowercase letters, numbers, hyphens, or underscores (max 40 chars)")
             return render_template("auth/signup.html"), 400
 
         if len(password) < 8:
@@ -189,7 +228,6 @@ def google_callback():
         flash("Could not get Google user info")
         return redirect(url_for("auth.login"))
 
-    # find existing user by google_id or email
     user = User.query.filter_by(google_id=google_id).first()
     if not user and email:
         user = User.query.filter_by(email=email).first()
@@ -198,7 +236,6 @@ def google_callback():
             db.session.commit()
 
     if not user:
-        # generate username from email or name
         base_username = (email.split("@")[0] if email else name.lower().replace(" ", ""))[:32]
         username = base_username
         counter = 1

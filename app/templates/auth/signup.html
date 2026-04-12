@@ -65,6 +65,7 @@
   <div class="divider">or</div>
 
   <form method="POST">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label for="username">Username</label>
     <input type="text" id="username" name="username" autocomplete="username" required pattern="[a-z0-9_-]+" title="lowercase letters, numbers, hyphens, underscores">
     <label for="email">Email (optional)</label>

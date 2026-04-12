@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>wikihub — GitHub for LLM wikis</title>
+  <meta name="csrf-token" content="{{ csrf_token() }}">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -978,6 +979,7 @@
   </footer>
 
 <script>
+(function(){var m=document.querySelector('meta[name="csrf-token"]');if(!m)return;var F=window.fetch;window.fetch=function(u,o){o=o||{};var mt=(o.method||'GET').toUpperCase();if(mt!=='GET'&&mt!=='HEAD'){var s=typeof u==='string'?u:u.url||'';if(!s.startsWith('/api/')){o.headers=o.headers||{};if(!o.headers['X-CSRFToken'])o.headers['X-CSRFToken']=m.content}}return F.call(this,u,o)}})();
 // prevent browser from opening dropped files anywhere on the page
 document.addEventListener('dragover', (e) => { e.preventDefault(); });
 document.addEventListener('drop', (e) => { e.preventDefault(); });

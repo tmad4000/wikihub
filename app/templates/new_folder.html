@@ -48,6 +48,7 @@
     <div class="error-card">{{ error }}</div>
     {% endif %}
     <form method="POST">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       {% if parent_path %}
       <input type="hidden" name="parent" value="{{ parent_path }}">
       {% endif %}

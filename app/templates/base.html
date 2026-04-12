@@ -235,6 +235,7 @@ a:hover { text-decoration: underline; }
 {% block extra_css %}{% endblock %}
 </style>
 {% block head %}{% endblock %}
+<meta name="csrf-token" content="{{ csrf_token() }}">
 </head>
 <body>
 {% include '_nav.html' %}
@@ -251,6 +252,7 @@ a:hover { text-decoration: underline; }
 <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/highlight.min.js"></script>
 <script>
+(function(){var m=document.querySelector('meta[name="csrf-token"]');if(!m)return;var F=window.fetch;window.fetch=function(u,o){o=o||{};var mt=(o.method||'GET').toUpperCase();if(mt!=='GET'&&mt!=='HEAD'){var s=typeof u==='string'?u:u.url||'';if(!s.startsWith('/api/')){o.headers=o.headers||{};if(o.headers instanceof Headers){if(!o.headers.has('X-CSRFToken'))o.headers.set('X-CSRFToken',m.content)}else{if(!o.headers['X-CSRFToken'])o.headers['X-CSRFToken']=m.content}}}return F.call(this,u,o)}})();
 document.addEventListener('DOMContentLoaded', () => {
   try {
     renderMathInElement(document.body, {

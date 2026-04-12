@@ -64,6 +64,7 @@
   <div class="divider">or</div>
 
   <form method="POST">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label for="username">Username</label>
     <input type="text" id="username" name="username" autocomplete="username">
     <label for="password">Password</label>
@@ -74,6 +75,7 @@
   <div class="divider">or</div>
 
   <form method="POST">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label for="api_key">API Key</label>
     <input type="text" id="api_key" name="api_key" placeholder="wh_..." style="font-family: var(--font-mono); font-size: 0.8125rem;">
     <button type="submit" class="btn btn-primary" style="background: transparent; border: 1px solid var(--border-emphasis); color: var(--text-secondary);">Sign in with API key</button>
@@ -83,9 +85,11 @@
   <div class="divider">test accounts</div>
   <div style="display:flex;gap:8px;">
     <form method="POST" action="{{ url_for('auth.test_login', username='alice') }}" style="flex:1;">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit" class="btn" style="background:transparent;border:1px dashed var(--border-emphasis);color:var(--text-tertiary);font-size:0.8125rem;">Login as alice</button>
     </form>
     <form method="POST" action="{{ url_for('auth.test_login', username='bob') }}" style="flex:1;">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit" class="btn" style="background:transparent;border:1px dashed var(--border-emphasis);color:var(--text-tertiary);font-size:0.8125rem;">Login as bob</button>
     </form>
   </div>
