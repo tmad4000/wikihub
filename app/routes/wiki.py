@@ -12,7 +12,7 @@ from app.acl import can_read, can_write, grants_for_user, resolve_grants, resolv
 from app.content_utils import has_private_bands, parse_markdown_document, set_visibility_in_content
 from app.discovery import discoverable_page_for_wiki, visible_wikis_for_owner
 from app.git_backend import _repo_path
-from app.git_sync import read_file_from_repo, read_file_bytes_from_repo, list_files_in_repo, regenerate_public_mirror, remove_page_from_repo, sync_page_to_repo
+from app.git_sync import read_file_from_repo, read_file_bytes_from_repo, list_files_in_repo, regenerate_public_mirror, remove_page_from_repo, sync_page_to_repo, update_mirror_page
 from app.models import Page, User, UsernameRedirect, Wiki, Wikilink, utcnow
 from app.renderer import extract_toc, render_page
 from app.routes import wiki_bp
@@ -971,7 +971,10 @@ def edit_page(username, slug, page_path):
         author_email = f"{author_name}@wikihub" if current_user.is_authenticated else "anon@wikihub"
         msg = f"Rename {file_path} → {target_path}" if renamed else f"Update {target_path}"
         sync_page_to_repo(owner.username, wiki.slug, target_path, content, message=msg, author_name=author_name, author_email=author_email)
-        regenerate_public_mirror(owner.username, wiki.slug, acl_rules)
+        if renamed:
+            regenerate_public_mirror(owner.username, wiki.slug, acl_rules)
+        else:
+            update_mirror_page(owner.username, wiki.slug, target_path, acl_rules)
         db.session.commit()
         return redirect(_page_url(owner.username, wiki.slug, target_path))
 
@@ -1020,7 +1023,7 @@ def new_page(username, slug):
         author_name = current_user.username if current_user.is_authenticated else "anonymous"
         author_email = f"{author_name}@wikihub" if current_user.is_authenticated else "anon@wikihub"
         sync_page_to_repo(owner.username, wiki.slug, page_path, content, message=f"Create {page_path}", author_name=author_name, author_email=author_email)
-        regenerate_public_mirror(owner.username, wiki.slug, acl_rules)
+        update_mirror_page(owner.username, wiki.slug, page_path, acl_rules)
         db.session.commit()
         return redirect(_page_url(owner.username, wiki.slug, page_path))
 
@@ -1104,7 +1107,7 @@ def new_folder(username, slug):
             author_name=current_user.username,
             author_email=f"{current_user.username}@wikihub",
         )
-        regenerate_public_mirror(owner.username, wiki.slug, acl_rules)
+        update_mirror_page(owner.username, wiki.slug, file_path, acl_rules)
         db.session.commit()
         edit_path = url_path_from_page_path(f"{folder_path}/index", strip_md=True)
         return redirect(f"/@{owner.username}/{wiki.slug}/{edit_path}/edit")

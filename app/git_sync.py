@@ -264,6 +264,102 @@ def regenerate_public_mirror(username, slug, acl_rules=None):
             os.unlink(idx)
 
 
+def update_mirror_page(username, slug, filepath, acl_rules=None, deleted=False):
+    """incrementally update a single file in the public mirror.
+    loads the existing mirror tree, adds/updates/removes just the one file,
+    then writes a new commit. O(1) git ops instead of O(N files).
+    falls back to full rebuild on any error."""
+    try:
+        _update_mirror_page_impl(username, slug, filepath, acl_rules, deleted)
+    except Exception as e:
+        print(f"WARNING: incremental mirror update failed for {username}/{slug}/{filepath}, falling back to full rebuild: {e}")
+        regenerate_public_mirror(username, slug, acl_rules)
+
+
+def _update_mirror_page_impl(username, slug, filepath, acl_rules=None, deleted=False):
+    from app.acl import resolve_visibility
+
+    auth_repo = _repo_path(username, slug)
+    pub_repo = _repo_path(username, slug, public=True)
+
+    if not os.path.isdir(auth_repo) or not os.path.isdir(pub_repo):
+        return
+
+    head = _head_commit(auth_repo)
+    if not head:
+        return
+
+    idx = tempfile.mktemp(prefix="wikihub-mirror-inc-", suffix=".idx")
+    env = {"GIT_INDEX_FILE": idx}
+
+    try:
+        # load current mirror state
+        mirror_tree = _head_tree(pub_repo)
+        if mirror_tree:
+            _git(pub_repo, "read-tree", mirror_tree, env=env)
+
+        if deleted or filepath == ".wikihub/acl":
+            # remove from mirror (ignore if file wasn't in mirror)
+            try:
+                _git(
+                    pub_repo, "update-index", "--index-info", env=env,
+                    input=f"0 {'0'*40}\t{filepath}\n",
+                )
+            except subprocess.CalledProcessError:
+                pass
+        else:
+            # read file from auth repo
+            try:
+                content_bytes = _git_bytes(auth_repo, "cat-file", "blob", f"HEAD:{filepath}")
+            except subprocess.CalledProcessError:
+                return
+
+            is_markdown = filepath.endswith(".md")
+            fm_vis = None
+            if is_markdown:
+                content = content_bytes.decode("utf-8", errors="replace")
+                frontmatter, _ = parse_markdown_document(content)
+                fm_vis = frontmatter.get("visibility")
+
+            vis = resolve_visibility(filepath, acl_rules or [], fm_vis)
+            if vis == "private":
+                # remove from mirror if it was there
+                try:
+                    _git(
+                        pub_repo, "update-index", "--index-info", env=env,
+                        input=f"0 {'0'*40}\t{filepath}\n",
+                    )
+                except subprocess.CalledProcessError:
+                    pass
+            else:
+                if is_markdown:
+                    try:
+                        content = strip_private_bands(content)
+                    except Exception:
+                        pass
+                    blob_input = content.encode("utf-8")
+                else:
+                    blob_input = content_bytes
+
+                blob = _git_bytes(
+                    pub_repo, "hash-object", "-w", "--stdin",
+                    input=blob_input, env=env,
+                ).strip().decode()
+                _git(pub_repo, "update-index", "--add", "--cacheinfo",
+                     "100644", blob, filepath, env=env)
+
+        new_tree = _git(pub_repo, "write-tree", env=env)
+        new_commit = _git(
+            pub_repo, "commit-tree", new_tree,
+            "-m", f"Update {filepath} @ {head[:12]}",
+            env={**env, **_AUTHOR_ENV},
+        )
+        _git(pub_repo, "update-ref", "refs/heads/main", new_commit)
+    finally:
+        if os.path.exists(idx):
+            os.unlink(idx)
+
+
 def read_file_from_repo(username, slug, file_path, public=False):
     """read a file's content from HEAD of a bare repo."""
     repo = _repo_path(username, slug, public=public)

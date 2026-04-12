@@ -110,6 +110,29 @@ def create_app(config_class="config.Config"):
                 click.echo(f"  {path}")
         raise SystemExit(1)
 
+    @wikihub_cli.command("rebuild-mirrors")
+    @click.option("--all", "all_wikis", is_flag=True, default=False)
+    @click.argument("wiki_ref", required=False)
+    def rebuild_mirrors_command(all_wikis=False, wiki_ref=None):
+        """full rebuild of public mirrors (safety net for incremental updates)."""
+        from app.models import User, Wiki
+        from app.git_sync import regenerate_public_mirror
+        from app.wiki_ops import load_acl_rules
+
+        if all_wikis:
+            wikis = Wiki.query.all()
+        elif wiki_ref and "/" in wiki_ref:
+            owner_name, slug = wiki_ref.split("/", 1)
+            owner = User.query.filter_by(username=owner_name).first()
+            wikis = [Wiki.query.filter_by(owner_id=owner.id, slug=slug).first()] if owner else []
+        else:
+            raise click.ClickException("pass owner/slug or use --all")
+
+        for wiki in filter(None, wikis):
+            acl_rules = load_acl_rules(wiki.owner.username, wiki.slug)
+            regenerate_public_mirror(wiki.owner.username, wiki.slug, acl_rules)
+            click.echo(f"rebuilt mirror {wiki.owner.username}/{wiki.slug}")
+
     from flask import jsonify, request as req, render_template
 
     @app.errorhandler(404)

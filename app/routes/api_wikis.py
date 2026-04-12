@@ -22,6 +22,7 @@ from app.git_sync import (
     regenerate_public_mirror,
     remove_page_from_repo,
     sync_page_to_repo,
+    update_mirror_page,
 )
 from app.acl import can_read, can_write, list_all_grants, remove_grant, resolve_grants, resolve_visibility
 from app.content_utils import (
@@ -359,7 +360,7 @@ def create_page(owner, slug):
     author_name, author_email = _current_author()
     sync_page_to_repo(owner_user.username, wiki.slug, path, content, message=f"Create {path}", author_name=author_name, author_email=author_email)
     append_event_to_repo(owner_user.username, wiki.slug, "page.create", path=path, visibility=page.visibility, actor=_current_username())
-    regenerate_public_mirror(owner_user.username, wiki.slug, acl_rules)
+    update_mirror_page(owner_user.username, wiki.slug, path, acl_rules)
     db.session.commit()
 
     return jsonify({
@@ -500,7 +501,7 @@ def replace_page(owner, slug, page_path):
     refresh_wikilinks_for_page(page, content)
     author_name, author_email = _current_author()
     sync_page_to_repo(owner_user.username, wiki.slug, page.path, content, message=f"Update {page.path}", author_name=author_name, author_email=author_email)
-    regenerate_public_mirror(owner_user.username, wiki.slug, acl_rules)
+    update_mirror_page(owner_user.username, wiki.slug, page.path, acl_rules)
     db.session.commit()
 
     return jsonify({"id": page.id, "path": page.path, "title": page.title, "visibility": page.visibility})
@@ -618,7 +619,7 @@ def patch_page(owner, slug, page_path):
         )
         append_event_to_repo(owner_user.username, wiki.slug, "page.update", path=page.path, visibility=page.visibility, actor=_current_username())
 
-    regenerate_public_mirror(owner_user.username, wiki.slug, acl_rules)
+    update_mirror_page(owner_user.username, wiki.slug, page.path, acl_rules)
     db.session.commit()
 
     return jsonify({"id": page.id, "path": page.path, "title": page.title, "visibility": page.visibility})
@@ -641,13 +642,14 @@ def delete_page(owner, slug, page_path):
     if request.current_user.id != wiki.owner_id:
         return {"error": "forbidden", "message": "Only the owner can delete pages"}, 403
 
+    page_path_for_mirror = page.path
     remove_page_from_repo(owner_user.username, wiki.slug, page.path)
     append_event_to_repo(owner_user.username, wiki.slug, "page.delete", path=page.path, actor=request.current_user.username)
     db.session.delete(page)
     db.session.commit()
 
     acl_rules = load_acl_rules(owner_user.username, wiki.slug)
-    regenerate_public_mirror(owner_user.username, wiki.slug, acl_rules)
+    update_mirror_page(owner_user.username, wiki.slug, page_path_for_mirror, acl_rules, deleted=True)
 
     return "", 204
 
