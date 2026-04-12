@@ -27,12 +27,6 @@ def explore():
     # Editorial picks: curated wikis that represent the best of wikihub
     _EDITORIAL_PICKS = [
         ("wikihub", "wikihub"),
-        ("jacobcole", "ideas"),
-        ("jacobcole", "quotes"),
-        ("jacobcole", "rsi-wiki"),
-        ("jacobcole", "admitsphere"),
-        ("jacobcole", "llm-wiki-ecosystem"),
-        ("harrisonqian", "tools-stack"),
     ]
     editorial = []
     for owner_name, slug in _EDITORIAL_PICKS:
