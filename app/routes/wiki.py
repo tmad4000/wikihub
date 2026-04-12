@@ -855,9 +855,14 @@ def wiki_page(username, slug, page_path):
         abort(404)
 
     wants_markdown = "text/markdown" in request.headers.get("Accept", "")
-    html_url_path = url_path_from_page_path(page_path, strip_md=True)
+    html_url_path = url_path_from_page_path(raw_page_path if raw_page_path.endswith(".md") else page_path, strip_md=True)
     md_url_path = url_path_from_page_path(file_path, strip_md=False)
-    if wants_markdown or page_path.endswith(".md"):
+
+    # .md in URL: browsers get redirected to the clean HTML URL,
+    # API clients requesting text/markdown get raw markdown.
+    if page_path.endswith(".md") and not wants_markdown:
+        return redirect(f"/@{owner.username}/{wiki.slug}/{html_url_path}", code=302)
+    if wants_markdown:
         return Response(
             content,
             content_type="text/markdown; charset=utf-8",
