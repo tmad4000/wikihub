@@ -214,8 +214,9 @@ def regenerate_public_mirror(username, slug, acl_rules=None):
             # read file content from authoritative repo
             try:
                 content_bytes = _git_bytes(auth_repo, "cat-file", "blob", f"HEAD:{filepath}")
-            except subprocess.CalledProcessError:
-                continue  # skip files git can't read (encoding issues, etc)
+            except subprocess.CalledProcessError as e:
+                print(f"WARNING: mirror skipped {filepath}: git cat-file failed: {e}")
+                continue
 
             is_markdown = filepath.endswith(".md")
 
@@ -232,7 +233,10 @@ def regenerate_public_mirror(username, slug, acl_rules=None):
 
             # strip private bands from markdown files
             if is_markdown:
-                content = strip_private_bands(content)
+                try:
+                    content = strip_private_bands(content)
+                except Exception as e:
+                    print(f"WARNING: mirror skipped private-band stripping for {filepath}: {e}")
                 blob_input = content.encode("utf-8")
             else:
                 blob_input = content_bytes
