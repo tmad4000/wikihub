@@ -377,14 +377,12 @@ def _git_history(username, slug, public=False, path=None, limit=50):
     if not os.path.isdir(repo):
         return []
 
+    # use %x00 (NUL) as record separator — cleaner than \x1e with --name-only
     cmd = [
-        "git",
-        "-C",
-        repo,
-        "log",
-        "--format=%H%x1f%an%x1f%aI%x1f%s%x1e",
-        "--name-only",
+        "git", "-C", repo, "log",
         f"--max-count={limit}",
+        "--format=%H%x1f%an%x1f%aI%x1f%s",
+        "--name-only",
     ]
     if path:
         cmd += ["--", path]
@@ -393,27 +391,33 @@ def _git_history(username, slug, public=False, path=None, limit=50):
     if result.returncode != 0:
         return []
 
+    # parse: each commit is a format line followed by a blank line, then file names, then another blank line
+    # format line has exactly 3 \x1f separators; file lines have none
     commits = []
-    for chunk in result.stdout.split("\x1e"):
-        chunk = chunk.strip()
-        if not chunk:
+    current = None
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line:
             continue
-        lines = [line for line in chunk.splitlines() if line.strip()]
-        if not lines:
-            continue
-        parts = lines[0].split("\x1f")
-        if len(parts) != 4:
-            continue
-        sha, author, date, message = parts
-        commits.append(
-            {
+        parts = line.split("\x1f")
+        if len(parts) == 4:
+            # this is a format line = start of a new commit
+            if current:
+                commits.append(current)
+            sha, author, date, message = parts
+            current = {
                 "sha": sha,
                 "author": author,
                 "date": date,
                 "message": message,
-                "files_changed": lines[1:],
+                "files_changed": [],
             }
-        )
+        elif current:
+            # this is a filename belonging to the current commit
+            current["files_changed"].append(line)
+    if current:
+        commits.append(current)
+
     return commits
 
 
