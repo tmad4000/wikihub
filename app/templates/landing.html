@@ -133,6 +133,9 @@
     .nav-account-item.logout { color: #d88c75; }
     .nav-account-item .menu-hint { font-family: var(--font-mono); font-size: 0.6875rem; color: var(--text-muted); }
     .search-trigger { display: none; }
+    {% if current_user and current_user.is_authenticated %}
+    @media (min-width: 640px) { .search-trigger { display: flex; } }
+    {% endif %}
     @media (min-width: 640px) { .nav { padding: 0 24px; } }
 
     /* ── btn (used elsewhere on landing) ── */
@@ -1064,5 +1067,47 @@ document.querySelectorAll('[data-account-menu]').forEach(menu => {
   });
 });
 </script>
+{% if current_user and current_user.is_authenticated %}
+<style>
+.search-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 200; }
+.search-overlay.open { display: block; }
+.search-modal {
+  display: none; position: fixed; top: 15vh; left: 50%; transform: translateX(-50%);
+  width: calc(100% - 32px); max-width: 600px;
+  background: var(--bg-elevated); border: 1px solid var(--border-emphasis);
+  border-radius: var(--radius-lg); z-index: 201; overflow: hidden;
+}
+.search-modal.open { display: block; }
+@media (max-width: 767px) {
+  .search-modal.open { top: 0; left: 0; right: 0; bottom: 0; transform: none; width: 100%; max-width: none; border-radius: 0; max-height: 100vh; }
+}
+.search-input {
+  width: 100%; padding: 16px 20px; border: none; outline: none;
+  background: transparent; color: var(--text-primary);
+  font-size: 1.125rem; font-family: var(--font-body);
+  border-bottom: 1px solid var(--border-default);
+}
+.search-input::placeholder { color: var(--text-muted); }
+#search-results { max-height: 400px; overflow-y: auto; }
+.search-result {
+  display: block; padding: 12px 20px; text-decoration: none;
+  border-bottom: 1px solid var(--border-default);
+  transition: background 0.1s ease;
+}
+.search-result:hover, .search-result.active { background: var(--accent-subtle); text-decoration: none; }
+.search-result-path { font-size: 0.6875rem; color: var(--text-muted); font-family: var(--font-mono); margin-bottom: 2px; }
+.search-result-title { font-size: 0.875rem; color: var(--text-primary); font-weight: 500; margin-bottom: 2px; }
+.search-result-excerpt { font-size: 0.75rem; color: var(--text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search-empty { padding: 20px; text-align: center; color: var(--text-muted); font-size: 0.875rem; }
+.search-create { display: block; padding: 12px 20px; color: var(--accent); font-size: 0.875rem; text-decoration: none; font-weight: 500; }
+.search-create:hover { background: var(--accent-subtle); text-decoration: none; }
+</style>
+<div class="search-overlay" id="search-overlay"></div>
+<div class="search-modal" id="search-modal" data-username="{{ current_user.username }}">
+  <input type="text" class="search-input" id="search-input" placeholder="Search wikis..." autocomplete="off">
+  <div id="search-results"></div>
+</div>
+<script src="{{ url_for('static', filename='js/search.js') }}"></script>
+{% endif %}
 </body>
 </html>
