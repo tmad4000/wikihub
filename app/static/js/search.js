@@ -9,6 +9,7 @@
   let debounceTimer;
   let activeIndex = 0;
   let items = [];
+  let searchId = 0; // track request freshness
 
   function open() {
     modal.classList.add('open');
@@ -59,7 +60,14 @@
       if (items.length) setActive(Math.max(activeIndex - 1, 0));
     } else if (e.key === 'Enter') {
       e.preventDefault();
-      activateItem();
+      if (e.metaKey || e.ctrlKey) {
+        // Cmd+Enter: always trigger create (last item) if available
+        const createEl = results.querySelector('.search-create');
+        if (createEl) createEl.click();
+        else activateItem();
+      } else {
+        activateItem();
+      }
     }
   });
 
@@ -80,9 +88,14 @@
       return;
     }
 
+    const thisSearch = ++searchId;
+
     fetch('/api/v1/search?q=' + encodeURIComponent(q) + '&limit=8')
       .then(r => r.json())
       .then(data => {
+        // ignore stale responses from earlier searches
+        if (thisSearch !== searchId) return;
+
         results.textContent = '';
         items = [];
         activeIndex = 0;
