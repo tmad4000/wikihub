@@ -143,7 +143,7 @@
         {% set file_path = line.replace('diff --git a/', '').split(' b/')[0] %}
         {% set current_file.name = file_path %}
         <div class="diff-block">
-          <div class="diff-file-header">{{ file_path }}</div>
+          <div class="diff-file-header"><a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ file_path | page_url }}" style="color:inherit;text-decoration:underline;text-decoration-color:var(--border-accent);">{{ file_path }}</a></div>
       {% elif kind == 'meta' %}
         {# skip --- and +++ lines, file header covers it #}
       {% else %}

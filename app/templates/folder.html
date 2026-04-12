@@ -212,7 +212,9 @@
         </div>
         {% set visible_files = commit.files_changed | reject('equalto', '.wikihub/events.jsonl') | reject('equalto', '.wikihub/acl') | list %}
         {% if visible_files %}
-        <div style="font-size:0.8125rem;color:var(--text-secondary);">{{ visible_files | join(', ') }}</div>
+        <div style="font-size:0.8125rem;color:var(--text-secondary);">
+          {% for f in visible_files %}{% if not loop.first %}, {% endif %}<a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ f | page_url }}" style="color:var(--accent);text-decoration:none;" onclick="event.stopPropagation();">{{ f }}</a>{% endfor %}
+        </div>
         {% endif %}
       </a>
       {% endfor %}
