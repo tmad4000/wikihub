@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>wikihub — GitHub for LLM wikis</title>
+  <meta name="csrf-token" content="{{ csrf_token() }}">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -132,7 +133,15 @@
     .nav-account-item:hover { background: var(--accent-subtle); color: var(--text-primary); text-decoration: none; }
     .nav-account-item.logout { color: #d88c75; }
     .nav-account-item .menu-hint { font-family: var(--font-mono); font-size: 0.6875rem; color: var(--text-muted); }
-    .search-trigger { display: none; }
+    .search-trigger {
+      display: none; -webkit-appearance: none; appearance: none;
+      background: #1a1816 !important; border: 1px solid var(--control-border);
+      border-radius: var(--radius-sm); color: var(--text-muted); cursor: pointer;
+      font-size: 0.75rem; font-family: var(--font-body); min-height: 32px;
+      align-items: center; gap: 6px; padding: 6px 12px;
+    }
+    .search-trigger:hover { border-color: var(--border-emphasis); color: var(--text-secondary); }
+    .search-trigger kbd { font-family: var(--font-mono); font-size: 0.625rem; background: var(--bg-elevated); padding: 1px 4px; border-radius: 3px; border: 1px solid var(--border-default); }
     {% if current_user and current_user.is_authenticated %}
     @media (min-width: 640px) { .search-trigger { display: flex; } }
     {% endif %}
@@ -969,6 +978,25 @@
     </div>
   </footer>
 
+<script>
+(function() {
+  var csrfToken = document.querySelector('meta[name="csrf-token"]');
+  if (!csrfToken) return;
+  var origFetch = window.fetch;
+  window.fetch = function(url, opts) {
+    opts = opts || {};
+    var method = (opts.method || 'GET').toUpperCase();
+    if (method !== 'GET' && method !== 'HEAD') {
+      var urlStr = typeof url === 'string' ? url : url.url || '';
+      if (!urlStr.startsWith('/api/')) {
+        opts.headers = opts.headers || {};
+        if (!opts.headers['X-CSRFToken']) opts.headers['X-CSRFToken'] = csrfToken.content;
+      }
+    }
+    return origFetch.call(this, url, opts);
+  };
+})();
+</script>
 <script>
 // prevent browser from opening dropped files anywhere on the page
 document.addEventListener('dragover', (e) => { e.preventDefault(); });
