@@ -1023,20 +1023,54 @@ if (heroZone) {
 
     function resetHeroZone() { heroZone.style.pointerEvents = ''; heroZone.style.opacity = ''; }
 
-    function handleUploadResponse(r) {
-      if (r.redirected && !r.url.includes('/auth/login')) {
-        window.location.href = r.url;
-      } else {
-        resetHeroZone();
-        heroStatus.textContent = 'Sign in to create your wiki — your files will be waiting for you.';
-        sessionStorage.setItem('wikihub_pending_upload', JSON.stringify(names));
-        setTimeout(() => { window.location.href = '/auth/login?next=/new'; }, 1500);
-      }
+    function stashFilesAndRedirect(files, slug) {
+      var req = indexedDB.open('wikihub_uploads', 1);
+      req.onupgradeneeded = function(e) { e.target.result.createObjectStore('pending'); };
+      req.onsuccess = function(e) {
+        var db = e.target.result;
+        var tx = db.transaction('pending', 'readwrite');
+        var store = tx.objectStore('pending');
+        var fileData = [];
+        var done = 0;
+        Array.from(files).forEach(function(f) {
+          var reader = new FileReader();
+          reader.onload = function() {
+            fileData.push({ name: f.name, type: f.type, data: reader.result });
+            done++;
+            if (done === files.length) {
+              store.put({ files: fileData, slug: slug, title: slug.replace(/-/g, ' ') }, 'upload');
+              tx.oncomplete = function() {
+                window.location.href = '/auth/login?next=/new';
+              };
+            }
+          };
+          reader.readAsArrayBuffer(f);
+        });
+      };
+      req.onerror = function() { window.location.href = '/auth/login?next=/new'; };
     }
 
-    fetch('/new', { method: 'POST', body: fd, redirect: 'follow' })
-      .then(handleUploadResponse)
-      .catch(err => { resetHeroZone(); heroStatus.textContent = 'Upload failed: ' + err.message; });
+    function doUpload(fileList, slug) {
+      var fd = new FormData();
+      fd.append('slug', slug);
+      fd.append('title', slug.replace(/-/g, ' '));
+      fd.append('description', '');
+      for (var i = 0; i < fileList.length; i++) fd.append('files', fileList[i]);
+
+      fetch('/new', { method: 'POST', body: fd, redirect: 'follow' })
+        .then(function(r) {
+          if (r.redirected && !r.url.includes('/auth/login')) {
+            window.location.href = r.url;
+          } else {
+            resetHeroZone();
+            heroStatus.textContent = 'Sign in to create your wiki — your files will be waiting.';
+            stashFilesAndRedirect(fileList, slug);
+          }
+        })
+        .catch(function(err) { resetHeroZone(); heroStatus.textContent = 'Upload failed: ' + err.message; });
+    }
+
+    doUpload(files, slug);
   });
 
   heroZone.addEventListener('click', () => heroFileInput.click());
@@ -1053,15 +1087,7 @@ if (heroZone) {
     heroZone.style.pointerEvents = 'none';
     heroZone.style.opacity = '0.7';
 
-    const fd = new FormData();
-    fd.append('slug', slug);
-    fd.append('title', slug.replace(/-/g, ' '));
-    fd.append('description', '');
-    for (const f of files) fd.append('files', f);
-
-    fetch('/new', { method: 'POST', body: fd, redirect: 'follow' })
-      .then(handleUploadResponse)
-      .catch(err => { resetHeroZone(); heroStatus.textContent = 'Upload failed: ' + err.message; });
+    doUpload(files, slug);
   });
 }
 

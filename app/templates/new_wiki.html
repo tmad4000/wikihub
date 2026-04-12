@@ -145,5 +145,32 @@ form.addEventListener('submit', (ev) => {
     })
     .catch(err => { btn.classList.remove('btn-loading'); btn.textContent = 'Create wiki'; alert('Upload failed: ' + err.message); });
 });
+
+// restore files stashed from landing page drop (before signup redirect)
+(function() {
+  var req = indexedDB.open('wikihub_uploads', 1);
+  req.onupgradeneeded = function(e) { e.target.result.createObjectStore('pending'); };
+  req.onsuccess = function(e) {
+    var db = e.target.result;
+    var tx = db.transaction('pending', 'readwrite');
+    var store = tx.objectStore('pending');
+    var get = store.get('upload');
+    get.onsuccess = function() {
+      if (!get.result) return;
+      var pending = get.result;
+      store.delete('upload');
+      var files = pending.files.map(function(f) {
+        return new File([f.data], f.name, { type: f.type });
+      });
+      droppedFiles = files;
+      var slugInput = document.getElementById('slug');
+      var titleInput = document.querySelector('input[name="title"]');
+      if (slugInput && !slugInput.value) slugInput.value = pending.slug || '';
+      if (titleInput && !titleInput.value) titleInput.value = pending.title || '';
+      updateFileList(files);
+      heroStatus = document.getElementById('hero-drop-status');
+    };
+  };
+})();
 </script>
 {% endblock %}
