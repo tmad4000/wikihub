@@ -1011,7 +1011,7 @@ def new_page(username, slug):
     if requested_path:
         page_path = requested_path if requested_path.endswith(".md") else requested_path + ".md"
     else:
-        base = "wiki/new-page"
+        base = "new-page"
         page_path = f"{base}.md"
         n = 2
         while Page.query.filter_by(wiki_id=wiki.id, path=page_path).first():

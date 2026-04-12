@@ -141,13 +141,13 @@
 
             const createPath = document.createElement('div');
             createPath.className = 'search-result-path';
-            createPath.textContent = 'wiki/' + slug + '.md → @' + wikiOwner + '/' + wikiSlug;
+            createPath.textContent = slug + '.md → @' + wikiOwner + '/' + wikiSlug;
             create.appendChild(createPath);
 
             create.addEventListener('click', (e) => {
               e.preventDefault();
               window.location.href = '/@' + wikiOwner + '/' + wikiSlug +
-                '/new?path=wiki/' + encodeURIComponent(slug);
+                '/new?path=' + encodeURIComponent(slug);
               close();
             });
             results.appendChild(create);
