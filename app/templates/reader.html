@@ -208,6 +208,18 @@
   border-radius: var(--radius-sm); cursor: pointer;
 }
 .share-form button:hover { opacity: 0.9; }
+.share-suggestions {
+  display: none; position: absolute; top: 100%; left: 0; right: 0; z-index: 10;
+  background: var(--bg-elevated); border: 1px solid var(--border-emphasis);
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm); max-height: 160px; overflow-y: auto;
+}
+.share-suggestions.open { display: block; }
+.share-suggestion {
+  padding: 8px 12px; cursor: pointer; font-size: 0.8125rem; display: flex; gap: 8px; align-items: center;
+}
+.share-suggestion:hover, .share-suggestion.active { background: var(--accent-subtle); }
+.share-suggestion .sg-user { color: var(--text-primary); font-weight: 500; }
+.share-suggestion .sg-name { color: var(--text-muted); font-size: 0.75rem; }
 .share-grants { list-style: none; padding: 0; margin: 0; }
 .share-grants li {
   display: flex; align-items: center; justify-content: space-between;
@@ -1310,7 +1322,10 @@ document.addEventListener('DOMContentLoaded', function() {
   <div class="share-modal">
     <h3>Share "{{ page.title or page.path }}"</h3>
     <div class="share-form">
-      <input type="text" id="share-username" placeholder="username" autocomplete="off">
+      <div style="position:relative;flex:1;">
+        <input type="text" id="share-username" placeholder="username or email" autocomplete="off" style="width:100%;margin:0;">
+        <div id="share-suggestions" class="share-suggestions"></div>
+      </div>
       <select id="share-role">
         <option value="read">read</option>
         <option value="edit">edit</option>
@@ -1341,34 +1356,106 @@ function closeShareModal() {
   document.getElementById('share-overlay').classList.remove('open');
 }
 function submitShare() {
-  var username = document.getElementById('share-username').value.trim().toLowerCase();
+  var input = document.getElementById('share-username').value.trim().toLowerCase();
   var role = document.getElementById('share-role').value;
   var status = document.getElementById('share-status');
-  if (!username) return;
+  if (!input) return;
   status.style.display = 'block';
   status.style.color = 'var(--text-muted)';
   status.textContent = 'Sharing...';
+  // Detect email vs username
+  var body = {pattern: '{{ page.path }}', role: role};
+  if (input.includes('@') && input.includes('.')) {
+    body.email = input;
+  } else {
+    body.username = input;
+  }
   fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}/share', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({pattern: '{{ page.path }}', username: username, role: role})
+    body: JSON.stringify(body)
   }).then(function(r) { return r.json(); }).then(function(d) {
     if (d.error) {
       status.style.color = 'var(--color-private)';
       status.textContent = d.message || 'Error';
     } else {
+      var grantedUser = d.grant.split(':')[0].replace('@', '');
       status.style.color = 'var(--color-success, #4a9)';
-      status.textContent = 'Shared with @' + username;
+      status.textContent = 'Shared with @' + grantedUser;
       document.getElementById('share-username').value = '';
+      closeSuggestions();
       var empty = document.getElementById('share-empty');
       if (empty) empty.remove();
       var li = document.createElement('li');
-      li.setAttribute('data-user', username);
-      li.innerHTML = '<span class="grant-info"><a href="/@' + username + '">@' + username + '</a> <span class="role-badge role-' + role + '">' + role + '</span></span><button class="revoke-btn" onclick="revokeShare(\'' + username + '\')">revoke</button>';
+      li.setAttribute('data-user', grantedUser);
+      li.innerHTML = '<span class="grant-info"><a href="/@' + grantedUser + '">@' + grantedUser + '</a> <span class="role-badge role-' + role + '">' + role + '</span></span><button class="revoke-btn" onclick="revokeShare(\'' + grantedUser + '\')">revoke</button>';
       document.getElementById('share-grants-list').appendChild(li);
     }
   });
 }
+
+// --- Autocomplete ---
+var shareInput = document.getElementById('share-username');
+var suggestionsEl = document.getElementById('share-suggestions');
+var debounceTimer = null;
+var activeSuggestion = -1;
+
+function closeSuggestions() {
+  suggestionsEl.classList.remove('open');
+  suggestionsEl.innerHTML = '';
+  activeSuggestion = -1;
+}
+
+shareInput.addEventListener('input', function() {
+  var q = this.value.trim();
+  clearTimeout(debounceTimer);
+  if (q.length < 2) { closeSuggestions(); return; }
+  debounceTimer = setTimeout(function() {
+    fetch('/api/v1/users/search?q=' + encodeURIComponent(q))
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (!d.users || !d.users.length) { closeSuggestions(); return; }
+        suggestionsEl.innerHTML = '';
+        d.users.forEach(function(u, i) {
+          var div = document.createElement('div');
+          div.className = 'share-suggestion';
+          div.innerHTML = '<span class="sg-user">@' + u.username + '</span>' +
+            (u.display_name ? '<span class="sg-name">' + u.display_name + '</span>' : '');
+          div.addEventListener('click', function() {
+            shareInput.value = u.username;
+            closeSuggestions();
+            shareInput.focus();
+          });
+          suggestionsEl.appendChild(div);
+        });
+        suggestionsEl.classList.add('open');
+        activeSuggestion = -1;
+      });
+  }, 200);
+});
+
+shareInput.addEventListener('keydown', function(e) {
+  var items = suggestionsEl.querySelectorAll('.share-suggestion');
+  if (!items.length) return;
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    activeSuggestion = Math.min(activeSuggestion + 1, items.length - 1);
+    items.forEach(function(el, i) { el.classList.toggle('active', i === activeSuggestion); });
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    activeSuggestion = Math.max(activeSuggestion - 1, 0);
+    items.forEach(function(el, i) { el.classList.toggle('active', i === activeSuggestion); });
+  } else if (e.key === 'Enter' && activeSuggestion >= 0) {
+    e.preventDefault();
+    items[activeSuggestion].click();
+  } else if (e.key === 'Escape') {
+    closeSuggestions();
+  }
+});
+
+shareInput.addEventListener('blur', function() {
+  setTimeout(closeSuggestions, 200);
+});
 function revokeShare(username) {
   fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}/share', {
     method: 'DELETE',
