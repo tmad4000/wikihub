@@ -200,8 +200,9 @@
           <span>{{ commit.author }}</span>
           <span>{{ commit.date[:10] }}</span>
         </div>
-        {% if commit.files_changed %}
-        <div style="font-size:0.8125rem;color:var(--text-secondary);">{{ commit.files_changed | join(', ') }}</div>
+        {% set visible_files = commit.files_changed | reject('equalto', '.wikihub/events.jsonl') | reject('equalto', '.wikihub/acl') | list %}
+        {% if visible_files %}
+        <div style="font-size:0.8125rem;color:var(--text-secondary);">{{ visible_files | join(', ') }}</div>
         {% endif %}
       </a>
       {% endfor %}

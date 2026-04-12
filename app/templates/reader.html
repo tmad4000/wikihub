@@ -663,7 +663,7 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
         Reindex
       </button>
-      {% elif page.visibility in ('public-edit', 'unlisted-edit') %}
+      {% elif user_can_edit is defined and user_can_edit %}
       <a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ page.path | page_url }}/edit" class="action-btn">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
         Edit

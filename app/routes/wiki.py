@@ -678,7 +678,10 @@ def wiki_tag_index(username, slug, tag_name):
 @wiki_bp.route("/@<username>/<slug>/history")
 def wiki_history(username, slug):
     owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
-    commits = _git_history(owner.username, wiki.slug, public=not _is_owner(wiki))
+    # always read from authoritative repo — public mirror is linearized to 1 commit
+    raw_commits = _git_history(owner.username, wiki.slug, public=False)
+    # filter out internal event log commits (noise)
+    commits = [c for c in raw_commits if not c["message"].startswith("Log ")]
     return render_template("folder.html", owner=owner, wiki=wiki, items=[], sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=not _is_owner(wiki)), folder_path="history", rendered_html=None, breadcrumb=[("History", None)], history_commits=commits)
 
 
@@ -688,7 +691,9 @@ def page_history(username, slug, folder_path):
     folder_path = page_path_from_url_path(folder_path)
     owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
     path = raw_folder_path if raw_folder_path.endswith(".md") else f"{raw_folder_path}.md"
-    commits = _git_history(owner.username, wiki.slug, public=not _is_owner(wiki), path=path)
+    # always read from authoritative repo
+    raw_commits = _git_history(owner.username, wiki.slug, public=False, path=path)
+    commits = [c for c in raw_commits if not c["message"].startswith("Log ")]
     return render_template("folder.html", owner=owner, wiki=wiki, items=[], sidebar_items=_build_sidebar_tree(owner.username, wiki.slug, wiki, public=not _is_owner(wiki), current_path=path), folder_path=f"{path} history", rendered_html=None, breadcrumb=[("History", None)], history_commits=commits)
 
 
@@ -877,6 +882,7 @@ def wiki_page(username, slug, page_path):
 
     rendered_html = render_page(content, owner.username, wiki.slug)
     page_grants = resolve_grants(file_path, acl_rules) if is_owner else []
+    user_can_edit = is_owner or can_write(file_path, acl_rules, user_name, page.visibility if page else None)
     return render_template(
         "reader.html",
         owner=owner,
@@ -892,6 +898,7 @@ def wiki_page(username, slug, page_path):
         json_ld_author=owner.display_name or owner.username,
         sibling_wikis=siblings,
         page_grants=page_grants,
+        user_can_edit=user_can_edit,
     ), 200, {
         "Vary": "Accept",
         "Link": f'</@{owner.username}/{wiki.slug}/{md_url_path}>; rel="alternate"; type="text/markdown"',
@@ -967,6 +974,7 @@ def edit_page(username, slug, page_path):
     content = read_file_from_repo(owner.username, wiki.slug, file_path, public=False) or ""
     visibility = page.visibility if page else resolve_visibility(file_path, acl_rules)
 
+    page_grants = resolve_grants(file_path, acl_rules) if is_owner else []
     return render_template(
         "editor.html",
         owner=owner,
@@ -975,6 +983,7 @@ def edit_page(username, slug, page_path):
         content=content,
         visibility=visibility,
         is_owner=is_owner,
+        page_grants=page_grants,
     )
 
 
