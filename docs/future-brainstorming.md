@@ -104,3 +104,58 @@ The Librarian would be wikihub's AI agent — accessible via `@librarian` on the
 - The one entity that has read everything on the platform
 - Explicitly a tool/daemon, not pretending to be human — but with personality
 - Powered by the MCP surface — uses the same API any agent uses, just the best-informed one
+
+---
+
+## Social Graph + Collective Intelligence (2026-04-10, Harrison Qian brainstorm)
+
+### Follow users + personalized feed (`wikihub-9bi`)
+
+Follow other users on WikiHub. When you search, results from people you follow are prioritized.
+
+**Key insight (Harrison):** Instagram/Twitter influencers promote restaurants, products, businesses — but you can't search against what people you follow have recommended. ChatGPT can't search your social graph. WikiHub can because wiki content is structured and searchable.
+
+**Vision:** "WikiHub influencers" — people known for curating great knowledge in specific domains. Following them means their recommendations surface first in your searches. A new generation of wiki influencers.
+
+### Cross-wiki search across trusted friends (`wikihub-7nl`)
+
+When searching, optionally search across wikis that friends have shared with you.
+
+**Example:** "Who are investors I should talk to for my next funding round?" → searches across your friends' shared wikis, surfaces connections with intro paths.
+
+Harrison: "One of the greatest offerings you can do is open your wiki to someone." The trust relationship enables knowledge sharing that wouldn't happen on a public platform. Since we have trusted relationships, you can list people and provide intro paths.
+
+### Contribute-back from AI conversations — Stack Overflow for agents (`wikihub-fuj`)
+
+When someone gets coding help or research answers from an AI conversation, contribute the Q&A back to a public wiki in an anonymized way.
+
+Harrison: "Everyone's getting coding help in a private context and not online. Stack Overflow is a ghost town. But what if you can contribute back your AI answers in an anonymized way?"
+
+This is the Claude Collective Intelligence (CCI) pattern applied to WikiHub. A "Stack Overflow for agents" — literally could be Stack Overflow, but for the agent era.
+
+### Wiki matchmaking — opt-in discovery (`wikihub-bh0`)
+
+Based on private wiki content (opt-in only), suggest people with complementary thinking/skills.
+
+- "This person thinks a lot like you"
+- "This person has really complementary thinking/skills to you"
+
+Harrison: "As the gods of WikiHub, we can shape how all kinds of connections happen. We have godlike matchmaker power."
+
+**Critical:** Must be opt-in. Privacy-sensitive since it's based on private content. Careful about information asymmetry — founders never want to broadcast that they need investors.
+
+### SEO + LLM crawlability (`wikihub-76d`)
+
+Wiki content is part of the internet and crawlable. Backlinked wiki pages boost SEO. When someone asks ChatGPT "vegetarian restaurants in Palo Alto", WikiHub content should surface.
+
+Harrison: "If we have a bunch of different pages that are backlinked to each other, our SEO will go crazy."
+
+### Fan wiki auto-updaters (`wikihub-acj`)
+
+Automated scripts that watch new episodes of shows, read new books, and update fan wikis. Good example of the daily log + wiki page pattern.
+
+Harrison: "The daily notes are like a changelog. And then the articles are like the tags. That's how you project IdeaFlow into WikiHub."
+
+### Daily log → wiki projection pattern
+
+The IdeaFlow/Karpathy shared insight: the daily log structure is the changelog, and wiki pages are the persistent articles. When you ingest a new source, it updates the log and ripple-updates the relevant wiki pages. This is how personal knowledge management (daily notes) maps to the wiki structure.

@@ -88,6 +88,9 @@ when starting a batch of work, run `bd list` to see open issues. close beads as 
 
 **ticket-first rule:** always create a beads ticket before implementing a feature or fix. close the ticket when done. this is the project's workflow — no exceptions.
 
+**recurring issues:** use `bd label add <id> recurring` to tag bugs that keep coming back. before working on related code, check `bd list --label recurring` and verify those areas aren't regressed. current recurring issues:
+- **wikihub-58c** (sidebar indentation) — check child nesting depth after any sidebar CSS/template change
+
 ## verification: agent-browser is mandatory
 
 **after making any UI or route change, verify it with `agent-browser` against the running dev server.** do not rely solely on e2e tests or curl. the user expects visual confirmation that the change works.
