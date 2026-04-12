@@ -130,8 +130,19 @@ form.addEventListener('submit', (ev) => {
   const fd = new FormData(form);
   fd.delete('files');
   for (const f of droppedFiles) fd.append('files', f);
-  fetch(form.action || window.location.href, { method: 'POST', body: fd, redirect: 'follow' })
-    .then(r => { if (r.redirected) { window.location.href = r.url; } else { window.location.reload(); } })
+  fetch(form.action || window.location.href, { method: 'POST', body: fd, redirect: 'manual' })
+    .then(r => {
+      if (r.type === 'opaqueredirect' || r.status === 302 || r.status === 301) {
+        window.location.href = r.headers.get('Location') || '/@' + fd.get('slug');
+      } else if (r.redirected) {
+        window.location.href = r.url;
+      } else if (r.ok) {
+        window.location.href = '/@{{ current_user.username }}/' + (fd.get('slug') || '');
+      } else {
+        btn.classList.remove('btn-loading'); btn.textContent = 'Create wiki';
+        alert('Upload failed (status ' + r.status + ')');
+      }
+    })
     .catch(err => { btn.classList.remove('btn-loading'); btn.textContent = 'Create wiki'; alert('Upload failed: ' + err.message); });
 });
 </script>

@@ -243,6 +243,7 @@ def _page_url(username, slug, page_path):
 
 def _build_sidebar_tree(username, slug, wiki, public=False, current_path=None, acl_filter_user=None):
     root = {"children": {}}
+    pages_by_path = {p.path: p for p in Page.query.filter_by(wiki_id=wiki.id).all()}
 
     for path in sorted(_visible_files(username, slug, wiki, public=public, acl_filter_user=acl_filter_user)):
         parts = path.split("/")
@@ -266,12 +267,14 @@ def _build_sidebar_tree(username, slug, wiki, public=False, current_path=None, a
         if filename in {"index.md", "README.md"} and len(parts) > 1:
             continue
 
+        page = pages_by_path.get(path)
         cursor[("page", path)] = {
             "kind": "page",
             "name": filename.replace(".md", ""),
             "path": path,
             "url": _page_url(username, slug, path),
             "active": current_path == path,
+            "visibility": page.visibility if page else "private",
             "children": {},
         }
 
