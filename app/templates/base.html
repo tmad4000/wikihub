@@ -295,6 +295,15 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 });
 </script>
+<footer style="text-align:center;padding:24px 16px 16px;font-size:0.6875rem;color:var(--text-muted);font-family:var(--font-mono);">
+  <a href="/explore" style="color:var(--text-muted);text-decoration:none;">explore</a>
+  &middot;
+  <a href="/people" style="color:var(--text-muted);text-decoration:none;">people</a>
+  &middot;
+  <a href="/agents" style="color:var(--text-muted);text-decoration:none;">agents</a>
+  &middot;
+  <a href="/api/v1/admin/claude-auth" style="color:var(--text-muted);text-decoration:none;">admin</a>
+</footer>
 <script src="{{ url_for('static', filename='js/search.js') }}"></script>
 {% block scripts %}{% endblock %}
 </body>
