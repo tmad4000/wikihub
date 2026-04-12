@@ -12,7 +12,7 @@ from app.url_utils import url_path_from_page_path
 
 from app import db
 from app.models import User, Wiki, Page, Star, Fork, Wikilink, utcnow
-from app.auth_utils import api_auth_optional, api_auth_required
+from app.auth_utils import api_auth_optional, api_auth_required, rate_limit_writes
 from app.git_backend import init_wiki_repo
 from app.git_sync import (
     apply_repo_changes,
@@ -308,6 +308,7 @@ def unstar_wiki(owner, slug):
 
 @api_bp.route("/wikis/<owner>/<slug>/pages", methods=["POST"])
 @api_auth_optional
+@rate_limit_writes()
 def create_page(owner, slug):
     owner_user, wiki, err = _get_wiki_or_404(owner, slug)
     if err:
@@ -455,6 +456,7 @@ def read_page(owner, slug, page_path):
 
 @api_bp.route("/wikis/<owner>/<slug>/pages/<path:page_path>", methods=["PUT"])
 @api_auth_optional
+@rate_limit_writes()
 def replace_page(owner, slug, page_path):
     owner_user, wiki, err = _get_wiki_or_404(owner, slug)
     if err:
@@ -506,6 +508,7 @@ def replace_page(owner, slug, page_path):
 
 @api_bp.route("/wikis/<owner>/<slug>/pages/<path:page_path>", methods=["PATCH"])
 @api_auth_optional
+@rate_limit_writes()
 def patch_page(owner, slug, page_path):
     owner_user, wiki, err = _get_wiki_or_404(owner, slug)
     if err:
@@ -623,6 +626,7 @@ def patch_page(owner, slug, page_path):
 
 @api_bp.route("/wikis/<owner>/<slug>/pages/<path:page_path>", methods=["DELETE"])
 @api_auth_required
+@rate_limit_writes()
 def delete_page(owner, slug, page_path):
     owner_user, wiki, err = _get_wiki_or_404(owner, slug)
     if err:
@@ -650,6 +654,7 @@ def delete_page(owner, slug, page_path):
 
 @api_bp.route("/wikis/<owner>/<slug>/pages/<path:page_path>/visibility", methods=["POST"])
 @api_auth_required
+@rate_limit_writes()
 def set_page_visibility(owner, slug, page_path):
     owner_user, wiki, err = _get_wiki_or_404(owner, slug)
     if err:
@@ -684,6 +689,7 @@ def set_page_visibility(owner, slug, page_path):
 
 @api_bp.route("/wikis/<owner>/<slug>/bulk-visibility", methods=["POST"])
 @api_auth_required
+@rate_limit_writes()
 def bulk_visibility(owner, slug):
     """change visibility for multiple pages at once."""
     owner_user, wiki, err = _get_wiki_or_404(owner, slug)
@@ -738,6 +744,7 @@ def bulk_visibility(owner, slug):
 
 @api_bp.route("/wikis/<owner>/<slug>/bulk-delete", methods=["POST"])
 @api_auth_required
+@rate_limit_writes()
 def bulk_delete(owner, slug):
     """delete multiple pages (supports folder prefixes)."""
     owner_user, wiki, err = _get_wiki_or_404(owner, slug)

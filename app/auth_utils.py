@@ -7,6 +7,8 @@ Bearer token extraction from requests.
 
 import hashlib
 import secrets
+import time
+from collections import defaultdict
 
 import bcrypt
 from flask import request
@@ -14,6 +16,9 @@ from functools import wraps
 
 from app import db
 from app.models import User, ApiKey
+
+# sliding window: user_id -> list of monotonic timestamps
+_write_timestamps = defaultdict(list)
 
 
 def hash_password(password):
@@ -93,3 +98,34 @@ def api_auth_optional(f):
         request.current_user = get_current_user_from_request()
         return f(*args, **kwargs)
     return decorated
+
+
+def rate_limit_writes(max_per_minute=10):
+    """reject requests when an authenticated user exceeds max_per_minute writes.
+    must be applied after an auth decorator so request.current_user is set."""
+    def decorator(f):
+        @wraps(f)
+        def wrapped(*args, **kwargs):
+            user = getattr(request, "current_user", None)
+            if not user:
+                return f(*args, **kwargs)
+
+            key = user.id
+            now = time.monotonic()
+            window = 60
+
+            timestamps = _write_timestamps[key]
+            _write_timestamps[key] = timestamps = [t for t in timestamps if now - t < window]
+
+            if len(timestamps) >= max_per_minute:
+                retry_after = int(timestamps[0] + window - now) + 1
+                return {
+                    "error": "rate_limited",
+                    "message": f"Too many write requests ({max_per_minute}/min). Retry in {retry_after}s.",
+                    "retry_after": retry_after,
+                }, 429, {"Retry-After": str(retry_after)}
+
+            timestamps.append(now)
+            return f(*args, **kwargs)
+        return wrapped
+    return decorator
