@@ -12,7 +12,17 @@ precedence (most specific wins):
 import fnmatch
 import re
 
-VALID_VISIBILITIES = {"private", "public", "public-edit", "unlisted", "unlisted-edit"}
+VALID_VISIBILITIES = {"private", "public", "public-view", "public-edit", "unlisted", "unlisted-view", "unlisted-edit"}
+
+# normalize old names → new names
+VISIBILITY_ALIASES = {"public": "public-view", "unlisted": "unlisted-view"}
+
+
+def normalize_visibility(vis):
+    """normalize visibility: accept old names, return canonical form."""
+    if not vis:
+        return vis
+    return VISIBILITY_ALIASES.get(vis, vis)
 GRANT_RE = re.compile(r"^@([\w-]+):(read|edit)$")
 
 

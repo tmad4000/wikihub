@@ -23,7 +23,7 @@ def _recently_updated_pages(wiki, limit=8, public_only=False):
     """get the most recently updated pages for a wiki."""
     query = Page.query.filter_by(wiki_id=wiki.id)
     if public_only:
-        query = query.filter(Page.visibility.in_(('public', 'public-edit')))
+        query = query.filter(Page.visibility.in_(('public', 'public-view', 'public-edit')))
     return query.order_by(Page.updated_at.desc()).limit(limit).all()
 
 
@@ -223,7 +223,7 @@ def _visible_files(username, slug, wiki, public=False, acl_filter_user=None):
     discoverable = {
         page.path
         for page in Page.query.filter_by(wiki_id=wiki.id).all()
-        if page.visibility in ("public", "public-edit")
+        if page.visibility in ("public", "public-view", "public-edit")
     }
     return [
         path
@@ -532,7 +532,7 @@ def wiki_llms_txt(username, slug):
     ]
 
     pages = Page.query.filter_by(wiki_id=wiki.id).filter(
-        Page.visibility.in_(["public", "public-edit"])
+        Page.visibility.in_(["public", "public-view", "public-edit"])
     ).order_by(Page.path).all()
 
     for p in pages:

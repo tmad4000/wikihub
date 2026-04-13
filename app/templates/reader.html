@@ -105,13 +105,13 @@
   border-radius: var(--radius-sm); margin-bottom: 20px;
 }
 .vis-badge svg { width: 14px; height: 14px; }
-.vis-badge.public { color: var(--color-public); background: rgba(122, 158, 107, 0.1); border: 1px solid rgba(122, 158, 107, 0.2); }
+.vis-badge.public, .vis-badge.public-view { color: var(--color-public); background: rgba(122, 158, 107, 0.1); border: 1px solid rgba(122, 158, 107, 0.2); }
 .vis-badge.private { color: var(--color-private); background: rgba(196, 92, 60, 0.1); border: 1px solid rgba(196, 92, 60, 0.2); }
-.vis-badge.unlisted { color: var(--color-unlisted); background: rgba(184, 173, 158, 0.1); border: 1px solid rgba(184, 173, 158, 0.2); }
+.vis-badge.unlisted, .vis-badge.unlisted-view { color: var(--color-unlisted); background: rgba(184, 173, 158, 0.1); border: 1px solid rgba(184, 173, 158, 0.2); }
 .vis-pill { font-size: 0.7rem; padding: 3px 8px; border-radius: var(--radius-sm); border: 1px solid var(--border-emphasis); color: var(--text-secondary); }
-.vis-pill.public, .vis-pill.public-edit { color: var(--color-public); border-color: rgba(122, 158, 107, 0.2); }
+.vis-pill.public, .vis-pill.public-view, .vis-pill.public-edit { color: var(--color-public); border-color: rgba(122, 158, 107, 0.2); }
 .vis-pill.private { color: var(--color-private); border-color: rgba(196, 92, 60, 0.2); }
-.vis-pill.unlisted, .vis-pill.unlisted-edit { color: var(--color-unlisted); border-color: rgba(184, 173, 158, 0.2); }
+.vis-pill.unlisted, .vis-pill.unlisted-view, .vis-pill.unlisted-edit { color: var(--color-unlisted); border-color: rgba(184, 173, 158, 0.2); }
 .vis-pill.mixed { color: var(--text-muted); border-color: rgba(184, 173, 158, 0.2); font-style: italic; }
 .vis-badge.public-edit { color: var(--accent); background: rgba(212, 160, 74, 0.1); border: 1px solid rgba(212, 160, 74, 0.2); }
 .vis-badge.unlisted-edit { color: var(--accent); background: rgba(212, 160, 74, 0.1); border: 1px solid rgba(212, 160, 74, 0.2); }
@@ -610,7 +610,7 @@
         {% else %}
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
         {% endif %}
-        {{ page.visibility | replace('public-edit', 'Public Edit') | replace('unlisted-edit', 'Unlisted Edit') | replace('public', 'Public View') | replace('private', 'Private') | replace('unlisted', 'Unlisted') }}
+        {{ page.visibility | replace('public-view', 'Public View') | replace('public-edit', 'Public Edit') | replace('unlisted-view', 'Unlisted') | replace('unlisted-edit', 'Unlisted Edit') | replace('public', 'Public View') | replace('private', 'Private') | replace('unlisted', 'Unlisted') }}
       </span>
 
       <div class="actions-spacer"></div>
@@ -724,7 +724,7 @@
             {% endif %}
             <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ item.name }}</span>
           </a>
-          <span class="vis-pill {{ item.visibility }}" style="font-size:0.7rem;padding:2px 6px;">{{ item.visibility | replace('mixed', 'Mixed') | replace('public-edit', 'Public Edit') | replace('unlisted-edit', 'Unlisted Edit') | replace('public', 'Public View') | replace('private', 'Private') | replace('unlisted', 'Unlisted') }}</span>
+          <span class="vis-pill {{ item.visibility }}" style="font-size:0.7rem;padding:2px 6px;">{{ item.visibility | replace('mixed', 'Mixed') | replace('public-view', 'Public View') | replace('public-edit', 'Public Edit') | replace('unlisted-view', 'Unlisted') | replace('unlisted-edit', 'Unlisted Edit') | replace('public', 'Public View') | replace('private', 'Private') | replace('unlisted', 'Unlisted') }}</span>
           <span style="font-size:0.7rem;color:var(--text-muted);font-family:var(--font-mono);">{{ item.updated_at.strftime('%Y-%m-%d') if item.updated_at else '' }}</span>
           <button style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border:none;background:transparent;color:var(--text-muted);cursor:pointer;border-radius:var(--radius-sm);" title="Delete" onclick="deleteMgmtItem('{{ item.path }}{{ '/' if item.kind == 'folder' else '' }}', '{{ item.name }}', '{{ item.kind }}')">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
@@ -738,9 +738,9 @@
         <span id="mgmt-count" style="color:var(--accent);font-weight:600;font-family:var(--font-mono);">0</span>
         <span style="color:var(--text-secondary);">selected</span>
         <select id="mgmt-vis-select" style="background:var(--bg-surface);color:var(--text-primary);border:1px solid var(--border-emphasis);border-radius:var(--radius-sm);padding:3px 8px;font-size:0.8125rem;font-family:var(--font-body);">
-          <option value="public">Public View</option>
+          <option value="public-view">Public View</option>
           <option value="public-edit">Public Edit</option>
-          <option value="unlisted">Unlisted</option>
+          <option value="unlisted-view">Unlisted</option>
           <option value="unlisted-edit">Unlisted Edit</option>
           <option value="private">Private</option>
         </select>

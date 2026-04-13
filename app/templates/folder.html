@@ -48,9 +48,9 @@
 .contents-name span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .contents-meta { font-size: 0.75rem; color: var(--text-muted); font-family: var(--font-mono); }
 .vis-pill { font-size: 0.7rem; padding: 3px 8px; border-radius: var(--radius-sm); border: 1px solid var(--border-emphasis); color: var(--text-secondary); }
-.vis-pill.public, .vis-pill.public-edit { color: var(--color-public); border-color: rgba(122, 158, 107, 0.2); }
+.vis-pill.public, .vis-pill.public-view, .vis-pill.public-edit { color: var(--color-public); border-color: rgba(122, 158, 107, 0.2); }
 .vis-pill.private { color: var(--color-private); border-color: rgba(196, 92, 60, 0.2); }
-.vis-pill.unlisted, .vis-pill.unlisted-edit { color: var(--color-unlisted); border-color: rgba(184, 173, 158, 0.2); }
+.vis-pill.unlisted, .vis-pill.unlisted-view, .vis-pill.unlisted-edit { color: var(--color-unlisted); border-color: rgba(184, 173, 158, 0.2); }
 .history-list { display: grid; gap: 10px; }
 .history-card { border: 1px solid var(--border-default); border-radius: var(--radius-md); padding: 14px 16px; background: var(--bg-surface); transition: border-color 0.15s ease; }
 .history-card:hover { border-color: var(--border-accent); }
@@ -237,7 +237,7 @@
           {% endif %}
           <span>{{ item.name }}</span>
         </div>
-        <span class="vis-pill {{ item.visibility }}">{{ item.visibility | replace('public-edit', 'Public Edit') | replace('unlisted-edit', 'Unlisted Edit') | replace('public', 'Public View') | replace('private', 'Private') | replace('unlisted', 'Unlisted') }}</span>
+        <span class="vis-pill {{ item.visibility }}">{{ item.visibility | replace('public-view', 'Public View') | replace('public-edit', 'Public Edit') | replace('unlisted-view', 'Unlisted') | replace('unlisted-edit', 'Unlisted Edit') | replace('public', 'Public View') | replace('private', 'Private') | replace('unlisted', 'Unlisted') }}</span>
         <span class="contents-meta">{{ item.updated_at.strftime('%Y-%m-%d') if item.updated_at else '' }}</span>
       </a>
       {% else %}
