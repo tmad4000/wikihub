@@ -393,6 +393,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function show(el, data) {
+    clearTimeout(hideTimer);
     var c = createCard();
     c.textContent = '';
     var pageUrl = el.getAttribute('href') || ('/@' + data._owner + '/' + data._slug + '/' + data.path);
@@ -422,6 +423,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function showLoading(el) {
+    clearTimeout(hideTimer);
     var c = createCard();
     c.textContent = '';
     var loading = document.createElement('div');
@@ -447,6 +449,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function showAt(rect, data) {
+    clearTimeout(hideTimer);
     var c = createCard();
     c.textContent = '';
     var titleEl = document.createElement('div');
