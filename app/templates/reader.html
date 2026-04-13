@@ -289,6 +289,17 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
             Copy clone URL
           </button>
+          {% if current_user.is_authenticated and current_user.id == wiki.owner_id and wiki.slug != owner.username %}
+          <div style="border-top:1px solid var(--border-default);margin:4px 0;"></div>
+          <button class="download-option" onclick="renameWiki()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+            Rename wiki
+          </button>
+          <button class="download-option" style="color:var(--color-private);" onclick="deleteWiki()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            Delete wiki
+          </button>
+          {% endif %}
         </div>
       </div>
 
@@ -374,6 +385,28 @@ function toggleFolder(path) {
   const state = loadFolders();
   state[path] = folder.classList.contains('open');
   saveFolders(state);
+}
+
+function renameWiki() {
+  var newSlug = prompt('New slug for this wiki (URL-safe, lowercase):', '{{ wiki.slug }}');
+  if (!newSlug || newSlug === '{{ wiki.slug }}') return;
+  newSlug = newSlug.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '-');
+  if (!confirm('Rename "{{ wiki.slug }}" to "' + newSlug + '"? Old URLs will redirect.')) return;
+  fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}/rename', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({slug: newSlug})
+  }).then(r => r.json().then(d => {
+    if (r.ok) { location.href = d.url; }
+    else { alert(d.message || 'Rename failed'); }
+  }));
+}
+
+function deleteWiki() {
+  if (!confirm('Delete the entire wiki "{{ wiki.slug }}"? All pages and history will be lost.')) return;
+  if (!confirm('Are you sure? This cannot be undone.')) return;
+  fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}', {method: 'DELETE'})
+    .then(r => { if (r.ok) location.href = '/@{{ owner.username }}'; else r.json().then(d => alert(d.message || 'Delete failed')); });
 }
 
 function starWiki() {
