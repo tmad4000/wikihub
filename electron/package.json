@@ -5,7 +5,7 @@
   "description": "Desktop app for WikiHub — GitHub for LLM wikis",
   "main": "main.js",
   "scripts": {
-    "start": "electron .",
+    "start": "electron . --remote-debugging-port=9223",
     "build": "electron-builder --mac",
     "build:dmg": "electron-builder --mac dmg",
     "build:zip": "electron-builder --mac zip"
