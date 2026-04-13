@@ -1070,6 +1070,11 @@ def search_pages():
         if len(parts) == 2:
             query = query.filter(User.username == parts[0], Wiki.slug == parts[1])
 
+    # scope to author (all wikis by a user)
+    author_param = request.args.get("author")
+    if scope == "author" and author_param:
+        query = query.filter(User.username == author_param)
+
     # only show pages the user can see
     user = getattr(request, "current_user", None)
     if user:

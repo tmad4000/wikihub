@@ -226,6 +226,28 @@ a:hover { text-decoration: underline; }
   border-bottom: 1px solid var(--border-default);
 }
 .search-input::placeholder { color: var(--text-muted); }
+.search-scope {
+  display: none; align-items: center; gap: 6px; padding: 4px 12px;
+  font-size: 0.75rem; color: var(--text-tertiary);
+  border-bottom: 1px solid var(--border-default);
+}
+.search-scope.active { display: flex; }
+.search-scope-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; border-radius: 99px;
+  border: 1px solid var(--border-accent, var(--accent)); color: var(--accent);
+  font-family: var(--font-mono); font-size: 0.6875rem;
+}
+.search-scope-pill button {
+  background: none; border: none; color: var(--text-muted);
+  cursor: pointer; padding: 0; font-size: 0.75rem; line-height: 1;
+}
+.search-scope-pill button:hover { color: var(--text-primary); }
+.search-scope-global {
+  font-family: var(--font-mono); font-size: 0.6875rem;
+  color: var(--text-muted); cursor: pointer;
+}
+.search-scope-global:hover { color: var(--text-secondary); }
 #search-results { max-height: 400px; overflow-y: auto; }
 .search-result {
   display: block; padding: 12px 20px; text-decoration: none;
@@ -276,6 +298,7 @@ a:hover { text-decoration: underline; }
 <div class="search-overlay" id="search-overlay"></div>
 <div class="search-modal" id="search-modal"{% if current_user and current_user.is_authenticated %} data-username="{{ current_user.username }}"{% endif %}>
   <input type="text" class="search-input" id="search-input" placeholder="Search wikis..." autocomplete="off">
+  <div class="search-scope" id="search-scope"></div>
   <div id="search-results"></div>
 </div>
 
