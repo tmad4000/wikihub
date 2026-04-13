@@ -4,7 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>wikihub — GitHub for LLM wikis</title>
-  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+  <meta property="og:title" content="wikihub — GitHub for LLM wikis">
+  <meta property="og:description" content="The home for markdown knowledge bases. Bring your files or let your agent build it.">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="wikihub">
+  <meta name="description" content="The home for markdown knowledge bases. Bring your files or let your agent build it.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">

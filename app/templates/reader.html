@@ -1,5 +1,8 @@
 {% extends "base.html" %}
 {% block title %}{{ page.title or page.path }} — {{ wiki.title or wiki.slug }} — wikihub{% endblock %}
+{% block og_title %}{{ page.title or page.path }} — {{ wiki.title or wiki.slug }}{% endblock %}
+{% block og_desc %}{{ page.excerpt or wiki.description or '' }}{% endblock %}
+{% block meta_desc %}{{ page.excerpt or wiki.description or '' }}{% endblock %}
 
 {% block extra_css %}
 .reader-layout { display: flex; min-height: calc(100vh - 56px); }
