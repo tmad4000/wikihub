@@ -122,7 +122,12 @@
 
     {% if commit %}
     <div class="commit-header">
-      <div class="commit-message">{{ commit.message }}</div>
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
+        <div class="commit-message">{{ commit.message }}</div>
+        {% if current_user.is_authenticated and current_user.id == wiki.owner_id and commit.files_changed %}
+        <button style="flex-shrink:0;padding:6px 12px;font-size:0.75rem;font-weight:600;border:1px solid var(--border-emphasis);background:transparent;color:var(--text-secondary);border-radius:var(--radius-sm);cursor:pointer;font-family:var(--font-body);" onclick="revertCommit()">Revert to this</button>
+        {% endif %}
+      </div>
       <div class="commit-meta">
         <span>{{ commit.sha[:12] }}</span>
         <span>{{ commit.author }}</span>
@@ -189,5 +194,30 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 });
+
+{% if current_user.is_authenticated and current_user.id == wiki.owner_id and commit and commit.files_changed %}
+function revertCommit() {
+  var files = {{ commit.files_changed | tojson }};
+  var sha = '{{ commit.sha }}';
+  if (!confirm('Revert ' + files.length + ' file(s) to commit ' + sha.substring(0, 12) + '?')) return;
+  var done = 0;
+  var errors = [];
+  files.forEach(function(path) {
+    fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}/revert', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({sha: sha, path: path})
+    })
+    .then(function(r) { return r.json().then(function(d) { if (!r.ok) errors.push(path + ': ' + d.message); done++; checkDone(); }); })
+    .catch(function() { errors.push(path); done++; checkDone(); });
+  });
+  function checkDone() {
+    if (done < files.length) return;
+    if (errors.length) alert('Some files failed:\n' + errors.join('\n'));
+    else alert('Reverted ' + files.length + ' file(s) to ' + sha.substring(0, 12));
+    location.reload();
+  }
+}
+{% endif %}
 </script>
 {% endblock %}

@@ -1174,6 +1174,63 @@ def wiki_history(owner, slug):
     return jsonify({"commits": commits, "total": len(commits)})
 
 
+@api_bp.route("/wikis/<owner>/<slug>/revert", methods=["POST"])
+@api_auth_required
+@rate_limit_writes()
+def revert_page(owner, slug):
+    """revert a file to its content at a given commit SHA."""
+    owner_user, wiki, err = _get_wiki_or_404(owner, slug)
+    if err:
+        return err
+    if request.current_user.id != wiki.owner_id:
+        return {"error": "forbidden", "message": "Only the owner can revert"}, 403
+
+    data = request.get_json(silent=True) or {}
+    sha = data.get("sha", "").strip()
+    path = data.get("path", "").strip()
+    if not sha or not path:
+        return {"error": "invalid", "message": "sha and path are required"}, 400
+
+    from app.git_backend import _repo_path
+
+    repo = _repo_path(owner_user.username, wiki.slug)
+    if not os.path.isdir(repo):
+        return {"error": "not_found", "message": "Repo not found"}, 404
+
+    # read file content at the given SHA
+    result = subprocess.run(
+        ["git", "-C", repo, "cat-file", "blob", f"{sha}:{path}"],
+        capture_output=True, check=False,
+    )
+    if result.returncode != 0:
+        return {"error": "not_found", "message": f"File '{path}' not found at commit {sha[:12]}"}, 404
+
+    content = result.stdout.decode("utf-8", errors="replace")
+
+    # write as new commit
+    sync_page_to_repo(
+        owner_user.username, wiki.slug, path, content,
+        message=f"Revert {path} to {sha[:12]}",
+        author_name=request.current_user.username,
+        author_email=f"{request.current_user.username}@wikihub",
+    )
+
+    # update DB
+    page = Page.query.filter_by(wiki_id=wiki.id, path=path).first()
+    if page:
+        from app.content_utils import parse_markdown_document
+        frontmatter, _ = parse_markdown_document(content)
+        page.visibility = frontmatter.get("visibility") or page.visibility
+        update_page_metadata(page, content, frontmatter)
+        refresh_wikilinks_for_page(page, content)
+
+    acl_rules = load_acl_rules(owner_user.username, wiki.slug)
+    update_mirror_page(owner_user.username, wiki.slug, path, acl_rules)
+    db.session.commit()
+
+    return jsonify({"path": path, "sha": sha, "message": f"Reverted to {sha[:12]}"})
+
+
 # --- admin endpoints (called by post-receive hook) ---
 
 @api_bp.route("/admin/sync-page", methods=["POST"])
