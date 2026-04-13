@@ -103,6 +103,8 @@
 .profile-wiki .article .external-link::after { content: ' ↗'; font-size: 0.7em; opacity: 0.7; }
 .profile-wiki .article .external-link { color: var(--color-external); }
 .profile-wiki .article strong { color: var(--text-primary); }
+.profile-wiki .article .katex-display { margin: 24px 0; overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
+.profile-wiki .article .math.amsmath { margin: 24px 0; overflow-x: auto; overflow-y: hidden; text-align: center; }
 .private-band-warning {
   margin-bottom: 20px; padding: 12px 14px;
   border: 1px solid rgba(212, 160, 74, 0.2);
@@ -255,8 +257,11 @@
         <h2 style="margin-bottom:0;">Wikis</h2>
         {% if is_owner %}
         <div class="action-row">
-          <a href="/new" class="action-btn primary">New wiki</a>
-          <button class="action-btn secondary" onclick="reindexAll(this)">Reindex all</button>
+          {% if personal_wiki %}
+          <a href="/@{{ owner.username }}/{{ personal_wiki.slug }}/new" class="action-btn primary">New page</a>
+          {% endif %}
+          <a href="/new" class="action-btn secondary">New wiki</a>
+          <button style="background:none;border:none;padding:6px 8px;font-size:0.75rem;color:var(--text-muted);cursor:pointer;" onmouseover="this.style.color='var(--text-secondary)'" onmouseout="this.style.color='var(--text-muted)'" onclick="reindexAll(this)">Reindex all</button>
         </div>
         {% endif %}
       </div>
