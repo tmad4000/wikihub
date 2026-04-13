@@ -802,8 +802,9 @@ def wiki_page(username, slug, page_path):
 
     # serve non-markdown files (images, PDFs, etc.) as raw binary
     _MARKDOWN_EXTS = {".md", ".markdown", ".mdown", ".mkd"}
+    _BINARY_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico", ".pdf", ".zip", ".tar", ".gz", ".mp3", ".mp4", ".wav", ".ogg", ".webm", ".woff", ".woff2", ".ttf", ".eot", ".csv", ".json", ".xml", ".yaml", ".yml", ".toml"}
     ext = os.path.splitext(page_path)[1].lower()
-    if ext and ext not in _MARKDOWN_EXTS and not request.path.endswith("/"):
+    if ext and ext in _BINARY_EXTS and not request.path.endswith("/"):
         import mimetypes
         is_owner = _is_owner(wiki)
         acl_rules = load_acl_rules(owner.username, wiki.slug)
