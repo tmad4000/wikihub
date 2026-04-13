@@ -10,6 +10,7 @@ For each page that contains a Google Docs link:
 Idempotent: skips pages that already have inlined content (marker comment present).
 """
 
+import os
 import re
 import sys
 import time
@@ -161,11 +162,17 @@ def build_private_note(original_content, doc_url):
 
 
 def main():
-    global WIKIHUB_BASE, DRY_RUN
+    global WIKIHUB_BASE, DRY_RUN, API_KEY, HEADERS
     args = sys.argv[1:]
     if "--local" in args:
         WIKIHUB_BASE = "http://localhost:5100"
         log("Running against LOCAL dev server")
+        # Use API key from env if provided (prod key won't work locally)
+        env_key = os.environ.get("WIKIHUB_API_KEY")
+        if env_key:
+            API_KEY = env_key
+            HEADERS["Authorization"] = f"Bearer {API_KEY}"
+            log(f"Using API key from env: {API_KEY[:11]}...")
     if "--dry-run" in args:
         DRY_RUN = True
         log("DRY RUN — no pages will be updated")
@@ -186,12 +193,17 @@ def main():
     }
     results = []
 
+    pages_processed = 0  # count of pages with gdocs (for batch pausing)
+
     for i, page_info in enumerate(pages):
         path = page_info["path"]
 
         # Skip index pages
         if path in ("index.md",):
             continue
+
+        log(f"Page {i+1}/{len(pages)}: checking {path}")
+        time.sleep(2)  # rate limit wikihub API
 
         page = get_page_content(path)
         if not page:
@@ -202,6 +214,7 @@ def main():
         # Check if already inlined
         if INLINE_MARKER in content:
             stats["already_inlined"] += 1
+            log(f"  → already inlined, skipping")
             continue
 
         # Extract Google Docs URLs
@@ -211,12 +224,17 @@ def main():
             continue
 
         stats["with_gdoc"] += 1
+        pages_processed += 1
         doc_id, doc_url = gdoc_urls[0]  # Use first Google Doc link
 
-        log(f"[{i+1}/{len(pages)}] {path} -> doc {doc_id[:12]}...")
+        # Batch pause every 20 pages to avoid sustained load
+        if pages_processed > 1 and (pages_processed - 1) % 20 == 0:
+            log(f"  ⏸ batch pause (processed {pages_processed - 1} gdoc pages), waiting 10s...")
+            time.sleep(10)
 
-        # Rate limit: be nice to Google and wikihub server
-        time.sleep(1)
+        log(f"  fetching doc {doc_id[:16]}...")
+
+        time.sleep(2)  # rate limit Google Docs API
 
         doc_text, error = export_gdoc_text(doc_id)
 
@@ -228,6 +246,7 @@ def main():
             else:
                 try:
                     update_page(path, new_content)
+                    time.sleep(2)  # rate limit wikihub API
                     stats["fetched"] += 1
                     stats["updated"] += 1
                     results.append({"path": path, "status": "inlined", "doc_id": doc_id})
@@ -244,6 +263,7 @@ def main():
             else:
                 try:
                     update_page(path, new_content)
+                    time.sleep(2)  # rate limit wikihub API
                     stats["private"] += 1
                     stats["updated"] += 1
                     results.append({"path": path, "status": "private", "doc_id": doc_id})
