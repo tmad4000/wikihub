@@ -62,9 +62,9 @@
 {% macro render_sidebar(items, level=0) %}
   {% for item in items %}
     {% if item.kind == 'folder' %}
-    <div class="sidebar-folder {{ 'open' if item.active else '' }}" data-folder-path="{{ item.path }}">
+    <div class="sidebar-folder {{ 'open' if item.active else '' }}" data-folder-path="{{ item.path }}" data-name="{{ item.name }}" data-kind="folder" data-updated="{{ item.updated_at or '' }}">
       <div class="sidebar-folder-row">
-        <button type="button" class="sidebar-folder-toggle" onclick="toggleFolder('{{ item.path }}')">
+        <button type="button" class="sidebar-folder-toggle">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
         </button>
         <a href="{{ item.url }}" class="sidebar-item {{ 'active' if item.active else '' }}">
@@ -77,7 +77,7 @@
       </div>
     </div>
     {% else %}
-    <a href="{{ item.url }}" class="sidebar-item {{ 'active' if item.active else '' }}">
+    <a href="{{ item.url }}" class="sidebar-item {{ 'active' if item.active else '' }}" data-name="{{ item.name }}" data-kind="page" data-updated="{{ item.updated_at or '' }}" data-path="{{ item.path }}">
       <span class="sidebar-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>
       <span>{{ item.name }}</span>
       {% if item.visibility is defined and item.visibility == 'private' %}
@@ -98,6 +98,14 @@
       {% else %}
       <a href="/@{{ owner.username }}/{{ wiki.slug }}" class="sidebar-heading" style="text-decoration:none;display:block;">{{ wiki.title or wiki.slug }}</a>
       {% endif %}
+      <div class="sidebar-sort" style="padding:0 12px 4px;display:flex;gap:2px;">
+        <button class="sidebar-sort-btn active" data-sort="alpha" title="A → Z" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:20px;border:none;background:transparent;color:var(--text-muted);cursor:pointer;padding:0;border-radius:var(--radius-sm);font-size:0.625rem;font-family:var(--font-mono);opacity:0.5;">A↓</button>
+        <button class="sidebar-sort-btn" data-sort="alpha-desc" title="Z → A" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:20px;border:none;background:transparent;color:var(--text-muted);cursor:pointer;padding:0;border-radius:var(--radius-sm);font-size:0.625rem;font-family:var(--font-mono);opacity:0.5;">Z↓</button>
+        <button class="sidebar-sort-btn" data-sort="recent" title="Recently updated" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:20px;border:none;background:transparent;color:var(--text-muted);cursor:pointer;padding:0;border-radius:var(--radius-sm);opacity:0.5;">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        </button>
+      </div>
+      <div id="sidebar-tree">
       {% if sidebar_items %}
       {{ render_sidebar(sidebar_items or []) }}
       {% else %}
@@ -105,6 +113,7 @@
         <div style="padding:8px 12px;color:var(--text-muted);font-size:0.8125rem;">Loading...</div>
       </div>
       {% endif %}
+      </div>
       {% if current_user.is_authenticated and current_user.id == wiki.owner_id %}
       <a href="/@{{ owner.username }}/{{ wiki.slug }}/new{% if folder_path %}?path={{ (folder_path ~ '/') | urlencode }}{% endif %}" class="sidebar-item" style="color:var(--accent);margin-top:8px;">New page</a>
       <a href="/@{{ owner.username }}/{{ wiki.slug }}/new-folder{% if folder_path %}?parent={{ folder_path | urlencode }}{% endif %}" class="sidebar-item" style="color:var(--accent);">New folder</a>
@@ -273,6 +282,14 @@ function toggleFolder(path) {
   localStorage.setItem(folderStorageKey, JSON.stringify(state));
 }
 
+// Event delegation for folder toggles
+document.addEventListener('click', function(e) {
+  var btn = e.target.closest('.sidebar-folder-toggle');
+  if (!btn) return;
+  var folder = btn.closest('.sidebar-folder');
+  if (folder) toggleFolder(folder.dataset.folderPath);
+});
+
 const state = loadFolders();
 document.querySelectorAll('.sidebar-folder').forEach(folder => {
   const path = folder.dataset.folderPath;
@@ -284,28 +301,97 @@ requestAnimationFrame(() => {
   if (active) active.scrollIntoView({ block: 'nearest', behavior: 'instant' });
 });
 
+// --- Sidebar sort ---
+const sortStorageKey = 'wikihub-sidebar-sort';
+
+function sortSidebarChildren(container, mode) {
+  var items = [];
+  Array.from(container.children).forEach(function(el) {
+    if (el.classList.contains('sidebar-folder') || (el.tagName === 'A' && el.classList.contains('sidebar-item'))) {
+      items.push(el);
+    }
+  });
+  if (items.length < 2) return;
+  items.sort(function(a, b) {
+    var aKind = a.dataset.kind || (a.classList.contains('sidebar-folder') ? 'folder' : 'page');
+    var bKind = b.dataset.kind || (b.classList.contains('sidebar-folder') ? 'folder' : 'page');
+    var aName = (a.dataset.name || '').toLowerCase();
+    var bName = (b.dataset.name || '').toLowerCase();
+    var aUpdated = a.dataset.updated || '';
+    var bUpdated = b.dataset.updated || '';
+    var aPath = a.dataset.path || a.dataset.folderPath || '';
+    var bPath = b.dataset.path || b.dataset.folderPath || '';
+    if (aKind !== bKind) return aKind === 'folder' ? -1 : 1;
+    if (mode === 'alpha') {
+      return aName < bName ? -1 : aName > bName ? 1 : (aPath < bPath ? -1 : aPath > bPath ? 1 : 0);
+    } else if (mode === 'alpha-desc') {
+      return aName > bName ? -1 : aName < bName ? 1 : (aPath > bPath ? -1 : aPath < bPath ? 1 : 0);
+    } else if (mode === 'recent') {
+      if (!aUpdated && !bUpdated) return aName < bName ? -1 : aName > bName ? 1 : 0;
+      if (!aUpdated) return 1;
+      if (!bUpdated) return -1;
+      return aUpdated > bUpdated ? -1 : aUpdated < bUpdated ? 1 : 0;
+    }
+    return 0;
+  });
+  items.forEach(function(el) { container.appendChild(el); });
+  container.querySelectorAll(':scope > .sidebar-folder > .sidebar-children').forEach(function(sub) {
+    sortSidebarChildren(sub, mode);
+  });
+}
+
+function applySidebarSort(mode) {
+  localStorage.setItem(sortStorageKey, mode);
+  document.querySelectorAll('.sidebar-sort-btn').forEach(function(btn) {
+    btn.classList.toggle('active', btn.dataset.sort === mode);
+    btn.style.opacity = btn.dataset.sort === mode ? '1' : '0.5';
+    btn.style.color = btn.dataset.sort === mode ? 'var(--accent)' : 'var(--text-muted)';
+  });
+  var tree = document.getElementById('sidebar-tree');
+  if (tree) sortSidebarChildren(tree, mode);
+}
+
+document.querySelectorAll('.sidebar-sort-btn').forEach(function(btn) {
+  btn.addEventListener('click', function() { applySidebarSort(btn.dataset.sort); });
+});
+
+(function() {
+  var saved = localStorage.getItem(sortStorageKey) || 'alpha';
+  if (saved !== 'alpha') applySidebarSort(saved);
+  document.querySelectorAll('.sidebar-sort-btn').forEach(function(btn) {
+    var isActive = btn.dataset.sort === saved;
+    btn.classList.toggle('active', isActive);
+    btn.style.opacity = isActive ? '1' : '0.5';
+    btn.style.color = isActive ? 'var(--accent)' : 'var(--text-muted)';
+  });
+})();
+
 // async sidebar for large wikis
 (function() {
   const el = document.getElementById('async-sidebar');
   if (!el) return;
   const url = el.dataset.url;
 
+  function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
   function renderItem(item, level) {
     if (item.kind === 'folder') {
       const isActive = item.active ? ' open' : '';
-      let html = `<div class="sidebar-folder${isActive}" data-folder-path="${item.path}">`;
+      const upd = item.updated_at ? esc(item.updated_at) : '';
+      let html = `<div class="sidebar-folder${isActive}" data-folder-path="${esc(item.path)}" data-name="${esc(item.name)}" data-kind="folder" data-updated="${upd}">`;
       html += `<div class="sidebar-folder-row">`;
-      html += `<button type="button" class="sidebar-folder-toggle" onclick="toggleFolder('${item.path}')">`;
+      html += `<button type="button" class="sidebar-folder-toggle">`;
       html += `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>`;
       html += `</button>`;
-      html += `<a href="${item.url}" class="sidebar-item${item.active ? ' active' : ''}">`;
+      html += `<a href="${esc(item.url)}" class="sidebar-item${item.active ? ' active' : ''}">`;
       html += `<span class="sidebar-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h5l2 2h11v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg></span>`;
-      html += `<span>${item.name}</span></a></div>`;
+      html += `<span>${esc(item.name)}</span></a></div>`;
       html += `<div class="sidebar-children">${(item.children || []).map(c => renderItem(c, level + 1)).join('')}</div>`;
       html += `</div>`;
       return html;
     } else {
-      return `<a href="${item.url}" class="sidebar-item"><span class="sidebar-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span><span>${item.name}</span></a>`;
+      const upd = item.updated_at ? esc(item.updated_at) : '';
+      return `<a href="${esc(item.url)}" class="sidebar-item" data-name="${esc(item.name)}" data-kind="page" data-updated="${upd}" data-path="${esc(item.path)}"><span class="sidebar-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span><span>${esc(item.name)}</span></a>`;
     }
   }
 
@@ -313,13 +399,15 @@ requestAnimationFrame(() => {
     .then(r => r.json())
     .then(items => {
       el.innerHTML = items.map(item => renderItem(item, 0)).join('');
-      // re-apply folder state
       const state = loadFolders();
       document.querySelectorAll('.sidebar-folder').forEach(folder => {
         const path = folder.dataset.folderPath;
         if (state[path] === false) folder.classList.remove('open');
         else if (state[path] === true || folder.classList.contains('open')) folder.classList.add('open');
       });
+      // Apply saved sort after async render
+      var saved = localStorage.getItem(sortStorageKey) || 'alpha';
+      if (saved !== 'alpha') applySidebarSort(saved);
     })
     .catch(() => {
       el.innerHTML = '<div style="padding:8px 12px;color:var(--text-muted);font-size:0.75rem;">Search to navigate</div>';

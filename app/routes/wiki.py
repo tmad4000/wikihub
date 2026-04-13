@@ -195,13 +195,14 @@ def _normalize_folder_path(raw_path):
     return "/".join(segments)
 
 
-def _visible_files(username, slug, wiki, public=False, acl_filter_user=None):
+def _visible_files(username, slug, wiki, public=False, acl_filter_user=None, pages_by_path=None):
     """List visible files in a wiki repo.
 
     Args:
         public: If True, read from public mirror.
         acl_filter_user: If set, read from authoritative repo but filter
             through can_read for this username (for ACL grantees who aren't owners).
+        pages_by_path: Pre-loaded {path: Page} dict to avoid duplicate DB queries.
     """
     files = list_files_in_repo(username, slug, public=public)
     if not public and not acl_filter_user:
@@ -211,7 +212,8 @@ def _visible_files(username, slug, wiki, public=False, acl_filter_user=None):
     if acl_filter_user:
         # non-owner with ACL grants — read authoritative repo, filter by can_read
         acl_rules = load_acl_rules(username, slug)
-        pages_by_path = {p.path: p for p in Page.query.filter_by(wiki_id=wiki.id).all()}
+        if pages_by_path is None:
+            pages_by_path = {p.path: p for p in Page.query.filter_by(wiki_id=wiki.id).all()}
         return [
             path
             for path in files
@@ -220,9 +222,11 @@ def _visible_files(username, slug, wiki, public=False, acl_filter_user=None):
             and can_read(path, acl_rules, acl_filter_user, (pages_by_path[path].visibility if path in pages_by_path else None))
         ]
 
+    if pages_by_path is None:
+        pages_by_path = {p.path: p for p in Page.query.filter_by(wiki_id=wiki.id).all()}
     discoverable = {
-        page.path
-        for page in Page.query.filter_by(wiki_id=wiki.id).all()
+        path
+        for path, page in pages_by_path.items()
         if page.visibility in ("public", "public-view", "public-edit")
     }
     return [
@@ -249,7 +253,7 @@ def _build_sidebar_tree(username, slug, wiki, public=False, current_path=None, a
     root = {"children": {}}
     pages_by_path = {p.path: p for p in Page.query.filter_by(wiki_id=wiki.id).all()}
 
-    for path in sorted(_visible_files(username, slug, wiki, public=public, acl_filter_user=acl_filter_user)):
+    for path in sorted(_visible_files(username, slug, wiki, public=public, acl_filter_user=acl_filter_user, pages_by_path=pages_by_path)):
         parts = path.split("/")
         cursor = root["children"]
         for depth, part in enumerate(parts[:-1]):
@@ -272,6 +276,7 @@ def _build_sidebar_tree(username, slug, wiki, public=False, current_path=None, a
             continue
 
         page = pages_by_path.get(path)
+        updated = page.updated_at.isoformat() if page and page.updated_at else None
         cursor[("page", path)] = {
             "kind": "page",
             "name": filename.replace(".md", ""),
@@ -279,6 +284,7 @@ def _build_sidebar_tree(username, slug, wiki, public=False, current_path=None, a
             "url": _page_url(username, slug, path),
             "active": current_path == path,
             "visibility": page.visibility if page else "private",
+            "updated_at": updated,
             "children": {},
         }
 
@@ -288,7 +294,11 @@ def _build_sidebar_tree(username, slug, wiki, public=False, current_path=None, a
             if item["kind"] == "folder":
                 item["children"] = normalize(item["children"])
                 item["active"] = item["active"] or any(child["active"] for child in item["children"])
-        return sorted(items, key=lambda item: (item["kind"] != "folder", item["name"].lower()))
+                child_dates = [c["updated_at"] for c in item["children"] if c.get("updated_at")]
+                item["updated_at"] = max(child_dates) if child_dates else None
+            else:
+                item.setdefault("updated_at", None)
+        return sorted(items, key=lambda item: (item["kind"] != "folder", item["name"].lower(), item["path"]))
 
     return normalize(root["children"])
 
@@ -637,7 +647,7 @@ def wiki_index(username, slug):
         rendered_html=rendered_html,
         toc=extract_toc(rendered_html),
         backlinks=_get_backlinks(page),
-        link_graph=_get_full_graph(wiki),
+        link_graph=_get_link_graph(page, wiki),
         full_graph_url=f"/@{owner.username}/{wiki.slug}/graph",
         recently_updated=recently_updated,
         sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, public=use_public, current_path=page_path, acl_filter_user=acl_filter_user),
