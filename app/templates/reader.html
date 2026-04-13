@@ -257,6 +257,9 @@
 
   <main class="content-wrap">
     <div class="breadcrumb">
+      <button class="hamburger" onclick="toggleSidebar()" aria-label="Open sidebar">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
       <a href="/@{{ owner.username }}">@{{ owner.username }}</a> /
       <a href="/@{{ owner.username }}/{{ wiki.slug }}">{{ wiki.slug }}</a>
       {% if page.path %} / {{ page.path.replace('.md', '').split('/')[-1] }}{% endif %}
@@ -312,6 +315,18 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/><path d="M3 7h5l2 2h11v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>
         New folder
       </a>
+      <button class="action-btn" style="color:var(--color-private);" onclick="deletePage()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        Delete
+      </button>
+      <button class="action-btn" onclick="changeVisibility()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/></svg>
+        Visibility
+      </button>
+      <button class="action-btn" onclick="reindexWiki()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/></svg>
+        Reindex
+      </button>
       {% endif %}
 
       {% if current_user.is_authenticated and current_user.id != wiki.owner_id %}
@@ -400,6 +415,28 @@ function renameWiki() {
     if (r.ok) { location.href = d.url; }
     else { alert(d.message || 'Rename failed'); }
   }));
+}
+
+function deletePage() {
+  if (!confirm('Delete "{{ page.path }}"? This cannot be undone.')) return;
+  fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}/pages/{{ page.path }}', {method: 'DELETE'})
+    .then(function(r) { if (r.ok) location.href = '/@{{ owner.username }}/{{ wiki.slug }}'; else r.json().then(function(d) { alert(d.message || 'Delete failed'); }); });
+}
+
+function changeVisibility() {
+  var vis = prompt('Set visibility for "{{ page.path }}":\n\nOptions: public, private, unlisted, public-edit', '{{ page.visibility }}');
+  if (!vis || vis === '{{ page.visibility }}') return;
+  fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}/pages/{{ page.path }}/visibility', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({visibility: vis})
+  }).then(function(r) { if (r.ok) location.reload(); else r.json().then(function(d) { alert(d.message || 'Failed'); }); });
+}
+
+function reindexWiki() {
+  fetch('/@{{ owner.username }}/{{ wiki.slug }}/reindex', {method: 'POST'})
+    .then(function(r) { return r.json(); })
+    .then(function(d) { if (d.reindexed !== undefined) alert('Reindexed ' + d.reindexed + ' pages'); else alert(d.message || 'Failed'); });
 }
 
 function deleteWiki() {
