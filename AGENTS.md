@@ -88,8 +88,20 @@ when starting a batch of work, run `bd list` to see open issues. close beads as 
 
 **ticket-first rule:** always create a beads ticket before implementing a feature or fix. close the ticket when done. this is the project's workflow — no exceptions.
 
-**recurring issues:** use `bd label add <id> recurring` to tag bugs that keep coming back. before working on related code, check `bd list --label recurring` and verify those areas aren't regressed. current recurring issues:
-- **wikihub-58c** (sidebar indentation) — check child nesting depth after any sidebar CSS/template change
+**recurring issues:** bugs that keep coming back despite being "fixed". this is the most important pattern in this repo.
+
+how it works:
+1. when a bug reappears after being fixed, tag it: `bd label add <id> recurring`
+2. before working on code in a recurring-issue area, check: `bd list --label recurring`
+3. after making changes in that area, explicitly verify the recurring issues aren't regressed
+4. when fixing a recurring bug, add a regression test or comment in the code explaining why it breaks
+
+current recurring issues:
+- **wikihub-58c** (sidebar indentation) — child nesting depth breaks after sidebar CSS/template changes
+- **wikihub-bnj** (right-hand sidebar disappearing) — TOC, graph, and contextual widgets vanish after reader.html changes. reader.html is fragile — always diff against the last known good state before committing.
+- **wikihub-9c8j** (sidebar sort order) — items reorder unexpectedly on click. maintain stable sort.
+
+**why this matters:** multiple agents work on this repo in parallel. agent A fixes the sidebar, agent B modifies the same template for a different feature and accidentally reverts agent A's fix. the recurring label is a canary — if you see it, be extra careful with that file.
 
 ## verification: agent-browser is mandatory
 
@@ -121,6 +133,25 @@ see `docs/deploy.md` for full details. the short version:
 5. `curl -s -o /dev/null -w "%{http_code}" https://wikihub.globalbr.ai/` — must be 200, not 502
 6. if 502, check logs: `ssh -i ~/.ssh/wikihub-dev-key ubuntu@54.145.123.7 "sudo journalctl -u wikihub --no-pager -n 30"`
 7. agent-browser smoke test on production for the specific changes made
+
+## agent instruction surfaces (keep in sync)
+
+when changing agent-facing docs or setup instructions, ALL of these must be updated together:
+
+| Surface | Location | What it serves |
+|---------|----------|---------------|
+| `/AGENTS.md` route | `app/routes/agent_surfaces.py:102` | Plain markdown agent setup (quick start, API, MCP) |
+| `/llms.txt` route | `app/routes/agent_surfaces.py:41` | LLM-readable site index |
+| `/llms-full.txt` route | `app/routes/agent_surfaces.py:75` | All public pages expanded |
+| `/agents` HTML page | `app/templates/agents.html` | Rendered human-readable agent docs |
+| `/.well-known/mcp/server-card.json` | `app/routes/agent_surfaces.py:205` | MCP server discovery card |
+| `/.well-known/wikihub.json` | `app/routes/agent_surfaces.py:234` | Bootstrap manifest |
+| `/@user/wiki/llms.txt` | `app/routes/agent_surfaces.py:247` | Per-wiki LLM index |
+| Landing page | `app/templates/landing.html` | Homepage with setup instructions |
+| `AGENTS.md` (repo) | `AGENTS.md` (this file) | Developer/agent instructions for codebase |
+| `MCP_TOOLS` list | `app/routes/agent_surfaces.py:21` | Tool definitions for MCP endpoint |
+
+**rule:** if you add a new API endpoint or change auth flow, update ALL surfaces above.
 
 ## design system
 
