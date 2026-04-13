@@ -375,12 +375,20 @@ document.addEventListener('DOMContentLoaded', () => {
     clearTimeout(hideTimer);
   }
 
-  function positionCard(c, rect) {
-    var top = rect.bottom + 6;
+  function positionCard(c, rect, depth) {
+    var preferBelow = (depth % 2 === 0);
     var left = rect.left;
     if (left + 320 > window.innerWidth) left = window.innerWidth - 330;
     if (left < 10) left = 10;
-    if (top + 400 > window.innerHeight) top = rect.top - c.offsetHeight - 6;
+
+    var top;
+    if (preferBelow) {
+      top = rect.bottom + 6;
+      if (top + 400 > window.innerHeight) top = rect.top - c.offsetHeight - 6;
+    } else {
+      top = rect.top - c.offsetHeight - 6;
+      if (top < 10) top = rect.bottom + 6;
+    }
     c.style.top = top + 'px';
     c.style.left = left + 'px';
   }
@@ -471,7 +479,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (cache[key]) {
       var c = buildCard(cache[key], depth);
       document.body.appendChild(c);
-      positionCard(c, rect);
+      positionCard(c, rect, depth);
       stack.push({ el: c, depth: depth });
       return;
     }
@@ -507,32 +515,28 @@ document.addEventListener('DOMContentLoaded', () => {
         var idx = stack.findIndex(function(s) { return s.el === c; });
         var newC = buildCard(data, depth);
         document.body.appendChild(newC);
-        positionCard(newC, rect);
+        positionCard(newC, rect, depth);
         c.remove();
         if (idx >= 0) stack[idx] = { el: newC, depth: depth };
       })
       .catch(function() { c.remove(); });
   }
 
-  // page-level hover detection with 500ms hover intent
+  // page-level hover detection — immediate, no delay
   var lastHoverEl = null;
-  var intentTimer = null;
   document.addEventListener('mouseover', function(e) {
     var el = e.target.closest('.wikilink, .article a[href^="/@"]');
     if (!el || el === lastHoverEl) return;
     if (el.closest('.hover-preview')) return;
-    clearTimeout(intentTimer);
     lastHoverEl = el;
     var href = el.getAttribute('href');
     if (!href || href.startsWith('#')) return;
     var parsed = parseWikiUrl(href);
     if (!parsed) return;
 
-    intentTimer = setTimeout(function() {
-      cancelClose();
-      closeFromDepth(0);
-      openPreview(parsed, el.getBoundingClientRect(), 0);
-    }, 500);
+    cancelClose();
+    closeFromDepth(0);
+    openPreview(parsed, el.getBoundingClientRect(), 0);
   });
 
   document.addEventListener('mouseout', function(e) {
@@ -541,9 +545,17 @@ document.addEventListener('DOMContentLoaded', () => {
     if (el.closest('.hover-preview')) return;
     var related = e.relatedTarget;
     if (related && related.closest && related.closest('.hover-preview')) return;
-    clearTimeout(intentTimer);
     lastHoverEl = null;
     closeAll();
+  });
+
+  // click anywhere outside cards closes entire stack
+  document.addEventListener('click', function(e) {
+    if (stack.length === 0) return;
+    if (e.target.closest('.hover-preview')) return;
+    cancelClose();
+    closeFromDepth(0);
+    lastHoverEl = null;
   });
 })();
 </script>
