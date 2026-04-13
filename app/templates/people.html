@@ -54,9 +54,11 @@
           <div class="person-handle">@{{ person.user.username }}</div>
         </div>
       </div>
+      {% if person.profile_excerpt %}
       <div class="person-summary">
-        {{ person.profile_excerpt or "This person has not published a profile yet. Their person page still acts as the canonical entry point for their public work." }}
+        {{ person.profile_excerpt }}
       </div>
+      {% endif %}
       <div class="person-meta">
         <span>{{ person.project_count }} public {{ 'wiki' if person.project_count == 1 else 'wikis' }}</span>
         <span>{{ person.total_stars }} stars</span>
