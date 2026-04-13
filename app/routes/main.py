@@ -14,7 +14,16 @@ from app.wiki_ops import delete_wiki_repos
 
 @main_bp.route("/")
 def index():
-    return render_template("landing.html")
+    from app.models import Wiki, Page
+    from app.discovery import discoverable_wiki_ids
+    visible_ids = discoverable_wiki_ids()
+    featured = (
+        Wiki.query.filter(Wiki.id.in_(visible_ids))
+        .order_by(Wiki.star_count.desc(), Wiki.updated_at.desc())
+        .limit(3)
+        .all()
+    ) if visible_ids else []
+    return render_template("landing.html", featured_wikis=featured)
 
 
 @main_bp.route("/roadmap")
