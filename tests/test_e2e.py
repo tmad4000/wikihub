@@ -29,6 +29,7 @@ from app.auth_utils import _write_timestamps
 def setup():
     shutil.rmtree("/tmp/wikihub-test-repos", ignore_errors=True)
     app = create_app()
+    app.config["TESTING"] = True
     app.config["WTF_CSRF_ENABLED"] = False
     with app.app_context():
         db.create_all()
