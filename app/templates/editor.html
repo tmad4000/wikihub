@@ -88,7 +88,7 @@
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <div class="editor-topbar">
     <div class="editor-breadcrumb">
-      @{{ owner.username }} / {{ wiki.slug }} /
+      @{{ owner.username }} / {{ wiki.title or wiki.slug }} /
       {% if is_owner %}
       <input type="text" id="path-input" name="path" value="{{ page_path }}"
         style="background:transparent;border:none;border-bottom:1px solid var(--border-default);color:var(--text-primary);font-family:var(--font-mono);font-size:0.8125rem;padding:2px 4px;min-width:120px;outline:none;"

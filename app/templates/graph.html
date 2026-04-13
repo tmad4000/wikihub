@@ -25,7 +25,7 @@
   <div class="graph-header">
     <a href="/@{{ owner.username }}">@{{ owner.username }}</a>
     <span style="color:var(--text-muted);">/</span>
-    <a href="/@{{ owner.username }}/{{ wiki.slug }}">{{ wiki.slug }}</a>
+    <a href="/@{{ owner.username }}/{{ wiki.slug }}">{{ wiki.title or wiki.slug }}</a>
     <span style="color:var(--text-muted);">/</span>
     <span class="title">graph</span>
     <span class="stats">{{ graph_data.nodes|length }} pages &middot; {{ graph_data.links|length }} connections</span>
