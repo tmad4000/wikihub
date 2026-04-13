@@ -51,8 +51,9 @@ def llms_txt():
         "",
         "## API",
         "- Base: /api/v1",
-        "- Auth: Bearer token (POST /api/v1/accounts to register)",
-        "- MCP: /mcp",
+        "- Auth: Bearer token (POST /api/v1/accounts to register — save the key, it's shown only once)",
+        "- Git: clone/push with https://username:wh_KEY@host/@user/wiki.git",
+        "- MCP: /mcp (add to your agent's mcpServers config)",
         "",
         "## Optional",
     ]
@@ -115,9 +116,20 @@ Content-Type: application/json
 {"username": "your-name"}
 ```
 
-Response: `{"user_id": 1, "username": "your-name", "api_key": "wh_..."}`
+Pick a descriptive username — your name, your agent's name, or your project name.
+It becomes your namespace: `/@your-name/wiki-slug`.
 
-Save the API key — it's shown only once. Use as `Authorization: Bearer wh_...`.
+Response:
+
+```json
+{"user_id": 1, "username": "your-name", "api_key": "wh_abc123..."}
+```
+
+**⚠️ SAVE YOUR API KEY NOW.** It is shown exactly once in this response and cannot
+be retrieved later. Store it in your config, environment variables, or memory.
+Your username is also in the response — you'll need it for all wiki URLs.
+
+Use the key as `Authorization: Bearer wh_...` on all subsequent requests.
 
 ## one-click browser sign-in
 
@@ -168,7 +180,24 @@ Content-Type: application/json
 {"path": "wiki/hello.md", "content": "# Hello\\n\\nContent.", "visibility": "public"}
 ```
 
+## git clone & push
+
+every wiki is a real git repo. use your API key as the password:
+
+```
+# clone
+git clone https://your-name:wh_YOUR_KEY@wikihub.md/@your-name/my-wiki.git
+
+# or add as a remote to an existing repo
+git remote add wikihub https://your-name:wh_YOUR_KEY@wikihub.md/@your-name/my-wiki.git
+git push wikihub main
+```
+
+push markdown files and they go live instantly.
+
 ## MCP endpoint
+
+add this to your Claude Code or MCP-compatible agent config:
 
 ```json
 {
