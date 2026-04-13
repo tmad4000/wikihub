@@ -693,6 +693,300 @@ def claude_auth_logout():
     return jsonify({"loggedIn": False})
 
 
+# --- Roadmap issue creation via Claude agent ---
+
+# Project root (for running bd commands)
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+ROADMAP_TOOLS = [
+    {
+        "name": "create_issue",
+        "description": "Create a new roadmap issue/ticket. Call this once per issue. For multiple issues from a single request, call this tool multiple times.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Short, clear issue title"},
+                "issue_type": {
+                    "type": "string",
+                    "enum": ["feature", "bug", "task", "epic", "chore"],
+                    "description": "Type of issue",
+                },
+                "priority": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 4,
+                    "description": "Priority: 0=critical, 1=high, 2=medium (default), 3=low, 4=backlog",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Optional longer description of the issue",
+                },
+            },
+            "required": ["title", "issue_type", "priority"],
+        },
+    },
+]
+
+ROADMAP_SYSTEM_PROMPT = """You are a roadmap assistant for WikiHub, an open-source wiki platform.
+
+Your job: parse the user's natural language input into one or more structured issues using the create_issue tool.
+
+Guidelines:
+- Extract individual actionable items from the user's message
+- Choose the appropriate issue_type: feature (new capability), bug (something broken), task (work item), epic (large multi-part initiative), chore (maintenance/cleanup)
+- Set priority sensibly: 0=critical/urgent, 1=high, 2=medium (good default), 3=low, 4=backlog
+- Write clear, concise titles (imperative mood: "Add X", "Fix Y", "Implement Z")
+- Add a description if the user provided context that wouldn't fit in the title
+- If the input is vague, still create the issue with a reasonable interpretation
+- ALWAYS call create_issue at least once. Never just respond with text — create the ticket(s).
+"""
+
+
+def _run_bd_create(title, issue_type, priority, description=None):
+    """Run bd create in the project directory and return (success, issue_id_or_error)."""
+    cmd = [
+        "bd", "create",
+        f"--title={title}",
+        f"--type={issue_type}",
+        f"--priority={priority}",
+    ]
+    if description:
+        cmd.append(f"--description={description}")
+    try:
+        result = subprocess.run(
+            cmd, cwd=_PROJECT_ROOT,
+            capture_output=True, text=True, timeout=15,
+        )
+        output = (result.stdout + result.stderr).strip()
+        # Extract issue ID from output (bd create prints "Created <id>")
+        import re
+        match = re.search(r'(wikihub-\w+)', output)
+        issue_id = match.group(1) if match else None
+        if result.returncode == 0:
+            return True, issue_id or output
+        return False, output
+    except subprocess.TimeoutExpired:
+        return False, "bd create timed out"
+    except Exception as e:
+        return False, str(e)
+
+
+def _bd_sync_and_push():
+    """Run bd sync --flush-only, then commit and push the JSONL to GitHub."""
+    try:
+        # Flush beads to JSONL
+        subprocess.run(
+            ["bd", "sync", "--flush-only"],
+            cwd=_PROJECT_ROOT, capture_output=True, text=True, timeout=15,
+        )
+        # Stage the JSONL file
+        subprocess.run(
+            ["git", "add", ".beads/issues.jsonl"],
+            cwd=_PROJECT_ROOT, capture_output=True, timeout=10,
+        )
+        # Check if there are changes to commit
+        status = subprocess.run(
+            ["git", "status", "--porcelain", ".beads/issues.jsonl"],
+            cwd=_PROJECT_ROOT, capture_output=True, text=True, timeout=10,
+        )
+        if not status.stdout.strip():
+            return True, "No changes to push"
+        # Commit
+        subprocess.run(
+            ["git", "commit", "-m", "roadmap: add issues from web UI"],
+            cwd=_PROJECT_ROOT, capture_output=True, timeout=10,
+        )
+        # Push
+        result = subprocess.run(
+            ["git", "push"],
+            cwd=_PROJECT_ROOT, capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode == 0:
+            return True, "Pushed to GitHub"
+        return False, result.stderr.strip()
+    except Exception as e:
+        return False, str(e)
+
+
+@agent_chat_bp.route("/roadmap/create-issues", methods=["POST"])
+def roadmap_create_issues():
+    """SSE endpoint: parse natural language into beads issues via Claude."""
+    # Admin-token auth (same as admin endpoints)
+    if not _check_admin_token(request):
+        # Also allow logged-in users
+        user = get_current_user_from_request()
+        if not user:
+            return {"error": "unauthorized", "message": "Authentication required"}, 401
+
+    data = request.get_json(silent=True)
+    if not data or "message" not in data:
+        return {"error": "bad_request", "message": "Missing 'message' field"}, 400
+
+    message = data["message"].strip()
+    if not message:
+        return {"error": "bad_request", "message": "Empty message"}, 400
+
+    # Get API key: env var → server config → user home Claude config
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    home_claude_dir = os.path.join(os.path.expanduser("~"), ".claude")
+    for config_dir in [SERVER_CONFIG_DIR, home_claude_dir]:
+        if api_key:
+            break
+        creds_file = os.path.join(config_dir, ".credentials.json")
+        if os.path.exists(creds_file):
+            try:
+                with open(creds_file) as f:
+                    creds = json.load(f)
+                oauth = creds.get("claudeAiOauth", {})
+                api_key = oauth.get("accessToken")
+            except Exception:
+                pass
+
+    if not api_key:
+        return {"error": "config_error", "message": "No Claude API key configured. Set ANTHROPIC_API_KEY or log in via Claude subscription."}, 400
+
+    def generate():
+        client = anthropic.Anthropic(api_key=api_key)
+        model = os.environ.get("CURATOR_MODEL", "claude-sonnet-4-20250514")
+
+        messages = [{"role": "user", "content": message}]
+        created_issues = []
+
+        max_iterations = 5
+        for _iteration in range(max_iterations):
+            try:
+                full_text = ""
+                tool_uses = []
+                current_tool = None
+
+                with client.messages.stream(
+                    model=model,
+                    max_tokens=2048,
+                    system=ROADMAP_SYSTEM_PROMPT,
+                    messages=messages,
+                    tools=ROADMAP_TOOLS,
+                ) as stream:
+                    for event in stream:
+                        if event.type == "content_block_start":
+                            if event.content_block.type == "tool_use":
+                                current_tool = {
+                                    "id": event.content_block.id,
+                                    "name": event.content_block.name,
+                                    "input_json": "",
+                                }
+                        elif event.type == "content_block_delta":
+                            if event.delta.type == "text_delta":
+                                full_text += event.delta.text
+                                yield _sse_event({"type": "text", "content": event.delta.text})
+                            elif event.delta.type == "input_json_delta":
+                                if current_tool:
+                                    current_tool["input_json"] += event.delta.partial_json
+                        elif event.type == "content_block_stop":
+                            if current_tool:
+                                try:
+                                    parsed_input = json.loads(current_tool["input_json"]) if current_tool["input_json"] else {}
+                                except json.JSONDecodeError:
+                                    parsed_input = {}
+                                current_tool["parsed_input"] = parsed_input
+                                tool_uses.append(current_tool)
+                                current_tool = None
+
+                    final_message = stream.get_final_message()
+                    stop_reason = final_message.stop_reason
+
+            except anthropic.APIError as e:
+                yield _sse_event({"type": "error", "content": f"API error: {e.message}"})
+                break
+
+            # Build assistant message for history
+            assistant_content = []
+            if full_text:
+                assistant_content.append({"type": "text", "text": full_text})
+            for tu in tool_uses:
+                assistant_content.append({
+                    "type": "tool_use",
+                    "id": tu["id"],
+                    "name": tu["name"],
+                    "input": tu["parsed_input"],
+                })
+            if assistant_content:
+                messages.append({"role": "assistant", "content": assistant_content})
+
+            if tool_uses and stop_reason == "tool_use":
+                tool_results = []
+                for tu in tool_uses:
+                    inp = tu["parsed_input"]
+                    yield _sse_event({
+                        "type": "creating_issue",
+                        "title": inp.get("title", ""),
+                        "issue_type": inp.get("issue_type", "task"),
+                        "priority": inp.get("priority", 2),
+                    })
+
+                    ok, result = _run_bd_create(
+                        inp.get("title", "Untitled"),
+                        inp.get("issue_type", "task"),
+                        inp.get("priority", 2),
+                        inp.get("description"),
+                    )
+
+                    if ok:
+                        created_issues.append({
+                            "id": result,
+                            "title": inp.get("title"),
+                            "issue_type": inp.get("issue_type"),
+                            "priority": inp.get("priority"),
+                        })
+                        yield _sse_event({
+                            "type": "issue_created",
+                            "id": result,
+                            "title": inp.get("title"),
+                            "issue_type": inp.get("issue_type"),
+                            "priority": inp.get("priority"),
+                        })
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": tu["id"],
+                            "content": f"Created issue {result}: {inp.get('title')}",
+                        })
+                    else:
+                        yield _sse_event({
+                            "type": "error",
+                            "content": f"Failed to create issue: {result}",
+                        })
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": tu["id"],
+                            "content": f"Error creating issue: {result}",
+                        })
+
+                messages.append({"role": "user", "content": tool_results})
+            else:
+                break
+
+        # Sync and push if we created anything
+        if created_issues:
+            yield _sse_event({"type": "syncing"})
+            ok, msg = _bd_sync_and_push()
+            yield _sse_event({
+                "type": "sync_result",
+                "success": ok,
+                "message": msg,
+            })
+
+        yield _sse_event({
+            "type": "done",
+            "created_count": len(created_issues),
+            "issues": created_issues,
+        })
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 # --- Admin Claude auth (server-wide, token-protected) ---
 
 # Background login process state

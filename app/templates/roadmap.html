@@ -54,6 +54,125 @@
 .badge-p2 { color: var(--text-muted); } .badge-p3 { color: var(--text-muted); }
 .badge-p4 { color: var(--text-muted); }
 
+/* Quick-capture input */
+.capture-box {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+    padding: 16px;
+    margin-bottom: 24px;
+    transition: border-color 0.2s;
+}
+.capture-box:focus-within {
+    border-color: var(--border-accent);
+}
+.capture-input-row {
+    display: flex;
+    gap: 10px;
+    align-items: flex-end;
+}
+.capture-input {
+    flex: 1;
+    background: var(--control-bg);
+    border: 1px solid var(--control-border);
+    border-radius: var(--radius-md);
+    padding: 10px 14px;
+    color: var(--text-primary);
+    font-family: var(--font-body);
+    font-size: 0.875rem;
+    resize: none;
+    min-height: 42px;
+    max-height: 120px;
+    line-height: 1.5;
+    outline: none;
+    transition: border-color 0.15s;
+}
+.capture-input:focus {
+    border-color: var(--border-accent);
+}
+.capture-input::placeholder {
+    color: var(--text-muted);
+}
+.capture-submit {
+    padding: 10px 20px;
+    background: var(--accent);
+    color: var(--bg-base);
+    border: none;
+    border-radius: var(--radius-md);
+    font-family: var(--font-body);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s, opacity 0.15s;
+    height: 42px;
+}
+.capture-submit:hover { background: var(--accent-hover); }
+.capture-submit:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+.capture-label {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.capture-label svg {
+    width: 14px;
+    height: 14px;
+    color: var(--accent);
+}
+
+/* Agent response area */
+.agent-response {
+    margin-top: 12px;
+    display: none;
+}
+.agent-response.active {
+    display: block;
+}
+.agent-log {
+    background: var(--bg-base);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    padding: 12px 14px;
+    font-size: 0.8125rem;
+    font-family: var(--font-mono);
+    line-height: 1.6;
+    color: var(--text-secondary);
+    max-height: 200px;
+    overflow-y: auto;
+}
+.agent-log .log-creating {
+    color: var(--accent);
+}
+.agent-log .log-created {
+    color: var(--color-public);
+}
+.agent-log .log-error {
+    color: var(--color-private);
+}
+.agent-log .log-sync {
+    color: var(--text-muted);
+    font-style: italic;
+}
+.agent-log .log-text {
+    color: var(--text-tertiary);
+}
+
+/* Newly created issue highlight */
+.tree-item.just-created {
+    background: var(--accent-muted);
+    animation: fade-highlight 3s ease-out forwards;
+}
+@keyframes fade-highlight {
+    0% { background: var(--accent-muted); }
+    100% { background: transparent; }
+}
+
 .desc-panel {
     position: fixed; top: 0; right: -420px; width: 420px; height: 100vh;
     background: var(--bg-surface); border-left: 1px solid var(--border-emphasis);
@@ -85,6 +204,25 @@
     <h1>Roadmap</h1>
     <p class="subtitle">Project issues pulled live from <a href="https://github.com/tmad4000/wikihub/blob/main/.beads/issues.jsonl" target="_blank">.beads/issues.jsonl</a></p>
 
+    <!-- Quick-capture input -->
+    <div class="capture-box" id="capture-box">
+        <div class="capture-label">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/>
+            </svg>
+            <span>Quick capture &mdash; describe features, bugs, or tasks in plain language</span>
+        </div>
+        <div class="capture-input-row">
+            <textarea class="capture-input" id="capture-input"
+                placeholder="e.g. &quot;Add dark mode toggle in settings&quot; or &quot;Fix mobile nav overlap and add search to the explore page&quot;"
+                rows="1"></textarea>
+            <button class="capture-submit" id="capture-submit" onclick="submitCapture()">Create</button>
+        </div>
+        <div class="agent-response" id="agent-response">
+            <div class="agent-log" id="agent-log"></div>
+        </div>
+    </div>
+
     <div class="stats" id="stats"></div>
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:16px;">
         <div class="filters" id="filters"></div>
@@ -111,6 +249,7 @@ const JSONL_URL = 'https://raw.githubusercontent.com/tmad4000/wikihub/main/.bead
 let allIssues = [];
 let activeFilter = 'open';
 let activeSort = 'created';
+let newlyCreatedIds = new Set();
 
 async function loadIssues() {
     try {
@@ -195,12 +334,13 @@ function renderNode(issue, childMap, depth) {
     const statusColor = isClosed ? 'var(--text-muted)' : (issue.status === 'in_progress' ? 'var(--accent)' : 'var(--text-tertiary)');
     const type = issue.issue_type || 'task';
     const p = issue.priority ?? 2;
+    const isNew = newlyCreatedIds.has(issue.id);
     let childrenHtml = '';
     if (hasChildren) {
         const fc = activeFilter === 'all' ? children : activeFilter === 'open' ? children.filter(c => c.status !== 'closed') : activeFilter === 'closed' ? children.filter(c => c.status === 'closed') : children.filter(c => c.issue_type === activeFilter);
         childrenHtml = `<div class="tree-children" id="children-${issue.id}">${fc.map(c => renderNode(c, childMap, depth + 1)).join('')}</div>`;
     }
-    return `<div class="tree-node depth-${depth}"><div class="tree-item" onclick="openPanel('${issue.id}')">
+    return `<div class="tree-node depth-${depth}"><div class="tree-item ${isNew ? 'just-created' : ''}" onclick="openPanel('${issue.id}')">
         ${hasChildren ? `<span class="tree-toggle" onclick="event.stopPropagation();toggleChildren('${issue.id}')">&#9660;</span>` : '<span class="tree-spacer"></span>'}
         <span class="tree-status" style="color:${statusColor}">${statusIcon}</span>
         <div class="tree-content"><div class="tree-title ${isClosed ? 'closed' : ''}">${escHtml(issue.title || issue.id)}</div>
@@ -213,6 +353,172 @@ function toggleChildren(id) { const el = document.getElementById('children-' + i
 function openPanel(id) { const i = allIssues.find(x => x.id === id); if (!i) return; document.getElementById('panel-title').textContent = i.title || i.id; const p = i.priority ?? 2; document.getElementById('panel-meta').innerHTML = `<span class="badge badge-${i.issue_type||'task'}">${i.issue_type||'task'}</span><span class="badge badge-p${p}">P${p}</span><span>${i.status}</span><span>${i.id}</span>${i.created_at?`<span>${i.created_at.slice(0,10)}</span>`:''}`; document.getElementById('panel-body').textContent = i.description || '(no description)'; document.getElementById('panel').classList.add('open'); document.getElementById('overlay').classList.add('open'); }
 function closePanel() { document.getElementById('panel').classList.remove('open'); document.getElementById('overlay').classList.remove('open'); }
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closePanel(); });
+
+// --- Quick-capture ---
+
+const captureInput = document.getElementById('capture-input');
+const captureSubmit = document.getElementById('capture-submit');
+const agentResponse = document.getElementById('agent-response');
+const agentLog = document.getElementById('agent-log');
+
+// Auto-resize textarea
+captureInput.addEventListener('input', function() {
+    this.style.height = 'auto';
+    this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+});
+
+// Submit on Cmd/Ctrl+Enter
+captureInput.addEventListener('keydown', function(e) {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        e.preventDefault();
+        submitCapture();
+    }
+});
+
+function appendLog(text, className) {
+    const line = document.createElement('div');
+    line.className = className || '';
+    line.textContent = text;
+    agentLog.appendChild(line);
+    agentLog.scrollTop = agentLog.scrollHeight;
+}
+
+async function submitCapture() {
+    const message = captureInput.value.trim();
+    if (!message) return;
+
+    // Disable input
+    captureInput.disabled = true;
+    captureSubmit.disabled = true;
+    captureSubmit.textContent = 'Creating...';
+
+    // Show agent response area
+    agentLog.innerHTML = '';
+    agentResponse.classList.add('active');
+    appendLog('Parsing your request...', 'log-sync');
+
+    try {
+        const res = await fetch('/api/v1/roadmap/create-issues', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message }),
+        });
+
+        if (!res.ok) {
+            const err = await res.json();
+            appendLog(`Error: ${err.message || 'Request failed'}`, 'log-error');
+            resetCapture();
+            return;
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let createdIssues = [];
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop();
+
+            for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+                try {
+                    const event = JSON.parse(line.slice(6));
+                    handleEvent(event, createdIssues);
+                } catch (e) { /* skip malformed */ }
+            }
+        }
+
+        // Process remaining buffer
+        if (buffer.startsWith('data: ')) {
+            try {
+                const event = JSON.parse(buffer.slice(6));
+                handleEvent(event, createdIssues);
+            } catch (e) { /* skip */ }
+        }
+
+        // Add created issues to the local list and re-render
+        if (createdIssues.length > 0) {
+            for (const issue of createdIssues) {
+                newlyCreatedIds.add(issue.id);
+                allIssues.push({
+                    id: issue.id,
+                    title: issue.title,
+                    issue_type: issue.issue_type,
+                    priority: issue.priority,
+                    status: 'open',
+                    created_at: new Date().toISOString(),
+                });
+            }
+            render();
+
+            // Clear highlight after animation
+            setTimeout(() => {
+                newlyCreatedIds.clear();
+            }, 4000);
+
+            // Reload from GitHub after a delay (once push propagates)
+            setTimeout(() => loadIssues(), 8000);
+        }
+
+        captureInput.value = '';
+        captureInput.style.height = 'auto';
+
+    } catch (e) {
+        appendLog(`Network error: ${e.message}`, 'log-error');
+    }
+
+    resetCapture();
+}
+
+function handleEvent(event, createdIssues) {
+    switch (event.type) {
+        case 'creating_issue':
+            appendLog(`Creating: ${event.title} [${event.issue_type}, P${event.priority}]`, 'log-creating');
+            break;
+        case 'issue_created':
+            appendLog(`Created ${event.id}: ${event.title}`, 'log-created');
+            createdIssues.push(event);
+            break;
+        case 'text':
+            // Agent commentary — show if substantive
+            if (event.content.trim()) {
+                const existing = agentLog.querySelector('.log-text:last-child');
+                if (existing) {
+                    existing.textContent += event.content;
+                } else {
+                    appendLog(event.content, 'log-text');
+                }
+            }
+            break;
+        case 'syncing':
+            appendLog('Syncing to GitHub...', 'log-sync');
+            break;
+        case 'sync_result':
+            appendLog(event.success ? 'Synced.' : `Sync issue: ${event.message}`, event.success ? 'log-sync' : 'log-error');
+            break;
+        case 'error':
+            appendLog(`Error: ${event.content}`, 'log-error');
+            break;
+        case 'done':
+            if (event.created_count > 0) {
+                appendLog(`Done — ${event.created_count} issue${event.created_count > 1 ? 's' : ''} created.`, 'log-created');
+            }
+            break;
+    }
+}
+
+function resetCapture() {
+    captureInput.disabled = false;
+    captureSubmit.disabled = false;
+    captureSubmit.textContent = 'Create';
+    captureInput.focus();
+}
+
 loadIssues();
 </script>
 {% endblock %}
