@@ -33,8 +33,8 @@ def create_account():
     display_name = data.get("display_name", "").strip() or None
     password = data.get("password", "").strip() or None
 
-    if not _USERNAME_RE.match(username) or len(username) > 40:
-        return {"error": "bad_request", "message": "Username must be lowercase letters, numbers, hyphens, or underscores (max 40 chars)"}, 400
+    if not _USERNAME_RE.match(username) or len(username) < 2 or len(username) > 40:
+        return {"error": "bad_request", "message": "Username must be 2-40 chars: lowercase letters, numbers, hyphens, or underscores"}, 400
 
     if User.query.filter_by(username=username).first():
         return {"error": "conflict", "message": f"Username '{username}' already taken"}, 409

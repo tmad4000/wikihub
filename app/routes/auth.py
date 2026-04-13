@@ -134,8 +134,8 @@ def signup():
             flash("Username and password required")
             return render_template("auth/signup.html"), 400
 
-        if not _USERNAME_RE.match(username) or len(username) > 40:
-            flash("Username must be lowercase letters, numbers, hyphens, or underscores (max 40 chars)")
+        if not _USERNAME_RE.match(username) or len(username) < 2 or len(username) > 40:
+            flash("Username must be 2-40 chars: lowercase letters, numbers, hyphens, or underscores")
             return render_template("auth/signup.html"), 400
 
         if len(password) < 8:

@@ -6,10 +6,10 @@
   </button>
   <div class="nav-spacer"></div>
   <a href="/explore" class="nav-link">Explore</a>
-  <a href="/people" class="nav-link">People</a>
-  <a href="/agents" class="nav-link nav-agents">For Agents</a>
+  <a href="/people" class="nav-link nav-hide-mobile">People</a>
+  <a href="/agents" class="nav-link nav-agents nav-hide-mobile">For Agents</a>
   {% if current_user and current_user.is_authenticated %}
-    <a href="/@{{ current_user.username }}" class="nav-link">My Wiki</a>
+    <a href="/@{{ current_user.username }}" class="nav-link nav-hide-mobile">My Wiki</a>
     <div class="nav-account" data-account-menu>
       <button
         type="button"
