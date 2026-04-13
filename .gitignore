@@ -10,3 +10,4 @@ venv/
 wikihub-dev-access/
 backups/
 .DS_Store
+archive/
