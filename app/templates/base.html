@@ -277,13 +277,20 @@ a:hover { text-decoration: underline; }
 <script>
 (function(){var m=document.querySelector('meta[name="csrf-token"]');if(!m)return;var F=window.fetch;window.fetch=function(u,o){o=o||{};var mt=(o.method||'GET').toUpperCase();if(mt!=='GET'&&mt!=='HEAD'){var s=typeof u==='string'?u:u.url||'';if(!s.startsWith('/api/')){o.headers=o.headers||{};if(o.headers instanceof Headers){if(!o.headers.has('X-CSRFToken'))o.headers.set('X-CSRFToken',m.content)}else{if(!o.headers['X-CSRFToken'])o.headers['X-CSRFToken']=m.content}}}return F.call(this,u,o)}})();
 document.addEventListener('DOMContentLoaded', () => {
+  var katexMacros = {"\\Sum": "\\sum"};
   try {
     renderMathInElement(document.body, {
       delimiters: [
         {left: '$$', right: '$$', display: true},
         {left: '$', right: '$', display: false},
       ],
+      macros: katexMacros,
       throwOnError: false,
+    });
+  } catch(e) {}
+  try {
+    document.querySelectorAll('.math.amsmath').forEach(function(el) {
+      katex.render(el.textContent.trim(), el, {displayMode: true, throwOnError: false, macros: katexMacros});
     });
   } catch(e) {}
   try {
@@ -321,15 +328,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 });
 </script>
-<footer style="text-align:center;padding:24px 16px 16px;font-size:0.6875rem;color:var(--text-muted);font-family:var(--font-mono);">
-  <a href="/explore" style="color:var(--text-muted);text-decoration:none;">explore</a>
-  &middot;
-  <a href="/people" style="color:var(--text-muted);text-decoration:none;">people</a>
-  &middot;
-  <a href="/agents" style="color:var(--text-muted);text-decoration:none;">agents</a>
-  &middot;
-  <a href="/api/v1/admin/claude-auth" style="color:var(--text-muted);text-decoration:none;">admin</a>
-</footer>
+{% include '_footer.html' %}
 <script src="{{ url_for('static', filename='js/search.js') }}"></script>
 <script>
 // hover preview cards for wikilinks and internal links
