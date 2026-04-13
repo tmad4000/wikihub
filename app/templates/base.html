@@ -361,6 +361,24 @@ document.addEventListener('DOMContentLoaded', () => {
     return links;
   }
 
+  function appendRelatedLinks(container, links, owner, slug) {
+    var relatedEl = document.createElement('div');
+    relatedEl.className = 'hover-preview-related';
+    var labelEl = document.createElement('div');
+    labelEl.className = 'hover-preview-related-label';
+    labelEl.textContent = 'Related to';
+    relatedEl.appendChild(labelEl);
+    links.forEach(function(name) {
+      var linkEl = document.createElement('a');
+      linkEl.className = 'hover-preview-link wikilink';
+      linkEl.textContent = name;
+      var linkSlug = name.replace(/\s+/g, '_');
+      linkEl.href = '/@' + owner + '/' + slug + '/wiki/' + encodeURIComponent(linkSlug);
+      relatedEl.appendChild(linkEl);
+    });
+    container.appendChild(relatedEl);
+  }
+
   function show(el, data) {
     var c = createCard();
     c.textContent = '';
@@ -381,21 +399,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     var links = extractWikilinks(data.content);
     if (links.length > 0 && data._owner && data._slug) {
-      var relatedEl = document.createElement('div');
-      relatedEl.className = 'hover-preview-related';
-      var labelEl = document.createElement('div');
-      labelEl.className = 'hover-preview-related-label';
-      labelEl.textContent = 'Related to';
-      relatedEl.appendChild(labelEl);
-      links.forEach(function(name) {
-        var linkEl = document.createElement('a');
-        linkEl.className = 'hover-preview-link wikilink';
-        linkEl.textContent = name;
-        var linkSlug = name.toLowerCase().replace(/\s+/g, '_');
-        linkEl.href = '/@' + data._owner + '/' + data._slug + '/wiki/' + linkSlug;
-        relatedEl.appendChild(linkEl);
-      });
-      c.appendChild(relatedEl);
+      appendRelatedLinks(c, links, data._owner, data._slug);
     }
 
     position(c, el);
@@ -413,8 +417,7 @@ document.addEventListener('DOMContentLoaded', () => {
     c.style.display = 'block';
   }
 
-  function position(c, el) {
-    var rect = el.getBoundingClientRect();
+  function positionFromRect(c, rect) {
     var top = rect.bottom + 8;
     var left = rect.left;
     if (left + 320 > window.innerWidth) left = window.innerWidth - 330;
@@ -422,6 +425,35 @@ document.addEventListener('DOMContentLoaded', () => {
     if (top + 280 > window.innerHeight) top = rect.top - 288;
     c.style.top = top + 'px';
     c.style.left = left + 'px';
+  }
+
+  function position(c, el) {
+    positionFromRect(c, el.getBoundingClientRect());
+  }
+
+  function showAt(rect, data) {
+    var c = createCard();
+    c.textContent = '';
+    var titleEl = document.createElement('div');
+    titleEl.className = 'hover-preview-title';
+    titleEl.textContent = data.title || data.path;
+    c.appendChild(titleEl);
+    if (data.excerpt) {
+      var excerptEl = document.createElement('div');
+      excerptEl.className = 'hover-preview-excerpt';
+      excerptEl.textContent = data.excerpt;
+      c.appendChild(excerptEl);
+    }
+    var moreEl = document.createElement('span');
+    moreEl.className = 'hover-preview-more';
+    moreEl.textContent = '(read more)';
+    c.appendChild(moreEl);
+    var links = extractWikilinks(data.content);
+    if (links.length > 0 && data._owner && data._slug) {
+      appendRelatedLinks(c, links, data._owner, data._slug);
+    }
+    positionFromRect(c, rect);
+    c.style.display = 'block';
   }
 
   function hide() {
@@ -444,20 +476,29 @@ document.addEventListener('DOMContentLoaded', () => {
     var key = parsed.owner + '/' + parsed.slug + '/' + parsed.path;
     if (cache[key]) { show(el, cache[key]); return; }
 
-    showLoading(el);
+    // if hovering a link inside the card, don't clear — keep card visible until data arrives
+    var insideCard = card && card.contains(el);
+    var savedRect = el.getBoundingClientRect();
+    if (!insideCard) showLoading(el);
+
     var apiPath = '/api/v1/wikis/' + parsed.owner + '/' + parsed.slug + '/pages/' + parsed.path;
     if (!apiPath.endsWith('.md')) apiPath += '.md';
 
     fetch(apiPath)
       .then(function(r) { return r.ok ? r.json() : null; })
       .then(function(data) {
-        if (!data || currentTarget !== el) return;
+        if (!data) { if (!insideCard && card) card.style.display = 'none'; return; }
         data._owner = parsed.owner;
         data._slug = parsed.slug;
         cache[key] = data;
-        show(el, data);
+        // for chained hovers, position at original link location
+        if (insideCard) {
+          showAt(savedRect, data);
+        } else {
+          show(el, data);
+        }
       })
-      .catch(function() { if (card) card.style.display = 'none'; });
+      .catch(function() { if (!insideCard && card) card.style.display = 'none'; });
   }
 
   document.addEventListener('mouseenter', function(e) {
