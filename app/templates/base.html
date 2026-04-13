@@ -382,6 +382,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function show(el, data) {
     var c = createCard();
     c.textContent = '';
+    var pageUrl = el.getAttribute('href') || ('/@' + data._owner + '/' + data._slug + '/' + data.path);
     var titleEl = document.createElement('div');
     titleEl.className = 'hover-preview-title';
     titleEl.textContent = data.title || data.path;
@@ -392,9 +393,10 @@ document.addEventListener('DOMContentLoaded', () => {
       excerptEl.textContent = data.excerpt;
       c.appendChild(excerptEl);
     }
-    var moreEl = document.createElement('span');
+    var moreEl = document.createElement('a');
     moreEl.className = 'hover-preview-more';
     moreEl.textContent = '(read more)';
+    moreEl.href = pageUrl;
     c.appendChild(moreEl);
 
     var links = extractWikilinks(data.content);
@@ -444,9 +446,10 @@ document.addEventListener('DOMContentLoaded', () => {
       excerptEl.textContent = data.excerpt;
       c.appendChild(excerptEl);
     }
-    var moreEl = document.createElement('span');
+    var moreEl = document.createElement('a');
     moreEl.className = 'hover-preview-more';
     moreEl.textContent = '(read more)';
+    moreEl.href = '/@' + data._owner + '/' + data._slug + '/' + data.path;
     c.appendChild(moreEl);
     var links = extractWikilinks(data.content);
     if (links.length > 0 && data._owner && data._slug) {
