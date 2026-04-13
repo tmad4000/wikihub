@@ -1057,7 +1057,17 @@ def new_page(username, slug):
     acl_rules = load_acl_rules(owner.username, wiki.slug)
     requested_path = request.args.get("path", "").strip()
     if requested_path:
-        page_path = requested_path if requested_path.endswith(".md") else requested_path + ".md"
+        # If path ends with / it's a folder prefix — generate a new page name inside it
+        if requested_path.endswith("/"):
+            prefix = requested_path
+            base = f"{prefix}new-page"
+            page_path = f"{base}.md"
+            n = 2
+            while Page.query.filter_by(wiki_id=wiki.id, path=page_path).first():
+                page_path = f"{base}-{n}.md"
+                n += 1
+        else:
+            page_path = requested_path if requested_path.endswith(".md") else requested_path + ".md"
     else:
         base = "new-page"
         page_path = f"{base}.md"
@@ -1087,7 +1097,11 @@ def new_folder(username, slug):
     parent_path = page_path_from_url_path(request.values.get("parent", "").strip().strip("/"))
 
     if request.method == "POST":
-        folder_path = _normalize_folder_path(request.form.get("folder_path"))
+        folder_name = request.form.get("folder_name", "").strip().strip("/")
+        if folder_name and parent_path:
+            folder_path = _normalize_folder_path(f"{parent_path}/{folder_name}")
+        else:
+            folder_path = _normalize_folder_path(folder_name)
         if not folder_path:
             return render_template(
                 "new_folder.html",

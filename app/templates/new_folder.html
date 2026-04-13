@@ -54,9 +54,16 @@
       {% endif %}
 
       <div class="form-row">
-        <label for="folder-path">Folder Path</label>
-        <input id="folder-path" name="folder_path" type="text" value="{{ parent_path ~ ('/' if parent_path else '') }}" placeholder="research/agents" required>
-        <div class="field-hint">Use slash-separated paths. The folder is created by writing <code>index.md</code> inside it.</div>
+        <label for="folder-name">Folder Name</label>
+        {% if parent_path %}
+        <div style="display:flex;align-items:center;gap:0;border:1px solid var(--control-border);border-radius:var(--radius-md);overflow:hidden;background:var(--bg-elevated);">
+          <span style="padding:10px 2px 10px 12px;color:var(--text-muted);font-family:var(--font-mono);font-size:0.875rem;white-space:nowrap;">{{ parent_path }}/</span>
+          <input id="folder-name" name="folder_name" type="text" placeholder="my-folder" required style="border:none;border-radius:0;min-height:44px;">
+        </div>
+        {% else %}
+        <input id="folder-name" name="folder_name" type="text" placeholder="my-folder" required>
+        {% endif %}
+        <div class="field-hint">Creates an <code>index.md</code> inside the new folder.</div>
       </div>
 
       <div class="form-row">
@@ -83,12 +90,16 @@
 
 {% block scripts %}
 <script>
-const folderInput = document.getElementById('folder-path');
+const folderInput = document.getElementById('folder-name');
 const preview = document.getElementById('path-preview').querySelector('span');
+const parentPath = '{{ parent_path | default("", true) }}';
 
 function updatePreview() {
-  const path = folderInput.value.trim().replace(/^\/+|\/+$/g, '');
-  preview.textContent = (path ? path + '/' : '') + 'index.md';
+  const name = folderInput.value.trim().replace(/^\/+|\/+$/g, '');
+  let full = name;
+  if (parentPath && name) full = parentPath + '/' + name;
+  else if (parentPath) full = parentPath + '/…';
+  preview.textContent = (full ? full + '/' : '') + 'index.md';
 }
 
 folderInput.addEventListener('input', updatePreview);

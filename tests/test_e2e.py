@@ -435,8 +435,17 @@ def test_new_folder_ui(client):
     r = client.post("/auth/signup", data={"username": "folderuser", "password": "testpass123"}, follow_redirects=False)
     assert r.status_code == 302
 
+    # Create top-level folder
     r = client.post("/@folderuser/folderuser/new-folder", data={
-        "folder_path": "plans/2026",
+        "folder_name": "plans",
+        "visibility": "public",
+    }, follow_redirects=False)
+    assert r.status_code == 302
+    assert "/@folderuser/folderuser/plans/index/edit" in r.headers["Location"]
+
+    # Create subfolder using parent param
+    r = client.post("/@folderuser/folderuser/new-folder?parent=plans", data={
+        "folder_name": "2026",
         "visibility": "public",
     }, follow_redirects=False)
     assert r.status_code == 302
