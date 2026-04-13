@@ -589,7 +589,7 @@
       </button>
       <a href="/@{{ owner.username }}">@{{ owner.username }}</a>
       {% if wiki.slug != owner.username %}
-        / <a href="/@{{ owner.username }}/{{ wiki.slug }}">{{ wiki.slug }}</a>
+        / <a href="/@{{ owner.username }}/{{ wiki.slug }}">{{ wiki.title or wiki.slug }}</a>
       {% endif %}
       {% if page.path %}
         {% set parts = page.path.replace('.md', '').split('/') %}
