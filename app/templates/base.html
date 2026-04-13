@@ -250,6 +250,10 @@ a:hover { text-decoration: underline; }
 .hover-preview-excerpt { display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; }
 .hover-preview-more { display: block; margin-top: 8px; font-size: 0.75rem; color: var(--accent); text-decoration: none; }
 .hover-preview-loading { color: var(--text-muted); font-style: italic; }
+.hover-preview-related { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border-default); }
+.hover-preview-related-label { font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 4px; }
+.hover-preview-link { display: block; font-size: 0.75rem; color: var(--accent); text-decoration: none; padding: 2px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hover-preview-link:hover { text-decoration: underline; }
 
 {% block extra_css %}{% endblock %}
 </style>
@@ -346,23 +350,55 @@ document.addEventListener('DOMContentLoaded', () => {
     return card;
   }
 
+  function extractWikilinks(content) {
+    if (!content) return [];
+    var re = /\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/g;
+    var links = [], seen = {}, m;
+    while ((m = re.exec(content)) !== null) {
+      var name = m[1].trim();
+      if (!seen[name]) { seen[name] = true; links.push(name); }
+      if (links.length >= 5) break;
+    }
+    return links;
+  }
+
   function show(el, data) {
     var c = createCard();
     c.textContent = '';
-    var title = document.createElement('div');
-    title.className = 'hover-preview-title';
-    title.textContent = data.title || data.path;
-    c.appendChild(title);
+    var titleEl = document.createElement('div');
+    titleEl.className = 'hover-preview-title';
+    titleEl.textContent = data.title || data.path;
+    c.appendChild(titleEl);
     if (data.excerpt) {
-      var excerpt = document.createElement('div');
-      excerpt.className = 'hover-preview-excerpt';
-      excerpt.textContent = data.excerpt;
-      c.appendChild(excerpt);
+      var excerptEl = document.createElement('div');
+      excerptEl.className = 'hover-preview-excerpt';
+      excerptEl.textContent = data.excerpt;
+      c.appendChild(excerptEl);
     }
-    var more = document.createElement('span');
-    more.className = 'hover-preview-more';
-    more.textContent = '(read more)';
-    c.appendChild(more);
+    var moreEl = document.createElement('span');
+    moreEl.className = 'hover-preview-more';
+    moreEl.textContent = '(read more)';
+    c.appendChild(moreEl);
+
+    var links = extractWikilinks(data.content);
+    if (links.length > 0 && data._owner && data._slug) {
+      var relatedEl = document.createElement('div');
+      relatedEl.className = 'hover-preview-related';
+      var labelEl = document.createElement('div');
+      labelEl.className = 'hover-preview-related-label';
+      labelEl.textContent = 'Related to';
+      relatedEl.appendChild(labelEl);
+      links.forEach(function(name) {
+        var linkEl = document.createElement('a');
+        linkEl.className = 'hover-preview-link wikilink';
+        linkEl.textContent = name;
+        var linkSlug = name.toLowerCase().replace(/\s+/g, '_');
+        linkEl.href = '/@' + data._owner + '/' + data._slug + '/wiki/' + linkSlug;
+        relatedEl.appendChild(linkEl);
+      });
+      c.appendChild(relatedEl);
+    }
+
     position(c, el);
     c.style.display = 'block';
   }
@@ -417,6 +453,8 @@ document.addEventListener('DOMContentLoaded', () => {
       .then(function(r) { return r.ok ? r.json() : null; })
       .then(function(data) {
         if (!data || currentTarget !== el) return;
+        data._owner = parsed.owner;
+        data._slug = parsed.slug;
         cache[key] = data;
         show(el, data);
       })
