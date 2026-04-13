@@ -420,12 +420,24 @@ document.addEventListener('DOMContentLoaded', () => {
       labelEl.textContent = 'Related to';
       relatedEl.appendChild(labelEl);
 
+      // build lookup of resolved wikilink URLs from the page
+      var resolvedLinks = {};
+      document.querySelectorAll('.wikilink[data-target]').forEach(function(a) {
+        resolvedLinks[a.dataset.target.toLowerCase()] = a.href;
+      });
+
       links.forEach(function(name) {
         var linkEl = document.createElement('a');
         linkEl.className = 'hover-preview-link';
         linkEl.textContent = name;
-        var linkSlug = name.replace(/\s+/g, '_');
-        linkEl.href = '/@' + data._owner + '/' + data._slug + '/wiki/' + encodeURIComponent(linkSlug);
+        // use resolved URL from page if available, otherwise construct best guess
+        var resolved = resolvedLinks[name.toLowerCase()];
+        if (resolved) {
+          linkEl.href = resolved;
+        } else {
+          var linkSlug = name.replace(/\s+/g, '_');
+          linkEl.href = '/@' + data._owner + '/' + data._slug + '/' + encodeURIComponent(linkSlug);
+        }
 
         linkEl.addEventListener('mouseenter', function() {
           cancelClose();
