@@ -235,6 +235,22 @@ a:hover { text-decoration: underline; }
 .btn-primary .wh-spinner, .btn-save .wh-spinner { border-color: rgba(15, 14, 12, 0.25); border-top-color: #0f0e0c; }
 .btn-loading { pointer-events: none; opacity: 0.7; }
 
+.hover-preview {
+  position: fixed; z-index: 300; pointer-events: auto;
+  width: 320px; max-height: 280px; overflow: hidden;
+  background: var(--bg-elevated); border: 1px solid var(--border-emphasis);
+  border-radius: var(--radius-md); padding: 16px 18px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  font-size: 0.8125rem; line-height: 1.6; color: var(--text-secondary);
+}
+.hover-preview-title {
+  font-size: 0.9375rem; font-weight: 600; color: var(--text-primary);
+  margin-bottom: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.hover-preview-excerpt { display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; }
+.hover-preview-more { display: block; margin-top: 8px; font-size: 0.75rem; color: var(--accent); text-decoration: none; }
+.hover-preview-loading { color: var(--text-muted); font-style: italic; }
+
 {% block extra_css %}{% endblock %}
 </style>
 {% block head %}{% endblock %}
@@ -311,6 +327,122 @@ document.addEventListener('DOMContentLoaded', () => {
   <a href="/api/v1/admin/claude-auth" style="color:var(--text-muted);text-decoration:none;">admin</a>
 </footer>
 <script src="{{ url_for('static', filename='js/search.js') }}"></script>
+<script>
+// hover preview cards for wikilinks and internal links
+(function() {
+  var card = null;
+  var hideTimer = null;
+  var cache = {};
+  var currentTarget = null;
+
+  function createCard() {
+    if (card) return card;
+    card = document.createElement('div');
+    card.className = 'hover-preview';
+    card.style.display = 'none';
+    card.addEventListener('mouseenter', function() { clearTimeout(hideTimer); });
+    card.addEventListener('mouseleave', function() { hide(); });
+    document.body.appendChild(card);
+    return card;
+  }
+
+  function show(el, data) {
+    var c = createCard();
+    c.textContent = '';
+    var title = document.createElement('div');
+    title.className = 'hover-preview-title';
+    title.textContent = data.title || data.path;
+    c.appendChild(title);
+    if (data.excerpt) {
+      var excerpt = document.createElement('div');
+      excerpt.className = 'hover-preview-excerpt';
+      excerpt.textContent = data.excerpt;
+      c.appendChild(excerpt);
+    }
+    var more = document.createElement('span');
+    more.className = 'hover-preview-more';
+    more.textContent = '(read more)';
+    c.appendChild(more);
+    position(c, el);
+    c.style.display = 'block';
+  }
+
+  function showLoading(el) {
+    var c = createCard();
+    c.textContent = '';
+    var loading = document.createElement('div');
+    loading.className = 'hover-preview-loading';
+    loading.textContent = 'Loading\u2026';
+    c.appendChild(loading);
+    position(c, el);
+    c.style.display = 'block';
+  }
+
+  function position(c, el) {
+    var rect = el.getBoundingClientRect();
+    var top = rect.bottom + 8;
+    var left = rect.left;
+    if (left + 320 > window.innerWidth) left = window.innerWidth - 330;
+    if (left < 10) left = 10;
+    if (top + 280 > window.innerHeight) top = rect.top - 288;
+    c.style.top = top + 'px';
+    c.style.left = left + 'px';
+  }
+
+  function hide() {
+    hideTimer = setTimeout(function() {
+      if (card) card.style.display = 'none';
+      currentTarget = null;
+    }, 200);
+  }
+
+  function parseWikiUrl(href) {
+    try {
+      var url = new URL(href, window.location.origin);
+      var m = url.pathname.match(/^\/@([^/]+)\/([^/]+)\/(.+)/);
+      if (!m) return null;
+      return { owner: m[1], slug: m[2], path: m[3] };
+    } catch (e) { return null; }
+  }
+
+  function fetchPreview(parsed, el) {
+    var key = parsed.owner + '/' + parsed.slug + '/' + parsed.path;
+    if (cache[key]) { show(el, cache[key]); return; }
+
+    showLoading(el);
+    var apiPath = '/api/v1/wikis/' + parsed.owner + '/' + parsed.slug + '/pages/' + parsed.path;
+    if (!apiPath.endsWith('.md')) apiPath += '.md';
+
+    fetch(apiPath)
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(data) {
+        if (!data || currentTarget !== el) return;
+        cache[key] = data;
+        show(el, data);
+      })
+      .catch(function() { if (card) card.style.display = 'none'; });
+  }
+
+  document.addEventListener('mouseenter', function(e) {
+    var el = e.target.closest('.wikilink, .article a[href^="/@"]');
+    if (!el) return;
+    var href = el.getAttribute('href');
+    if (!href || href.startsWith('#')) return;
+    var parsed = parseWikiUrl(href);
+    if (!parsed) return;
+
+    clearTimeout(hideTimer);
+    currentTarget = el;
+    fetchPreview(parsed, el);
+  }, true);
+
+  document.addEventListener('mouseleave', function(e) {
+    var el = e.target.closest('.wikilink, .article a[href^="/@"]');
+    if (!el) return;
+    hide();
+  }, true);
+})();
+</script>
 {% block scripts %}{% endblock %}
 </body>
 </html>
