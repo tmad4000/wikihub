@@ -502,22 +502,25 @@ document.addEventListener('DOMContentLoaded', () => {
       .catch(function() { c.remove(); });
   }
 
-  // page-level hover detection
+  // page-level hover detection with 500ms hover intent
   var lastHoverEl = null;
+  var intentTimer = null;
   document.addEventListener('mouseover', function(e) {
     var el = e.target.closest('.wikilink, .article a[href^="/@"]');
     if (!el || el === lastHoverEl) return;
-    // ignore links inside preview cards (handled by direct listeners)
     if (el.closest('.hover-preview')) return;
+    clearTimeout(intentTimer);
     lastHoverEl = el;
     var href = el.getAttribute('href');
     if (!href || href.startsWith('#')) return;
     var parsed = parseWikiUrl(href);
     if (!parsed) return;
 
-    cancelClose();
-    closeFromDepth(0); // close any existing stack
-    openPreview(parsed, el.getBoundingClientRect(), 0);
+    intentTimer = setTimeout(function() {
+      cancelClose();
+      closeFromDepth(0);
+      openPreview(parsed, el.getBoundingClientRect(), 0);
+    }, 500);
   });
 
   document.addEventListener('mouseout', function(e) {
@@ -526,6 +529,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (el.closest('.hover-preview')) return;
     var related = e.relatedTarget;
     if (related && related.closest && related.closest('.hover-preview')) return;
+    clearTimeout(intentTimer);
     lastHoverEl = null;
     closeAll();
   });
