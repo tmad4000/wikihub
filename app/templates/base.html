@@ -501,9 +501,13 @@ document.addEventListener('DOMContentLoaded', () => {
       .catch(function() { if (!insideCard && card) card.style.display = 'none'; });
   }
 
-  document.addEventListener('mouseenter', function(e) {
+  // mouseover/mouseout bubble (unlike mouseenter/mouseleave) so they
+  // reliably fire on links inside the hover card for chaining
+  var lastHoverEl = null;
+  document.addEventListener('mouseover', function(e) {
     var el = e.target.closest('.wikilink, .article a[href^="/@"]');
-    if (!el) return;
+    if (!el || el === lastHoverEl) return;
+    lastHoverEl = el;
     var href = el.getAttribute('href');
     if (!href || href.startsWith('#')) return;
     var parsed = parseWikiUrl(href);
@@ -512,13 +516,17 @@ document.addEventListener('DOMContentLoaded', () => {
     clearTimeout(hideTimer);
     currentTarget = el;
     fetchPreview(parsed, el);
-  }, true);
+  });
 
-  document.addEventListener('mouseleave', function(e) {
+  document.addEventListener('mouseout', function(e) {
     var el = e.target.closest('.wikilink, .article a[href^="/@"]');
     if (!el) return;
+    // don't hide if moving to the card or another wikilink
+    var related = e.relatedTarget;
+    if (related && (related.closest('.hover-preview') || related.closest('.wikilink'))) return;
+    lastHoverEl = null;
     hide();
-  }, true);
+  });
 })();
 </script>
 {% block scripts %}{% endblock %}
