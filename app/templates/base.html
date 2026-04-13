@@ -331,22 +331,19 @@ document.addEventListener('DOMContentLoaded', () => {
 {% include '_footer.html' %}
 <script src="{{ url_for('static', filename='js/search.js') }}"></script>
 <script>
-// hover preview cards for wikilinks and internal links
+// hover preview cards — LessWrong-style stacking
 (function() {
-  var card = null;
+  var stack = []; // array of {el: card element, depth: number}
   var hideTimer = null;
   var cache = {};
-  var currentTarget = null;
 
-  function createCard() {
-    if (card) return card;
-    card = document.createElement('div');
-    card.className = 'hover-preview';
-    card.style.display = 'none';
-    card.addEventListener('mouseenter', function() { clearTimeout(hideTimer); });
-    card.addEventListener('mouseleave', function() { hide(); });
-    document.body.appendChild(card);
-    return card;
+  function parseWikiUrl(href) {
+    try {
+      var url = new URL(href, window.location.origin);
+      var m = url.pathname.match(/^\/@([^/]+)\/([^/]+)\/(.+)/);
+      if (!m) return null;
+      return { owner: m[1], slug: m[2], path: m[3] };
+    } catch (e) { return null; }
   }
 
   function extractWikilinks(content) {
@@ -361,122 +358,128 @@ document.addEventListener('DOMContentLoaded', () => {
     return links;
   }
 
-  function appendRelatedLinks(container, links, owner, slug) {
-    var relatedEl = document.createElement('div');
-    relatedEl.className = 'hover-preview-related';
-    var labelEl = document.createElement('div');
-    labelEl.className = 'hover-preview-related-label';
-    labelEl.textContent = 'Related to';
-    relatedEl.appendChild(labelEl);
-    links.forEach(function(name) {
-      var linkEl = document.createElement('a');
-      linkEl.className = 'hover-preview-link';
-      linkEl.textContent = name;
-      var linkSlug = name.replace(/\s+/g, '_');
-      linkEl.href = '/@' + owner + '/' + slug + '/wiki/' + encodeURIComponent(linkSlug);
-      // direct listeners for chaining (don't rely on delegation)
-      linkEl.addEventListener('mouseenter', function() {
-        clearTimeout(hideTimer);
-        var parsed = parseWikiUrl(linkEl.href);
-        if (parsed) {
-          currentTarget = linkEl;
-          fetchPreview(parsed, linkEl);
-        }
-      });
-      linkEl.addEventListener('mouseleave', function(e) {
-        if (e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest('.hover-preview')) return;
-        hide();
-      });
-      relatedEl.appendChild(linkEl);
-    });
-    container.appendChild(relatedEl);
+  function closeFromDepth(depth) {
+    while (stack.length > depth) {
+      var entry = stack.pop();
+      entry.el.remove();
+    }
   }
 
-  function fillCard(c, data) {
+  function closeAll() {
+    hideTimer = setTimeout(function() {
+      closeFromDepth(0);
+    }, 200);
+  }
+
+  function cancelClose() {
     clearTimeout(hideTimer);
-    c.textContent = '';
+  }
+
+  function positionCard(c, rect) {
+    var top = rect.bottom + 6;
+    var left = rect.left;
+    if (left + 320 > window.innerWidth) left = window.innerWidth - 330;
+    if (left < 10) left = 10;
+    if (top + 400 > window.innerHeight) top = rect.top - c.offsetHeight - 6;
+    c.style.top = top + 'px';
+    c.style.left = left + 'px';
+  }
+
+  function buildCard(data, depth) {
+    var c = document.createElement('div');
+    c.className = 'hover-preview';
+    c.style.zIndex = 300 + depth;
+    c.dataset.depth = depth;
+
     var pageUrl = '/@' + (data._owner || '') + '/' + (data._slug || '') + '/' + (data.path || '');
+
     var titleEl = document.createElement('div');
     titleEl.className = 'hover-preview-title';
     titleEl.textContent = data.title || data.path;
     c.appendChild(titleEl);
+
     if (data.excerpt) {
       var excerptEl = document.createElement('div');
       excerptEl.className = 'hover-preview-excerpt';
       excerptEl.textContent = data.excerpt;
       c.appendChild(excerptEl);
     }
+
     var moreEl = document.createElement('a');
     moreEl.className = 'hover-preview-more';
     moreEl.textContent = '(read more)';
     moreEl.href = pageUrl;
     c.appendChild(moreEl);
+
     var links = extractWikilinks(data.content);
     if (links.length > 0 && data._owner && data._slug) {
-      appendRelatedLinks(c, links, data._owner, data._slug);
+      var relatedEl = document.createElement('div');
+      relatedEl.className = 'hover-preview-related';
+      var labelEl = document.createElement('div');
+      labelEl.className = 'hover-preview-related-label';
+      labelEl.textContent = 'Related to';
+      relatedEl.appendChild(labelEl);
+
+      links.forEach(function(name) {
+        var linkEl = document.createElement('a');
+        linkEl.className = 'hover-preview-link';
+        linkEl.textContent = name;
+        var linkSlug = name.replace(/\s+/g, '_');
+        linkEl.href = '/@' + data._owner + '/' + data._slug + '/wiki/' + encodeURIComponent(linkSlug);
+
+        linkEl.addEventListener('mouseenter', function() {
+          cancelClose();
+          var rect = linkEl.getBoundingClientRect();
+          var parsed = parseWikiUrl(linkEl.href);
+          if (!parsed) return;
+          // close any cards deeper than this one, then open a new one
+          closeFromDepth(depth + 1);
+          openPreview(parsed, rect, depth + 1);
+        });
+        relatedEl.appendChild(linkEl);
+      });
+      c.appendChild(relatedEl);
     }
+
+    // keep stack alive while mouse is on any card
+    c.addEventListener('mouseenter', function() { cancelClose(); });
+    c.addEventListener('mouseleave', function(e) {
+      // don't close if moving to another card in the stack
+      if (e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest('.hover-preview')) return;
+      closeAll();
+    });
+
+    return c;
   }
 
-  function show(el, data) {
-    var c = createCard();
-    fillCard(c, data);
-    position(c, el);
-    c.style.display = 'block';
-  }
+  function openPreview(parsed, rect, depth) {
+    var key = parsed.owner + '/' + parsed.slug + '/' + parsed.path;
+    cancelClose();
 
-  function showLoading(el) {
-    clearTimeout(hideTimer);
-    var c = createCard();
-    c.textContent = '';
+    if (cache[key]) {
+      var c = buildCard(cache[key], depth);
+      document.body.appendChild(c);
+      positionCard(c, rect);
+      stack.push({ el: c, depth: depth });
+      return;
+    }
+
+    // loading card
+    var c = document.createElement('div');
+    c.className = 'hover-preview';
+    c.style.zIndex = 300 + depth;
     var loading = document.createElement('div');
     loading.className = 'hover-preview-loading';
     loading.textContent = 'Loading\u2026';
     c.appendChild(loading);
-    position(c, el);
-    c.style.display = 'block';
-  }
-
-  function positionFromRect(c, rect) {
-    var top = rect.bottom + 8;
-    var left = rect.left;
-    if (left + 320 > window.innerWidth) left = window.innerWidth - 330;
-    if (left < 10) left = 10;
-    if (top + 280 > window.innerHeight) top = rect.top - 288;
-    c.style.top = top + 'px';
-    c.style.left = left + 'px';
-  }
-
-  function position(c, el) {
-    positionFromRect(c, el.getBoundingClientRect());
-  }
-
-
-  function hide() {
-    hideTimer = setTimeout(function() {
-      if (card) card.style.display = 'none';
-      currentTarget = null;
-    }, 200);
-  }
-
-  function parseWikiUrl(href) {
-    try {
-      var url = new URL(href, window.location.origin);
-      var m = url.pathname.match(/^\/@([^/]+)\/([^/]+)\/(.+)/);
-      if (!m) return null;
-      return { owner: m[1], slug: m[2], path: m[3] };
-    } catch (e) { return null; }
-  }
-
-  function fetchPreview(parsed, el) {
-    var key = parsed.owner + '/' + parsed.slug + '/' + parsed.path;
-    var insideCard = card && card.contains(el);
-    if (cache[key]) {
-      if (insideCard) { fillCard(card, cache[key]); }
-      else { show(el, cache[key]); }
-      return;
-    }
-
-    if (!insideCard) showLoading(el);
+    c.addEventListener('mouseenter', function() { cancelClose(); });
+    c.addEventListener('mouseleave', function(e) {
+      if (e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest('.hover-preview')) return;
+      closeAll();
+    });
+    document.body.appendChild(c);
+    positionCard(c, rect);
+    stack.push({ el: c, depth: depth });
 
     var apiPath = '/api/v1/wikis/' + parsed.owner + '/' + parsed.slug + '/pages/' + parsed.path;
     if (!apiPath.endsWith('.md')) apiPath += '.md';
@@ -484,45 +487,47 @@ document.addEventListener('DOMContentLoaded', () => {
     fetch(apiPath)
       .then(function(r) { return r.ok ? r.json() : null; })
       .then(function(data) {
-        if (!data) { if (!insideCard && card) card.style.display = 'none'; return; }
+        if (!data) { c.remove(); return; }
         data._owner = parsed.owner;
         data._slug = parsed.slug;
         cache[key] = data;
-        if (insideCard) {
-          // chain: update content in place, don't reposition
-          fillCard(card, data);
-        } else {
-          show(el, data);
-        }
+        // replace loading card with real card
+        var idx = stack.findIndex(function(s) { return s.el === c; });
+        var newC = buildCard(data, depth);
+        document.body.appendChild(newC);
+        positionCard(newC, rect);
+        c.remove();
+        if (idx >= 0) stack[idx] = { el: newC, depth: depth };
       })
-      .catch(function() { if (!insideCard && card) card.style.display = 'none'; });
+      .catch(function() { c.remove(); });
   }
 
-  // mouseover/mouseout bubble (unlike mouseenter/mouseleave) so they
-  // reliably fire on links inside the hover card for chaining
+  // page-level hover detection
   var lastHoverEl = null;
   document.addEventListener('mouseover', function(e) {
     var el = e.target.closest('.wikilink, .article a[href^="/@"]');
     if (!el || el === lastHoverEl) return;
+    // ignore links inside preview cards (handled by direct listeners)
+    if (el.closest('.hover-preview')) return;
     lastHoverEl = el;
     var href = el.getAttribute('href');
     if (!href || href.startsWith('#')) return;
     var parsed = parseWikiUrl(href);
     if (!parsed) return;
 
-    clearTimeout(hideTimer);
-    currentTarget = el;
-    fetchPreview(parsed, el);
+    cancelClose();
+    closeFromDepth(0); // close any existing stack
+    openPreview(parsed, el.getBoundingClientRect(), 0);
   });
 
   document.addEventListener('mouseout', function(e) {
     var el = e.target.closest('.wikilink, .article a[href^="/@"]');
     if (!el) return;
-    // don't hide if moving to the card or another wikilink
+    if (el.closest('.hover-preview')) return;
     var related = e.relatedTarget;
-    if (related && (related.closest('.hover-preview') || related.closest('.wikilink'))) return;
+    if (related && related.closest && related.closest('.hover-preview')) return;
     lastHoverEl = null;
-    hide();
+    closeAll();
   });
 })();
 </script>
