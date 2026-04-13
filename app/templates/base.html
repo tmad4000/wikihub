@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{% block title %}wikihub{% endblock %}</title>
 <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+<link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+<meta name="theme-color" content="#d4a04a">
+<link rel="apple-touch-icon" href="{{ url_for('static', filename='favicon.svg') }}">
 <meta property="og:title" content="{% block og_title %}{{ self.title() }}{% endblock %}">
 <meta property="og:description" content="{% block og_desc %}GitHub for LLM wikis. Publish markdown knowledge bases in seconds.{% endblock %}">
 <meta property="og:type" content="website">
@@ -565,6 +568,11 @@ document.addEventListener('DOMContentLoaded', () => {
     lastHoverEl = null;
   });
 })();
+</script>
+<script>
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/static/sw.js', { scope: '/' });
+}
 </script>
 {% block scripts %}{% endblock %}
 </body>
