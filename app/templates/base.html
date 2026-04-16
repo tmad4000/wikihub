@@ -6,49 +6,169 @@
 <title>{% block title %}wikihub{% endblock %}</title>
 <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
 <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
-<meta name="theme-color" content="#d4a04a">
+<meta name="theme-color" content="#0f0e0c" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#faf7f1" media="(prefers-color-scheme: light)">
 <link rel="apple-touch-icon" href="{{ url_for('static', filename='favicon.svg') }}">
 <meta property="og:title" content="{% block og_title %}{{ self.title() }}{% endblock %}">
 <meta property="og:description" content="{% block og_desc %}GitHub for LLM wikis. Publish markdown knowledge bases in seconds.{% endblock %}">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="wikihub">
 <meta name="description" content="{% block meta_desc %}GitHub for LLM wikis. Publish markdown knowledge bases in seconds.{% endblock %}">
+<!-- no-flash theme boot: apply saved override before first paint -->
+<script>(function(){try{var t=localStorage.getItem('wikihubTheme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github-dark-dimmed.min.css">
+<!-- highlight.js: two themes, media-gated for auto mode; JS flips media= for explicit override -->
+<link id="hljs-theme-dark" rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github-dark-dimmed.min.css" media="(prefers-color-scheme: dark)">
+<link id="hljs-theme-light" rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)">
 <style>
+/* ── Theme tokens ────────────────────────────────────────────────────────
+   Dark is the default. Light kicks in via @media (prefers-color-scheme: light)
+   or an explicit html[data-theme="light"] override (higher specificity).
+   Every surface/text color MUST be a token so both themes stay in sync.
+*/
 :root {
+  color-scheme: dark;
+
+  /* surfaces — obsidian warm */
   --bg-base: #0f0e0c;
   --bg-surface: #191714;
   --bg-elevated: #221f1b;
   --bg-overlay: #2a2622;
+
+  /* text — warm ink */
   --text-primary: #e8e0d4;
   --text-secondary: #b8ad9e;
   --text-tertiary: #887d6e;
   --text-muted: #5a5248;
+  --text-on-accent: #0f0e0c;   /* text color on an amber-bg button */
+
+  /* accent — amber/gold */
   --accent: #d4a04a;
   --accent-hover: #e0b35a;
   --accent-muted: rgba(212, 160, 74, 0.12);
   --accent-subtle: rgba(212, 160, 74, 0.06);
+
+  /* semantic */
   --color-public: #7a9e6b;
   --color-private: #c45c3c;
   --color-unlisted: #b8ad9e;
+  --color-edit: #d4a04a;
   --color-wikilink: #d4a04a;
   --color-wikilink-broken: #c45c3c;
   --color-external: #7a9bb5;
+  --color-success: #7a9e6b;
+  --color-warning: #d4a04a;
+  --color-error: #c45c3c;
+  --color-error-soft: #d88c75;  /* lighter red for destructive text (logout) */
+
+  /* borders — warm tinted */
   --border-default: rgba(200, 180, 150, 0.08);
   --border-emphasis: rgba(200, 180, 150, 0.15);
   --border-strong: rgba(200, 180, 150, 0.25);
   --border-accent: rgba(212, 160, 74, 0.4);
+
+  /* controls */
   --control-bg: rgba(0, 0, 0, 0.2);
+  --control-bg-hover: rgba(200, 180, 150, 0.08);
   --control-border: rgba(200, 180, 150, 0.12);
+  --search-trigger-bg: #1a1816;
+  --scrim: rgba(0, 0, 0, 0.7);
+  --hover-preview-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+
   --font-body: 'Inter', -apple-system, sans-serif;
   --font-mono: 'IBM Plex Mono', 'Menlo', monospace;
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 10px;
+}
+
+/* ── Light palette ──────────────────────────────────────────────────────
+   "warm paper under a desk lamp" — ivory surfaces, warm charcoal ink,
+   darker bronze accent for AA-legible text. Mirrors the dark token set.
+*/
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+
+    --bg-base: #faf7f1;
+    --bg-surface: #f3ede0;
+    --bg-elevated: #eae3d2;
+    --bg-overlay: #ded5bf;
+
+    --text-primary: #2a2520;
+    --text-secondary: #5a5248;
+    --text-tertiary: #887d6e;
+    --text-muted: #a39989;
+    --text-on-accent: #1a1510;
+
+    --accent: #b78126;
+    --accent-hover: #9c6e1e;
+    --accent-muted: rgba(183, 129, 38, 0.14);
+    --accent-subtle: rgba(183, 129, 38, 0.07);
+
+    --color-public: #5a8051;
+    --color-private: #a04b2f;
+    --color-unlisted: #887d6e;
+    --color-edit: #b78126;
+    --color-wikilink: #b78126;
+    --color-wikilink-broken: #a04b2f;
+    --color-external: #4d6e8c;
+    --color-success: #5a8051;
+    --color-warning: #b78126;
+    --color-error: #a04b2f;
+    --color-error-soft: #b95540;
+
+    --border-default: rgba(60, 45, 25, 0.10);
+    --border-emphasis: rgba(60, 45, 25, 0.20);
+    --border-strong: rgba(60, 45, 25, 0.32);
+    --border-accent: rgba(183, 129, 38, 0.45);
+
+    --control-bg: rgba(255, 255, 255, 0.6);
+    --control-bg-hover: rgba(60, 45, 25, 0.06);
+    --control-border: rgba(60, 45, 25, 0.14);
+    --search-trigger-bg: #ede6d6;
+    --scrim: rgba(40, 30, 20, 0.45);
+    --hover-preview-shadow: 0 8px 28px rgba(60, 45, 25, 0.18);
+  }
+}
+
+/* ── Explicit overrides (beat the media query via specificity) ───────── */
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --bg-base: #0f0e0c; --bg-surface: #191714; --bg-elevated: #221f1b; --bg-overlay: #2a2622;
+  --text-primary: #e8e0d4; --text-secondary: #b8ad9e; --text-tertiary: #887d6e; --text-muted: #5a5248;
+  --text-on-accent: #0f0e0c;
+  --accent: #d4a04a; --accent-hover: #e0b35a;
+  --accent-muted: rgba(212, 160, 74, 0.12); --accent-subtle: rgba(212, 160, 74, 0.06);
+  --color-public: #7a9e6b; --color-private: #c45c3c; --color-unlisted: #b8ad9e;
+  --color-edit: #d4a04a; --color-wikilink: #d4a04a; --color-wikilink-broken: #c45c3c;
+  --color-external: #7a9bb5; --color-success: #7a9e6b; --color-warning: #d4a04a; --color-error: #c45c3c;
+  --color-error-soft: #d88c75;
+  --border-default: rgba(200, 180, 150, 0.08); --border-emphasis: rgba(200, 180, 150, 0.15);
+  --border-strong: rgba(200, 180, 150, 0.25); --border-accent: rgba(212, 160, 74, 0.4);
+  --control-bg: rgba(0, 0, 0, 0.2); --control-bg-hover: rgba(200, 180, 150, 0.08);
+  --control-border: rgba(200, 180, 150, 0.12); --search-trigger-bg: #1a1816;
+  --scrim: rgba(0, 0, 0, 0.7); --hover-preview-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+html[data-theme="light"] {
+  color-scheme: light;
+  --bg-base: #faf7f1; --bg-surface: #f3ede0; --bg-elevated: #eae3d2; --bg-overlay: #ded5bf;
+  --text-primary: #2a2520; --text-secondary: #5a5248; --text-tertiary: #887d6e; --text-muted: #a39989;
+  --text-on-accent: #1a1510;
+  --accent: #b78126; --accent-hover: #9c6e1e;
+  --accent-muted: rgba(183, 129, 38, 0.14); --accent-subtle: rgba(183, 129, 38, 0.07);
+  --color-public: #5a8051; --color-private: #a04b2f; --color-unlisted: #887d6e;
+  --color-edit: #b78126; --color-wikilink: #b78126; --color-wikilink-broken: #a04b2f;
+  --color-external: #4d6e8c; --color-success: #5a8051; --color-warning: #b78126; --color-error: #a04b2f;
+  --color-error-soft: #b95540;
+  --border-default: rgba(60, 45, 25, 0.10); --border-emphasis: rgba(60, 45, 25, 0.20);
+  --border-strong: rgba(60, 45, 25, 0.32); --border-accent: rgba(183, 129, 38, 0.45);
+  --control-bg: rgba(255, 255, 255, 0.6); --control-bg-hover: rgba(60, 45, 25, 0.06);
+  --control-border: rgba(60, 45, 25, 0.14); --search-trigger-bg: #ede6d6;
+  --scrim: rgba(40, 30, 20, 0.45); --hover-preview-shadow: 0 8px 28px rgba(60, 45, 25, 0.18);
 }
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 body {
@@ -187,7 +307,7 @@ a:hover { text-decoration: underline; }
   text-decoration: none;
 }
 .nav-account-item.logout {
-  color: #d88c75;
+  color: var(--color-error-soft);
 }
 .nav-account-item .menu-hint {
   font-family: var(--font-mono);
@@ -199,7 +319,7 @@ a:hover { text-decoration: underline; }
 .search-trigger {
   display: none; align-items: center; gap: 6px; padding: 6px 12px;
   -webkit-appearance: none; appearance: none;
-  background: #1a1816 !important; border: 1px solid var(--control-border);
+  background: var(--search-trigger-bg) !important; border: 1px solid var(--control-border);
   border-radius: var(--radius-sm); color: var(--text-muted); cursor: pointer;
   font-size: 0.75rem; font-family: var(--font-body); min-height: 32px;
 }
@@ -207,7 +327,7 @@ a:hover { text-decoration: underline; }
 .search-trigger:hover { border-color: var(--border-emphasis); color: var(--text-secondary); }
 .search-trigger kbd { font-family: var(--font-mono); font-size: 0.625rem; background: var(--bg-elevated); padding: 1px 4px; border-radius: 3px; border: 1px solid var(--border-default); }
 
-.search-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 200; }
+.search-overlay { display: none; position: fixed; inset: 0; background: var(--scrim); z-index: 200; }
 .search-overlay.open { display: block; }
 .search-modal {
   display: none; position: fixed; top: 15vh; left: 50%; transform: translateX(-50%);
@@ -264,7 +384,7 @@ a:hover { text-decoration: underline; }
 
 @keyframes wh-spin { to { transform: rotate(360deg); } }
 .wh-spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border-emphasis); border-top-color: var(--accent); border-radius: 50%; animation: wh-spin 0.6s linear infinite; vertical-align: middle; margin-right: 6px; }
-.btn-primary .wh-spinner, .btn-save .wh-spinner { border-color: rgba(15, 14, 12, 0.25); border-top-color: #0f0e0c; }
+.btn-primary .wh-spinner, .btn-save .wh-spinner { border-color: color-mix(in srgb, var(--text-on-accent) 25%, transparent); border-top-color: var(--text-on-accent); }
 .btn-loading { pointer-events: none; opacity: 0.7; }
 
 .hover-preview {
@@ -272,7 +392,7 @@ a:hover { text-decoration: underline; }
   width: 320px; max-height: 400px; overflow-y: auto; overflow-x: hidden;
   background: var(--bg-elevated); border: 1px solid var(--border-emphasis);
   border-radius: var(--radius-md); padding: 16px 18px;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  box-shadow: var(--hover-preview-shadow);
   font-size: 0.8125rem; line-height: 1.6; color: var(--text-secondary);
 }
 .hover-preview-title {
@@ -286,6 +406,24 @@ a:hover { text-decoration: underline; }
 .hover-preview-related-label { font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 4px; }
 .hover-preview-link { display: block; font-size: 0.75rem; color: var(--accent); text-decoration: none; padding: 2px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hover-preview-link:hover { text-decoration: underline; }
+
+/* theme toggle — nav button cycling Auto → Light → Dark */
+.theme-toggle {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px;
+  background: transparent; border: 1px solid transparent;
+  border-radius: var(--radius-sm); cursor: pointer;
+  color: var(--text-tertiary);
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+.theme-toggle:hover { color: var(--text-primary); border-color: var(--border-default); background: var(--control-bg-hover); }
+.theme-toggle svg { display: block; }
+.theme-toggle .theme-ico-auto,
+.theme-toggle .theme-ico-light,
+.theme-toggle .theme-ico-dark { display: none; }
+html:not([data-theme]) .theme-toggle .theme-ico-auto { display: block; }
+html[data-theme="light"] .theme-toggle .theme-ico-light { display: block; }
+html[data-theme="dark"] .theme-toggle .theme-ico-dark { display: block; }
 
 {% block extra_css %}{% endblock %}
 </style>
@@ -329,6 +467,62 @@ document.addEventListener('DOMContentLoaded', () => {
   try {
     document.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
   } catch(e) {}
+
+  // ── Theme toggle: cycles Auto → Light → Dark. Persists in localStorage.
+  //    Keeps the highlight.js stylesheets aligned with the effective theme.
+  (function(){
+    const order = ['auto', 'light', 'dark'];
+    const labels = {auto: 'Theme: Auto (follow system)', light: 'Theme: Light', dark: 'Theme: Dark'};
+    const hljsDark = document.getElementById('hljs-theme-dark');
+    const hljsLight = document.getElementById('hljs-theme-light');
+    const darkMq = window.matchMedia('(prefers-color-scheme: dark)');
+
+    function current() {
+      var t = document.documentElement.getAttribute('data-theme');
+      return (t === 'light' || t === 'dark') ? t : 'auto';
+    }
+    function effective() {
+      var c = current();
+      if (c !== 'auto') return c;
+      return darkMq.matches ? 'dark' : 'light';
+    }
+    function syncHljs() {
+      if (!hljsDark || !hljsLight) return;
+      var c = current();
+      if (c === 'auto') {
+        hljsDark.media = '(prefers-color-scheme: dark)';
+        hljsLight.media = '(prefers-color-scheme: light)';
+      } else if (c === 'dark') {
+        hljsDark.media = 'all'; hljsLight.media = 'not all';
+      } else {
+        hljsDark.media = 'not all'; hljsLight.media = 'all';
+      }
+    }
+    function apply(mode) {
+      if (mode === 'auto') document.documentElement.removeAttribute('data-theme');
+      else document.documentElement.setAttribute('data-theme', mode);
+      try {
+        if (mode === 'auto') localStorage.removeItem('wikihubTheme');
+        else localStorage.setItem('wikihubTheme', mode);
+      } catch(e) {}
+      syncHljs();
+      document.querySelectorAll('[data-theme-toggle]').forEach(function(b) {
+        b.setAttribute('aria-label', labels[mode]);
+        b.setAttribute('title', labels[mode]);
+      });
+    }
+    syncHljs();
+    darkMq.addEventListener && darkMq.addEventListener('change', syncHljs);
+
+    document.querySelectorAll('[data-theme-toggle]').forEach(function(btn) {
+      btn.setAttribute('aria-label', labels[current()]);
+      btn.setAttribute('title', labels[current()]);
+      btn.addEventListener('click', function() {
+        var next = order[(order.indexOf(current()) + 1) % order.length];
+        apply(next);
+      });
+    });
+  })();
 
   const accountMenus = document.querySelectorAll('[data-account-menu]');
   accountMenus.forEach((menu) => {

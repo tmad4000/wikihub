@@ -8,6 +8,22 @@
   <a href="/explore" class="nav-link">Explore</a>
   <a href="/people" class="nav-link nav-hide-mobile">People</a>
   <a href="/agents" class="nav-link nav-agents nav-hide-mobile">For Agents</a>
+  <button type="button" class="theme-toggle" data-theme-toggle aria-label="Theme: Auto (follow system)" title="Theme: Auto (follow system)">
+    <!-- auto: half sun/half moon -->
+    <svg class="theme-ico-auto" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="8"/>
+      <path d="M12 4 A8 8 0 0 1 12 20 Z" fill="currentColor" stroke="none"/>
+    </svg>
+    <!-- light: sun -->
+    <svg class="theme-ico-light" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="4"/>
+      <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+    </svg>
+    <!-- dark: moon -->
+    <svg class="theme-ico-dark" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+    </svg>
+  </button>
   {% if current_user and current_user.is_authenticated %}
     <a href="/@{{ current_user.username }}" class="nav-link nav-hide-mobile">My Wiki</a>
     <div class="nav-account" data-account-menu>
