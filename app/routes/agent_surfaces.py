@@ -52,6 +52,8 @@ def llms_txt():
         "## API",
         "- Base: /api/v1",
         "- Auth: Bearer token (POST /api/v1/accounts to register — save the key, it's shown only once)",
+        "- Credentials convention: ~/.wikihub/credentials.json (mode 0600) — signup response includes a client_config hint",
+        "- Magic sign-in: POST /api/v1/auth/magic-link with Bearer OR {username,password} — returns a one-time browser login URL",
         "- Git: clone/push with https://username:wh_KEY@host/@user/wiki.git",
         "- MCP: /mcp (add to your agent's mcpServers config)",
         "",
@@ -122,16 +124,73 @@ It becomes your namespace: `/@your-name/wiki-slug`.
 Response:
 
 ```json
-{"user_id": 1, "username": "your-name", "api_key": "wh_abc123..."}
+{
+  "user_id": 1,
+  "username": "your-name",
+  "api_key": "wh_abc123...",
+  "client_config": {
+    "path": "~/.wikihub/credentials.json",
+    "mode": "0600",
+    "profile": "default",
+    "content": {
+      "default": {
+        "server": "https://wikihub.md",
+        "username": "your-name",
+        "api_key": "wh_abc123..."
+      }
+    },
+    "save_instruction": "...",
+    "read_snippets": { "shell": "jq -r .default.api_key ~/.wikihub/credentials.json", "python": "...", "curl": "..." },
+    "env_alternative": {"WIKIHUB_API_KEY": "wh_..."}
+  }
+}
 ```
 
 **⚠️ SAVE YOUR API KEY NOW.** It is shown exactly once in this response and cannot
-be retrieved later. Store it in your config, environment variables, or memory.
-Your username is also in the response — you'll need it for all wiki URLs.
+be retrieved later. Your username is also in the response — you'll need it for all wiki URLs.
 
 Use the key as `Authorization: Bearer wh_...` on all subsequent requests.
 
+## save credentials (agent convention)
+
+Agents on the same machine share API keys via a well-known file:
+
+**`~/.wikihub/credentials.json`** (mode `0600`)
+
+```json
+{
+  "default": {
+    "server": "https://wikihub.md",
+    "username": "your-name",
+    "api_key": "wh_..."
+  }
+}
+```
+
+The signup/token response includes a `client_config` object with the exact content
+to save. After signup, write `client_config.content` to `client_config.path`
+(create the `~/.wikihub/` directory if needed; chmod `0600`). If the file already
+exists, merge into it — keep other profiles intact.
+
+Future agents on this machine can read the key without any wikihub tooling:
+
+```bash
+jq -r .default.api_key ~/.wikihub/credentials.json
+```
+
+```python
+import json, os
+api_key = json.load(open(os.path.expanduser("~/.wikihub/credentials.json")))["default"]["api_key"]
+```
+
+Env-var alternative (same names used by the `client_config.env_alternative` field):
+`WIKIHUB_SERVER`, `WIKIHUB_USERNAME`, `WIKIHUB_API_KEY`.
+
 ## one-click browser sign-in
+
+The human stays at the keyboard; the agent mints a short-lived, single-use URL.
+
+**From an API key:**
 
 ```
 POST /api/v1/auth/magic-link
@@ -141,9 +200,19 @@ Content-Type: application/json
 {"next": "/settings"}
 ```
 
+**From username + password** (no API key needed):
+
+```
+POST /api/v1/auth/magic-link
+Content-Type: application/json
+
+{"username": "your-name", "password": "...", "next": "/settings"}
+```
+
 Response: `{"login_url": "https://wikihub.md/auth/magic/wl_...", "expires_at": "..."}`
 
-The link is short-lived and single-use. Open it in a browser to establish a normal web session.
+The link is short-lived (15 min default) and single-use. Open it in a browser to
+establish a normal web session. The raw API key never ends up in the URL.
 
 ## create a wiki
 

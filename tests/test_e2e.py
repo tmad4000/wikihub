@@ -329,6 +329,75 @@ def test_magic_link_login(client):
     assert "/auth/login" in r.headers["Location"]
 
 
+def test_client_config_hint(client):
+    """signup and token responses include client_config telling agents where to save credentials"""
+    # signup
+    r = client.post("/api/v1/accounts", json={"username": "cfguser"})
+    assert r.status_code == 201
+    data = r.get_json()
+    cc = data.get("client_config")
+    assert cc, "signup response missing client_config"
+    assert cc["path"] == "~/.wikihub/credentials.json"
+    assert cc["mode"] == "0600"
+    assert cc["profile"] == "default"
+    default_profile = cc["content"]["default"]
+    assert default_profile["username"] == "cfguser"
+    assert default_profile["api_key"] == data["api_key"]
+    assert default_profile["server"].startswith("http")
+    assert "api_key" in cc["read_snippets"]["shell"]
+    assert cc["env_alternative"]["WIKIHUB_API_KEY"] == data["api_key"]
+
+    # token exchange also returns client_config
+    r = client.post("/auth/signup", data={"username": "cfguser2", "password": "secret-pw-123"}, follow_redirects=False)
+    assert r.status_code == 302
+    r = client.post("/api/v1/auth/token", json={"username": "cfguser2", "password": "secret-pw-123"})
+    assert r.status_code == 200
+    tdata = r.get_json()
+    assert tdata["client_config"]["content"]["default"]["api_key"] == tdata["api_key"]
+    assert tdata["client_config"]["content"]["default"]["username"] == "cfguser2"
+
+
+def test_magic_link_from_password(client):
+    """POST /api/v1/auth/magic-link should accept {username,password} as an alternative to Bearer"""
+    # create account with password via API (bypasses web signup IP rate limit)
+    r = client.post("/api/v1/accounts", json={
+        "username": "pwmagic", "password": "correct-horse-battery-staple",
+    })
+    assert r.status_code == 201, r.get_json()
+
+    # magic link from username+password (no Bearer)
+    r = client.post("/api/v1/auth/magic-link", json={
+        "username": "pwmagic", "password": "correct-horse-battery-staple", "next": "/settings",
+    })
+    assert r.status_code == 201, r.get_json()
+    data = r.get_json()
+    assert "/auth/magic/" in data["login_url"]
+
+    # consume the link
+    magic_path = urlparse(data["login_url"]).path
+    browser = client.application.test_client()
+    r = browser.get(magic_path, follow_redirects=False)
+    assert r.status_code == 302, r.get_data(as_text=True)
+    assert r.headers["Location"].endswith("/settings")
+
+    # the test harness wraps every test in a single outer app_context,
+    # so flask-login's cached user sticks on flask.g across requests.
+    # clear it and use a fresh test_client so the "anonymous" assertions
+    # below are really anonymous.
+    from flask import g as _g
+    _g.pop("_login_user", None)
+    anon = client.application.test_client()
+
+    # wrong password → 401
+    r = anon.post("/api/v1/auth/magic-link", json={"username": "pwmagic", "password": "wrong"})
+    assert r.status_code == 401
+
+    # no auth at all → 401
+    _g.pop("_login_user", None)
+    r = anon.post("/api/v1/auth/magic-link", json={"next": "/settings"})
+    assert r.status_code == 401
+
+
 def test_anonymous_public_edit(client, api_key):
     h = {"Authorization": f"Bearer {api_key}"}
     r = client.post("/api/v1/wikis/agent1/test-wiki/pages", json={
@@ -689,7 +758,9 @@ def run_all():
             ("zip upload", lambda: test_zip_upload(client, key)),
             ("agent surfaces", lambda: test_agent_surfaces(client)),
             ("token + settings", lambda: test_token_and_settings(client)),
+            ("client_config hint", lambda: test_client_config_hint(client)),
             ("magic link login", lambda: test_magic_link_login(client)),
+            ("magic link from password", lambda: test_magic_link_from_password(client)),
             ("ACL permissions", lambda: test_acl_permissions(client, key)),
             ("anonymous public edit", lambda: test_anonymous_public_edit(client, key)),
             ("people directory + profiles", lambda: test_people_directory_and_profiles(client, key)),

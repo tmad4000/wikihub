@@ -11,6 +11,7 @@ from app.models import User, ApiKey, MagicLoginToken, UsernameRedirect, utcnow, 
 from app.auth_utils import (
     generate_api_key, generate_magic_login_token, hash_password, check_password, api_auth_required, get_current_user_from_request,
 )
+from app.credentials_hint import build_client_config, resolve_server_url
 from app.git_backend import _repo_path
 from app.routes import api_bp
 from app.wiki_ops import ensure_personal_wiki
@@ -62,10 +63,12 @@ def create_account():
     db.session.add(api_key)
     db.session.commit()
 
+    server_url = resolve_server_url(current_app, request)
     return jsonify({
         "user_id": user.id,
         "username": user.username,
         "api_key": raw_key,
+        "client_config": build_client_config(user.username, raw_key, server_url),
     }), 201
 
 
@@ -97,10 +100,12 @@ def get_token():
     db.session.add(api_key)
     db.session.commit()
 
+    server_url = resolve_server_url(current_app, request)
     return jsonify({
         "user_id": user.id,
         "username": user.username,
         "api_key": raw_key,
+        "client_config": build_client_config(user.username, raw_key, server_url),
     })
 
 
@@ -114,10 +119,46 @@ def _sanitize_redirect_path(raw_path, fallback="/"):
 
 
 @api_bp.route("/auth/magic-link", methods=["POST"])
-@api_auth_required
 def create_magic_link():
-    user = request.current_user
+    """mint a short-lived, single-use browser sign-in URL.
+
+    auth (any of):
+      - Authorization: Bearer wh_...   (API key)
+      - body: {"username": "...", "password": "..."}
+    body (optional): {"next": "/path"} — destination after sign-in.
+
+    this lets a human ask an agent "give me a login link" using just a
+    password, without the agent ever handing the API key to the browser.
+    """
     data = request.get_json(silent=True) or {}
+
+    # if the caller provided explicit credentials in the body, use those
+    # (and only those) — don't silently fall through to a lingering
+    # session cookie if the password is wrong.
+    explicit_creds = "username" in data or "password" in data
+
+    if explicit_creds:
+        username = (data.get("username") or "").strip()
+        password = data.get("password") or ""
+        candidate = User.query.filter_by(username=username).first() if username else None
+        if (
+            candidate
+            and candidate.password_hash
+            and password
+            and check_password(password, candidate.password_hash)
+        ):
+            user = candidate
+        else:
+            user = None
+    else:
+        user = get_current_user_from_request()
+
+    if not user:
+        return {
+            "error": "unauthorized",
+            "message": "Provide an Authorization: Bearer wh_... header or {username, password} in the body.",
+        }, 401
+
     redirect_path = _sanitize_redirect_path(
         data.get("next"),
         fallback=f"/@{user.username}",
@@ -134,7 +175,7 @@ def create_magic_link():
     db.session.add(token)
     db.session.commit()
 
-    base_url = current_app.config.get("BASE_URL", "").rstrip("/") or request.url_root.rstrip("/")
+    base_url = resolve_server_url(current_app, request)
     return jsonify({
         "login_url": f"{base_url}/auth/magic/{raw_token}",
         "expires_at": expires_at.isoformat(),
