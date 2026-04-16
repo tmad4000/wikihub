@@ -103,6 +103,28 @@ current recurring issues:
 
 **why this matters:** multiple agents work on this repo in parallel. agent A fixes the sidebar, agent B modifies the same template for a different feature and accidentally reverts agent A's fix. the recurring label is a canary — if you see it, be extra careful with that file.
 
+## signing into the dev app for visual testing
+
+Because the dev DB doesn't mirror production, use the magic-link flow to create a
+fresh test account and log yourself (or agent-browser / chrome-devtools MCP) into
+an authenticated session in one shot:
+
+```bash
+USER="themetest-$(date +%s)"
+KEY=$(curl -s -X POST http://localhost:5100/api/v1/accounts \
+  -H 'Content-Type: application/json' \
+  -d "{\"username\":\"$USER\",\"password\":\"testpass12345\"}" \
+  | python3 -c "import json,sys;print(json.load(sys.stdin)['api_key'])")
+URL=$(curl -s -X POST http://localhost:5100/api/v1/auth/magic-link \
+  -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d '{"next":"/settings"}' | python3 -c "import json,sys;print(json.load(sys.stdin)['login_url'])")
+echo "$URL"   # paste into the browser / navigate in chrome-devtools
+```
+
+For prod smoke tests, swap the server URL and use an existing account's password
+or API key (jacobcole's key lives in 1Password — see
+`~/.claude/projects/-Users-jacobcole-code-wikihub/memory/reference_wikihub_credentials.md`).
+
 ## verification: agent-browser is mandatory
 
 **after making any UI or route change, verify it with `agent-browser` against the running dev server.** do not rely solely on e2e tests or curl. the user expects visual confirmation that the change works.

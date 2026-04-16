@@ -10,107 +10,13 @@
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="wikihub">
   <meta name="description" content="The home for markdown knowledge bases. Bring your files or let your agent build it.">
-  <meta name="theme-color" content="#0f0e0c" media="(prefers-color-scheme: dark)">
-  <meta name="theme-color" content="#faf7f1" media="(prefers-color-scheme: light)">
-  <script>(function(){try{var t=localStorage.getItem('wikihubTheme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+  {% include '_theme.html' %}
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
-      color-scheme: dark;
-      --bg-base: #0f0e0c;
-      --bg-surface: #191714;
-      --bg-elevated: #221f1b;
-      --bg-overlay: #2a2622;
-      --text-primary: #e8e0d4;
-      --text-secondary: #b8ad9e;
-      --text-tertiary: #887d6e;
-      --text-muted: #5a5248;
-      --text-on-accent: #0f0e0c;
-      --accent: #d4a04a;
-      --accent-hover: #e0b35a;
-      --accent-muted: rgba(212, 160, 74, 0.12);
-      --accent-subtle: rgba(212, 160, 74, 0.06);
-      --color-public: #7a9e6b;
-      --color-private: #c45c3c;
-      --color-unlisted: #b8ad9e;
-      --color-edit: #d4a04a;
-      --color-wikilink: #d4a04a;
-      --color-wikilink-broken: #c45c3c;
-      --color-external: #7a9bb5;
-      --color-success: #7a9e6b;
-      --color-warning: #d4a04a;
-      --color-error: #c45c3c;
-      --color-error-soft: #d88c75;
-      --border-default: rgba(200, 180, 150, 0.08);
-      --border-emphasis: rgba(200, 180, 150, 0.15);
-      --border-strong: rgba(200, 180, 150, 0.25);
-      --border-accent: rgba(212, 160, 74, 0.4);
-      --control-bg: rgba(0, 0, 0, 0.2);
-      --control-bg-hover: rgba(200, 180, 150, 0.08);
-      --control-border: rgba(200, 180, 150, 0.12);
-      --search-trigger-bg: #1a1816;
-      --menu-bg: rgba(25, 23, 20, 0.98);
-      --font-body: 'Inter', -apple-system, sans-serif;
-      --font-mono: 'IBM Plex Mono', 'Menlo', monospace;
-      --radius-sm: 4px;
-      --radius-md: 6px;
-      --radius-lg: 10px;
       --max-width: 1120px;
-    }
-    @media (prefers-color-scheme: light) {
-      :root {
-        color-scheme: light;
-        --bg-base: #faf7f1; --bg-surface: #f3ede0; --bg-elevated: #eae3d2; --bg-overlay: #ded5bf;
-        --text-primary: #2a2520; --text-secondary: #5a5248; --text-tertiary: #887d6e; --text-muted: #a39989;
-        --text-on-accent: #1a1510;
-        --accent: #b78126; --accent-hover: #9c6e1e;
-        --accent-muted: rgba(183, 129, 38, 0.14); --accent-subtle: rgba(183, 129, 38, 0.07);
-        --color-public: #5a8051; --color-private: #a04b2f; --color-unlisted: #887d6e;
-        --color-edit: #b78126; --color-wikilink: #b78126; --color-wikilink-broken: #a04b2f;
-        --color-external: #4d6e8c; --color-success: #5a8051; --color-warning: #b78126; --color-error: #a04b2f;
-        --color-error-soft: #b95540;
-        --border-default: rgba(60, 45, 25, 0.10); --border-emphasis: rgba(60, 45, 25, 0.20);
-        --border-strong: rgba(60, 45, 25, 0.32); --border-accent: rgba(183, 129, 38, 0.45);
-        --control-bg: rgba(255, 255, 255, 0.6); --control-bg-hover: rgba(60, 45, 25, 0.06);
-        --control-border: rgba(60, 45, 25, 0.14); --search-trigger-bg: #ede6d6;
-        --menu-bg: rgba(250, 247, 241, 0.98);
-      }
-    }
-    html[data-theme="dark"] {
-      color-scheme: dark;
-      --bg-base: #0f0e0c; --bg-surface: #191714; --bg-elevated: #221f1b; --bg-overlay: #2a2622;
-      --text-primary: #e8e0d4; --text-secondary: #b8ad9e; --text-tertiary: #887d6e; --text-muted: #5a5248;
-      --text-on-accent: #0f0e0c;
-      --accent: #d4a04a; --accent-hover: #e0b35a;
-      --accent-muted: rgba(212, 160, 74, 0.12); --accent-subtle: rgba(212, 160, 74, 0.06);
-      --color-public: #7a9e6b; --color-private: #c45c3c; --color-unlisted: #b8ad9e;
-      --color-edit: #d4a04a; --color-wikilink: #d4a04a; --color-wikilink-broken: #c45c3c;
-      --color-external: #7a9bb5; --color-success: #7a9e6b; --color-warning: #d4a04a; --color-error: #c45c3c;
-      --color-error-soft: #d88c75;
-      --border-default: rgba(200, 180, 150, 0.08); --border-emphasis: rgba(200, 180, 150, 0.15);
-      --border-strong: rgba(200, 180, 150, 0.25); --border-accent: rgba(212, 160, 74, 0.4);
-      --control-bg: rgba(0, 0, 0, 0.2); --control-bg-hover: rgba(200, 180, 150, 0.08);
-      --control-border: rgba(200, 180, 150, 0.12); --search-trigger-bg: #1a1816;
-      --menu-bg: rgba(25, 23, 20, 0.98);
-    }
-    html[data-theme="light"] {
-      color-scheme: light;
-      --bg-base: #faf7f1; --bg-surface: #f3ede0; --bg-elevated: #eae3d2; --bg-overlay: #ded5bf;
-      --text-primary: #2a2520; --text-secondary: #5a5248; --text-tertiary: #887d6e; --text-muted: #a39989;
-      --text-on-accent: #1a1510;
-      --accent: #b78126; --accent-hover: #9c6e1e;
-      --accent-muted: rgba(183, 129, 38, 0.14); --accent-subtle: rgba(183, 129, 38, 0.07);
-      --color-public: #5a8051; --color-private: #a04b2f; --color-unlisted: #887d6e;
-      --color-edit: #b78126; --color-wikilink: #b78126; --color-wikilink-broken: #a04b2f;
-      --color-external: #4d6e8c; --color-success: #5a8051; --color-warning: #b78126; --color-error: #a04b2f;
-      --color-error-soft: #b95540;
-      --border-default: rgba(60, 45, 25, 0.10); --border-emphasis: rgba(60, 45, 25, 0.20);
-      --border-strong: rgba(60, 45, 25, 0.32); --border-accent: rgba(183, 129, 38, 0.45);
-      --control-bg: rgba(255, 255, 255, 0.6); --control-bg-hover: rgba(60, 45, 25, 0.06);
-      --control-border: rgba(60, 45, 25, 0.14); --search-trigger-bg: #ede6d6;
-      --menu-bg: rgba(250, 247, 241, 0.98);
     }
 
     *, *::before, *::after {
@@ -751,24 +657,7 @@
     /* ── footer ──────────────────────────── */
 
     /* footer styles removed — using shared _footer.html partial */
-
-    /* ── theme toggle ────────────────────── */
-    .theme-toggle {
-      display: inline-flex; align-items: center; justify-content: center;
-      width: 34px; height: 34px;
-      background: transparent; border: 1px solid transparent;
-      border-radius: var(--radius-sm); cursor: pointer;
-      color: var(--text-tertiary);
-      transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
-    }
-    .theme-toggle:hover { color: var(--text-primary); border-color: var(--border-default); background: var(--control-bg-hover); }
-    .theme-toggle svg { display: block; }
-    .theme-toggle .theme-ico-auto,
-    .theme-toggle .theme-ico-light,
-    .theme-toggle .theme-ico-dark { display: none; }
-    html:not([data-theme]) .theme-toggle .theme-ico-auto { display: block; }
-    html[data-theme="light"] .theme-toggle .theme-ico-light { display: block; }
-    html[data-theme="dark"] .theme-toggle .theme-ico-dark { display: block; }
+    /* theme-toggle styles live in _theme.html */
   </style>
 </head>
 <body>
