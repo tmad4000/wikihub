@@ -917,15 +917,20 @@ function saveFolders(state) {
 
 function applyFolderState() {
   const state = loadFolders();
+  let changed = false;
   document.querySelectorAll('.sidebar-folder').forEach(folder => {
     const path = folder.dataset.folderPath;
     if (state[path] === false) {
       folder.classList.remove('open');
     } else if (state[path] === true || folder.classList.contains('open')) {
       folder.classList.add('open');
+      // Persist open state (including server-side auto-expand for active page)
+      // so folders stay open when user navigates to a page in a different branch.
+      if (state[path] !== true) { state[path] = true; changed = true; }
     }
     // non-active folders with no localStorage state stay collapsed (server default)
   });
+  if (changed) saveFolders(state);
   // scroll active sidebar item into view
   requestAnimationFrame(() => {
     const active = document.querySelector('.sidebar-item.active');

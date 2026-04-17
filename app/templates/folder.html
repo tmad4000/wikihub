@@ -290,12 +290,21 @@ document.addEventListener('click', function(e) {
   if (folder) toggleFolder(folder.dataset.folderPath);
 });
 
-const state = loadFolders();
-document.querySelectorAll('.sidebar-folder').forEach(folder => {
-  const path = folder.dataset.folderPath;
-  if (state[path] === false) folder.classList.remove('open');
-  else if (state[path] === true || folder.classList.contains('open')) folder.classList.add('open');
-});
+(function initFolders() {
+  const state = loadFolders();
+  let changed = false;
+  document.querySelectorAll('.sidebar-folder').forEach(folder => {
+    const path = folder.dataset.folderPath;
+    if (state[path] === false) {
+      folder.classList.remove('open');
+    } else if (state[path] === true || folder.classList.contains('open')) {
+      folder.classList.add('open');
+      // Persist auto-expanded active folders so they stay open after navigation.
+      if (state[path] !== true) { state[path] = true; changed = true; }
+    }
+  });
+  if (changed) localStorage.setItem(folderStorageKey, JSON.stringify(state));
+})();
 requestAnimationFrame(() => {
   const active = document.querySelector('.sidebar-item.active');
   if (active) active.scrollIntoView({ block: 'nearest', behavior: 'instant' });
