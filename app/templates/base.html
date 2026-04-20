@@ -427,9 +427,16 @@ document.addEventListener('DOMContentLoaded', () => {
       var entry = stack.pop();
       entry.el.remove();
     }
+    // safety net — if we're clearing to root, sweep any .hover-preview DOM
+    // nodes that somehow aren't tracked in `stack` (stale fetch responses,
+    // race conditions). without this, orphans linger and block future clicks.
+    if (depth === 0) {
+      document.querySelectorAll('.hover-preview').forEach(function(el) { el.remove(); });
+    }
   }
 
   function closeAll() {
+    clearTimeout(hideTimer);
     hideTimer = setTimeout(function() {
       closeFromDepth(0);
     }, 200);
@@ -473,7 +480,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (data.excerpt) {
       var excerptEl = document.createElement('div');
       excerptEl.className = 'hover-preview-excerpt';
-      excerptEl.textContent = data.excerpt;
+      var ex = data.excerpt.replace(/\s+$/, '');
+      // always end the preview on "…" so users know there's more to read;
+      // -webkit-line-clamp may cut mid-word without rendering its own glyph
+      if (!/[…\u2026]$|\.\.\.$/.test(ex)) ex += '…';
+      excerptEl.textContent = ex;
       c.appendChild(excerptEl);
     }
 
@@ -529,7 +540,13 @@ document.addEventListener('DOMContentLoaded', () => {
     c.addEventListener('mouseenter', function() { cancelClose(); });
     c.addEventListener('mouseleave', function(e) {
       // don't close if moving to another card in the stack
-      if (e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest('.hover-preview')) return;
+      // only suppress close if the pointer is moving to a card that's still
+      // part of the live stack. moving to an orphan preview (or anywhere else)
+      // MUST arm the close timer, or stacked cards linger forever.
+      if (e.relatedTarget && e.relatedTarget.closest) {
+        var nextCard = e.relatedTarget.closest('.hover-preview');
+        if (nextCard && stack.some(function(s) { return s.el === nextCard; })) return;
+      }
       closeAll();
     });
 
@@ -558,7 +575,13 @@ document.addEventListener('DOMContentLoaded', () => {
     c.appendChild(loading);
     c.addEventListener('mouseenter', function() { cancelClose(); });
     c.addEventListener('mouseleave', function(e) {
-      if (e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest('.hover-preview')) return;
+      // only suppress close if the pointer is moving to a card that's still
+      // part of the live stack. moving to an orphan preview (or anywhere else)
+      // MUST arm the close timer, or stacked cards linger forever.
+      if (e.relatedTarget && e.relatedTarget.closest) {
+        var nextCard = e.relatedTarget.closest('.hover-preview');
+        if (nextCard && stack.some(function(s) { return s.el === nextCard; })) return;
+      }
       closeAll();
     });
     document.body.appendChild(c);
@@ -568,10 +591,15 @@ document.addEventListener('DOMContentLoaded', () => {
     var apiPath = '/api/v1/wikis/' + parsed.owner + '/' + parsed.slug + '/pages/' + parsed.path;
     if (!apiPath.endsWith('.md')) apiPath += '.md';
 
+    function removeLoadingFromStack() {
+      var idx = stack.findIndex(function(s) { return s.el === c; });
+      if (idx >= 0) stack.splice(idx, 1);
+    }
+
     fetch(apiPath)
       .then(function(r) { return r.ok ? r.json() : null; })
       .then(function(data) {
-        if (!data) { c.remove(); return; }
+        if (!data) { removeLoadingFromStack(); c.remove(); return; }
         data._owner = parsed.owner;
         data._slug = parsed.slug;
         cache[key] = data;
@@ -585,7 +613,7 @@ document.addEventListener('DOMContentLoaded', () => {
         c.remove();
         stack[idx] = { el: newC, depth: depth };
       })
-      .catch(function() { c.remove(); });
+      .catch(function() { removeLoadingFromStack(); c.remove(); });
   }
 
   // page-level hover detection — immediate, no delay
@@ -615,9 +643,8 @@ document.addEventListener('DOMContentLoaded', () => {
     closeAll();
   });
 
-  // click anywhere outside cards closes entire stack
+  // click anywhere outside cards closes entire stack (and any orphans)
   document.addEventListener('click', function(e) {
-    if (stack.length === 0) return;
     if (e.target.closest('.hover-preview')) return;
     cancelClose();
     closeFromDepth(0);
