@@ -223,6 +223,39 @@ def test_binary_file_serving(client, api_key):
     assert b'file-embed' in r.data
     assert b'wiki/doc.pdf' in r.data
 
+    # plain text files (.txt) should serve inline as text/plain
+    r = client.post("/api/v1/wikis/agent1/media-wiki/pages", json={
+        "path": "wiki/notes.txt", "content": "raw notes\nline two\n", "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201
+    r = client.get("/@agent1/media-wiki/wiki/notes.txt")
+    assert r.status_code == 200, f"Expected 200 for .txt, got {r.status_code}"
+    assert "text/plain" in r.content_type
+    assert b"raw notes" in r.data
+    # browser should display inline (no Content-Disposition: attachment)
+    assert "attachment" not in r.headers.get("Content-Disposition", "")
+
+    # unknown extensions should download (Content-Disposition: attachment, octet-stream)
+    r = client.post("/api/v1/wikis/agent1/media-wiki/pages", json={
+        "path": "wiki/data.weirdext", "content": "arbitrary bytes here", "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201
+    r = client.get("/@agent1/media-wiki/wiki/data.weirdext")
+    assert r.status_code == 200, f"Expected 200 for unknown ext, got {r.status_code}"
+    assert "application/octet-stream" in r.content_type
+    assert "attachment" in r.headers.get("Content-Disposition", "")
+    assert b"arbitrary bytes here" in r.data
+
+    # potentially-XSS-y extension (.html) must NOT be served as text/html — force download
+    r = client.post("/api/v1/wikis/agent1/media-wiki/pages", json={
+        "path": "wiki/evil.html", "content": "<script>alert(1)</script>", "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201
+    r = client.get("/@agent1/media-wiki/wiki/evil.html")
+    assert r.status_code == 200
+    assert "application/octet-stream" in r.content_type, "XSS guard: .html must not be served inline"
+    assert "attachment" in r.headers.get("Content-Disposition", "")
+
 
 def test_search(client, api_key):
     """full-text search returns results"""
@@ -524,6 +557,66 @@ def test_new_folder_ui(client):
     r = client.get("/@folderuser/folderuser/plans/2026/")
     assert r.status_code == 200
     assert b"plans/2026" in r.data or b"2026" in r.data
+
+
+def test_sidebar_indentation(client, api_key):
+    """REGRESSION GUARD wikihub-58c — children of folders must be visually indented.
+
+    This bug keeps coming back: someone edits sidebar CSS or the macro in
+    reader.html, accidentally drops the .sidebar-children padding or the wrapper
+    div, and the left sidebar collapses into an un-nested flat list. This test
+    fails loudly if that happens. DO NOT remove or relax without discussing.
+
+    What it checks:
+      1. The .sidebar-children CSS rule exists with padding-left >= 16px.
+      2. A folder with a child page renders <div class="sidebar-children">
+         wrapping the child row in the rendered HTML.
+    """
+    import re
+
+    h = {"Authorization": f"Bearer {api_key}"}
+
+    # dedicated wiki so we don't collide with other tests
+    r = client.post("/api/v1/wikis", json={"slug": "indent-test", "title": "Indent Test"}, headers=h)
+    assert r.status_code == 201
+
+    # creating a page at "plans/roadmap.md" implicitly creates the 'plans' folder
+    r = client.post(
+        "/api/v1/wikis/agent1/indent-test/pages",
+        json={
+            "path": "plans/roadmap.md",
+            "content": "---\ntitle: Roadmap\nvisibility: public\n---\n\n# Roadmap",
+            "visibility": "public",
+        },
+        headers=h,
+    )
+    assert r.status_code == 201, f"child page create failed: {r.status_code} {r.data[:200]}"
+
+    # fetch the reader page for the child — sidebar will expand folder
+    r = client.get("/@agent1/indent-test/plans/roadmap")
+    assert r.status_code == 200, f"reader fetch failed: {r.status_code}"
+    html = r.data.decode()
+
+    # 1) CSS rule exists with enough padding
+    m = re.search(r"\.sidebar-children\s*\{[^}]*padding-left:\s*(\d+)px", html)
+    assert m, (
+        "wikihub-58c REGRESSION: .sidebar-children CSS rule missing padding-left. "
+        "Child items under folders will not be indented. Restore the rule in "
+        "app/templates/reader.html."
+    )
+    px = int(m.group(1))
+    assert px >= 16, (
+        f"wikihub-58c REGRESSION: .sidebar-children padding-left is {px}px, "
+        f"must be >= 16px for visible nesting under parent folders."
+    )
+
+    # 2) HTML structure: folder wraps child rows in .sidebar-children
+    assert 'class="sidebar-children"' in html, (
+        "wikihub-58c REGRESSION: folder macro no longer emits "
+        '<div class="sidebar-children">. Child rows will render as siblings of '
+        "the folder instead of nested. Check the render_sidebar macro in "
+        "app/templates/reader.html."
+    )
 
 
 def test_wikipedia_urls(client, api_key):
@@ -871,6 +964,7 @@ def run_all():
             ("anonymous public edit", lambda: test_anonymous_public_edit(client, key)),
             ("people directory + profiles", lambda: test_people_directory_and_profiles(client, key)),
             ("new folder UI", lambda: test_new_folder_ui(client)),
+            ("sidebar indentation (wikihub-58c regression guard)", lambda: test_sidebar_indentation(client, key)),
             ("wikipedia-style URLs", lambda: test_wikipedia_urls(client, key)),
             ("sharing lifecycle", lambda: test_sharing_lifecycle(client, key)),
             ("wiki-level sharing", lambda: test_wiki_level_sharing(client, key)),

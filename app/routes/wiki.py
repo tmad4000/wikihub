@@ -819,11 +819,26 @@ def wiki_page(username, slug, page_path):
 
     siblings = _sibling_wikis(owner, wiki)
 
-    # serve non-markdown files (images, PDFs, etc.) as raw binary
+    # Non-markdown files: inline preview for known-safe formats, download for everything else.
+    # Markdown is the only first-class format (chrome, sidebar, search, graph). Other extensions
+    # are second-class: viewable/downloadable but not part of the wiki graph.
     _MARKDOWN_EXTS = {".md", ".markdown", ".mdown", ".mkd"}
-    _BINARY_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico", ".pdf", ".zip", ".tar", ".gz", ".mp3", ".mp4", ".wav", ".ogg", ".webm", ".woff", ".woff2", ".ttf", ".eot", ".csv", ".json", ".xml", ".yaml", ".yml", ".toml"}
+    _INLINE_EXTS = {
+        # text — served as text/plain (or specific text mime); browsers render inline
+        ".txt", ".log", ".csv", ".tsv", ".json", ".xml", ".yaml", ".yml", ".toml",
+        # images — browsers render inline
+        ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico",
+        # PDF — browsers render in built-in viewer
+        ".pdf",
+        # audio/video — browsers play in built-in player
+        ".mp3", ".mp4", ".wav", ".ogg", ".webm",
+        # fonts
+        ".woff", ".woff2", ".ttf", ".eot",
+        # archives — browsers download these naturally via correct mime
+        ".zip", ".tar", ".gz",
+    }
     ext = os.path.splitext(page_path)[1].lower()
-    if ext and ext in _BINARY_EXTS and not request.path.endswith("/"):
+    if ext and ext not in _MARKDOWN_EXTS and not request.path.endswith("/"):
         import mimetypes
         is_owner = _is_owner(wiki)
         acl_rules = load_acl_rules(owner.username, wiki.slug)
@@ -834,17 +849,24 @@ def wiki_page(username, slug, page_path):
             abort(404)
         use_public = _use_public_repo(wiki, acl_rules)
         data = read_file_bytes_from_repo(owner.username, wiki.slug, page_path, public=use_public)
-        if data is None and not use_public:
-            pass  # already tried authoritative repo
-        elif data is None:
+        if data is None and use_public:
             data = read_file_bytes_from_repo(owner.username, wiki.slug, page_path, public=False)
         if data is None:
-            abort(404)
-        content_type = mimetypes.guess_type(page_path)[0] or "application/octet-stream"
-        headers = {"Cache-Control": "public, max-age=3600"}
-        if content_type == "application/pdf":
-            headers["Content-Disposition"] = f'inline; filename="{os.path.basename(page_path)}"'
-        return Response(data, content_type=content_type, headers=headers)
+            # File not in repo with this extension — fall through to markdown path
+            # (which will try .md suffix and 404 if nothing matches).
+            pass
+        else:
+            headers = {"Cache-Control": "public, max-age=3600"}
+            if ext in _INLINE_EXTS:
+                content_type = mimetypes.guess_type(page_path)[0] or "application/octet-stream"
+                if content_type == "application/pdf":
+                    headers["Content-Disposition"] = f'inline; filename="{os.path.basename(page_path)}"'
+            else:
+                # Unknown extension: force octet-stream + attachment.
+                # Prevents XSS via uploaded .html, .swf, etc. while still letting users download anything.
+                content_type = "application/octet-stream"
+                headers["Content-Disposition"] = f'attachment; filename="{os.path.basename(page_path)}"'
+            return Response(data, content_type=content_type, headers=headers)
 
     if request.path.endswith("/"):
         acl_rules = load_acl_rules(owner.username, wiki.slug)
