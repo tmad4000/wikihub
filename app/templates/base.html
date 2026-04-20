@@ -255,6 +255,14 @@ a:hover { text-decoration: underline; }
 .hover-preview-excerpt { display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; }
 .hover-preview-more { display: block; margin-top: 8px; font-size: 0.75rem; color: var(--accent); text-decoration: none; }
 .hover-preview-loading { color: var(--text-muted); font-style: italic; }
+.hover-preview.stub { border-style: dashed; border-color: var(--border-default); }
+.hover-preview-stub-label {
+  font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--text-muted); margin-bottom: 4px;
+}
+.hover-preview-stub-body { color: var(--text-muted); font-size: 0.8125rem; margin-bottom: 10px; }
+.hover-preview-stub-create { display: inline-block; font-size: 0.75rem; color: var(--accent); text-decoration: none; }
+.hover-preview-stub-create:hover { text-decoration: underline; }
 .hover-preview-related { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border-default); }
 .hover-preview-related-label { font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 4px; }
 .hover-preview-link { display: block; font-size: 0.75rem; color: var(--accent); text-decoration: none; padding: 2px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -538,19 +546,32 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // keep stack alive while mouse is on any card
     c.addEventListener('mouseenter', function() { cancelClose(); });
-    c.addEventListener('mouseleave', function(e) {
-      // don't close if moving to another card in the stack
-      // only suppress close if the pointer is moving to a card that's still
-      // part of the live stack. moving to an orphan preview (or anywhere else)
-      // MUST arm the close timer, or stacked cards linger forever.
-      if (e.relatedTarget && e.relatedTarget.closest) {
-        var nextCard = e.relatedTarget.closest('.hover-preview');
-        if (nextCard && stack.some(function(s) { return s.el === nextCard; })) return;
-      }
-      closeAll();
-    });
+    c.addEventListener('mouseleave', onCardLeave(depth));
 
     return c;
+  }
+
+  // wikihub-spwp: when leaving a card, decide based on where the cursor goes.
+  //   - into a deeper (or equal-depth) card in the stack  → keep stack alive
+  //   - into a SHALLOWER card in the stack                → close cards deeper
+  //     than it (so leaving secondary back onto primary dismisses secondary)
+  //   - anywhere else                                      → arm full close
+  function onCardLeave(myDepth) {
+    return function(e) {
+      if (e.relatedTarget && e.relatedTarget.closest) {
+        var nextCard = e.relatedTarget.closest('.hover-preview');
+        if (nextCard) {
+          var nextEntry = stack.find(function(s) { return s.el === nextCard; });
+          if (nextEntry) {
+            if (nextEntry.depth >= myDepth) return;
+            cancelClose();
+            closeFromDepth(nextEntry.depth + 1);
+            return;
+          }
+        }
+      }
+      closeAll();
+    };
   }
 
   function openPreview(parsed, rect, depth) {
@@ -574,18 +595,9 @@ document.addEventListener('DOMContentLoaded', () => {
     loading.textContent = 'Loading\u2026';
     c.appendChild(loading);
     c.addEventListener('mouseenter', function() { cancelClose(); });
-    c.addEventListener('mouseleave', function(e) {
-      // only suppress close if the pointer is moving to a card that's still
-      // part of the live stack. moving to an orphan preview (or anywhere else)
-      // MUST arm the close timer, or stacked cards linger forever.
-      if (e.relatedTarget && e.relatedTarget.closest) {
-        var nextCard = e.relatedTarget.closest('.hover-preview');
-        if (nextCard && stack.some(function(s) { return s.el === nextCard; })) return;
-      }
-      closeAll();
-    });
+    c.addEventListener('mouseleave', onCardLeave(depth));
     document.body.appendChild(c);
-    positionCard(c, rect);
+    positionCard(c, rect, depth);
     stack.push({ el: c, depth: depth });
 
     var apiPath = '/api/v1/wikis/' + parsed.owner + '/' + parsed.slug + '/pages/' + parsed.path;
@@ -597,16 +609,31 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     fetch(apiPath)
-      .then(function(r) { return r.ok ? r.json() : null; })
-      .then(function(data) {
-        if (!data) { removeLoadingFromStack(); c.remove(); return; }
-        data._owner = parsed.owner;
-        data._slug = parsed.slug;
-        cache[key] = data;
+      .then(function(r) {
+        return r.json().then(function(j) { return { status: r.status, ok: r.ok, data: j }; })
+                       .catch(function() { return { status: r.status, ok: r.ok, data: null }; });
+      })
+      .then(function(res) {
         // if loading card was already popped (user moved on before fetch resolved),
         // drop the response on the floor — otherwise we leak an orphan card
         var idx = stack.findIndex(function(s) { return s.el === c; });
         if (idx < 0) { c.remove(); return; }
+        if (!res.ok || !res.data) {
+          // wikihub-spwp: 404 → show stub card instead of silently vanishing.
+          // covers "Related to" links whose targets don't exist in the wiki.
+          var fakeLink = document.createElement('a');
+          fakeLink.setAttribute('href', '/@' + parsed.owner + '/' + parsed.slug + '/' + parsed.path);
+          fakeLink.dataset.target = parsed.path.replace(/\.md$/, '');
+          fakeLink.textContent = parsed.path;
+          c.remove();
+          stack.splice(idx, 1);
+          openStubPreview(fakeLink, rect, depth);
+          return;
+        }
+        var data = res.data;
+        data._owner = parsed.owner;
+        data._slug = parsed.slug;
+        cache[key] = data;
         var newC = buildCard(data, depth);
         document.body.appendChild(newC);
         positionCard(newC, rect, depth);
@@ -614,6 +641,43 @@ document.addEventListener('DOMContentLoaded', () => {
         stack[idx] = { el: newC, depth: depth };
       })
       .catch(function() { removeLoadingFromStack(); c.remove(); });
+  }
+
+  // wikihub-spwp: stub cards for wikilinks pointing at pages that do not exist.
+  // .wikilink-broken is set by app/renderer.py:321 for unresolved [[links]].
+  // Show a dedicated card (no fetch) so the preview doesn't silently vanish.
+  function openStubPreview(linkEl, rect, depth) {
+    var c = document.createElement('div');
+    c.className = 'hover-preview stub';
+    c.style.zIndex = 300 + depth;
+    c.dataset.depth = depth;
+
+    var label = document.createElement('div');
+    label.className = 'hover-preview-stub-label';
+    label.textContent = 'Stub';
+    c.appendChild(label);
+
+    var titleEl = document.createElement('div');
+    titleEl.className = 'hover-preview-title';
+    titleEl.textContent = linkEl.dataset.target || linkEl.textContent.trim();
+    c.appendChild(titleEl);
+
+    var body = document.createElement('div');
+    body.className = 'hover-preview-stub-body';
+    body.textContent = 'Page not created yet.';
+    c.appendChild(body);
+
+    var create = document.createElement('a');
+    create.className = 'hover-preview-stub-create';
+    create.textContent = 'Create this page →';
+    create.href = linkEl.getAttribute('href');
+    c.appendChild(create);
+
+    c.addEventListener('mouseenter', function() { cancelClose(); });
+    c.addEventListener('mouseleave', onCardLeave(depth));
+    document.body.appendChild(c);
+    positionCard(c, rect, depth);
+    stack.push({ el: c, depth: depth });
   }
 
   // page-level hover detection — immediate, no delay
@@ -625,11 +689,17 @@ document.addEventListener('DOMContentLoaded', () => {
     lastHoverEl = el;
     var href = el.getAttribute('href');
     if (!href || href.startsWith('#')) return;
-    var parsed = parseWikiUrl(href);
-    if (!parsed) return;
 
     cancelClose();
     closeFromDepth(0);
+
+    if (el.classList.contains('wikilink-broken')) {
+      openStubPreview(el, el.getBoundingClientRect(), 0);
+      return;
+    }
+
+    var parsed = parseWikiUrl(href);
+    if (!parsed) return;
     openPreview(parsed, el.getBoundingClientRect(), 0);
   });
 
