@@ -56,6 +56,7 @@ def llms_txt():
         "- Magic sign-in: POST /api/v1/auth/magic-link with Bearer OR {username,password} — returns a one-time browser login URL",
         "- Git: clone/push with https://username:wh_KEY@host/@user/wiki.git",
         "- MCP: /mcp (add to your agent's mcpServers config)",
+        "- CLI: `pipx install wikihub-cli` then `wikihub signup`, `wikihub write`, `wikihub read`, `wikihub search` (see /AGENTS.md)",
         "",
         "## Optional",
     ]
@@ -279,6 +280,27 @@ add this to your Claude Code or MCP-compatible agent config:
 }
 ```
 
+`wikihub mcp-config` (from the CLI) prints this snippet pre-filled with your saved key.
+
+## CLI
+
+Thin wrapper over this REST API. Install once, then compose with shell pipelines.
+
+```bash
+pipx install wikihub-cli          # or: pip install -e cli/ from the repo
+
+wikihub signup --username you     # saves key to ~/.wikihub/credentials.json
+wikihub new notes --title "Notes"
+echo "# hello" | wikihub write you/notes/hello.md
+wikihub read you/notes/hello.md
+wikihub search "hello" --wiki you/notes
+wikihub mcp-config                # prints mcpServers JSON pre-filled
+```
+
+Subcommands: `signup | login | logout | whoami | new | ls | read | write | publish | rm | search | mcp-config | version`.
+
+Auth order: `--api-key` flag → `WIKIHUB_*` env vars → `~/.wikihub/credentials.json` (`--profile` selects).
+
 ## content negotiation
 
 `Accept: text/markdown` on any page URL returns raw markdown.
@@ -339,6 +361,11 @@ def wikihub_bootstrap():
         "signup_url": base + "/api/v1/accounts",
         "docs_url": base + "/agents",
         "llms_txt": base + "/llms.txt",
+        "cli": {
+            "name": "wikihub-cli",
+            "install": "pipx install wikihub-cli",
+            "repo": "https://github.com/harqian/wikihub/tree/main/cli",
+        },
     })
 
 

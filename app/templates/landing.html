@@ -729,7 +729,7 @@
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
         </div>
         <h3>Agent API</h3>
-        <p>Native MCP server, REST endpoints, and content negotiation. Your AI agent can read, search, and edit pages programmatically.</p>
+        <p>Native MCP server, REST endpoints, CLI (<code>wikihub</code>), and content negotiation. Your AI agent can read, search, and edit pages programmatically.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon blue">
@@ -798,6 +798,26 @@
       </div>
       <p style="text-align:center;margin-top:16px;"><a href="/agents" style="color:var(--accent);font-size:0.875rem;">Full API docs &rarr;</a></p>
     </div>
+  </section>
+
+  <div class="divider"><hr></div>
+
+  <!-- CLI -->
+  <section class="section">
+    <p class="section-label">CLI</p>
+    <h2 class="section-heading">Shell-friendly in 30 seconds</h2>
+    <p class="section-desc">Pipe markdown, cron-publish, bootstrap wikis from shell scripts. Thin wrapper over the REST API.</p>
+    <div style="max-width:560px;margin:0 auto;background:var(--bg-surface);border:1px solid var(--border-default);border-radius:var(--radius-md);padding:20px 24px;font-family:var(--font-mono);font-size:0.8125rem;line-height:1.8;color:var(--text-secondary);overflow-x:auto;">
+      <div style="color:var(--text-muted);margin-bottom:4px;"># install</div>
+      <div>pipx install <span style="color:var(--accent);">wikihub-cli</span></div>
+      <div style="height:8px;"></div>
+      <div style="color:var(--text-muted);"># sign up, create a wiki, write a page</div>
+      <div>wikihub signup --username <span style="color:var(--accent);">you</span></div>
+      <div>wikihub new <span style="color:var(--accent);">notes</span> --title <span style="color:var(--accent);">"Notes"</span></div>
+      <div>echo <span style="color:var(--accent);">"# hello"</span> | wikihub write <span style="color:var(--accent);">you/notes/hello.md</span></div>
+      <div>wikihub read <span style="color:var(--accent);">you/notes/hello.md</span></div>
+    </div>
+    <p style="text-align:center;margin-top:16px;"><a href="/agents#cli" style="color:var(--accent);font-size:0.875rem;">Full CLI reference &rarr;</a></p>
   </section>
 
   <div class="divider"><hr></div>

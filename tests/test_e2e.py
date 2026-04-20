@@ -679,9 +679,23 @@ def test_sidebar_indentation(client, api_key):
         "app/templates/reader.html."
     )
     px = int(m.group(1))
-    assert px >= 16, (
-        f"wikihub-58c REGRESSION: .sidebar-children padding-left is {px}px, "
-        f"must be >= 16px for visible nesting under parent folders."
+
+    # wikihub-58bd: the real invariant is that padding-left must exceed the
+    # sidebar-folder-toggle width. Files inside a folder have no toggle button,
+    # so when .sidebar-children padding == toggle width, file icons end up at
+    # exactly the same x as their parent folder's icon — zero visible nesting.
+    tog = re.search(r"\.sidebar-folder-toggle\s*\{[^}]*width:\s*(\d+)px", html)
+    assert tog, (
+        "wikihub-58c REGRESSION: .sidebar-folder-toggle width rule missing. "
+        "Cannot verify nesting invariant."
+    )
+    toggle_width = int(tog.group(1))
+    assert px > toggle_width + 4, (
+        f"wikihub-58bd REGRESSION: .sidebar-children padding-left is {px}px "
+        f"but .sidebar-folder-toggle width is {toggle_width}px. Children need "
+        f"padding-left > toggle_width + 4 so file icons appear visibly indented "
+        f"past the parent folder's icon. (Was: padding=={toggle_width} made the "
+        f"tree look flat at the second nesting level.)"
     )
 
     # 2) HTML structure: folder wraps child rows in .sidebar-children
@@ -1004,6 +1018,137 @@ def test_subdomain_routing(client):
     assert "wikihub.wikihub.md" in r.headers["Location"]
 
 
+def test_cli(client):
+    """CLI end-to-end: credential handling + every subcommand against a
+    real app via a requests→flask-test-client shim."""
+    import io
+    import json as _json
+    import os as _os
+    import tempfile
+    from contextlib import redirect_stdout, redirect_stderr
+    from unittest.mock import patch
+
+    # make sure the CLI package is importable (installed editable or via path)
+    sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "cli"))
+    from wikihub_cli.__main__ import main
+    import wikihub_cli.__main__ as wh
+
+    class FakeResp:
+        def __init__(self, fresp):
+            self.status_code = fresp.status_code
+            self.text = fresp.get_data(as_text=True)
+            self._headers = dict(fresp.headers)
+
+        def json(self):
+            return _json.loads(self.text)
+
+    def fake_request(method, url, headers=None, json=None, params=None, timeout=None, **_kw):
+        parsed = urlparse(url)
+        path = parsed.path
+        if parsed.query:
+            path = f"{path}?{parsed.query}"
+        kwargs = {"headers": headers or {}}
+        if json is not None:
+            kwargs["json"] = json
+        if params:
+            kwargs["query_string"] = params
+        fresp = client.open(path, method=method, **kwargs)
+        return FakeResp(fresp)
+
+    # isolate the credentials file to a temp dir
+    tmp_home = tempfile.mkdtemp(prefix="wh-cli-test-")
+    orig_path = wh.CREDENTIALS_PATH
+    wh.CREDENTIALS_PATH = type(orig_path)(tmp_home) / ".wikihub" / "credentials.json"
+
+    def run_cli(*args) -> tuple[int, str, str]:
+        out, err = io.StringIO(), io.StringIO()
+        with patch("wikihub_cli.__main__.requests.request", side_effect=fake_request), \
+             redirect_stdout(out), redirect_stderr(err):
+            rc = main(["--server", "http://localhost"] + list(args))
+        return rc, out.getvalue(), err.getvalue()
+
+    try:
+        # signup
+        rc, out, err = run_cli("signup", "--username", "cliuser", "--password", "testpass12345")
+        assert rc == 0, f"signup failed: {err}"
+        assert "signed up as cliuser" in out
+        assert wh.CREDENTIALS_PATH.exists(), "credentials file not written"
+        creds = _json.loads(wh.CREDENTIALS_PATH.read_text())
+        assert creds["default"]["username"] == "cliuser"
+        assert creds["default"]["api_key"].startswith("wh_")
+
+        # whoami
+        rc, out, err = run_cli("whoami")
+        assert rc == 0, err
+        assert "cliuser" in out
+
+        # new wiki
+        rc, out, err = run_cli("new", "notes", "--title", "CLI Notes")
+        assert rc == 0, err
+        assert "cliuser/notes" in out
+
+        # write (inline content)
+        rc, out, err = run_cli("write", "cliuser/notes/hello.md", "--content", "# hello from cli\n")
+        assert rc == 0, err
+        assert "created" in out
+
+        # read
+        rc, out, err = run_cli("read", "cliuser/notes/hello.md")
+        assert rc == 0, err
+        assert "hello from cli" in out
+
+        # write (update existing)
+        rc, out, err = run_cli("write", "cliuser/notes/hello.md", "--content", "# v2\n")
+        assert rc == 0, err
+        assert "updated" in out
+
+        # ls
+        rc, out, err = run_cli("ls", "cliuser/notes")
+        assert rc == 0, err
+        assert "hello.md" in out
+
+        # search
+        rc, out, err = run_cli("search", "hello", "--wiki", "cliuser/notes")
+        assert rc == 0, err
+        assert "result(s)" in out
+
+        # publish from local file
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as tf:
+            tf.write("# published\n")
+            tmpfile = tf.name
+        rc, out, err = run_cli("publish", tmpfile, "--to", "cliuser/notes/pub.md")
+        _os.unlink(tmpfile)
+        assert rc == 0, err
+
+        # rm
+        rc, out, err = run_cli("rm", "cliuser/notes/pub.md")
+        assert rc == 0, err
+        assert "deleted" in out
+
+        # mcp-config
+        rc, out, err = run_cli("mcp-config")
+        assert rc == 0, err
+        cfg = _json.loads(out)
+        assert cfg["mcpServers"]["wikihub"]["url"].endswith("/mcp")
+        assert "Authorization" in cfg["mcpServers"]["wikihub"]["headers"]
+
+        # logout
+        rc, out, err = run_cli("logout")
+        assert rc == 0, err
+        assert "removed profile" in out
+        # re-read — should NOT have 'default'
+        creds_after = _json.loads(wh.CREDENTIALS_PATH.read_text())
+        assert "default" not in creds_after
+
+        # unauthenticated command after logout
+        rc, out, err = run_cli("whoami")
+        assert rc != 0
+        assert "not authenticated" in err
+    finally:
+        wh.CREDENTIALS_PATH = orig_path
+        shutil.rmtree(tmp_home, ignore_errors=True)
+
+
 def run_all():
     app = setup()
 
@@ -1045,6 +1190,7 @@ def run_all():
             ("wiki-level sharing", lambda: test_wiki_level_sharing(client, key)),
             ("folder-level sharing", lambda: test_folder_level_sharing(client, key)),
             ("subdomain routing", lambda: test_subdomain_routing(client)),
+            ("CLI end-to-end", lambda: test_cli(client)),
         ]
 
         passed = 1  # account creation already passed

@@ -125,6 +125,20 @@ Step 7: Your wiki is live at {{ request.host_url }}@USERNAME/my-wiki</pre></div>
     }
   }
 }</pre></div>
+  <p>The <code>wikihub</code> CLI prints this snippet pre-filled with your saved key: <code>wikihub mcp-config</code>.</p>
+
+  <h2>CLI</h2>
+  <p>Thin wrapper over this REST API — for shell scripts, cron jobs, onboarding, and pipe-friendly workflows.</p>
+  <div class="code-block"><pre>pipx install wikihub-cli          # or: pip install -e cli/ from the repo
+
+wikihub signup --username you     # saves key to ~/.wikihub/credentials.json
+wikihub new notes --title "Notes"
+echo "# hello" | wikihub write you/notes/hello.md
+wikihub read you/notes/hello.md
+wikihub search "hello" --wiki you/notes
+wikihub mcp-config                # prints mcpServers JSON pre-filled</pre></div>
+  <p>Subcommands: <code>signup</code>, <code>login</code>, <code>logout</code>, <code>whoami</code>, <code>new</code>, <code>ls</code>, <code>read</code>, <code>write</code>, <code>publish</code>, <code>rm</code>, <code>search</code>, <code>mcp-config</code>, <code>version</code>.</p>
+  <p>Auth order: <code>--api-key</code> flag &rarr; <code>WIKIHUB_*</code> env vars &rarr; <code>~/.wikihub/credentials.json</code> (<code>--profile</code> selects).</p>
 
   <h2>Content negotiation</h2>
   <p><code>Accept: text/markdown</code> on any page URL returns raw markdown. Or append <code>.md</code>.</p>

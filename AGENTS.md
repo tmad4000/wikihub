@@ -35,6 +35,7 @@ don't add unit tests for individual functions. if something breaks, add an e2e t
 
 ## architecture
 
+- `cli/` — `wikihub-cli` Python CLI package (pip-installable; wraps `/api/v1`)
 - `app/` — Flask app (factory pattern in `__init__.py`)
 - `app/models.py` — SQLAlchemy models (users, wikis, pages, stars, forks, api_keys, wikilinks, audit_log)
 - `app/acl.py` — CODEOWNERS-pattern ACL parser for `.wikihub/acl`
@@ -172,6 +173,8 @@ when changing agent-facing docs or setup instructions, ALL of these must be upda
 | Landing page | `app/templates/landing.html` | Homepage with setup instructions |
 | `AGENTS.md` (repo) | `AGENTS.md` (this file) | Developer/agent instructions for codebase |
 | `MCP_TOOLS` list | `app/routes/agent_surfaces.py:21` | Tool definitions for MCP endpoint |
+| CLI README | `cli/README.md` | `wikihub-cli` usage docs |
+| CLI subcommand registry | `cli/wikihub_cli/__main__.py` (`build_parser`) | Actual CLI surface — keep in sync with docs |
 
 **rule:** if you add a new API endpoint or change auth flow, update ALL surfaces above.
 

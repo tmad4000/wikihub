@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wikihub-cli"
+version = "0.1.0"
+description = "WikiHub command-line client — thin wrapper over the REST API"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [{name = "Jacob Cole"}]
+dependencies = [
+    "requests>=2.32",
+]
+
+[project.scripts]
+wikihub = "wikihub_cli.__main__:main"
+
+[project.urls]
+Homepage = "https://wikihub.md"
+Repository = "https://github.com/harqian/wikihub"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["wikihub_cli*"]

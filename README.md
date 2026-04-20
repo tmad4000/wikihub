@@ -56,6 +56,21 @@ Content negotiation: `Accept: text/markdown` on any page URL returns raw markdow
 
 Full docs at `/agents` when running.
 
+## CLI
+
+```bash
+pipx install wikihub-cli   # or: pip install -e cli/ from this repo
+
+wikihub signup --username you        # saves key to ~/.wikihub/credentials.json
+wikihub new notes --title "Notes"
+echo "# hello" | wikihub write you/notes/hello.md
+wikihub read you/notes/hello.md
+wikihub search "hello" --wiki you/notes
+wikihub mcp-config                   # prints mcpServers JSON pre-filled
+```
+
+Subcommands: `signup | login | logout | whoami | new | ls | read | write | publish | rm | search | mcp-config | version`. See `cli/README.md`.
+
 ## Access control
 
 `.wikihub/acl` uses glob patterns. Most specific wins. Private by default.
@@ -94,6 +109,7 @@ app/
   renderer.py        markdown-it pipeline
   auth_utils.py      password hashing, API keys, Bearer auth
   routes/            Flask blueprints
+cli/                 wikihub-cli Python package (REST wrapper)
 hooks/post-receive   git->DB sync (installed per-repo)
 mockups/             standalone HTML mockups
 ```
