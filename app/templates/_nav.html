@@ -64,6 +64,6 @@
       </div>
     </div>
   {% else %}
-    <a href="/auth/login" class="nav-link">Sign in</a>
+    <a href="/auth/login?next={{ request.path|urlencode }}" class="nav-link">Sign in</a>
   {% endif %}
 </nav>

@@ -256,6 +256,20 @@ def test_binary_file_serving(client, api_key):
     assert "application/octet-stream" in r.content_type, "XSS guard: .html must not be served inline"
     assert "attachment" in r.headers.get("Content-Disposition", "")
 
+    # Non-md Page rows must survive an index_repo_pages reset (regression: wikihub-0idv).
+    # Previously index_repo_pages filtered out non-md, so any operation that triggered
+    # reset=True (share/ACL change/fork) would silently delete .txt/.png Page rows.
+    from app.wiki_ops import index_repo_pages
+    from app.models import Wiki, Page
+    wiki_obj = Wiki.query.filter_by(slug="media-wiki").first()
+    assert Page.query.filter_by(wiki_id=wiki_obj.id, path="wiki/notes.txt").first() is not None
+    index_repo_pages("agent1", "media-wiki", wiki_obj, reset=True)
+    db.session.commit()
+    txt_page = Page.query.filter_by(wiki_id=wiki_obj.id, path="wiki/notes.txt").first()
+    assert txt_page is not None, "non-md Page row was wiped by index_repo_pages(reset=True)"
+    png_page = Page.query.filter_by(wiki_id=wiki_obj.id, path="wiki/test.png").first()
+    assert png_page is not None, "non-md Page row was wiped by index_repo_pages(reset=True)"
+
 
 def test_search(client, api_key):
     """full-text search returns results"""
@@ -360,6 +374,66 @@ def test_magic_link_login(client):
     r = other_browser.get(magic_path, follow_redirects=False)
     assert r.status_code == 302
     assert "/auth/login" in r.headers["Location"]
+
+
+def test_login_redirect_back(client):
+    """Login form should redirect back to the page the user came from.
+
+    Three layers of redirect-after-login:
+    1. Explicit ?next=/foo on the login URL → land on /foo
+    2. Referer header from same-origin (no ?next=) → land on the referring page
+    3. No next, no Referer → land on home
+
+    Without (2), every "Sign in" link would need to manually pass ?next=current_path,
+    and any link that didn't would dump users on the homepage.
+    """
+    # Make a real account so the password works
+    r = client.post("/api/v1/accounts", json={"username": "redirtest", "password": "testpass12345"})
+    assert r.status_code == 201
+
+    # 1. explicit ?next=
+    c1 = client.application.test_client()
+    r = c1.post("/auth/login?next=/explore",
+                data={"username": "redirtest", "password": "testpass12345"},
+                follow_redirects=False)
+    assert r.status_code == 302, f"login should redirect, got {r.status_code}"
+    assert r.headers["Location"].endswith("/explore"), f"expected /explore, got {r.headers['Location']}"
+
+    # 2. Referer fallback (no ?next=)
+    r = client.post("/api/v1/accounts", json={"username": "redirtest2", "password": "testpass12345"})
+    assert r.status_code == 201
+    c2 = client.application.test_client()
+    r = c2.post("/auth/login",
+                data={"username": "redirtest2", "password": "testpass12345"},
+                headers={"Referer": "http://localhost/@somewiki/cool-page"},
+                follow_redirects=False)
+    assert r.status_code == 302
+    assert "/@somewiki/cool-page" in r.headers["Location"], (
+        f"Referer-based redirect failed: got {r.headers['Location']}"
+    )
+
+    # 3. No next, no Referer → home (not /auth/*)
+    r = client.post("/api/v1/accounts", json={"username": "redirtest3", "password": "testpass12345"})
+    assert r.status_code == 201
+    c3 = client.application.test_client()
+    r = c3.post("/auth/login",
+                data={"username": "redirtest3", "password": "testpass12345"},
+                follow_redirects=False)
+    assert r.status_code == 302
+    assert "/auth/" not in r.headers["Location"], f"unwanted /auth/ redirect: {r.headers['Location']}"
+
+    # 4. Cross-origin Referer must be REJECTED (open-redirect guard)
+    r = client.post("/api/v1/accounts", json={"username": "redirtest4", "password": "testpass12345"})
+    assert r.status_code == 201
+    c4 = client.application.test_client()
+    r = c4.post("/auth/login",
+                data={"username": "redirtest4", "password": "testpass12345"},
+                headers={"Referer": "https://evil.example.com/phishing"},
+                follow_redirects=False)
+    assert r.status_code == 302
+    assert "evil.example.com" not in r.headers["Location"], (
+        "open-redirect risk: cross-origin Referer was honored"
+    )
 
 
 def test_client_config_hint(client):
@@ -959,6 +1033,7 @@ def run_all():
             ("token + settings", lambda: test_token_and_settings(client)),
             ("client_config hint", lambda: test_client_config_hint(client)),
             ("magic link login", lambda: test_magic_link_login(client)),
+            ("login redirects back (?next + Referer fallback)", lambda: test_login_redirect_back(client)),
             ("magic link from password", lambda: test_magic_link_from_password(client)),
             ("ACL permissions", lambda: test_acl_permissions(client, key)),
             ("anonymous public edit", lambda: test_anonymous_public_edit(client, key)),

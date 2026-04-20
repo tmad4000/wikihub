@@ -28,14 +28,26 @@ _USERNAME_RE = re.compile(r'^[a-z0-9_-]+$')
 
 
 def _safe_next_url(fallback=None):
-    """validate the ?next= parameter to prevent open redirects."""
+    """Validate the ?next= parameter to prevent open redirects.
+
+    Order: explicit ?next= → Referer header (same-origin only) → fallback → main.index.
+    The Referer fallback means clicking "Sign in" from any page redirects back after login,
+    even if the link itself didn't include ?next=.
+    """
     target = request.args.get("next", "")
-    if not target:
-        return fallback or url_for("main.index")
-    parsed = urlparse(target)
-    if parsed.scheme or parsed.netloc:
-        return fallback or url_for("main.index")
-    return target
+    if target:
+        parsed = urlparse(target)
+        if not parsed.scheme and not parsed.netloc:
+            return target
+
+    referer = request.headers.get("Referer", "")
+    if referer:
+        parsed = urlparse(referer)
+        # same-origin only — strip scheme/netloc and use the path
+        if parsed.netloc == request.host and parsed.path and not parsed.path.startswith("/auth/"):
+            return parsed.path + (f"?{parsed.query}" if parsed.query else "")
+
+    return fallback or url_for("main.index")
 
 
 def _check_login_rate_limit():

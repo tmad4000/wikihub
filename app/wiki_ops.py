@@ -172,14 +172,25 @@ def index_repo_pages(username, slug, wiki, reset=False):
     seen_paths = set()
 
     for path in list_files_in_repo(username, slug):
-        if not path.endswith(".md"):
+        # Skip git/wikihub plumbing
+        if path.endswith(".gitkeep") or path.startswith(".wikihub/"):
             continue
 
-        content = read_file_from_repo(username, slug, path)
-        if content is None:
-            continue
+        is_md = path.endswith(".md")
 
-        frontmatter, _ = parse_markdown_document(content)
+        if is_md:
+            content = read_file_from_repo(username, slug, path)
+            if content is None:
+                continue
+            frontmatter, _ = parse_markdown_document(content)
+        else:
+            # Non-markdown files (transcripts, datasets, images, etc.) get Page rows
+            # so they appear in sidebar/listings/search. No frontmatter parsing — just
+            # path + ACL-derived visibility. The actual file bytes are served by the
+            # binary handler in app/routes/wiki.py.
+            content = ""
+            frontmatter = {}
+
         visibility = resolve_visibility(path, acl_rules, frontmatter.get("visibility"))
         page = existing_pages.get(path)
         if page is None:
