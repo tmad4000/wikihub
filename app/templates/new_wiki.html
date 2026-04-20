@@ -43,7 +43,6 @@ textarea { resize: vertical; min-height: 80px; }
   {% endwith %}
 
   <form method="POST" enctype="multipart/form-data" id="wiki-form">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label for="slug">Slug</label>
     <input type="text" id="slug" name="slug" required pattern="[a-z0-9_-]+" placeholder="my-research-wiki">
 
@@ -52,12 +51,6 @@ textarea { resize: vertical; min-height: 80px; }
 
     <label for="description">Description (optional)</label>
     <textarea id="description" name="description" placeholder="What's this wiki about?"></textarea>
-
-    <label for="template">Template</label>
-    <select id="template" name="template" style="width:100%;background:var(--control-bg);border:1px solid var(--control-border);border-radius:var(--radius-sm);color:var(--text-primary);font-family:var(--font-body);font-size:0.9375rem;padding:10px 12px;margin-bottom:16px;outline:none;">
-      <option value="freeform">Freeform — minimal structure, just frontmatter + wikilinks</option>
-      <option value="structured" selected>Structured — compiled truth + timeline, source tracking, connection rules</option>
-    </select>
 
     <div class="drop-zone" id="drop-zone" onclick="document.getElementById('files').click()">
       <div class="drop-zone-text"><strong>Drop files here</strong> or click to browse</div>
@@ -73,104 +66,27 @@ textarea { resize: vertical; min-height: 80px; }
 
 {% block scripts %}
 <script>
-// prevent browser from opening dropped files anywhere on the page
-document.addEventListener('dragover', (e) => { e.preventDefault(); });
-document.addEventListener('drop', (e) => { e.preventDefault(); });
-
 const dropZone = document.getElementById('drop-zone');
 const fileInput = document.getElementById('files');
 const fileList = document.getElementById('file-list');
-const form = document.getElementById('wiki-form');
-let droppedFiles = null;
 
 ['dragenter', 'dragover'].forEach(e => {
-  dropZone.addEventListener(e, (ev) => { ev.preventDefault(); ev.stopPropagation(); dropZone.classList.add('dragover'); });
+  dropZone.addEventListener(e, (ev) => { ev.preventDefault(); dropZone.classList.add('dragover'); });
 });
-dropZone.addEventListener('dragleave', (ev) => { ev.preventDefault(); dropZone.classList.remove('dragover'); });
-
+['dragleave', 'drop'].forEach(e => {
+  dropZone.addEventListener(e, (ev) => { ev.preventDefault(); dropZone.classList.remove('dragover'); });
+});
 dropZone.addEventListener('drop', (ev) => {
-  ev.preventDefault();
-  ev.stopPropagation();
-  dropZone.classList.remove('dragover');
-  const files = ev.dataTransfer.files;
-  if (files.length > 0) {
-    droppedFiles = files;
-    try { fileInput.files = files; } catch(e) { /* some browsers block programmatic .files set */ }
-    updateFileList(files);
-  }
+  fileInput.files = ev.dataTransfer.files;
+  updateFileList();
 });
+fileInput.addEventListener('change', updateFileList);
 
-fileInput.addEventListener('change', () => { droppedFiles = null; updateFileList(fileInput.files); });
-
-function updateFileList(files) {
-  files = files || fileInput.files;
-  if (!files || files.length === 0) { fileList.textContent = ''; return; }
+function updateFileList() {
+  const files = fileInput.files;
+  if (files.length === 0) { fileList.textContent = ''; return; }
   const names = Array.from(files).map(f => f.name).slice(0, 10);
   fileList.textContent = names.join(', ') + (files.length > 10 ? ` +${files.length - 10} more` : '');
 }
-
-form.addEventListener('submit', (ev) => {
-  const btn = form.querySelector('button[type="submit"]');
-  if (!droppedFiles) {
-    btn.classList.add('btn-loading');
-    btn.textContent = '';
-    const sp = document.createElement('span');
-    sp.className = 'wh-spinner';
-    btn.appendChild(sp);
-    btn.appendChild(document.createTextNode('Creating wiki...'));
-    return;
-  }
-  ev.preventDefault();
-  btn.classList.add('btn-loading');
-  btn.textContent = '';
-  const sp2 = document.createElement('span');
-  sp2.className = 'wh-spinner';
-  btn.appendChild(sp2);
-  btn.appendChild(document.createTextNode('Creating wiki...'));
-  const fd = new FormData(form);
-  fd.delete('files');
-  for (const f of droppedFiles) fd.append('files', f);
-  fetch(form.action || window.location.href, { method: 'POST', body: fd, redirect: 'manual' })
-    .then(r => {
-      if (r.type === 'opaqueredirect' || r.status === 302 || r.status === 301) {
-        window.location.href = r.headers.get('Location') || '/@' + fd.get('slug');
-      } else if (r.redirected) {
-        window.location.href = r.url;
-      } else if (r.ok) {
-        window.location.href = '/@{{ current_user.username }}/' + (fd.get('slug') || '');
-      } else {
-        btn.classList.remove('btn-loading'); btn.textContent = 'Create wiki';
-        alert('Upload failed (status ' + r.status + ')');
-      }
-    })
-    .catch(err => { btn.classList.remove('btn-loading'); btn.textContent = 'Create wiki'; alert('Upload failed: ' + err.message); });
-});
-
-// restore files stashed from landing page drop (before signup redirect)
-(function() {
-  var req = indexedDB.open('wikihub_uploads', 1);
-  req.onupgradeneeded = function(e) { e.target.result.createObjectStore('pending'); };
-  req.onsuccess = function(e) {
-    var db = e.target.result;
-    var tx = db.transaction('pending', 'readwrite');
-    var store = tx.objectStore('pending');
-    var get = store.get('upload');
-    get.onsuccess = function() {
-      if (!get.result) return;
-      var pending = get.result;
-      store.delete('upload');
-      var files = pending.files.map(function(f) {
-        return new File([f.data], f.name, { type: f.type });
-      });
-      droppedFiles = files;
-      var slugInput = document.getElementById('slug');
-      var titleInput = document.querySelector('input[name="title"]');
-      if (slugInput && !slugInput.value) slugInput.value = pending.slug || '';
-      if (titleInput && !titleInput.value) titleInput.value = pending.title || '';
-      updateFileList(files);
-      heroStatus = document.getElementById('hero-drop-status');
-    };
-  };
-})();
 </script>
 {% endblock %}

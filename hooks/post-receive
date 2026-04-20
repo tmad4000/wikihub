@@ -33,15 +33,6 @@ def read_config():
     return config
 
 
-def init_imports(config):
-    app_root = config.get("WIKIHUB_APP_ROOT")
-    if app_root and app_root not in sys.path:
-        sys.path.insert(0, app_root)
-    from app.acl import parse_acl, resolve_visibility
-    from app.content_utils import parse_markdown_document
-    return parse_acl, resolve_visibility, parse_markdown_document
-
-
 def get_changed_files(old_sha, new_sha, repo_dir):
     null_sha = "0" * 40
     if old_sha == null_sha:
@@ -83,6 +74,23 @@ def read_file_content(sha, filepath, repo_dir):
         return None
     return result.stdout
 
+
+def extract_frontmatter(content):
+    metadata = {}
+    body = content
+    if content.startswith("---"):
+        parts = content.split("---", 2)
+        if len(parts) >= 3:
+            frontmatter = parts[1].strip()
+            body = parts[2].strip()
+            for line in frontmatter.split("\n"):
+                line = line.strip()
+                if ":" in line:
+                    key, val = line.split(":", 1)
+                    metadata[key.strip().lower()] = val.strip()
+    return metadata, body
+
+
 def api_request(base_url, path, method, data, admin_token):
     url = f"{base_url}{path}"
     body = json.dumps(data).encode("utf-8")
@@ -105,7 +113,6 @@ def main():
     admin_token = config.get("WIKIHUB_ADMIN_TOKEN", "")
     username = config.get("WIKIHUB_USERNAME", "")
     slug = config.get("WIKIHUB_SLUG", "")
-    parse_acl, resolve_visibility, parse_markdown_document = init_imports(config)
 
     if not admin_token:
         print("WARNING: no WIKIHUB_ADMIN_TOKEN. push accepted but pages won't sync.",
@@ -130,8 +137,6 @@ def main():
 
         changed = get_changed_files(old_sha, new_sha, repo_dir)
         deleted = get_deleted_files(old_sha, new_sha, repo_dir)
-        acl_text = read_file_content(new_sha, ".wikihub/acl", repo_dir) or ""
-        acl_rules = parse_acl(acl_text) if acl_text else []
 
         # upsert changed .md files
         md_changed = [f for f in changed if f.endswith(".md") and f not in deleted]
@@ -139,9 +144,9 @@ def main():
             content = read_file_content(new_sha, filepath, repo_dir)
             if content is None:
                 continue
-            metadata, body = parse_markdown_document(content)
+            metadata, body = extract_frontmatter(content)
             title = metadata.get("title", os.path.splitext(os.path.basename(filepath))[0])
-            visibility = resolve_visibility(filepath, acl_rules, metadata.get("visibility"))
+            visibility = metadata.get("visibility", "private")
 
             result, status = api_request(
                 base_url,

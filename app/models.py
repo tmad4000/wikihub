@@ -17,7 +17,6 @@ class User(UserMixin, db.Model):
     email = db.Column(db.String(256), unique=True, nullable=True)
     password_hash = db.Column(db.String(256), nullable=True)  # null for oauth-only users
     google_id = db.Column(db.String(256), unique=True, nullable=True)
-    llm_api_key_encrypted = db.Column(db.Text, nullable=True)  # encrypted Anthropic API key for Curator
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
 
     wikis = db.relationship("Wiki", backref="owner", lazy="dynamic")
@@ -48,7 +47,8 @@ class Wiki(db.Model):
 
 
 class Page(db.Model):
-    """derived metadata index for markdown pages. content lives in git."""
+    """derived metadata index for public pages (content lives in git).
+    private pages store content here directly (never enters git)."""
     __tablename__ = "pages"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -57,8 +57,10 @@ class Page(db.Model):
     title = db.Column(db.String(512))
     visibility = db.Column(db.String(32), default="private", nullable=False)
     frontmatter_json = db.Column(db.JSON)
-    excerpt = db.Column(db.String(200))  # ~200 chars for search results
+    excerpt = db.Column(db.String(500))  # ~200 chars for search results
     content_hash = db.Column(db.String(64))
+    # private page content — only populated when visibility=private and page doesn't enter git
+    private_content = db.Column(db.Text, nullable=True)
     author = db.Column(db.String(256), nullable=True)  # nullable for anonymous writes
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = db.Column(db.DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
@@ -130,43 +132,25 @@ class ApiKey(db.Model):
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
 
 
-class MagicLoginToken(db.Model):
-    __tablename__ = "magic_login_tokens"
+class Session(db.Model):
+    __tablename__ = "sessions"
 
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
-    token_hash = db.Column(db.String(256), nullable=False, unique=True, index=True)
-    redirect_path = db.Column(db.String(512), nullable=False, default="/")
-    expires_at = db.Column(db.DateTime(timezone=True), nullable=False)
-    used_at = db.Column(db.DateTime(timezone=True), nullable=True)
-    created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
-
-    user = db.relationship("User")
-
-
-class UsernameRedirect(db.Model):
-    __tablename__ = "username_redirects"
-
-    id = db.Column(db.Integer, primary_key=True)
-    old_username = db.Column(db.String(64), unique=True, nullable=False, index=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    token_hash = db.Column(db.String(256), nullable=False, unique=True)
     expires_at = db.Column(db.DateTime(timezone=True), nullable=False)
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
 
     user = db.relationship("User")
 
 
-class WikiSlugRedirect(db.Model):
-    __tablename__ = "wiki_slug_redirects"
+class AuditLog(db.Model):
+    __tablename__ = "audit_log"
 
     id = db.Column(db.Integer, primary_key=True)
-    owner_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    old_slug = db.Column(db.String(128), nullable=False, index=True)
-    wiki_id = db.Column(db.Integer, db.ForeignKey("wikis.id"), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    action = db.Column(db.String(64), nullable=False)  # e.g. "page.create", "wiki.fork"
+    target_type = db.Column(db.String(32))  # "page", "wiki", "user"
+    target_id = db.Column(db.Integer)
+    detail_json = db.Column(db.JSON)
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
-
-    __table_args__ = (
-        db.UniqueConstraint("owner_id", "old_slug", name="uq_slug_redirect_owner_slug"),
-    )
-
-    wiki = db.relationship("Wiki")

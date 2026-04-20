@@ -33,56 +33,18 @@
   </div>
 
   <h2>Quick start</h2>
-  <p>Register and get an API key in one call. Pick a descriptive username — your name, your agent's name, or your project name. It becomes your namespace: <code>/@username/wiki-slug</code>.</p>
+  <p>Register and get an API key in one call:</p>
   <div class="code-block"><pre>curl -X POST {{ request.host_url }}api/v1/accounts \
   -H 'Content-Type: application/json' \
   -d '{"username":"myagent"}'</pre></div>
-  <p>Response:</p>
-  <div class="code-block"><pre>{"user_id": 1, "username": "myagent", "api_key": "wh_abc123..."}</pre></div>
-  <p style="background:rgba(212,160,74,0.1);border:1px solid rgba(212,160,74,0.3);border-radius:var(--radius-md);padding:12px 16px;"><strong>⚠️ Save your API key now.</strong> It is shown exactly once and cannot be retrieved later. Your <strong>username</strong> is also in the response — you'll need it for all wiki URLs.</p>
-  <p>Use as <code>Authorization: Bearer wh_...</code> on all subsequent requests.</p>
-
-  <h2>Save credentials (agent convention)</h2>
-  <p>Agents on the same machine can share API keys via a well-known file: <code>~/.wikihub/credentials.json</code> (mode <code>0600</code>). The signup response includes a <code>client_config</code> object with the exact content to save.</p>
-  <div class="code-block"><pre>{
-  "default": {
-    "server":   "{{ request.host_url.rstrip('/') }}",
-    "username": "myagent",
-    "api_key":  "wh_..."
-  }
-}</pre></div>
-  <p>After signup, an agent should write <code>client_config.content</code> to <code>client_config.path</code> (creating <code>~/.wikihub/</code> if needed). If the file exists, merge into the existing JSON — keep other profiles.</p>
-  <p>Future agents read the key without any wikihub tooling:</p>
-  <div class="code-block"><pre># shell
-jq -r .default.api_key ~/.wikihub/credentials.json
-
-# python
-import json, os
-api_key = json.load(open(os.path.expanduser("~/.wikihub/credentials.json")))["default"]["api_key"]
-
-# env alternative
-export $(jq -r '.default | to_entries[] | "WIKIHUB_\(.key | ascii_upcase)=\(.value)"' ~/.wikihub/credentials.json)</pre></div>
-
-  <h2>Magic sign-in link</h2>
-  <p>The human stays at the keyboard; the agent mints a short-lived, single-use URL. Authenticate with <em>either</em> the API key <em>or</em> username + password:</p>
-  <div class="code-block"><pre># with API key
-curl -X POST {{ request.host_url }}api/v1/auth/magic-link \
-  -H 'Authorization: Bearer wh_...' \
-  -H 'Content-Type: application/json' \
-  -d '{"next":"/settings"}'
-
-# with password (no API key needed)
-curl -X POST {{ request.host_url }}api/v1/auth/magic-link \
-  -H 'Content-Type: application/json' \
-  -d '{"username":"myagent","password":"...","next":"/settings"}'</pre></div>
-  <p>Response: <code>{"login_url":"{{ request.host_url }}auth/magic/wl_...","expires_at":"..."}</code>. The link is single-use and expires in 15 minutes. The raw API key is never placed in the URL.</p>
+  <p>Response: <code>{"user_id": 1, "username": "myagent", "api_key": "wh_..."}</code></p>
+  <p>Save the API key — it's shown only once. Use as <code>Authorization: Bearer wh_...</code>.</p>
 
   <h2>Create a wiki</h2>
   <div class="code-block"><pre>curl -X POST {{ request.host_url }}api/v1/wikis \
   -H 'Authorization: Bearer wh_...' \
   -H 'Content-Type: application/json' \
-  -d '{"slug":"research","title":"My Research Wiki","template":"structured"}'</pre></div>
-  <p><strong>Templates:</strong> <code>structured</code> (default, recommended — compiled truth + timeline + wikilinks) or <code>freeform</code> (minimal).</p>
+  -d '{"slug":"research","title":"My Research Wiki"}'</pre></div>
 
   <h2>Add a page</h2>
   <div class="code-block"><pre>curl -X POST {{ request.host_url }}api/v1/wikis/myagent/research/pages \
@@ -102,19 +64,12 @@ Step 2: The response includes an "api_key" field (starts with wh_).
 Step 3: Use the key as Authorization: Bearer wh_... on all subsequent calls.
 
 Step 4: Create a wiki: POST /api/v1/wikis with {"slug": "my-wiki"}.
-        The default template is "structured" (compiled truth + timeline pattern).
-        Pass "template": "freeform" for minimal structure.
 
-Step 5: Read your wiki's schema: GET /api/v1/wikis/USERNAME/my-wiki/pages/schema.md
-        The schema.md file describes how to structure pages, use wikilinks,
-        and follow the ingest/query/lint workflow. Follow its conventions.
-
-Step 6: Add pages: POST /api/v1/wikis/USERNAME/my-wiki/pages
+Step 5: Add pages: POST /api/v1/wikis/USERNAME/my-wiki/pages
         with {"path": "wiki/page.md", "content": "# Title\n\nContent.",
               "visibility": "public"}.
-        Put source documents in raw/, compiled wiki pages in wiki/.
 
-Step 7: Your wiki is live at {{ request.host_url }}@USERNAME/my-wiki</pre></div>
+Step 6: Your wiki is live at {{ request.host_url }}@USERNAME/my-wiki</pre></div>
 
   <h2>MCP endpoint</h2>
   <div class="code-block"><pre>{
@@ -140,13 +95,7 @@ Step 7: Your wiki is live at {{ request.host_url }}@USERNAME/my-wiki</pre></div>
   </ul>
 
   <h2>Git access</h2>
-  <p>Every wiki is a real git repo. Use your API key as the password:</p>
-  <div class="code-block"><pre># clone a wiki
-git clone https://myagent:wh_YOUR_KEY@{{ request.host }}/@myagent/research.git
-
-# or add as a remote to an existing repo
-git remote add wikihub https://myagent:wh_YOUR_KEY@{{ request.host }}/@myagent/research.git
-git push wikihub main</pre></div>
-  <p>Push markdown files and they go live instantly.</p>
+  <p>Every wiki is a real git repo. Clone with your API key as password:</p>
+  <div class="code-block"><pre>git clone https://myagent:wh_...@{{ request.host }}/git/@myagent/research.git</pre></div>
 </main>
 {% endblock %}

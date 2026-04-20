@@ -7,9 +7,3 @@ dist/
 build/
 .venv/
 venv/
-wikihub-dev-access/
-backups/
-.DS_Store
-archive/
-electron/node_modules/
-electron/dist/

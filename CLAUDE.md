@@ -1,2 +1,65 @@
 @~/AGENTS.md
-@AGENTS.md
+
+# wikihub
+
+GitHub for LLM wikis. Flask + Postgres + bare git. Spec: `wikihub-spec-final-2026-04-08.md`.
+
+## running locally
+
+```bash
+source .venv/bin/activate
+SECRET_KEY=dev DATABASE_URL=postgresql://localhost/wikihub REPOS_DIR=./repos ADMIN_TOKEN=devtoken flask --app wsgi.py run
+```
+
+postgres must be running (`brew services start postgresql@16`).
+
+## testing
+
+```bash
+source .venv/bin/activate && python3 tests/test_e2e.py
+```
+
+tests use a separate `wikihub_test` database. create it once: `/opt/homebrew/opt/postgresql@16/bin/createdb wikihub_test`.
+
+tests are minimal and intentional — each one verifies a real user flow end-to-end, not individual functions:
+
+1. **agent account creation** — POST /api/v1/accounts, get key, authenticate
+2. **wiki lifecycle** — create wiki, add page, read HTML + markdown, update, delete
+3. **search** — full-text search via API
+4. **social** — star, fork, unstar across two users
+5. **zip upload** — create wiki via web form with zip file
+6. **agent surfaces** — all discovery endpoints respond (llms.txt, AGENTS.md, .well-known/*)
+7. **ACL permissions** — private pages not readable without auth
+
+don't add unit tests for individual functions. if something breaks, add an e2e test that covers the broken flow. tests should run in <10 seconds.
+
+## architecture
+
+- `app/` — Flask app (factory pattern in `__init__.py`)
+- `app/models.py` — SQLAlchemy models (users, wikis, pages, stars, forks, api_keys, wikilinks, audit_log)
+- `app/acl.py` — CODEOWNERS-pattern ACL parser for `.wikihub/acl`
+- `app/git_backend.py` — git Smart HTTP (clone/push), ported from listhub
+- `app/git_sync.py` — DB→git plumbing (does NOT fire hooks), public mirror regeneration
+- `app/renderer.py` — markdown-it-py with wikilinks, KaTeX, footnotes, Obsidian embeds
+- `app/auth_utils.py` — password hashing, API key gen/verify, Bearer auth decorators
+- `app/routes/` — blueprints: main, auth, api, api_wikis, wiki, agent_surfaces, upload
+- `hooks/post-receive` — git→DB sync (installed into each wiki's bare repo)
+- `mockups/` — standalone HTML mockups (obsidian+amber design system)
+- `.interface-design/system.md` — design tokens and component patterns
+
+## key invariants
+
+- **git is source of truth for public content.** Postgres is derived index. private pages live in Postgres only.
+- **DB→git sync does NOT fire hooks.** this prevents infinite sync loops.
+- **two repos per wiki:** `repos/<user>/<slug>.git` (authoritative) + `repos/<user>/<slug>-public.git` (derived mirror).
+- **frontmatter visibility wins over ACL file** (most specific wins).
+- **API keys start with `wh_`**, SHA-256 hashed in DB, shown once on creation.
+
+## design system
+
+obsidian + amber. see `.interface-design/system.md` for tokens. key points:
+- warm blacks (#0f0e0c), not GitHub blues
+- amber accent (#d4a04a), not blue
+- `[[wikihub]]` logo with bracket signature
+- borders only, no shadows
+- link icon for unlisted (not eye)

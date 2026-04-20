@@ -2,72 +2,11 @@
 {% block title %}@{{ owner.username }} — wikihub{% endblock %}
 
 {% block extra_css %}
-.profile-shell { display: flex; min-height: calc(100vh - 56px); }
-.profile-sidebar {
-  width: 240px; flex-shrink: 0; border-right: 1px solid var(--border-default);
-  padding: 16px 0; overflow-y: auto; overflow-x: hidden; display: none;
-}
-@media (min-width: 768px) { .profile-sidebar { display: block; } }
-.profile-sidebar .sidebar-section { padding: 0 8px; }
-.profile-sidebar .sidebar-heading {
-  font-size: 0.6875rem; font-weight: 600; text-transform: uppercase;
-  letter-spacing: 0.06em; color: var(--text-muted); padding: 6px 12px; margin-bottom: 2px;
-}
-.sidebar-sort { display: flex; gap: 2px; }
-.sidebar-sort-btn {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 22px; height: 20px; border: none; background: transparent;
-  color: var(--text-muted); cursor: pointer; padding: 0; border-radius: var(--radius-sm);
-  font-size: 0.625rem; font-family: var(--font-mono); opacity: 0.5;
-}
-.sidebar-sort-btn:hover { opacity: 1; background: var(--control-bg-hover); }
-.sidebar-sort-btn.active { opacity: 1; color: var(--accent); }
-.sidebar-folder-row { display: flex; align-items: center; gap: 0; }
-.sidebar-folder-toggle {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 20px; height: 20px; border: none; background: transparent;
-  color: var(--text-muted); cursor: pointer; padding: 0; flex-shrink: 0; border-radius: var(--radius-sm);
-}
-.sidebar-folder-toggle:hover { background: var(--control-bg-hover); }
-.sidebar-folder.open > .sidebar-folder-row .sidebar-folder-toggle svg { transform: rotate(90deg); }
-.sidebar-children { display: none; padding-left: 20px; }
-.sidebar-folder.open > .sidebar-children { display: block; }
-.sidebar-item {
-  display: flex; align-items: center; gap: 8px; padding: 5px 8px;
-  border-radius: var(--radius-sm); font-size: 0.8125rem; color: var(--text-tertiary);
-  text-decoration: none; margin-bottom: 1px; border-left: 2px solid transparent;
-  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.sidebar-item:hover { color: var(--text-primary); background: var(--accent-subtle); text-decoration: none; }
-.sidebar-item.active { color: var(--text-primary); background: var(--accent-subtle); border-left-color: var(--accent); }
-.sidebar-folder-row .sidebar-item { flex: 1; min-width: 0; }
-.sidebar-wiki { margin-bottom: 1px; }
-.sidebar-wiki-row { display: flex; align-items: center; gap: 0; }
-.sidebar-wiki-toggle {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 20px; height: 20px; border: none; background: transparent;
-  color: var(--text-muted); cursor: pointer; padding: 0; flex-shrink: 0;
-  border-radius: var(--radius-sm); transition: transform 0.1s ease;
-}
-.sidebar-wiki-toggle:hover { background: var(--control-bg-hover); color: var(--text-secondary); }
-.sidebar-wiki.open > .sidebar-wiki-row .sidebar-wiki-toggle svg { transform: rotate(90deg); }
-.sidebar-wiki-row .sidebar-item { flex: 1; min-width: 0; padding-left: 4px; }
-.sidebar-wiki-children {
-  display: none; padding: 2px 0 4px 0; margin-left: 12px;
-  border-left: 1px solid var(--border-default);
-  background: rgba(255,255,255,0.012);
-}
-.sidebar-wiki.open > .sidebar-wiki-children { display: block; }
-.sidebar-wiki-msg {
-  padding: 4px 12px 4px 24px; font-size: 0.75rem;
-  color: var(--text-muted); font-style: italic;
-}
-.profile-main { flex: 1; min-width: 0; padding: 32px 16px 64px; }
-@media (min-width: 640px) { .profile-main { padding: 48px 24px 72px; } }
 .profile-header {
-  max-width: 860px; margin: 0 auto;
+  max-width: 800px; margin: 0 auto; padding: 32px 16px 0;
   display: flex; align-items: center; gap: 20px;
 }
+@media (min-width: 640px) { .profile-header { padding: 48px 24px 0; } }
 .avatar {
   width: 64px; height: 64px; border-radius: 50%;
   background: var(--accent-muted); border: 2px solid var(--border-accent);
@@ -77,532 +16,62 @@
 }
 .profile-info h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.02em; }
 .profile-info .username { font-family: var(--font-mono); color: var(--text-tertiary); font-size: 0.875rem; }
-.profile-summary { max-width: 620px; margin-top: 8px; color: var(--text-secondary); font-size: 0.875rem; }
 .profile-stats {
   display: flex; gap: 16px; margin-top: 8px; font-size: 0.8125rem; color: var(--text-secondary);
-  flex-wrap: wrap;
 }
 .profile-stats strong { color: var(--text-primary); }
 
 .wiki-list {
-  max-width: 860px; margin: 28px auto 0;
+  max-width: 800px; margin: 24px auto 0; padding: 0 16px 64px;
 }
-.wiki-list h2, .profile-wiki > h2 { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 12px; }
-.profile-wiki {
-  max-width: 860px; margin: 28px auto 0;
-}
-.profile-wiki .article { max-width: none; }
-.profile-wiki .article h1 {
-  font-size: 2.25rem; font-weight: 700; letter-spacing: -0.03em;
-  margin-bottom: 8px; line-height: 1.2;
-}
-.profile-wiki .article h2 {
-  font-size: 1.375rem; font-weight: 700; letter-spacing: -0.01em;
-  margin-top: 40px; margin-bottom: 16px;
-  padding-bottom: 8px; border-bottom: 1px solid var(--border-default);
-  text-transform: none; color: var(--text-primary);
-}
-.profile-wiki .article h3 { font-size: 1.125rem; font-weight: 600; margin-top: 28px; margin-bottom: 10px; }
-.profile-wiki .article p { color: var(--text-secondary); line-height: 1.75; margin-bottom: 18px; font-size: 0.9375rem; }
-.profile-wiki .article ul, .profile-wiki .article ol { color: var(--text-secondary); padding-left: 24px; margin-bottom: 18px; line-height: 1.75; font-size: 0.9375rem; }
-.profile-wiki .article li { margin-bottom: 6px; }
-.profile-wiki .article blockquote {
-  border-left: 3px solid var(--border-accent); padding: 4px 16px;
-  color: var(--text-tertiary); margin-bottom: 18px; font-style: italic;
-}
-.profile-wiki .article code {
-  font-family: var(--font-mono); font-size: 0.8125rem;
-  background: var(--bg-elevated); padding: 2px 7px; border-radius: var(--radius-sm);
-  border: 1px solid var(--border-default);
-}
-.profile-wiki .article pre {
-  background: var(--bg-surface); border: 1px solid var(--border-default);
-  border-radius: var(--radius-md); padding: 18px; margin-bottom: 20px;
-  overflow-x: auto;
-}
-.profile-wiki .article pre code { background: none; border: none; padding: 0; font-size: 0.8125rem; line-height: 1.65; }
-.profile-wiki .article img { max-width: 100%; border-radius: var(--radius-sm); margin-bottom: 18px; }
-.profile-wiki .article table { width: 100%; border-collapse: collapse; margin-bottom: 18px; font-size: 0.875rem; overflow-x: auto; display: block; }
-.profile-wiki .article th, .profile-wiki .article td { padding: 10px 14px; border: 1px solid var(--border-default); text-align: left; }
-.profile-wiki .article th { background: var(--bg-surface); color: var(--text-secondary); font-weight: 600; }
-.profile-wiki .article td { color: var(--text-secondary); }
-.profile-wiki .article hr { border: none; border-top: 1px solid var(--border-default); margin: 36px 0; }
-.profile-wiki .article .wikilink { color: var(--color-wikilink); text-decoration: none; }
-.profile-wiki .article .wikilink:hover { text-decoration: underline; }
-.profile-wiki .article .wikilink-broken { color: var(--color-wikilink-broken); text-decoration: none; border-bottom: 1px dashed var(--color-wikilink-broken); }
-.profile-wiki .article .external-link::after { content: ' ↗'; font-size: 0.7em; opacity: 0.7; }
-.profile-wiki .article .external-link { color: var(--color-external); }
-.profile-wiki .article strong { color: var(--text-primary); }
-.profile-wiki .article .katex-display { margin: 24px 0; overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
-.profile-wiki .article .math.amsmath { margin: 24px 0; overflow-x: auto; overflow-y: hidden; text-align: center; }
-.private-band-warning {
-  margin-bottom: 20px; padding: 12px 14px;
-  border: 1px solid rgba(212, 160, 74, 0.2);
-  background: rgba(212, 160, 74, 0.08);
-  border-radius: var(--radius-md); color: var(--text-secondary);
-  font-size: 0.8125rem; line-height: 1.5;
-}
-.hamburger {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 32px; height: 32px; background: none; border: none;
-  color: var(--text-muted); cursor: pointer; border-radius: var(--radius-sm);
-  margin-right: 8px; flex-shrink: 0;
-}
-.hamburger:hover { color: var(--text-secondary); background: var(--accent-subtle); }
-@media (min-width: 768px) { .hamburger { display: none; } }
-.sidebar-overlay { display: none; position: fixed; inset: 0; top: 56px; background: rgba(0,0,0,0.5); z-index: 50; }
-.sidebar-overlay.open { display: block; }
-.profile-sidebar.open { display: block; position: fixed; top: 56px; left: 0; bottom: 0; z-index: 51; background: var(--bg-base); width: 260px; overflow-y: auto; }
+@media (min-width: 640px) { .wiki-list { padding: 0 24px 64px; } }
+.wiki-list h2 { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 12px; }
 
 .wiki-card {
   display: block; background: var(--bg-surface); border: 1px solid var(--border-default);
   border-radius: var(--radius-md); padding: 16px 20px; margin-bottom: 8px;
-  text-decoration: none; transition: border-color 0.15s ease; position: relative;
+  text-decoration: none; transition: border-color 0.15s ease;
 }
 .wiki-card:hover { border-color: var(--border-emphasis); text-decoration: none; }
 .wiki-card-title { font-weight: 600; color: var(--text-primary); margin-bottom: 4px; }
 .wiki-card-desc { font-size: 0.8125rem; color: var(--text-tertiary); margin-bottom: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wiki-card-meta { display: flex; gap: 12px; font-size: 0.75rem; color: var(--text-muted); font-family: var(--font-mono); }
 .wiki-card-meta .star { color: var(--accent); }
-.wiki-card-delete { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: 1px solid transparent; background: transparent; color: var(--text-muted); cursor: pointer; border-radius: var(--radius-sm); position: absolute; top: 12px; right: 12px; opacity: 0; transition: opacity 0.1s; }
-.wiki-card:hover .wiki-card-delete { opacity: 1; }
-.wiki-card-delete:hover { color: var(--color-private); background: rgba(196, 92, 60, 0.1); border-color: rgba(196, 92, 60, 0.2); }
-.section-header {
-  display: flex; align-items: center; justify-content: space-between;
-  gap: 12px; margin-bottom: 12px; flex-wrap: wrap;
-}
-.section-note { color: var(--text-tertiary); font-size: 0.8125rem; }
-.action-row { display: flex; gap: 8px; flex-wrap: wrap; }
-.action-btn {
-  display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px;
-  min-height: 36px; border-radius: var(--radius-sm); font-size: 0.8125rem;
-  font-weight: 600; text-decoration: none;
-}
-.action-btn.primary { background: var(--accent); color: #0f0e0c; }
-.action-btn.secondary { border: 1px solid var(--border-emphasis); color: var(--text-secondary); }
-.profile-empty {
-  border: 1px dashed var(--border-emphasis); border-radius: var(--radius-md);
-  padding: 16px 18px; color: var(--text-secondary); background: rgba(255,255,255,0.01);
-}
 {% endblock %}
 
 {% block body %}
-{% macro render_sidebar(items, level=0) %}
-  {% for item in items %}
-    {% if item.kind == 'folder' %}
-    <div class="sidebar-folder {{ 'open' if item.active else '' }}" data-folder-path="{{ item.path }}" data-name="{{ item.name }}" data-kind="folder" data-updated="{{ item.updated_at or '' }}">
-      <div class="sidebar-folder-row">
-        <button type="button" class="sidebar-folder-toggle">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
-        </button>
-        <a href="{{ item.url }}" class="sidebar-item {{ 'active' if item.active else '' }}" style="padding-left: {{ 12 + (level * 16) }}px;">
-          <span>{{ item.name }}</span>
-        </a>
-      </div>
-      <div class="sidebar-children">
-        {{ render_sidebar(item.children, level + 1) }}
-      </div>
+<div class="profile-header">
+  <div class="avatar">{{ owner.username[0]|upper }}</div>
+  <div class="profile-info">
+    <h1>{{ owner.display_name or owner.username }}</h1>
+    <div class="username">@{{ owner.username }}</div>
+    <div class="profile-stats">
+      <span><strong>{{ wikis|length }}</strong> wikis</span>
+      <span><strong>{{ total_stars }}</strong> stars</span>
     </div>
-    {% else %}
-    <a href="{{ item.url }}" class="sidebar-item {{ 'active' if item.active else '' }}" data-name="{{ item.name }}" data-kind="page" data-updated="{{ item.updated_at or '' }}" data-path="{{ item.path }}" style="padding-left: {{ 28 + (level * 16) }}px;">
-      <span>{{ item.name }}</span>
-    </a>
-    {% endif %}
-  {% endfor %}
-{% endmacro %}
-
-<div class="profile-shell">
-  <aside class="profile-sidebar" {% if not (personal_wiki and sidebar_items) and not wikis %}style="display:none;"{% endif %}>
-    {% if personal_wiki and sidebar_items %}
-    <div class="sidebar-section">
-      <a href="/@{{ owner.username }}" class="sidebar-heading" style="text-decoration:none;display:block;">{{ owner.display_name or owner.username }}</a>
-      <div class="sidebar-sort" style="padding:0 12px 4px;">
-        <button class="sidebar-sort-btn active" data-sort="alpha" title="A → Z">A↓</button>
-        <button class="sidebar-sort-btn" data-sort="alpha-desc" title="Z → A">Z↓</button>
-        <button class="sidebar-sort-btn" data-sort="recent" title="Recently updated">
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-        </button>
-      </div>
-      <div id="sidebar-tree">
-      {{ render_sidebar(sidebar_items) }}
-      </div>
-      {% if is_owner %}
-      <a href="/@{{ owner.username }}/{{ personal_wiki.slug }}/new" class="sidebar-item" style="color:var(--accent);margin-top:8px;">New page</a>
-      {% endif %}
-    </div>
-    {% endif %}
-    {% if wikis %}
-    <div class="sidebar-section" style="margin-top: 16px; border-top: 1px solid var(--border-default); padding-top: 12px;">
-      <div class="sidebar-heading">Wikis</div>
-      {% for wiki in wikis %}
-      <div class="sidebar-wiki" data-wiki-slug="{{ wiki.slug }}" data-wiki-owner="{{ owner.username }}">
-        <div class="sidebar-wiki-row">
-          <button type="button" class="sidebar-wiki-toggle" aria-label="Expand pages" title="Expand pages">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
-          </button>
-          <a href="/@{{ owner.username }}/{{ wiki.slug }}" class="sidebar-item">
-            <span class="sidebar-icon" style="display:inline-flex;margin-right:6px;color:var(--text-muted);">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
-            </span>
-            {{ wiki.title or wiki.slug }}
-          </a>
-        </div>
-        <div class="sidebar-wiki-children" data-loaded="0"></div>
-      </div>
-      {% endfor %}
-    </div>
-    {% endif %}
-  </aside>
-  <div class="sidebar-overlay" id="sidebar-overlay" onclick="toggleSidebar()"></div>
-
-  <main class="profile-main">
-    <div class="profile-header">
-      <button class="hamburger" onclick="toggleSidebar()" aria-label="Open sidebar">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
-      </button>
-      <div class="avatar">{{ owner.username[0]|upper }}</div>
-      <div class="profile-info">
-        <h1>{{ owner.display_name or owner.username }}</h1>
-        <div class="username">@{{ owner.username }}</div>
-        {% if personal_excerpt %}
-        <div class="profile-summary">{{ personal_excerpt }}</div>
-        {% endif %}
-        <div class="profile-stats">
-          <span><strong>{{ visible_wiki_count }}</strong> {{ 'wiki' if visible_wiki_count == 1 else 'wikis' }}</span>
-          {% if total_stars > 0 %}<span><strong>{{ total_stars }}</strong> {{ 'star' if total_stars == 1 else 'stars' }}</span>{% endif %}
-        </div>
-      </div>
-    </div>
-
-    {% if personal_rendered_html %}
-    <div class="profile-wiki">
-      {% if is_owner and personal_wiki %}
-      <div style="display:flex;justify-content:flex-end;margin-bottom:12px;">
-        <a href="/@{{ owner.username }}/{{ personal_wiki.slug }}/index/edit" class="action-btn secondary" style="font-size:0.75rem;padding:4px 12px;min-height:28px;">Edit profile</a>
-      </div>
-      {% endif %}
-      {% if private_band_warning %}
-      <div class="private-band-warning">
-        This page has sections visible only to editors; not a security boundary. Don’t use private bands for real secrets.
-      </div>
-      {% endif %}
-      <article class="article">
-        {{ personal_rendered_html | safe }}
-      </article>
-    </div>
-    {% elif is_owner %}
-    <div class="profile-wiki">
-      <div class="profile-empty">
-        Your profile page is empty. Add an <code>index.md</code> to your <a href="/@{{ owner.username }}/{{ personal_wiki.slug }}" style="color:var(--accent);">personal wiki</a> to publish it here.
-      </div>
-    </div>
-    {% endif %}
-
-    {% if personal_wiki and (sidebar_items or is_owner) %}
-    <div class="wiki-list">
-      <div class="section-header">
-        <h2 style="margin-bottom:0;">Pages</h2>
-        {% if is_owner %}
-        <div class="action-row">
-          <a href="/@{{ owner.username }}/{{ personal_wiki.slug }}/new" class="action-btn primary">New page</a>
-        </div>
-        {% endif %}
-      </div>
-      {% if sidebar_items %}
-      {% for item in sidebar_items %}
-      <a href="{{ item.url }}" class="wiki-card" style="padding:12px 16px;">
-        <div class="wiki-card-title" style="margin-bottom:0;">{{ item.name }}</div>
-      </a>
-      {% endfor %}
-      {% else %}
-      <div class="profile-empty">(none yet)</div>
-      {% endif %}
-    </div>
-    {% endif %}
-
-    {% if wikis or is_owner %}
-    <div class="wiki-list">
-      <div class="section-header">
-        <h2 style="margin-bottom:0;">Wikis</h2>
-        {% if is_owner %}
-        <div class="action-row">
-          <a href="/new" class="action-btn secondary">New wiki</a>
-          <button style="background:none;border:none;padding:6px 8px;font-size:0.75rem;color:var(--text-muted);cursor:pointer;" onmouseover="this.style.color='var(--text-secondary)'" onmouseout="this.style.color='var(--text-muted)'" onclick="reindexAll(this)">Reindex all</button>
-        </div>
-        {% endif %}
-      </div>
-      {% for wiki in wikis %}
-      <a href="/@{{ owner.username }}/{{ wiki.slug }}" class="wiki-card">
-        <div class="wiki-card-title">{{ wiki.title or wiki.slug }}</div>
-        {% if wiki.description %}
-        <div class="wiki-card-desc">{{ wiki.description }}</div>
-        {% endif %}
-        <div class="wiki-card-meta">
-          <span class="star">&#9733; {{ wiki.star_count }}</span>
-          <span>{{ wiki.fork_count }} forks</span>
-        </div>
-        {% if is_owner %}
-        <button class="wiki-card-delete" title="Delete wiki" onclick="event.preventDefault(); event.stopPropagation(); deleteWiki('{{ wiki.slug }}', '{{ wiki.title or wiki.slug }}')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-        </button>
-        {% endif %}
-      </a>
-      {% else %}
-      <div class="profile-empty">No wikis yet.</div>
-      {% endfor %}
-    </div>
-    {% endif %}
-  </main>
+  </div>
 </div>
-{% endblock %}
 
-{% block scripts %}
-<script>
-function toggleSidebar() {
-  document.querySelector('.profile-sidebar').classList.toggle('open');
-  document.getElementById('sidebar-overlay').classList.toggle('open');
-}
-
-const folderStorageKey = 'wikihub-sidebar-folders';
-
-function loadFolders() {
-  try { return JSON.parse(localStorage.getItem(folderStorageKey) || '{}'); } catch (e) { return {}; }
-}
-
-function toggleFolder(path) {
-  const folder = document.querySelector(`.sidebar-folder[data-folder-path="${CSS.escape(path)}"]`);
-  if (!folder) return;
-  folder.classList.toggle('open');
-  const state = loadFolders();
-  state[path] = folder.classList.contains('open');
-  localStorage.setItem(folderStorageKey, JSON.stringify(state));
-}
-
-// Event delegation for folder toggles
-document.addEventListener('click', function(e) {
-  var btn = e.target.closest('.sidebar-folder-toggle');
-  if (!btn) return;
-  var folder = btn.closest('.sidebar-folder');
-  if (folder) toggleFolder(folder.dataset.folderPath);
-});
-
-(function initFolders() {
-  const state = loadFolders();
-  let changed = false;
-  document.querySelectorAll('.sidebar-folder').forEach(folder => {
-    const path = folder.dataset.folderPath;
-    if (state[path] === false) {
-      folder.classList.remove('open');
-    } else if (state[path] === true || folder.classList.contains('open')) {
-      folder.classList.add('open');
-      // Persist auto-expanded active folders so they stay open after navigation.
-      if (state[path] !== true) { state[path] = true; changed = true; }
-    }
-  });
-  if (changed) localStorage.setItem(folderStorageKey, JSON.stringify(state));
-})();
-
-// --- Sidebar sort ---
-const sortStorageKey = 'wikihub-sidebar-sort';
-
-function sortSidebarChildren(container, mode) {
-  var items = [];
-  Array.from(container.children).forEach(function(el) {
-    if (el.classList.contains('sidebar-folder') || (el.tagName === 'A' && el.classList.contains('sidebar-item'))) {
-      items.push(el);
-    }
-  });
-  if (items.length < 2) return;
-
-  items.sort(function(a, b) {
-    var aKind = a.dataset.kind || (a.classList.contains('sidebar-folder') ? 'folder' : 'page');
-    var bKind = b.dataset.kind || (b.classList.contains('sidebar-folder') ? 'folder' : 'page');
-    var aName = (a.dataset.name || '').toLowerCase();
-    var bName = (b.dataset.name || '').toLowerCase();
-    var aUpdated = a.dataset.updated || '';
-    var bUpdated = b.dataset.updated || '';
-    var aPath = a.dataset.path || a.dataset.folderPath || '';
-    var bPath = b.dataset.path || b.dataset.folderPath || '';
-    if (aKind !== bKind) return aKind === 'folder' ? -1 : 1;
-    if (mode === 'alpha') {
-      return aName < bName ? -1 : aName > bName ? 1 : (aPath < bPath ? -1 : aPath > bPath ? 1 : 0);
-    } else if (mode === 'alpha-desc') {
-      return aName > bName ? -1 : aName < bName ? 1 : (aPath > bPath ? -1 : aPath < bPath ? 1 : 0);
-    } else if (mode === 'recent') {
-      if (!aUpdated && !bUpdated) return aName < bName ? -1 : aName > bName ? 1 : 0;
-      if (!aUpdated) return 1;
-      if (!bUpdated) return -1;
-      return aUpdated > bUpdated ? -1 : aUpdated < bUpdated ? 1 : 0;
-    }
-    return 0;
-  });
-  items.forEach(function(el) { container.appendChild(el); });
-  container.querySelectorAll(':scope > .sidebar-folder > .sidebar-children').forEach(function(sub) {
-    sortSidebarChildren(sub, mode);
-  });
-}
-
-function applySidebarSort(mode) {
-  localStorage.setItem(sortStorageKey, mode);
-  document.querySelectorAll('.sidebar-sort-btn').forEach(function(btn) {
-    btn.classList.toggle('active', btn.dataset.sort === mode);
-  });
-  var tree = document.getElementById('sidebar-tree');
-  if (tree) sortSidebarChildren(tree, mode);
-}
-
-document.querySelectorAll('.sidebar-sort-btn').forEach(function(btn) {
-  btn.addEventListener('click', function() { applySidebarSort(btn.dataset.sort); });
-});
-
-(function() {
-  var saved = localStorage.getItem(sortStorageKey) || 'alpha';
-  if (saved !== 'alpha') applySidebarSort(saved);
-  document.querySelectorAll('.sidebar-sort-btn').forEach(function(btn) {
-    btn.classList.toggle('active', btn.dataset.sort === saved);
-  });
-})();
-
-// --- Inline wiki expansion (Wikis section) ---
-const wikiExpandedKey = 'wikihub-wiki-expanded';
-
-function loadWikiExpanded() {
-  try { return JSON.parse(localStorage.getItem(wikiExpandedKey) || '{}'); } catch (e) { return {}; }
-}
-
-function saveWikiExpanded(state) {
-  localStorage.setItem(wikiExpandedKey, JSON.stringify(state));
-}
-
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, function(c) {
-    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
-  });
-}
-
-function chevronSvg() {
-  return '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>';
-}
-
-// Namespace folder paths by wiki slug so localStorage state doesn't collide across trees
-function renderWikiNode(node, level, slug) {
-  const nsPath = slug + '|' + (node.path || '');
-  if (node.kind === 'folder') {
-    const div = document.createElement('div');
-    div.className = 'sidebar-folder';
-    div.dataset.folderPath = nsPath;
-    div.dataset.name = node.name;
-    div.dataset.kind = 'folder';
-    div.dataset.updated = node.updated_at || '';
-    const row = document.createElement('div');
-    row.className = 'sidebar-folder-row';
-    row.innerHTML = '<button type="button" class="sidebar-folder-toggle">' + chevronSvg() + '</button>' +
-      '<a href="' + node.url + '" class="sidebar-item" style="padding-left: ' + (12 + level * 16) + 'px;"><span>' + escapeHtml(node.name) + '</span></a>';
-    div.appendChild(row);
-    const children = document.createElement('div');
-    children.className = 'sidebar-children';
-    (node.children || []).forEach(function(c) { children.appendChild(renderWikiNode(c, level + 1, slug)); });
-    div.appendChild(children);
-    return div;
-  } else {
-    const a = document.createElement('a');
-    a.href = node.url;
-    a.className = 'sidebar-item';
-    a.style.paddingLeft = (12 + level * 16) + 'px';
-    a.dataset.name = node.name;
-    a.dataset.kind = 'page';
-    a.dataset.updated = node.updated_at || '';
-    a.dataset.path = node.path;
-    const span = document.createElement('span');
-    span.textContent = node.name;
-    a.appendChild(span);
-    return a;
-  }
-}
-
-async function expandWiki(wikiEl) {
-  const slug = wikiEl.dataset.wikiSlug;
-  const owner = wikiEl.dataset.wikiOwner;
-  const childrenEl = wikiEl.querySelector('.sidebar-wiki-children');
-  wikiEl.classList.add('open');
-  if (childrenEl.dataset.loaded !== '1') {
-    childrenEl.innerHTML = '<div class="sidebar-wiki-msg">Loading…</div>';
-    try {
-      const resp = await fetch('/@' + encodeURIComponent(owner) + '/' + encodeURIComponent(slug) + '/sidebar.json');
-      if (!resp.ok) throw new Error('fetch failed: ' + resp.status);
-      const tree = await resp.json();
-      childrenEl.innerHTML = '';
-      if (!Array.isArray(tree) || tree.length === 0) {
-        childrenEl.innerHTML = '<div class="sidebar-wiki-msg">(no pages)</div>';
-      } else {
-        tree.forEach(function(node) { childrenEl.appendChild(renderWikiNode(node, 0, slug)); });
-        const folderState = loadFolders();
-        childrenEl.querySelectorAll('.sidebar-folder').forEach(function(f) {
-          if (folderState[f.dataset.folderPath] === true) f.classList.add('open');
-        });
-      }
-      childrenEl.dataset.loaded = '1';
-    } catch (e) {
-      childrenEl.innerHTML = '<div class="sidebar-wiki-msg">Failed to load pages</div>';
-    }
-  }
-}
-
-function collapseWiki(wikiEl) {
-  wikiEl.classList.remove('open');
-}
-
-function persistWikiExpanded(slug, open) {
-  const state = loadWikiExpanded();
-  if (open) state[slug] = true;
-  else delete state[slug];
-  saveWikiExpanded(state);
-}
-
-document.addEventListener('click', function(e) {
-  const btn = e.target.closest('.sidebar-wiki-toggle');
-  if (!btn) return;
-  e.preventDefault();
-  const wikiEl = btn.closest('.sidebar-wiki');
-  if (!wikiEl) return;
-  if (wikiEl.classList.contains('open')) {
-    collapseWiki(wikiEl);
-    persistWikiExpanded(wikiEl.dataset.wikiSlug, false);
-  } else {
-    expandWiki(wikiEl);
-    persistWikiExpanded(wikiEl.dataset.wikiSlug, true);
-  }
-});
-
-(function initWikiExpanded() {
-  const state = loadWikiExpanded();
-  Object.keys(state).forEach(function(slug) {
-    if (state[slug] !== true) return;
-    const el = document.querySelector('.sidebar-wiki[data-wiki-slug="' + CSS.escape(slug) + '"]');
-    if (el) expandWiki(el);
-  });
-})();
-
-{% if current_user.is_authenticated and current_user.id == owner.id %}
-async function deleteWiki(slug, title) {
-  if (!confirm('Delete "' + title + '"? All pages and history will be lost. This cannot be undone.')) return;
-  if (!confirm('Are you sure? Click OK to permanently delete this wiki.')) return;
-  const resp = await fetch('/api/v1/wikis/{{ owner.username }}/' + slug, {method: 'DELETE'});
-  if (resp.ok) location.reload();
-  else { const d = await resp.json(); alert(d.message || 'Delete failed'); }
-}
-
-async function reindexAll(btn) {
-  const orig = btn.textContent;
-  btn.disabled = true;
-  btn.textContent = 'Reindexing…';
-  try {
-    const resp = await fetch('/@{{ owner.username }}/reindex', {method: 'POST'});
-    const d = await resp.json();
-    if (resp.ok) { btn.textContent = 'Done ✓ ' + d.reindexed + ' wikis'; setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 2000); }
-    else { btn.textContent = 'Failed'; setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 2000); }
-  } catch (e) { btn.textContent = 'Error'; setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 2000); }
-}
-{% endif %}
-</script>
+<div class="wiki-list">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+    <h2 style="margin-bottom:0;">Wikis</h2>
+    {% if current_user.is_authenticated and current_user.id == owner.id %}
+    <a href="/new" style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;min-height:36px;background:var(--accent);color:#0f0e0c;border-radius:var(--radius-sm);font-size:0.8125rem;font-weight:600;text-decoration:none;">New wiki</a>
+    {% endif %}
+  </div>
+  {% for wiki in wikis %}
+  <a href="/@{{ owner.username }}/{{ wiki.slug }}" class="wiki-card">
+    <div class="wiki-card-title">{{ wiki.title or wiki.slug }}</div>
+    {% if wiki.description %}
+    <div class="wiki-card-desc">{{ wiki.description }}</div>
+    {% endif %}
+    <div class="wiki-card-meta">
+      <span class="star">&#9733; {{ wiki.star_count }}</span>
+      <span>{{ wiki.fork_count }} forks</span>
+    </div>
+  </a>
+  {% else %}
+  <p style="color: var(--text-tertiary); font-size: 0.875rem;">No wikis yet.</p>
+  {% endfor %}
+</div>
 {% endblock %}

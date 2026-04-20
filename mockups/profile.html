@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>@alice — wikihub</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg-base: #0f0e0c;
+    --bg-surface: #191714;
+    --bg-elevated: #221f1b;
+    --bg-overlay: #2a2622;
+    --text-primary: #e8e0d4;
+    --text-secondary: #b8ad9e;
+    --text-tertiary: #887d6e;
+    --text-muted: #5a5248;
+    --accent: #d4a04a;
+    --accent-hover: #e0b35a;
+    --accent-muted: rgba(212, 160, 74, 0.12);
+    --accent-subtle: rgba(212, 160, 74, 0.06);
+    --color-public: #7a9e6b;
+    --color-private: #c45c3c;
+    --color-unlisted: #b8ad9e;
+    --color-edit: #d4a04a;
+    --color-success: #7a9e6b;
+    --color-warning: #d4a04a;
+    --color-error: #c45c3c;
+    --border-default: rgba(200, 180, 150, 0.08);
+    --border-emphasis: rgba(200, 180, 150, 0.15);
+    --border-strong: rgba(200, 180, 150, 0.25);
+    --border-accent: rgba(212, 160, 74, 0.4);
+    --control-bg: rgba(0, 0, 0, 0.2);
+    --control-bg-hover: rgba(200, 180, 150, 0.08);
+    --control-border: rgba(200, 180, 150, 0.12);
+    --font-body: 'Inter', -apple-system, sans-serif;
+    --font-mono: 'IBM Plex Mono', 'Menlo', monospace;
+    --radius-sm: 4px;
+    --radius-md: 6px;
+    --radius-lg: 10px;
+  }
+
+  *, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  html {
+    font-size: 16px;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    font-family: var(--font-body);
+    background: var(--bg-base);
+    color: var(--text-primary);
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+
+  /* --- nav --- */
+  .nav {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border-default);
+    padding: 0 16px;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .nav-logo {
+    font-family: var(--font-mono);
+    font-weight: 500;
+    font-size: 1.0625rem;
+    text-decoration: none;
+    flex-shrink: 0;
+    line-height: 1;
+  }
+
+  .nav-logo .bracket {
+    color: var(--text-tertiary);
+  }
+
+  .nav-logo .wordmark {
+    color: var(--text-primary);
+  }
+
+  .nav-search {
+    flex: 1;
+    max-width: 400px;
+    height: 36px;
+    background: var(--control-bg);
+    border: 1px solid var(--control-border);
+    border-radius: var(--radius-md);
+    padding: 0 12px;
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+    font-family: var(--font-body);
+    outline: none;
+    display: none;
+  }
+
+  .nav-search:focus {
+    border-color: var(--border-accent);
+  }
+
+  .nav-user {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--accent-muted);
+    border: 1px solid var(--border-accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    color: var(--accent);
+    cursor: pointer;
+    flex-shrink: 0;
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  @media (min-width: 640px) {
+    .nav { padding: 0 24px; }
+    .nav-search { display: block; }
+  }
+
+  /* --- profile header --- */
+  .profile-header {
+    padding: 24px 16px;
+    border-bottom: 1px solid var(--border-default);
+  }
+
+  .profile-header-inner {
+    max-width: 960px;
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .avatar {
+    width: 72px;
+    height: 72px;
+    border-radius: 50%;
+    background: var(--accent-muted);
+    border: 1px solid var(--border-accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.375rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--accent);
+    flex-shrink: 0;
+  }
+
+  @media (min-width: 640px) {
+    .avatar {
+      width: 96px;
+      height: 96px;
+      font-size: 1.875rem;
+    }
+    .profile-header { padding: 32px 24px; }
+  }
+
+  .profile-info {
+    min-width: 0;
+  }
+
+  .profile-name {
+    font-size: 1.375rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+    color: var(--text-primary);
+  }
+
+  .profile-username {
+    font-family: var(--font-mono);
+    font-size: 0.9375rem;
+    color: var(--text-secondary);
+    margin-top: 2px;
+  }
+
+  .profile-meta {
+    font-size: 0.8125rem;
+    color: var(--text-tertiary);
+    margin-top: 6px;
+  }
+
+  @media (min-width: 640px) {
+    .profile-name { font-size: 1.625rem; }
+  }
+
+  /* --- stats bar --- */
+  .stats-bar {
+    padding: 16px;
+    border-bottom: 1px solid var(--border-default);
+  }
+
+  .stats-bar-inner {
+    max-width: 960px;
+    margin: 0 auto;
+    display: flex;
+    gap: 24px;
+  }
+
+  .stat {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+  }
+
+  .stat-value {
+    font-size: 1.125rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--text-primary);
+  }
+
+  .stat-label {
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+  }
+
+  @media (min-width: 640px) {
+    .stats-bar { padding: 16px 24px; }
+  }
+
+  /* --- tabs --- */
+  .tabs {
+    border-bottom: 1px solid var(--border-default);
+    padding: 0 16px;
+  }
+
+  .tabs-inner {
+    max-width: 960px;
+    margin: 0 auto;
+    display: flex;
+  }
+
+  .tab {
+    padding: 12px 16px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    text-decoration: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+  }
+
+  .tab:hover {
+    color: var(--text-primary);
+  }
+
+  .tab.active {
+    color: var(--text-primary);
+    border-bottom-color: var(--accent);
+  }
+
+  .tab-count {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-default);
+    border-radius: 10px;
+    padding: 0 7px;
+    font-size: 0.75rem;
+    margin-left: 6px;
+    font-weight: 600;
+    color: var(--text-secondary);
+  }
+
+  @media (min-width: 640px) {
+    .tabs { padding: 0 24px; }
+  }
+
+  /* --- wiki list --- */
+  .wiki-list {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 16px;
+  }
+
+  @media (min-width: 640px) {
+    .wiki-list { padding: 24px; }
+  }
+
+  /* --- wiki card --- */
+  .wiki-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    padding: 16px;
+    margin-bottom: 12px;
+    transition: border-color 0.15s ease;
+  }
+
+  .wiki-card:hover {
+    border-color: var(--border-emphasis);
+  }
+
+  .wiki-card-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .wiki-card-title {
+    font-size: 1.0625rem;
+    font-weight: 600;
+    color: var(--accent);
+    text-decoration: none;
+    word-break: break-word;
+  }
+
+  .wiki-card-title:hover {
+    color: var(--accent-hover);
+    text-decoration: underline;
+  }
+
+  .wiki-card-desc {
+    margin-top: 6px;
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .wiki-card-footer {
+    margin-top: 12px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    font-size: 0.8125rem;
+    color: var(--text-tertiary);
+  }
+
+  .wiki-card-footer-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  /* --- visibility badges --- */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 10px;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    border: 1px solid;
+    white-space: nowrap;
+    min-height: 24px;
+  }
+
+  .badge-icon {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    line-height: 1;
+  }
+
+  .badge-public {
+    color: var(--color-public);
+    border-color: rgba(122, 158, 107, 0.3);
+    background: rgba(122, 158, 107, 0.08);
+  }
+
+  .badge-private {
+    color: var(--color-private);
+    border-color: rgba(196, 92, 60, 0.3);
+    background: rgba(196, 92, 60, 0.08);
+  }
+
+  .badge-unlisted {
+    color: var(--color-unlisted);
+    border-color: rgba(184, 173, 158, 0.2);
+    background: rgba(184, 173, 158, 0.06);
+  }
+
+  .badge-public-edit {
+    color: var(--color-edit);
+    border-color: rgba(212, 160, 74, 0.3);
+    background: rgba(212, 160, 74, 0.08);
+  }
+
+  .badge-unlisted-edit {
+    color: var(--color-edit);
+    border-color: rgba(212, 160, 74, 0.3);
+    background: rgba(212, 160, 74, 0.08);
+  }
+
+  /* --- star/fork icons --- */
+  .icon-star, .icon-fork {
+    display: inline-flex;
+    align-items: center;
+    color: var(--text-tertiary);
+  }
+
+  .icon-star svg, .icon-fork svg {
+    width: 14px;
+    height: 14px;
+    fill: currentColor;
+  }
+
+  /* --- footer --- */
+  .page-footer {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 32px 16px;
+    border-top: 1px solid var(--border-default);
+    text-align: center;
+    font-size: 0.8125rem;
+    color: var(--text-tertiary);
+  }
+
+  .page-footer a {
+    color: var(--text-secondary);
+    text-decoration: none;
+    font-family: var(--font-mono);
+  }
+
+  .page-footer a:hover {
+    color: var(--accent);
+  }
+
+  @media (min-width: 640px) {
+    .page-footer { padding: 32px 24px; }
+  }
+
+  @media (min-width: 960px) {
+    .wiki-card { padding: 20px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- nav -->
+<nav class="nav">
+  <a href="#" class="nav-logo"><span class="bracket">[[</span><span class="wordmark">wikihub</span><span class="bracket">]]</span></a>
+  <input type="text" class="nav-search" placeholder="Search wikis..." readonly>
+  <div class="nav-user">HQ</div>
+</nav>
+
+<!-- profile header -->
+<header class="profile-header">
+  <div class="profile-header-inner">
+    <div class="avatar">AW</div>
+    <div class="profile-info">
+      <h1 class="profile-name">Alice Wonderland</h1>
+      <div class="profile-username">@alice</div>
+      <div class="profile-meta">Member since Mar 2026</div>
+    </div>
+  </div>
+</header>
+
+<!-- stats -->
+<div class="stats-bar">
+  <div class="stats-bar-inner">
+    <div class="stat">
+      <span class="stat-value">5</span>
+      <span class="stat-label">wikis</span>
+    </div>
+    <div class="stat">
+      <span class="stat-value">142</span>
+      <span class="stat-label">stars received</span>
+    </div>
+  </div>
+</div>
+
+<!-- tabs -->
+<div class="tabs">
+  <div class="tabs-inner">
+    <a class="tab active" href="#">Wikis <span class="tab-count">5</span></a>
+  </div>
+</div>
+
+<!-- wiki list -->
+<main class="wiki-list">
+
+  <!-- card 1: public -->
+  <div class="wiki-card">
+    <div class="wiki-card-header">
+      <a href="#" class="wiki-card-title">deep-learning-notes</a>
+      <span class="badge badge-public"><span class="badge-icon"><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span> Public</span>
+    </div>
+    <p class="wiki-card-desc">Comprehensive notes on transformer architectures, attention mechanisms, and training dynamics. Covers papers from 2017-2026 with runnable code snippets and KaTeX derivations.</p>
+    <div class="wiki-card-footer">
+      <span class="wiki-card-footer-item">
+        <span class="icon-star"><svg viewBox="0 0 16 16"><path d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.75.75 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25z"/></svg></span>
+        87
+      </span>
+      <span class="wiki-card-footer-item">
+        <span class="icon-fork"><svg viewBox="0 0 16 16"><path d="M5 3.25a.75.75 0 11-1.5 0 .75.75 0 011.5 0zm0 2.122a2.25 2.25 0 10-1.5 0v.878A2.25 2.25 0 005.75 8.5h1.5v2.128a2.251 2.251 0 101.5 0V8.5h1.5a2.25 2.25 0 002.25-2.25v-.878a2.25 2.25 0 10-1.5 0v.878a.75.75 0 01-.75.75h-4.5A.75.75 0 015 6.25v-.878zm3.75 7.378a.75.75 0 11-1.5 0 .75.75 0 011.5 0zm3-8.75a.75.75 0 100-1.5.75.75 0 000 1.5z"/></svg></span>
+        12
+      </span>
+      <span class="wiki-card-footer-item">Updated 2 days ago</span>
+    </div>
+  </div>
+
+  <!-- card 2: private -->
+  <div class="wiki-card">
+    <div class="wiki-card-header">
+      <a href="#" class="wiki-card-title">personal-crm</a>
+      <span class="badge badge-private"><span class="badge-icon"><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span> Private</span>
+    </div>
+    <p class="wiki-card-desc">Relationship tracker and meeting notes. Integrates with calendar and email for automated context when catching up with contacts.</p>
+    <div class="wiki-card-footer">
+      <span class="wiki-card-footer-item">
+        <span class="icon-star"><svg viewBox="0 0 16 16"><path d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.75.75 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25z"/></svg></span>
+        0
+      </span>
+      <span class="wiki-card-footer-item">
+        <span class="icon-fork"><svg viewBox="0 0 16 16"><path d="M5 3.25a.75.75 0 11-1.5 0 .75.75 0 011.5 0zm0 2.122a2.25 2.25 0 10-1.5 0v.878A2.25 2.25 0 005.75 8.5h1.5v2.128a2.251 2.251 0 101.5 0V8.5h1.5a2.25 2.25 0 002.25-2.25v-.878a2.25 2.25 0 10-1.5 0v.878a.75.75 0 01-.75.75h-4.5A.75.75 0 015 6.25v-.878zm3.75 7.378a.75.75 0 11-1.5 0 .75.75 0 011.5 0zm3-8.75a.75.75 0 100-1.5.75.75 0 000 1.5z"/></svg></span>
+        0
+      </span>
+      <span class="wiki-card-footer-item">Updated 5 hours ago</span>
+    </div>
+  </div>
+
+  <!-- card 3: public-edit -->
+  <div class="wiki-card">
+    <div class="wiki-card-header">
+      <a href="#" class="wiki-card-title">effective-altruism-reading-list</a>
+      <span class="badge badge-public-edit"><span class="badge-icon"><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></span> Public (edit)</span>
+    </div>
+    <p class="wiki-card-desc">Curated reading list for effective altruism concepts, cause prioritization, and career advice. Community contributions welcome — anyone can add or annotate entries.</p>
+    <div class="wiki-card-footer">
+      <span class="wiki-card-footer-item">
+        <span class="icon-star"><svg viewBox="0 0 16 16"><path d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.75.75 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25z"/></svg></span>
+        41
+      </span>
+      <span class="wiki-card-footer-item">
+        <span class="icon-fork"><svg viewBox="0 0 16 16"><path d="M5 3.25a.75.75 0 11-1.5 0 .75.75 0 011.5 0zm0 2.122a2.25 2.25 0 10-1.5 0v.878A2.25 2.25 0 005.75 8.5h1.5v2.128a2.251 2.251 0 101.5 0V8.5h1.5a2.25 2.25 0 002.25-2.25v-.878a2.25 2.25 0 10-1.5 0v.878a.75.75 0 01-.75.75h-4.5A.75.75 0 015 6.25v-.878zm3.75 7.378a.75.75 0 11-1.5 0 .75.75 0 011.5 0zm3-8.75a.75.75 0 100-1.5.75.75 0 000 1.5z"/></svg></span>
+        8
+      </span>
+      <span class="wiki-card-footer-item">Updated 1 week ago</span>
+    </div>
+  </div>
+
+  <!-- card 4: unlisted -->
+  <div class="wiki-card">
+    <div class="wiki-card-header">
+      <a href="#" class="wiki-card-title">rsi-recovery-protocol</a>
+      <span class="badge badge-unlisted"><span class="badge-icon"><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></span> Unlisted</span>
+    </div>
+    <p class="wiki-card-desc">Personal RSI recovery notes — exercises, ergonomic setup, pain tracking, and what worked. Shared by link with a few friends.</p>
+    <div class="wiki-card-footer">
+      <span class="wiki-card-footer-item">
+        <span class="icon-star"><svg viewBox="0 0 16 16"><path d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.75.75 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25z"/></svg></span>
+        14
+      </span>
+      <span class="wiki-card-footer-item">
+        <span class="icon-fork"><svg viewBox="0 0 16 16"><path d="M5 3.25a.75.75 0 11-1.5 0 .75.75 0 011.5 0zm0 2.122a2.25 2.25 0 10-1.5 0v.878A2.25 2.25 0 005.75 8.5h1.5v2.128a2.251 2.251 0 101.5 0V8.5h1.5a2.25 2.25 0 002.25-2.25v-.878a2.25 2.25 0 10-1.5 0v.878a.75.75 0 01-.75.75h-4.5A.75.75 0 015 6.25v-.878zm3.75 7.378a.75.75 0 11-1.5 0 .75.75 0 011.5 0zm3-8.75a.75.75 0 100-1.5.75.75 0 000 1.5z"/></svg></span>
+        3
+      </span>
+      <span class="wiki-card-footer-item">Updated 3 weeks ago</span>
+    </div>
+  </div>
+
+  <!-- card 5: unlisted-edit -->
+  <div class="wiki-card">
+    <div class="wiki-card-header">
+      <a href="#" class="wiki-card-title">labs-research-log</a>
+      <span class="badge badge-unlisted-edit"><span class="badge-icon"><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></span> Unlisted (edit)</span>
+    </div>
+    <p class="wiki-card-desc">Shared research log for the labs team. Experiment notes, benchmark results, and weekly syncs. Collaborators edit directly.</p>
+    <div class="wiki-card-footer">
+      <span class="wiki-card-footer-item">
+        <span class="icon-star"><svg viewBox="0 0 16 16"><path d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.75.75 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25z"/></svg></span>
+        0
+      </span>
+      <span class="wiki-card-footer-item">
+        <span class="icon-fork"><svg viewBox="0 0 16 16"><path d="M5 3.25a.75.75 0 11-1.5 0 .75.75 0 011.5 0zm0 2.122a2.25 2.25 0 10-1.5 0v.878A2.25 2.25 0 005.75 8.5h1.5v2.128a2.251 2.251 0 101.5 0V8.5h1.5a2.25 2.25 0 002.25-2.25v-.878a2.25 2.25 0 10-1.5 0v.878a.75.75 0 01-.75.75h-4.5A.75.75 0 015 6.25v-.878zm3.75 7.378a.75.75 0 11-1.5 0 .75.75 0 011.5 0zm3-8.75a.75.75 0 100-1.5.75.75 0 000 1.5z"/></svg></span>
+        1
+      </span>
+      <span class="wiki-card-footer-item">Updated yesterday</span>
+    </div>
+  </div>
+
+</main>
+
+<footer class="page-footer">
+  <a href="#">wikihub.md</a>
+</footer>
+
+</body>
+</html>

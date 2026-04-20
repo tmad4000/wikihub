@@ -819,14 +819,9 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="7" x2="21" y2="7"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="17" x2="21" y2="17"/></svg>
       </button>
       <div class="nav-actions">
-        <a href="/explore" class="btn btn-ghost">Explore</a>
-        {% if current_user and current_user.is_authenticated %}
-        <a href="/@{{ current_user.username }}" class="btn btn-ghost">@{{ current_user.username }}</a>
-        <a href="/new" class="btn btn-primary">New wiki</a>
-        {% else %}
-        <a href="/auth/login" class="btn btn-ghost">Sign in</a>
-        <a href="/auth/signup" class="btn btn-primary">Get started</a>
-        {% endif %}
+        <a href="#" class="btn btn-ghost">Explore</a>
+        <a href="#" class="btn btn-ghost">Sign in</a>
+        <a href="#" class="btn btn-primary">Get started</a>
       </div>
     </div>
   </nav>
@@ -1001,7 +996,7 @@
     <div class="cta-banner-inner">
       <h2>Start publishing in seconds</h2>
       <p>Create your first wiki for free. No credit card, no build pipeline, no waiting.</p>
-      <a href="/auth/signup" class="btn btn-primary">Get started</a>
+      <a href="#" class="btn btn-primary">Get started</a>
     </div>
   </section>
 
@@ -1016,17 +1011,28 @@
         <div class="footer-col">
           <h4>Product</h4>
           <ul>
-            <li><a href="/explore">Explore</a></li>
-            <li><a href="/auth/signup">Get started</a></li>
+            <li><a href="#">Features</a></li>
+            <li><a href="#">Explore</a></li>
+            <li><a href="#">Pricing</a></li>
+            <li><a href="#">Changelog</a></li>
           </ul>
         </div>
         <div class="footer-col">
           <h4>Developers</h4>
           <ul>
-            <li><a href="/agents">API docs</a></li>
-            <li><a href="/llms.txt">llms.txt</a></li>
-            <li><a href="/.well-known/mcp/server-card.json">MCP server</a></li>
-            <li><a href="/AGENTS.md">AGENTS.md</a></li>
+            <li><a href="#">Docs</a></li>
+            <li><a href="#">REST API</a></li>
+            <li><a href="#">MCP server</a></li>
+            <li><a href="#">Git access</a></li>
+          </ul>
+        </div>
+        <div class="footer-col">
+          <h4>Company</h4>
+          <ul>
+            <li><a href="#">About</a></li>
+            <li><a href="#">Blog</a></li>
+            <li><a href="#">Terms</a></li>
+            <li><a href="#">Privacy</a></li>
           </ul>
         </div>
       </div>

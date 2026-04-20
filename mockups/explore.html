@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>explore — wikihub</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg-base: #0f0e0c;
+  --bg-surface: #191714;
+  --bg-elevated: #221f1b;
+  --bg-overlay: #2a2622;
+  --text-primary: #e8e0d4;
+  --text-secondary: #b8ad9e;
+  --text-tertiary: #887d6e;
+  --text-muted: #5a5248;
+  --accent: #d4a04a;
+  --accent-hover: #e0b35a;
+  --accent-muted: rgba(212, 160, 74, 0.12);
+  --accent-subtle: rgba(212, 160, 74, 0.06);
+  --color-public: #7a9e6b;
+  --color-private: #c45c3c;
+  --color-unlisted: #b8ad9e;
+  --color-edit: #d4a04a;
+  --color-wikilink: #d4a04a;
+  --border-default: rgba(200, 180, 150, 0.08);
+  --border-emphasis: rgba(200, 180, 150, 0.15);
+  --border-strong: rgba(200, 180, 150, 0.25);
+  --border-accent: rgba(212, 160, 74, 0.4);
+  --control-bg: rgba(0, 0, 0, 0.2);
+  --control-bg-hover: rgba(200, 180, 150, 0.08);
+  --control-border: rgba(200, 180, 150, 0.12);
+  --font-body: 'Inter', -apple-system, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'Menlo', monospace;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  font-family: var(--font-body);
+  background: var(--bg-base);
+  color: var(--text-primary);
+  line-height: 1.5;
+  min-height: 100vh;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--accent-hover);
+}
+
+/* ── nav ── */
+.nav {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-default);
+  padding: 0 16px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.nav-logo {
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  text-decoration: none;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.nav-logo .bracket {
+  color: var(--text-tertiary);
+}
+
+.nav-logo .name {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.nav-logo:hover .name {
+  color: var(--accent);
+}
+
+.nav-search {
+  flex: 1;
+  max-width: 360px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-md);
+  padding: 6px 12px;
+  cursor: pointer;
+  height: 36px;
+  transition: border-color 0.15s;
+}
+
+.nav-search:hover {
+  border-color: var(--border-emphasis);
+}
+
+.nav-search-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+  width: 15px;
+  height: 15px;
+}
+
+.nav-search-text {
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  flex: 1;
+}
+
+.nav-search-kbd {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  background: var(--bg-base);
+  border: 1px solid var(--border-default);
+  border-radius: 3px;
+  padding: 1px 5px;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
+.nav-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.nav-link {
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  transition: color 0.15s;
+  white-space: nowrap;
+}
+
+.nav-link:hover {
+  color: var(--text-primary);
+  text-decoration: none;
+}
+
+.nav-link--active {
+  color: var(--text-primary);
+  position: relative;
+}
+
+.nav-link--active::after {
+  content: '';
+  position: absolute;
+  bottom: -11px;
+  left: 10px;
+  right: 10px;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+}
+
+.nav-btn-secondary {
+  font-family: var(--font-body);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid var(--border-emphasis);
+  border-radius: var(--radius-md);
+  padding: 5px 12px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+
+.nav-btn-secondary:hover {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+.nav-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border-default);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* ── main layout ── */
+.main {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 40px 16px 80px;
+}
+
+/* ── section headers ── */
+.section-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  gap: 12px;
+}
+
+.section-title {
+  font-family: var(--font-body);
+  font-size: 1.125rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+
+.section-link {
+  font-size: 0.8125rem;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  transition: color 0.15s;
+}
+
+.section-link:hover {
+  color: var(--accent);
+}
+
+/* ── card grid ── */
+.card-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  margin-bottom: 48px;
+}
+
+.card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  transition: border-color 0.15s;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.card:hover {
+  border-color: var(--border-emphasis);
+}
+
+.card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.card-identity {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.card-owner {
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+  font-weight: 400;
+}
+
+.card-owner a {
+  color: var(--text-tertiary);
+}
+
+.card-owner a:hover {
+  color: var(--accent);
+}
+
+.card-slug {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.card-slug a {
+  color: var(--text-primary);
+}
+
+.card-slug a:hover {
+  color: var(--accent);
+}
+
+.card-visibility {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.6875rem;
+  color: var(--color-public);
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.card-visibility svg {
+  width: 14px;
+  height: 14px;
+}
+
+.card-desc {
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.tag {
+  font-size: 0.6875rem;
+  font-family: var(--font-mono);
+  color: var(--text-tertiary);
+  background: var(--bg-overlay);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: 2px 7px;
+  white-space: nowrap;
+}
+
+.card-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: auto;
+  padding-top: 2px;
+}
+
+.card-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.card-stat svg {
+  width: 13px;
+  height: 13px;
+}
+
+.card-stat--stars {
+  color: var(--accent);
+}
+
+.card-stat--forks {
+  color: var(--text-tertiary);
+}
+
+.card-updated {
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+  margin-left: auto;
+}
+
+/* ── divider ── */
+.divider {
+  border: none;
+  border-top: 1px solid var(--border-default);
+  margin: 0 0 40px;
+}
+
+/* ── responsive ── */
+@media (min-width: 600px) {
+  .card-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .main {
+    padding: 48px 24px 80px;
+  }
+}
+
+@media (min-width: 840px) {
+  .card-grid--featured {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .main {
+    padding: 48px 32px 80px;
+  }
+  .nav {
+    padding: 0 24px;
+  }
+}
+
+@media (max-width: 479px) {
+  .nav-search-kbd {
+    display: none;
+  }
+  .nav-search {
+    max-width: none;
+  }
+  .nav-btn-secondary {
+    display: none;
+  }
+}
+</style>
+</head>
+<body>
+
+<!-- nav -->
+<nav class="nav">
+  <a href="/" class="nav-logo"><span class="bracket">[[</span><span class="name">wikihub</span><span class="bracket">]]</span></a>
+
+  <div class="nav-search" role="button" tabindex="0" aria-label="Search wikihub">
+    <svg class="nav-search-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+      <circle cx="7" cy="7" r="5.25"/>
+      <line x1="10.75" y1="10.75" x2="14" y2="14"/>
+    </svg>
+    <span class="nav-search-text">Search wikis...</span>
+    <span class="nav-search-kbd">&#8984;K</span>
+  </div>
+
+  <div class="nav-right">
+    <a href="/explore" class="nav-link nav-link--active">Explore</a>
+    <button class="nav-btn-secondary" onclick="location.href='/new'">New wiki</button>
+    <div class="nav-avatar" aria-label="User menu">H</div>
+  </div>
+</nav>
+
+<!-- main content -->
+<main class="main">
+
+  <!-- featured section -->
+  <div class="section-header">
+    <h2 class="section-title">Featured</h2>
+    <a href="/explore?sort=stars" class="section-link">View all &rarr;</a>
+  </div>
+
+  <div class="card-grid card-grid--featured">
+
+    <!-- featured 1 -->
+    <div class="card">
+      <div class="card-top">
+        <div class="card-identity">
+          <span class="card-owner"><a href="/@karpathy">@karpathy</a></span>
+          <div class="card-slug"><a href="/@karpathy/ml-research">ml-research</a></div>
+        </div>
+        <span class="card-visibility"><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg> public</span>
+      </div>
+      <p class="card-desc">Notes on transformers, attention mechanisms, and scaling laws. Includes annotated paper summaries.</p>
+      <div class="card-tags">
+        <span class="tag">machine-learning</span>
+        <span class="tag">transformers</span>
+        <span class="tag">research</span>
+      </div>
+      <div class="card-meta">
+        <span class="card-stat card-stat--stars">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.75.75 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z"/></svg>
+          342
+        </span>
+        <span class="card-stat card-stat--forks">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M5 3.25a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm0 2.122a2.25 2.25 0 1 0-1.5 0v.878A2.25 2.25 0 0 0 5.75 8.5h1.5v2.128a2.251 2.251 0 1 0 1.5 0V8.5h1.5a2.25 2.25 0 0 0 2.25-2.25v-.878a2.25 2.25 0 1 0-1.5 0v.878a.75.75 0 0 1-.75.75h-4.5A.75.75 0 0 1 5 6.25v-.878Zm3.75 7.378a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm3-8.75a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Z"/></svg>
+          28
+        </span>
+        <span class="card-updated">updated 2h ago</span>
+      </div>
+    </div>
+
+    <!-- featured 2 -->
+    <div class="card">
+      <div class="card-top">
+        <div class="card-identity">
+          <span class="card-owner"><a href="/@alice">@alice</a></span>
+          <div class="card-slug"><a href="/@alice/systematic-altruism">systematic-altruism</a></div>
+        </div>
+        <span class="card-visibility"><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg> public</span>
+      </div>
+      <p class="card-desc">Evidence-based giving research, charity evaluations, and cost-effectiveness analyses</p>
+      <div class="card-tags">
+        <span class="tag">effective-altruism</span>
+        <span class="tag">giving</span>
+      </div>
+      <div class="card-meta">
+        <span class="card-stat card-stat--stars">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.75.75 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z"/></svg>
+          156
+        </span>
+        <span class="card-stat card-stat--forks">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M5 3.25a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm0 2.122a2.25 2.25 0 1 0-1.5 0v.878A2.25 2.25 0 0 0 5.75 8.5h1.5v2.128a2.251 2.251 0 1 0 1.5 0V8.5h1.5a2.25 2.25 0 0 0 2.25-2.25v-.878a2.25 2.25 0 1 0-1.5 0v.878a.75.75 0 0 1-.75.75h-4.5A.75.75 0 0 1 5 6.25v-.878Zm3.75 7.378a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm3-8.75a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Z"/></svg>
+          12
+        </span>
+        <span class="card-updated">updated 1d ago</span>
+      </div>
+    </div>
+
+    <!-- featured 3 -->
+    <div class="card">
+      <div class="card-top">
+        <div class="card-identity">
+          <span class="card-owner"><a href="/@bob">@bob</a></span>
+          <div class="card-slug"><a href="/@bob/rust-patterns">rust-patterns</a></div>
+        </div>
+        <span class="card-visibility"><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg> public</span>
+      </div>
+      <p class="card-desc">Idiomatic Rust patterns, anti-patterns, and ownership model deep-dives</p>
+      <div class="card-tags">
+        <span class="tag">rust</span>
+        <span class="tag">patterns</span>
+        <span class="tag">systems</span>
+      </div>
+      <div class="card-meta">
+        <span class="card-stat card-stat--stars">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.75.75 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z"/></svg>
+          98
+        </span>
+        <span class="card-stat card-stat--forks">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M5 3.25a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm0 2.122a2.25 2.25 0 1 0-1.5 0v.878A2.25 2.25 0 0 0 5.75 8.5h1.5v2.128a2.251 2.251 0 1 0 1.5 0V8.5h1.5a2.25 2.25 0 0 0 2.25-2.25v-.878a2.25 2.25 0 1 0-1.5 0v.878a.75.75 0 0 1-.75.75h-4.5A.75.75 0 0 1 5 6.25v-.878Zm3.75 7.378a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm3-8.75a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Z"/></svg>
+          7
+        </span>
+        <span class="card-updated">updated 3d ago</span>
+      </div>
+    </div>
+
+  </div>
+
+  <hr class="divider">
+
+  <!-- recent section -->
+  <div class="section-header">
+    <h2 class="section-title">Recent</h2>
+    <a href="/explore?sort=updated" class="section-link">View all &rarr;</a>
+  </div>
+
+  <div class="card-grid">
+
+    <!-- recent 1 -->
+    <div class="card">
+      <div class="card-top">
+        <div class="card-identity">
+          <span class="card-owner"><a href="/@diana">@diana</a></span>
+          <div class="card-slug"><a href="/@diana/distributed-systems">distributed-systems</a></div>
+        </div>
+        <span class="card-visibility"><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg> public</span>
+      </div>
+      <p class="card-desc">Raft, Paxos, CRDTs, and everything in between. Reading notes from papers and production postmortems.</p>
+      <div class="card-tags">
+        <span class="tag">distributed</span>
+        <span class="tag">consensus</span>
+      </div>
+      <div class="card-meta">
+        <span class="card-stat card-stat--stars">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.75.75 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z"/></svg>
+          47
+        </span>
+        <span class="card-stat card-stat--forks">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M5 3.25a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm0 2.122a2.25 2.25 0 1 0-1.5 0v.878A2.25 2.25 0 0 0 5.75 8.5h1.5v2.128a2.251 2.251 0 1 0 1.5 0V8.5h1.5a2.25 2.25 0 0 0 2.25-2.25v-.878a2.25 2.25 0 1 0-1.5 0v.878a.75.75 0 0 1-.75.75h-4.5A.75.75 0 0 1 5 6.25v-.878Zm3.75 7.378a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm3-8.75a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Z"/></svg>
+          3
+        </span>
+        <span class="card-updated">updated 14m ago</span>
+      </div>
+    </div>
+
+    <!-- recent 2 -->
+    <div class="card">
+      <div class="card-top">
+        <div class="card-identity">
+          <span class="card-owner"><a href="/@chen">@chen</a></span>
+          <div class="card-slug"><a href="/@chen/sourdough-lab">sourdough-lab</a></div>
+        </div>
+        <span class="card-visibility"><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg> public</span>
+      </div>
+      <p class="card-desc">Fermentation schedules, flour hydration experiments, and starter maintenance logs</p>
+      <div class="card-tags">
+        <span class="tag">baking</span>
+        <span class="tag">fermentation</span>
+      </div>
+      <div class="card-meta">
+        <span class="card-stat card-stat--stars">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.75.75 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z"/></svg>
+          23
+        </span>
+        <span class="card-stat card-stat--forks">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M5 3.25a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm0 2.122a2.25 2.25 0 1 0-1.5 0v.878A2.25 2.25 0 0 0 5.75 8.5h1.5v2.128a2.251 2.251 0 1 0 1.5 0V8.5h1.5a2.25 2.25 0 0 0 2.25-2.25v-.878a2.25 2.25 0 1 0-1.5 0v.878a.75.75 0 0 1-.75.75h-4.5A.75.75 0 0 1 5 6.25v-.878Zm3.75 7.378a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm3-8.75a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Z"/></svg>
+          5
+        </span>
+        <span class="card-updated">updated 45m ago</span>
+      </div>
+    </div>
+
+    <!-- recent 3 -->
+    <div class="card">
+      <div class="card-top">
+        <div class="card-identity">
+          <span class="card-owner"><a href="/@priya">@priya</a></span>
+          <div class="card-slug"><a href="/@priya/constitutional-law">constitutional-law</a></div>
+        </div>
+        <span class="card-visibility"><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg> public</span>
+      </div>
+      <p class="card-desc">Case law summaries, amendment analyses, and comparative constitutional frameworks across jurisdictions</p>
+      <div class="card-tags">
+        <span class="tag">law</span>
+        <span class="tag">constitution</span>
+      </div>
+      <div class="card-meta">
+        <span class="card-stat card-stat--stars">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.75.75 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z"/></svg>
+          31
+        </span>
+        <span class="card-stat card-stat--forks">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M5 3.25a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm0 2.122a2.25 2.25 0 1 0-1.5 0v.878A2.25 2.25 0 0 0 5.75 8.5h1.5v2.128a2.251 2.251 0 1 0 1.5 0V8.5h1.5a2.25 2.25 0 0 0 2.25-2.25v-.878a2.25 2.25 0 1 0-1.5 0v.878a.75.75 0 0 1-.75.75h-4.5A.75.75 0 0 1 5 6.25v-.878Zm3.75 7.378a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm3-8.75a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Z"/></svg>
+          2
+        </span>
+        <span class="card-updated">updated 3h ago</span>
+      </div>
+    </div>
+
+    <!-- recent 4 -->
+    <div class="card">
+      <div class="card-top">
+        <div class="card-identity">
+          <span class="card-owner"><a href="/@marco">@marco</a></span>
+          <div class="card-slug"><a href="/@marco/synth-patches">synth-patches</a></div>
+        </div>
+        <span class="card-visibility"><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg> public</span>
+      </div>
+      <p class="card-desc">Modular synth patch notes, signal flow diagrams, and oscillator tuning references</p>
+      <div class="card-tags">
+        <span class="tag">music</span>
+        <span class="tag">synthesis</span>
+      </div>
+      <div class="card-meta">
+        <span class="card-stat card-stat--stars">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.75.75 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z"/></svg>
+          15
+        </span>
+        <span class="card-stat card-stat--forks">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M5 3.25a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm0 2.122a2.25 2.25 0 1 0-1.5 0v.878A2.25 2.25 0 0 0 5.75 8.5h1.5v2.128a2.251 2.251 0 1 0 1.5 0V8.5h1.5a2.25 2.25 0 0 0 2.25-2.25v-.878a2.25 2.25 0 1 0-1.5 0v.878a.75.75 0 0 1-.75.75h-4.5A.75.75 0 0 1 5 6.25v-.878Zm3.75 7.378a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm3-8.75a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Z"/></svg>
+          1
+        </span>
+        <span class="card-updated">updated 6h ago</span>
+      </div>
+    </div>
+
+    <!-- recent 5 -->
+    <div class="card">
+      <div class="card-top">
+        <div class="card-identity">
+          <span class="card-owner"><a href="/@yuki">@yuki</a></span>
+          <div class="card-slug"><a href="/@yuki/type-theory-notes">type-theory-notes</a></div>
+        </div>
+        <span class="card-visibility"><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg> public</span>
+      </div>
+      <p class="card-desc">Dependent types, HoTT, and category theory connections. Working through PFPL and TAPL.</p>
+      <div class="card-tags">
+        <span class="tag">plt</span>
+        <span class="tag">type-theory</span>
+        <span class="tag">math</span>
+      </div>
+      <div class="card-meta">
+        <span class="card-stat card-stat--stars">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.75.75 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z"/></svg>
+          11
+        </span>
+        <span class="card-stat card-stat--forks">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M5 3.25a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm0 2.122a2.25 2.25 0 1 0-1.5 0v.878A2.25 2.25 0 0 0 5.75 8.5h1.5v2.128a2.251 2.251 0 1 0 1.5 0V8.5h1.5a2.25 2.25 0 0 0 2.25-2.25v-.878a2.25 2.25 0 1 0-1.5 0v.878a.75.75 0 0 1-.75.75h-4.5A.75.75 0 0 1 5 6.25v-.878Zm3.75 7.378a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm3-8.75a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Z"/></svg>
+          0
+        </span>
+        <span class="card-updated">updated 12h ago</span>
+      </div>
+    </div>
+
+    <!-- recent 6 -->
+    <div class="card">
+      <div class="card-top">
+        <div class="card-identity">
+          <span class="card-owner"><a href="/@sam">@sam</a></span>
+          <div class="card-slug"><a href="/@sam/urban-foraging">urban-foraging</a></div>
+        </div>
+        <span class="card-visibility"><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg> public</span>
+      </div>
+      <p class="card-desc">Seasonal identification guides for edible plants, mushrooms, and herbs found in city parks and green spaces</p>
+      <div class="card-tags">
+        <span class="tag">foraging</span>
+        <span class="tag">botany</span>
+        <span class="tag">urban</span>
+      </div>
+      <div class="card-meta">
+        <span class="card-stat card-stat--stars">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.75.75 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z"/></svg>
+          8
+        </span>
+        <span class="card-stat card-stat--forks">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M5 3.25a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm0 2.122a2.25 2.25 0 1 0-1.5 0v.878A2.25 2.25 0 0 0 5.75 8.5h1.5v2.128a2.251 2.251 0 1 0 1.5 0V8.5h1.5a2.25 2.25 0 0 0 2.25-2.25v-.878a2.25 2.25 0 1 0-1.5 0v.878a.75.75 0 0 1-.75.75h-4.5A.75.75 0 0 1 5 6.25v-.878Zm3.75 7.378a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm3-8.75a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Z"/></svg>
+          2
+        </span>
+        <span class="card-updated">updated 1d ago</span>
+      </div>
+    </div>
+
+  </div>
+
+</main>
+
+</body>
+</html>

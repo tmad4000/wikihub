@@ -14,10 +14,5 @@ class Config:
     ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB max request size
     MAX_PAGE_SIZE = 2 * 1024 * 1024  # 2MB per page
-    MAX_UPLOAD_FILES = 5000  # max files in a single upload/zip
+    MAX_UPLOAD_FILES = 500  # max files in a single upload/zip
     MAX_WIKIS_PER_USER = 50
-    MAGIC_LOGIN_TTL_SECONDS = int(os.environ.get("MAGIC_LOGIN_TTL_SECONDS", "900"))
-    TESTING_LOGIN = os.environ.get("TESTING_LOGIN", "").lower() in ("1", "true", "yes")
-    SESSION_COOKIE_SECURE = os.environ.get("SESSION_COOKIE_SECURE", "1").lower() in ("1", "true", "yes")
-    SESSION_COOKIE_SAMESITE = "Lax"
-    SESSION_COOKIE_HTTPONLY = True

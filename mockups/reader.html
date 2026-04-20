@@ -1,0 +1,991 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agents — wikihub</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;1,400&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ─── css variables ─────────────────────────────────────── */
+:root {
+  --bg-base: #0f0e0c;
+  --bg-surface: #191714;
+  --bg-elevated: #221f1b;
+  --bg-overlay: #2a2622;
+  --text-primary: #e8e0d4;
+  --text-secondary: #b8ad9e;
+  --text-tertiary: #887d6e;
+  --text-muted: #5a5248;
+  --accent: #d4a04a;
+  --accent-hover: #e0b35a;
+  --accent-muted: rgba(212, 160, 74, 0.12);
+  --accent-subtle: rgba(212, 160, 74, 0.06);
+  --color-public: #7a9e6b;
+  --color-private: #c45c3c;
+  --color-unlisted: #b8ad9e;
+  --color-wikilink: #d4a04a;
+  --color-wikilink-broken: #c45c3c;
+  --color-external: #7a9bb5;
+  --border-default: rgba(200, 180, 150, 0.08);
+  --border-emphasis: rgba(200, 180, 150, 0.15);
+  --border-strong: rgba(200, 180, 150, 0.25);
+  --border-accent: rgba(212, 160, 74, 0.4);
+  --control-bg: rgba(0, 0, 0, 0.2);
+  --control-bg-hover: rgba(200, 180, 150, 0.08);
+  --control-border: rgba(200, 180, 150, 0.12);
+  --font-body: 'Inter', -apple-system, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'Menlo', monospace;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --sidebar-width: 240px;
+  --nav-height: 56px;
+}
+
+/* ─── reset ─────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html {
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  font-family: var(--font-body);
+  background: var(--bg-base);
+  color: var(--text-primary);
+  line-height: 1.7;
+  overflow-x: hidden;
+}
+
+/* ─── nav ───────────────────────────────────────────────── */
+.nav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--nav-height);
+  background: var(--bg-base);
+  border-bottom: 1px solid var(--border-default);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  z-index: 100;
+}
+
+.nav-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.hamburger {
+  display: block;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 8px;
+  margin: -8px;
+  line-height: 1;
+}
+
+.hamburger svg {
+  width: 20px;
+  height: 20px;
+}
+
+.logo {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  text-decoration: none;
+  letter-spacing: -0.02em;
+  display: inline;
+}
+
+.logo-bracket {
+  color: var(--text-tertiary);
+}
+
+.logo-text {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.search-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-md);
+  color: var(--text-tertiary);
+  font-size: 12px;
+  cursor: pointer;
+  background: var(--control-bg);
+  transition: border-color 0.15s;
+}
+
+.search-hint:hover {
+  border-color: var(--border-emphasis);
+}
+
+.search-hint kbd {
+  font-family: var(--font-body);
+  font-size: 11px;
+  padding: 1px 5px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-sm);
+  background: var(--control-bg);
+  color: var(--text-muted);
+}
+
+.nav-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.user-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--bg-base);
+  cursor: pointer;
+}
+
+/* ─── layout ────────────────────────────────────────────── */
+.layout {
+  display: flex;
+  padding-top: var(--nav-height);
+  min-height: 100vh;
+}
+
+/* ─── sidebar ───────────────────────────────────────────── */
+.sidebar-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 49;
+}
+
+.sidebar {
+  position: fixed;
+  top: var(--nav-height);
+  left: 0;
+  bottom: 0;
+  width: var(--sidebar-width);
+  background: var(--bg-base);
+  border-right: 1px solid var(--border-default);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 16px 0;
+  z-index: 50;
+  transform: translateX(-100%);
+  transition: transform 0.2s ease;
+}
+
+.sidebar::-webkit-scrollbar { width: 5px; }
+.sidebar::-webkit-scrollbar-track { background: transparent; }
+.sidebar::-webkit-scrollbar-thumb { background: var(--border-emphasis); border-radius: 3px; }
+
+.sidebar-section-label {
+  padding: 8px 16px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.tree-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 16px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-height: 30px;
+}
+
+.tree-item:hover {
+  background: var(--control-bg-hover);
+  color: var(--text-primary);
+}
+
+.tree-item.active {
+  background: var(--accent-subtle);
+  color: var(--text-primary);
+  font-weight: 500;
+  border-left: 2px solid var(--border-accent);
+}
+
+.tree-icon {
+  flex-shrink: 0;
+  width: 15px;
+  height: 15px;
+  color: var(--text-muted);
+}
+
+.tree-indent-1 { padding-left: 32px; }
+.tree-indent-2 { padding-left: 48px; }
+
+.tree-folder-toggle {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  color: var(--text-muted);
+  transition: transform 0.15s;
+}
+
+.tree-folder-toggle.collapsed {
+  transform: rotate(-90deg);
+}
+
+.tree-children.collapsed {
+  display: none;
+}
+
+/* ─── main content ──────────────────────────────────────── */
+.main {
+  flex: 1;
+  min-width: 0;
+}
+
+.content-wrapper {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 28px 20px 80px;
+}
+
+/* ─── breadcrumb ────────────────────────────────────────── */
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 20px;
+}
+
+.breadcrumb a {
+  color: var(--text-tertiary);
+  text-decoration: none;
+  transition: color 0.15s;
+}
+
+.breadcrumb a:hover {
+  color: var(--accent);
+}
+
+.breadcrumb-sep {
+  color: var(--text-muted);
+  margin: 0 2px;
+}
+
+.breadcrumb-current {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+/* ─── visibility badge ──────────────────────────────────── */
+.visibility-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+  background: rgba(122, 158, 107, 0.1);
+  color: var(--color-public);
+  border: 1px solid rgba(122, 158, 107, 0.15);
+  margin-bottom: 16px;
+}
+
+.visibility-badge svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* ─── page title ────────────────────────────────────────── */
+.page-title {
+  font-size: 2em;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.page-meta {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 32px;
+}
+
+/* ─── article / rendered markdown ───────────────────────── */
+.article {
+  color: var(--text-primary);
+  font-size: 16px;
+  line-height: 1.7;
+}
+
+.article h2 {
+  font-size: 1.5em;
+  font-weight: 700;
+  margin-top: 2.5em;
+  margin-bottom: 0.75em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--border-default);
+  letter-spacing: -0.02em;
+}
+
+.article h3 {
+  font-size: 1.2em;
+  font-weight: 700;
+  margin-top: 2em;
+  margin-bottom: 0.5em;
+  letter-spacing: -0.02em;
+}
+
+.article p {
+  margin-bottom: 1.25em;
+}
+
+.article strong {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.article em {
+  color: var(--text-secondary);
+}
+
+/* wikilinks */
+.article a.wikilink {
+  color: var(--color-wikilink);
+  text-decoration: none;
+  transition: text-decoration 0.15s;
+}
+
+.article a.wikilink:hover {
+  text-decoration: underline;
+}
+
+/* broken wikilinks */
+.article a.wikilink.missing {
+  color: var(--color-wikilink-broken);
+  text-decoration: underline;
+  text-decoration-style: dashed;
+}
+
+.article a.wikilink.missing:hover {
+  text-decoration-style: dashed;
+}
+
+/* external links */
+.article a.external-link {
+  color: var(--color-external);
+  text-decoration: none;
+  transition: text-decoration 0.15s;
+}
+
+.article a.external-link:hover {
+  text-decoration: underline;
+}
+
+.article a.external-link::after {
+  content: '';
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  margin-left: 3px;
+  vertical-align: middle;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%237a9bb5' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6'/%3E%3Cpolyline points='15 3 21 3 21 9'/%3E%3Cline x1='10' y1='14' x2='21' y2='3'/%3E%3C/svg%3E");
+  background-size: contain;
+  background-repeat: no-repeat;
+  opacity: 0.7;
+}
+
+/* inline code */
+.article code {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  padding: 0.15em 0.4em;
+  background: var(--bg-elevated);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+}
+
+/* code blocks */
+.article pre {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  overflow-x: auto;
+  margin-bottom: 1.5em;
+  -webkit-overflow-scrolling: touch;
+}
+
+.article pre code {
+  background: none;
+  padding: 0;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--text-primary);
+}
+
+.code-label {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-default);
+}
+
+/* syntax highlighting — warm-shifted palette */
+.syn-kw { color: #6ba3a0; }
+.syn-str { color: #d4a04a; }
+.syn-cmt { color: #5a5248; font-style: italic; }
+.syn-fn { color: #7a9bb5; }
+.syn-num { color: #c45c3c; }
+.syn-ty { color: #b8ad9e; }
+
+/* blockquote */
+.article blockquote {
+  border-left: 2px solid var(--accent);
+  padding: 4px 16px;
+  margin: 0 0 1.25em 0;
+  color: var(--text-secondary);
+}
+
+/* lists */
+.article ul, .article ol {
+  margin-bottom: 1.25em;
+  padding-left: 1.5em;
+}
+
+.article li {
+  margin-bottom: 0.35em;
+}
+
+.article li::marker {
+  color: var(--text-muted);
+}
+
+/* table */
+.article .table-wrapper {
+  overflow-x: auto;
+  margin-bottom: 1.5em;
+  -webkit-overflow-scrolling: touch;
+}
+
+.article table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.article th, .article td {
+  padding: 8px 12px;
+  border: 1px solid var(--border-default);
+  text-align: left;
+}
+
+.article th {
+  background: var(--bg-surface);
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.article td {
+  color: var(--text-secondary);
+}
+
+/* image */
+.article figure {
+  margin: 1.5em 0;
+}
+
+.article figure img,
+.article img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-default);
+}
+
+.article figcaption {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: 8px;
+  text-align: center;
+}
+
+.image-placeholder {
+  width: 100%;
+  height: 220px;
+  background: var(--bg-surface);
+  border: 1px dashed var(--border-emphasis);
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-family: var(--font-mono);
+  gap: 8px;
+}
+
+.image-placeholder svg {
+  width: 24px;
+  height: 24px;
+  opacity: 0.4;
+}
+
+/* math (fake katex) */
+.math-block {
+  display: block;
+  text-align: center;
+  padding: 20px 16px;
+  margin: 1.5em 0;
+  font-family: 'Times New Roman', 'CMU Serif', Georgia, serif;
+  font-size: 1.15em;
+  color: var(--text-primary);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.math-inline {
+  font-family: 'Times New Roman', 'CMU Serif', Georgia, serif;
+  font-style: italic;
+  color: var(--text-primary);
+}
+
+.math-var { font-style: italic; }
+.math-op { font-style: normal; margin: 0 2px; }
+.math-frac { display: inline-block; text-align: center; vertical-align: middle; }
+.math-frac-num { display: block; border-bottom: 1px solid var(--text-muted); padding-bottom: 2px; }
+.math-frac-den { display: block; padding-top: 2px; }
+.math-sum { font-size: 1.4em; vertical-align: middle; font-style: normal; }
+.math-sub { font-size: 0.7em; vertical-align: sub; }
+.math-sup { font-size: 0.7em; vertical-align: super; }
+
+/* footnotes */
+.footnote-ref {
+  font-size: 0.8em;
+  vertical-align: super;
+  line-height: 0;
+}
+
+.footnote-ref a {
+  color: var(--accent) !important;
+  text-decoration: none !important;
+  font-weight: 600;
+}
+
+.footnotes-section {
+  margin-top: 3em;
+  padding-top: 1.5em;
+  border-top: 1px solid var(--border-default);
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.footnotes-section h2 {
+  font-size: 0.9em;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  border: none;
+  margin-top: 0;
+  margin-bottom: 1em;
+  padding-bottom: 0;
+}
+
+.footnotes-section ol {
+  padding-left: 1.5em;
+}
+
+.footnotes-section li {
+  margin-bottom: 0.5em;
+}
+
+.footnote-backref {
+  color: var(--accent) !important;
+  text-decoration: none !important;
+  margin-left: 4px;
+}
+
+/* hr */
+.article hr {
+  border: none;
+  border-top: 1px solid var(--border-default);
+  margin: 2em 0;
+}
+
+/* ─── responsive: mobile-first ──────────────────────────── */
+
+/* tablet+ : sidebar visible, hamburger hidden */
+@media (min-width: 768px) {
+  .hamburger {
+    display: none;
+  }
+
+  .sidebar {
+    transform: translateX(0);
+  }
+
+  .main {
+    margin-left: var(--sidebar-width);
+  }
+
+  .content-wrapper {
+    padding: 32px 40px 80px;
+  }
+
+  .search-hint .search-label {
+    display: inline;
+  }
+}
+
+/* mobile: hamburger shown, sidebar is a drawer */
+.sidebar.open {
+  transform: translateX(0);
+}
+
+.sidebar-overlay.open {
+  display: block;
+  z-index: 49;
+}
+
+/* hide search label on small screens */
+.search-hint .search-label {
+  display: none;
+}
+
+@media (min-width: 768px) {
+  .search-hint .search-label {
+    display: inline;
+  }
+}
+
+</style>
+</head>
+<body>
+
+<!-- ─── nav ──────────────────────────────────────────────── -->
+<header class="nav">
+  <div class="nav-left">
+    <button class="hamburger" onclick="toggleSidebar()" aria-label="Toggle navigation">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
+    <a class="logo" href="/"><span class="logo-bracket">[[</span><span class="logo-text">wikihub</span><span class="logo-bracket">]]</span></a>
+    <button class="search-hint" onclick="void(0)">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <span class="search-label">Search</span>
+      <kbd>&#8984;K</kbd>
+    </button>
+  </div>
+  <div class="nav-right">
+    <div class="user-avatar" title="harrison">H</div>
+  </div>
+</header>
+
+<!-- ─── sidebar overlay (mobile) ────────────────────────── -->
+<div class="sidebar-overlay" onclick="toggleSidebar()"></div>
+
+<!-- ─── sidebar ─────────────────────────────────────────── -->
+<nav class="sidebar">
+  <div class="sidebar-section-label">Pages</div>
+
+  <!-- wiki/ folder (expanded) -->
+  <div class="tree-item" onclick="toggleFolder(this)">
+    <svg class="tree-folder-toggle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+    <svg class="tree-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+    wiki
+  </div>
+  <div class="tree-children">
+    <a class="tree-item tree-indent-1" href="#">
+      <svg class="tree-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      index.md
+    </a>
+    <a class="tree-item tree-indent-1 active" href="#">
+      <svg class="tree-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      agents.md
+    </a>
+
+    <!-- entities/ subfolder (expanded) -->
+    <div class="tree-item tree-indent-1" onclick="toggleFolder(this)">
+      <svg class="tree-folder-toggle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+      <svg class="tree-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+      entities
+    </div>
+    <div class="tree-children">
+      <a class="tree-item tree-indent-2" href="#">
+        <svg class="tree-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        google.md
+      </a>
+      <a class="tree-item tree-indent-2" href="#">
+        <svg class="tree-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        openai.md
+      </a>
+    </div>
+
+    <a class="tree-item tree-indent-1" href="#">
+      <svg class="tree-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      collab.md
+    </a>
+  </div>
+
+  <!-- drafts/ folder (collapsed) -->
+  <div class="tree-item" onclick="toggleFolder(this)">
+    <svg class="tree-folder-toggle collapsed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+    <svg class="tree-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+    drafts
+  </div>
+  <div class="tree-children collapsed">
+    <a class="tree-item tree-indent-1" href="#">
+      <svg class="tree-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      ideas.md
+    </a>
+  </div>
+
+  <!-- raw/ folder (collapsed) -->
+  <div class="tree-item" onclick="toggleFolder(this)">
+    <svg class="tree-folder-toggle collapsed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+    <svg class="tree-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+    raw
+  </div>
+  <div class="tree-children collapsed">
+    <a class="tree-item tree-indent-1" href="#">
+      <svg class="tree-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      dump.txt
+    </a>
+  </div>
+</nav>
+
+<!-- ─── main ────────────────────────────────────────────── -->
+<main class="main">
+  <div class="content-wrapper">
+
+    <!-- breadcrumb -->
+    <div class="breadcrumb">
+      <a href="#">@harrison</a>
+      <span class="breadcrumb-sep">/</span>
+      <a href="#">ai-research</a>
+      <span class="breadcrumb-sep">/</span>
+      <a href="#">wiki</a>
+      <span class="breadcrumb-sep">/</span>
+      <span class="breadcrumb-current">agents</span>
+    </div>
+
+    <!-- visibility badge -->
+    <div class="visibility-badge">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+      Public
+    </div>
+
+    <!-- page title -->
+    <h1 class="page-title">Agents</h1>
+    <div class="page-meta">Last edited Apr 8, 2026 &middot; 12 min read</div>
+
+    <!-- ─── rendered markdown ─────────────────────────────── -->
+    <article class="article">
+
+      <p>
+        An <strong>agent</strong> is a system that uses an LLM to decide its next action in a loop, executing tools and observing results until a task is complete. This page covers the core architecture, evaluation approaches, and practical patterns that have emerged from deploying agents in production.<sup class="footnote-ref"><a href="#fn1" id="fnref1">[1]</a></sup>
+      </p>
+
+      <h2>Architecture</h2>
+
+      <p>
+        The canonical agent loop is deceptively simple: <code>observe &rarr; think &rarr; act &rarr; repeat</code>. The LLM receives context (previous observations, tool results, user instructions), generates a response that may include tool calls, and the harness executes those tool calls and feeds the results back. The loop terminates when the model produces a final answer or hits a resource limit.
+      </p>
+
+      <p>
+        What distinguishes agents from simple chain-of-thought prompting is <em>grounding</em> &mdash; the ability to take actions in the real world and observe the consequences. A coding agent that can run tests after writing code is categorically different from one that can only generate code. See <a href="#" class="wikilink">Another Page</a> for a deeper treatment of grounding strategies.
+      </p>
+
+      <blockquote>
+        <p>&ldquo;The most important thing about agents is not the LLM &mdash; it&rsquo;s the harness. A great harness with a mediocre model beats a mediocre harness with a great model.&rdquo;</p>
+      </blockquote>
+
+      <h3>Tool design</h3>
+
+      <p>
+        Tools should be <strong>idempotent</strong> wherever possible. An agent that retries a failed file write shouldn&rsquo;t create duplicates. Tools should return structured results that the model can parse without ambiguity, and they should fail loudly with actionable error messages rather than returning misleading partial results.
+      </p>
+
+      <p>
+        For context on how wikihub implements its own agent-facing tools, see <a href="#" class="wikilink missing">Missing Page</a> &mdash; that page is planned but not yet written.
+      </p>
+
+      <h2>Evaluation</h2>
+
+      <p>
+        Agent evaluation is hard because success depends on both the final output <em>and</em> the trajectory. A coding agent that produces correct code but takes 47 tool calls to get there is worse than one that does it in 5, even if the end result is identical. The standard approach uses a combination of pass rates and cost-weighted scores:
+      </p>
+
+      <div class="math-block">
+        <span class="math-var">S</span>
+        <span class="math-op">=</span>
+        <span class="math-frac">
+          <span class="math-frac-num">1</span>
+          <span class="math-frac-den"><span class="math-var">N</span></span>
+        </span>
+        <span class="math-sum">&nbsp;&Sigma;</span><span class="math-sub"><span class="math-var">i</span>=1</span><span class="math-sup"><span class="math-var">N</span></span>
+        <span class="math-frac">
+          <span class="math-frac-num"><span class="math-var">r</span><span class="math-sub"><span class="math-var">i</span></span></span>
+          <span class="math-frac-den">log<span class="math-sub">2</span>(1 + <span class="math-var">c</span><span class="math-sub"><span class="math-var">i</span></span>)</span>
+        </span>
+      </div>
+
+      <p>
+        where <span class="math-inline"><span class="math-var">r</span><span class="math-sub">i</span></span> is the binary reward for task <span class="math-inline"><span class="math-var">i</span></span> and <span class="math-inline"><span class="math-var">c</span><span class="math-sub">i</span></span> is the cost in dollars. This penalizes expensive successes and rewards cheap ones.
+      </p>
+
+      <h2>Implementation patterns</h2>
+
+      <p>
+        The following Python snippet shows the minimal agent loop used in our benchmarks. Note how tool results are appended to the message history before each new LLM call:
+      </p>
+
+      <pre><code><span class="code-label">python</span><span class="syn-kw">def</span> <span class="syn-fn">run_agent</span>(task: <span class="syn-ty">str</span>, tools: <span class="syn-ty">list</span>[<span class="syn-ty">Tool</span>], max_steps: <span class="syn-ty">int</span> = <span class="syn-num">50</span>) -> <span class="syn-ty">str</span>:
+    messages = [{<span class="syn-str">"role"</span>: <span class="syn-str">"user"</span>, <span class="syn-str">"content"</span>: task}]
+
+    <span class="syn-kw">for</span> step <span class="syn-kw">in</span> <span class="syn-fn">range</span>(max_steps):
+        response = llm.chat(messages, tools=tools)
+        messages.append(response)
+
+        <span class="syn-kw">if not</span> response.tool_calls:
+            <span class="syn-kw">return</span> response.content  <span class="syn-cmt"># final answer</span>
+
+        <span class="syn-kw">for</span> call <span class="syn-kw">in</span> response.tool_calls:
+            result = execute_tool(call)
+            messages.append({
+                <span class="syn-str">"role"</span>: <span class="syn-str">"tool"</span>,
+                <span class="syn-str">"tool_call_id"</span>: call.id,
+                <span class="syn-str">"content"</span>: result,
+            })
+
+    <span class="syn-kw">raise</span> <span class="syn-ty">AgentBudgetExceeded</span>(<span class="syn-str">f"hit </span>{max_steps}<span class="syn-str"> steps"</span>)</code></pre>
+
+      <h3>Handling context windows</h3>
+
+      <p>
+        As the message history grows, it eventually hits the model&rsquo;s context limit. Common strategies include <strong>sliding-window truncation</strong> (drop the oldest messages), <strong>summarization</strong> (compress old turns into a summary), and <strong>retrieval-augmented replay</strong> (index old turns and retrieve relevant ones). Each has trade-offs between coherence, cost, and information loss &mdash; see the comparison table below.
+      </p>
+
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Strategy</th>
+              <th>Coherence</th>
+              <th>Cost</th>
+              <th>Info loss</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Sliding window</td>
+              <td>Medium</td>
+              <td>Low</td>
+              <td>High</td>
+            </tr>
+            <tr>
+              <td>Summarization</td>
+              <td>High</td>
+              <td>Medium</td>
+              <td>Medium</td>
+            </tr>
+            <tr>
+              <td>RAG replay</td>
+              <td>High</td>
+              <td>High</td>
+              <td>Low</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2>Practical lessons</h2>
+
+      <p>
+        After running several hundred agent evaluations across <a href="https://swebench.com" class="external-link" target="_blank" rel="noopener">SWE-bench</a> and internal benchmarks, a few patterns emerge reliably:
+      </p>
+
+      <ul>
+        <li><strong>Fewer, better tools</strong> beat many narrow tools. Agents get confused by large tool menus.</li>
+        <li>Explicit <code>verify</code> steps after mutations (write file &rarr; run tests) dramatically improve pass rates.</li>
+        <li>Cost correlates weakly with quality past a threshold &mdash; the cheapest 80% of successful runs are almost as good as the most expensive 20%.</li>
+        <li>System prompts with task decomposition instructions outperform prompts that just describe tools.</li>
+      </ul>
+
+      <h2>Architecture diagram</h2>
+
+      <figure>
+        <div class="image-placeholder">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+          agent-loop-architecture.png
+        </div>
+        <figcaption>Fig 1. The agent loop architecture showing the LLM, tool harness, and observation cycle.</figcaption>
+      </figure>
+
+      <hr>
+
+      <!-- footnotes -->
+      <section class="footnotes-section">
+        <h2>Footnotes</h2>
+        <ol>
+          <li id="fn1">
+            The term &ldquo;agent&rdquo; is overloaded. In this wiki we use it strictly in the ReAct sense: an LLM in a tool-use loop. We do not mean autonomous goal-pursuing AGI systems or RL agents. <a href="#fnref1" class="footnote-backref">&uarr;</a>
+          </li>
+        </ol>
+      </section>
+
+    </article>
+  </div>
+</main>
+
+<script>
+function toggleSidebar() {
+  document.querySelector('.sidebar').classList.toggle('open');
+  document.querySelector('.sidebar-overlay').classList.toggle('open');
+}
+
+function toggleFolder(el) {
+  var toggle = el.querySelector('.tree-folder-toggle');
+  var children = el.nextElementSibling;
+  if (toggle && children && children.classList.contains('tree-children')) {
+    toggle.classList.toggle('collapsed');
+    children.classList.toggle('collapsed');
+  }
+}
+</script>
+</body>
+</html>

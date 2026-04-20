@@ -1,0 +1,925 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Edit — AI Agent Landscape — wikihub</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg-base: #0f0e0c;
+  --bg-surface: #191714;
+  --bg-elevated: #221f1b;
+  --bg-overlay: #2a2622;
+  --text-primary: #e8e0d4;
+  --text-secondary: #b8ad9e;
+  --text-tertiary: #887d6e;
+  --text-muted: #5a5248;
+  --accent: #d4a04a;
+  --accent-hover: #e0b35a;
+  --accent-muted: rgba(212, 160, 74, 0.12);
+  --accent-subtle: rgba(212, 160, 74, 0.06);
+  --color-public: #7a9e6b;
+  --color-private: #c45c3c;
+  --color-unlisted: #b8ad9e;
+  --color-edit: #d4a04a;
+  --color-wikilink: #d4a04a;
+  --border-default: rgba(200, 180, 150, 0.08);
+  --border-emphasis: rgba(200, 180, 150, 0.15);
+  --border-strong: rgba(200, 180, 150, 0.25);
+  --border-accent: rgba(212, 160, 74, 0.4);
+  --control-bg: rgba(0, 0, 0, 0.2);
+  --control-bg-hover: rgba(200, 180, 150, 0.08);
+  --control-border: rgba(200, 180, 150, 0.12);
+  --font-body: 'Inter', -apple-system, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'Menlo', monospace;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  font-family: var(--font-body);
+  background: var(--bg-base);
+  color: var(--text-primary);
+  line-height: 1.5;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+button, input, select, textarea {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+
+/* ─── headlines ─── */
+h1, h2, h3 {
+  font-family: var(--font-body);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+/* ─── top bar ─── */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 56px;
+  padding: 0 16px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-default);
+  flex-shrink: 0;
+}
+
+.topbar-logo {
+  font-family: var(--font-mono);
+  font-size: 0.9375rem;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+  display: flex;
+  align-items: baseline;
+  gap: 0;
+}
+
+.topbar-logo .bracket {
+  color: var(--text-tertiary);
+}
+
+.topbar-logo .name {
+  color: var(--text-primary);
+}
+
+.topbar-sep {
+  color: var(--text-muted);
+  flex-shrink: 0;
+  font-size: 0.875rem;
+}
+
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.breadcrumb a {
+  color: var(--text-secondary);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.breadcrumb a:hover {
+  color: var(--accent-hover);
+}
+
+.breadcrumb-current {
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+
+.topbar-spacer {
+  flex: 1;
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* ─── buttons ─── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--control-border);
+  background: var(--control-bg);
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.btn:hover {
+  background: var(--control-bg-hover);
+  color: var(--text-primary);
+}
+
+.btn:active {
+  transform: scale(0.97);
+}
+
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #0f0e0c;
+  font-weight: 600;
+}
+
+.btn-primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  color: #0f0e0c;
+}
+
+/* ─── tab bar ─── */
+.tab-bar {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  padding: 0 16px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-default);
+}
+
+.tab-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 16px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-tertiary);
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.tab-btn:hover {
+  color: var(--text-secondary);
+}
+
+.tab-btn.active {
+  color: var(--text-primary);
+  border-bottom-color: var(--accent);
+}
+
+/* ─── editor layout ─── */
+.editor-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.editor-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  min-height: 0;
+}
+
+/* ─── toolbar row (visibility) ─── */
+.toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--bg-base);
+  border-bottom: 1px solid var(--border-default);
+}
+
+.toolbar-spacer {
+  flex: 1;
+}
+
+/* ─── visibility selector ─── */
+.visibility-wrap {
+  position: relative;
+}
+
+.visibility-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--control-border);
+  background: var(--control-bg);
+  color: var(--text-primary);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.15s;
+}
+
+.visibility-btn:hover {
+  border-color: var(--border-emphasis);
+}
+
+.visibility-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.visibility-chevron {
+  color: var(--text-muted);
+  font-size: 0.625rem;
+  margin-left: 2px;
+}
+
+.visibility-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 200;
+  min-width: 280px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-emphasis);
+  border-radius: var(--radius-lg);
+  padding: 4px 0;
+}
+
+.visibility-dropdown.hidden {
+  display: none;
+}
+
+.vis-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-size: 0.875rem;
+  color: var(--text-primary);
+  min-height: 44px;
+  transition: background 0.1s;
+}
+
+.vis-option:hover {
+  background: var(--control-bg-hover);
+}
+
+.vis-option.selected {
+  background: var(--accent-muted);
+}
+
+.vis-option-icons {
+  flex-shrink: 0;
+  font-size: 1rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.vis-option-label {
+  flex: 1;
+  font-weight: 500;
+}
+
+.vis-option-desc {
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+}
+
+.vis-option-check {
+  color: var(--accent);
+  font-size: 0.875rem;
+  width: 16px;
+  text-align: center;
+}
+
+.vis-divider {
+  height: 1px;
+  background: var(--border-default);
+  margin: 4px 0;
+}
+
+.share-field {
+  padding: 8px 14px;
+}
+
+.share-field label {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+  margin-bottom: 4px;
+  font-weight: 500;
+}
+
+.share-input {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 10px;
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 0.875rem;
+}
+
+.share-input::placeholder {
+  color: var(--text-muted);
+}
+
+.share-input:focus {
+  outline: none;
+  border-color: var(--border-accent);
+}
+
+/* ─── editor textarea ─── */
+.editor-textarea {
+  flex: 1;
+  width: 100%;
+  min-height: 400px;
+  padding: 20px 16px;
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
+  border-left: none;
+  border-right: none;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1.7;
+  resize: none;
+  tab-size: 2;
+}
+
+.editor-textarea:focus {
+  outline: none;
+  border-color: var(--border-accent);
+}
+
+.editor-textarea::selection {
+  background: var(--accent-muted);
+}
+
+/* ─── preview pane ─── */
+.preview-pane {
+  display: none;
+  flex: 1;
+  padding: 24px 16px;
+  overflow-y: auto;
+  font-family: var(--font-body);
+  font-size: 1rem;
+  line-height: 1.7;
+  color: var(--text-primary);
+}
+
+.preview-pane h1 {
+  font-size: 1.75rem;
+  margin-bottom: 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-default);
+}
+
+.preview-pane h2 {
+  font-size: 1.375rem;
+  margin-top: 24px;
+  margin-bottom: 8px;
+}
+
+.preview-pane p {
+  margin-bottom: 12px;
+}
+
+.preview-pane ul {
+  padding-left: 24px;
+  margin-bottom: 16px;
+}
+
+.preview-pane li {
+  margin-bottom: 4px;
+}
+
+.preview-pane .wikilink {
+  color: var(--color-wikilink);
+  text-decoration: none;
+  border-bottom: 1px dashed var(--color-wikilink);
+  cursor: pointer;
+}
+
+.preview-pane .wikilink:hover {
+  color: var(--accent-hover);
+  border-bottom-color: var(--accent-hover);
+}
+
+.preview-pane code {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  background: var(--bg-elevated);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+}
+
+.preview-pane pre {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  overflow-x: auto;
+  margin-bottom: 16px;
+}
+
+.preview-pane pre code {
+  background: none;
+  padding: 0;
+}
+
+/* ─── wikilink autocomplete popover ─── */
+.autocomplete-popover {
+  position: absolute;
+  z-index: 300;
+  min-width: 220px;
+  max-width: 300px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-emphasis);
+  border-radius: var(--radius-md);
+  padding: 4px 0;
+}
+
+.ac-header {
+  padding: 6px 12px 4px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.ac-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  min-height: 40px;
+  transition: background 0.1s;
+}
+
+.ac-item:hover {
+  background: var(--control-bg-hover);
+}
+
+.ac-item.active {
+  background: var(--accent-muted);
+  color: var(--text-primary);
+}
+
+.ac-item-icon {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  flex-shrink: 0;
+  width: 18px;
+  text-align: center;
+}
+
+.ac-item.active .ac-item-icon {
+  color: var(--accent);
+}
+
+.ac-item-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ac-item-wiki {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+}
+
+/* ─── status bar ─── */
+.statusbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border-default);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  min-height: 32px;
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+}
+
+.statusbar-left, .statusbar-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.statusbar-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-public);
+  display: inline-block;
+}
+
+/* ─── responsive ─── */
+@media (min-width: 768px) {
+  .editor-textarea {
+    padding: 24px clamp(24px, 5vw, 80px);
+    font-size: 14.5px;
+  }
+
+  .preview-pane {
+    padding: 32px clamp(32px, 5vw, 80px);
+  }
+}
+
+@media (min-width: 1024px) {
+  .editor-textarea {
+    min-height: 600px;
+  }
+}
+</style>
+</head>
+<body>
+
+<!-- top bar -->
+<header class="topbar">
+  <a href="#" class="topbar-logo"><span class="bracket">[[</span><span class="name">wikihub</span><span class="bracket">]]</span></a>
+  <span class="topbar-sep">/</span>
+  <nav class="breadcrumb">
+    <a href="#">@harrison</a>
+    <span class="topbar-sep">/</span>
+    <a href="#">research-wiki</a>
+    <span class="topbar-sep">/</span>
+    <span class="breadcrumb-current">AI Agent Landscape</span>
+  </nav>
+  <div class="topbar-spacer"></div>
+  <div class="topbar-actions">
+    <button class="btn" onclick="handleCancel()">Cancel</button>
+    <button class="btn btn-primary" onclick="handleSave()">Save</button>
+  </div>
+</header>
+
+<!-- tab bar -->
+<div class="tab-bar">
+  <button class="tab-btn active" data-tab="edit" onclick="switchTab('edit')">Edit</button>
+  <button class="tab-btn" data-tab="preview" onclick="switchTab('preview')">Preview</button>
+</div>
+
+<!-- editor body -->
+<div class="editor-wrap">
+  <!-- toolbar row with visibility -->
+  <div class="toolbar-row">
+    <div class="toolbar-spacer"></div>
+    <div class="visibility-wrap">
+      <button class="visibility-btn" onclick="toggleVisibility()" aria-expanded="false" aria-haspopup="true">
+        <span class="visibility-dot" id="vis-dot" style="background: var(--color-public)"></span>
+        <span id="vis-label-current">Public (read)</span>
+        <span class="visibility-chevron"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span>
+      </button>
+      <div class="visibility-dropdown hidden" id="vis-dropdown">
+        <div class="vis-option" data-vis="private" onclick="selectVisibility(this)">
+          <span class="vis-option-icons"><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
+          <div>
+            <div class="vis-option-label" style="color: var(--color-private)">Private</div>
+            <div class="vis-option-desc">only you can see</div>
+          </div>
+          <span class="vis-option-check"></span>
+        </div>
+        <div class="vis-option selected" data-vis="public-read" onclick="selectVisibility(this)">
+          <span class="vis-option-icons"><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span>
+          <div>
+            <div class="vis-option-label" style="color: var(--color-public)">Public (read)</div>
+            <div class="vis-option-desc">anyone can view</div>
+          </div>
+          <span class="vis-option-check">&#10003;</span>
+        </div>
+        <div class="vis-option" data-vis="public-edit" onclick="selectVisibility(this)">
+          <span class="vis-option-icons"><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></span>
+          <div>
+            <div class="vis-option-label" style="color: var(--color-edit)">Public (edit)</div>
+            <div class="vis-option-desc">anyone can view and edit</div>
+          </div>
+          <span class="vis-option-check"></span>
+        </div>
+        <div class="vis-option" data-vis="unlisted-read" onclick="selectVisibility(this)">
+          <span class="vis-option-icons"><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></span>
+          <div>
+            <div class="vis-option-label" style="color: var(--color-unlisted)">Unlisted (read)</div>
+            <div class="vis-option-desc">anyone with the link can view</div>
+          </div>
+          <span class="vis-option-check"></span>
+        </div>
+        <div class="vis-option" data-vis="unlisted-edit" onclick="selectVisibility(this)">
+          <span class="vis-option-icons"><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg><svg class="vis-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></span>
+          <div>
+            <div class="vis-option-label" style="color: var(--color-edit)">Unlisted (edit)</div>
+            <div class="vis-option-desc">anyone with the link can edit</div>
+          </div>
+          <span class="vis-option-check"></span>
+        </div>
+        <div class="vis-divider"></div>
+        <div class="share-field">
+          <label for="share-input">share with user</label>
+          <input type="text" id="share-input" class="share-input" placeholder="@username">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="editor-body">
+    <textarea class="editor-textarea" id="editor" spellcheck="false">---
+visibility: public
+tags: [agents, research]
+---
+
+# AI Agent Landscape
+
+The current generation of coding agents represents a fundamental shift in how software gets built. Rather than acting as autocomplete, these systems can reason about tasks, use tools, and operate autonomously.
+
+## Key Players
+
+- [[OpenAI]] — GPT series, Codex, o-series reasoning models
+- [[Anthropic]] — Claude, with tool use and computer use
+- [[Google]] — Gemini, with code execution sandbox
+
+See also: [[Agent Protocols]] and [[Tool Use Patterns]]
+
+## Evaluation Frameworks
+
+The landscape of agent benchmarks is evolving:
+
+$$\text{Score} = \frac{\sum_{i=1}^{n} w_i \cdot t_i}{n}$$
+
+```python
+def evaluate_agent(agent, tasks):
+    results = []
+    for task in tasks:
+        outcome = agent.run(task)
+        results.append(score(outcome, task.expected))
+    return sum(results) / len(results)
+```
+
+## Open Questions
+
+1. How do we measure [[Agent Reliability]]?
+2. What's the right [[Human-in-the-Loop]] balance?
+3. Can agents self-improve via [[</textarea>
+
+    <!-- preview pane -->
+    <div class="preview-pane" id="preview-pane">
+      <h1>AI Agent Landscape</h1>
+      <p>The current generation of coding agents represents a fundamental shift in how software gets built. Rather than acting as autocomplete, these systems can reason about tasks, use tools, and operate autonomously.</p>
+      <h2>Key Players</h2>
+      <ul>
+        <li><a class="wikilink" href="#">OpenAI</a> &mdash; GPT series, Codex, o-series reasoning models</li>
+        <li><a class="wikilink" href="#">Anthropic</a> &mdash; Claude, with tool use and computer use</li>
+        <li><a class="wikilink" href="#">Google</a> &mdash; Gemini, with code execution sandbox</li>
+      </ul>
+      <p>See also: <a class="wikilink" href="#">Agent Protocols</a> and <a class="wikilink" href="#">Tool Use Patterns</a></p>
+      <h2>Evaluation Frameworks</h2>
+      <p>The landscape of agent benchmarks is evolving:</p>
+      <p><em>Score = &Sigma; w<sub>i</sub> &middot; t<sub>i</sub> / n</em></p>
+      <pre><code>def evaluate_agent(agent, tasks):
+    results = []
+    for task in tasks:
+        outcome = agent.run(task)
+        results.append(score(outcome, task.expected))
+    return sum(results) / len(results)</code></pre>
+    </div>
+
+    <!-- wikilink autocomplete popover -->
+    <div class="autocomplete-popover" id="ac-popover">
+      <div class="ac-header">pages</div>
+      <div class="ac-item active">
+        <span class="ac-item-icon">&#9741;</span>
+        <span class="ac-item-title">Agent Reliability</span>
+        <span class="ac-item-wiki">research-wiki</span>
+      </div>
+      <div class="ac-item">
+        <span class="ac-item-icon">&#9741;</span>
+        <span class="ac-item-title">Agent Protocols</span>
+        <span class="ac-item-wiki">research-wiki</span>
+      </div>
+      <div class="ac-item">
+        <span class="ac-item-icon">&#9741;</span>
+        <span class="ac-item-title">Agentic Workflows</span>
+        <span class="ac-item-wiki">eng-wiki</span>
+      </div>
+      <div class="ac-item">
+        <span class="ac-item-icon">&#9741;</span>
+        <span class="ac-item-title">API Design Notes</span>
+        <span class="ac-item-wiki">research-wiki</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- status bar -->
+  <div class="statusbar">
+    <div class="statusbar-left">
+      <span><span class="statusbar-dot"></span>&ensp;Markdown</span>
+      <span>32 lines</span>
+    </div>
+    <div class="statusbar-right">
+      <span>Ln 29, Col 34</span>
+      <span>UTF-8</span>
+    </div>
+  </div>
+</div>
+
+<script>
+// position autocomplete popover near the [[ at the end of the textarea
+function positionAutocomplete() {
+  var textarea = document.getElementById('editor');
+  var popover = document.getElementById('ac-popover');
+  var text = textarea.value;
+
+  // find the last unclosed [[ (the one at the very end)
+  var lastOpen = text.lastIndexOf('[[');
+  if (lastOpen === -1) return;
+
+  var lines = text.substring(0, lastOpen).split('\n');
+  var lineNum = lines.length;
+  var colNum = lines[lines.length - 1].length;
+
+  var style = getComputedStyle(textarea);
+  var lineHeight = parseFloat(style.lineHeight) || 24;
+  var charWidth = 8.4;
+
+  var rect = textarea.getBoundingClientRect();
+  var paddingTop = parseFloat(style.paddingTop);
+  var paddingLeft = parseFloat(style.paddingLeft);
+
+  var top = rect.top + paddingTop + (lineNum * lineHeight) + window.scrollY;
+  var left = rect.left + paddingLeft + (colNum * charWidth);
+
+  // clamp
+  left = Math.min(left, window.innerWidth - 260);
+  left = Math.max(8, left);
+  top = Math.min(top, window.innerHeight - 200 + window.scrollY);
+
+  popover.style.top = top + 'px';
+  popover.style.left = left + 'px';
+}
+
+// tab switching
+function switchTab(tab) {
+  var btns = document.querySelectorAll('.tab-btn');
+  for (var i = 0; i < btns.length; i++) {
+    btns[i].classList.toggle('active', btns[i].dataset.tab === tab);
+  }
+
+  var textarea = document.getElementById('editor');
+  var preview = document.getElementById('preview-pane');
+  var popover = document.getElementById('ac-popover');
+
+  if (tab === 'edit') {
+    textarea.style.display = '';
+    preview.style.display = 'none';
+    popover.style.display = '';
+  } else {
+    textarea.style.display = 'none';
+    preview.style.display = '';
+    popover.style.display = 'none';
+  }
+}
+
+// visibility dropdown
+function toggleVisibility() {
+  var dropdown = document.getElementById('vis-dropdown');
+  var btn = document.querySelector('.visibility-btn');
+  var isHidden = dropdown.classList.contains('hidden');
+  dropdown.classList.toggle('hidden');
+  btn.setAttribute('aria-expanded', String(isHidden));
+}
+
+var visColors = {
+  'private': 'var(--color-private)',
+  'public-read': 'var(--color-public)',
+  'public-edit': 'var(--color-edit)',
+  'unlisted-read': 'var(--color-unlisted)',
+  'unlisted-edit': 'var(--color-edit)'
+};
+
+var visLabels = {
+  'private': 'Private',
+  'public-read': 'Public (read)',
+  'public-edit': 'Public (edit)',
+  'unlisted-read': 'Unlisted (read)',
+  'unlisted-edit': 'Unlisted (edit)'
+};
+
+function selectVisibility(el) {
+  var vis = el.dataset.vis;
+
+  document.getElementById('vis-label-current').textContent = visLabels[vis];
+  document.getElementById('vis-dot').style.background = visColors[vis];
+
+  var options = document.querySelectorAll('.vis-option');
+  for (var i = 0; i < options.length; i++) {
+    options[i].classList.remove('selected');
+    options[i].querySelector('.vis-option-check').textContent = '';
+  }
+  el.classList.add('selected');
+  el.querySelector('.vis-option-check').textContent = '\u2713';
+
+  document.getElementById('vis-dropdown').classList.add('hidden');
+  document.querySelector('.visibility-btn').setAttribute('aria-expanded', 'false');
+}
+
+// close dropdown on outside click
+document.addEventListener('click', function(e) {
+  var wrap = document.querySelector('.visibility-wrap');
+  if (!wrap.contains(e.target)) {
+    document.getElementById('vis-dropdown').classList.add('hidden');
+    document.querySelector('.visibility-btn').setAttribute('aria-expanded', 'false');
+  }
+});
+
+function handleSave() {
+  // mockup only
+}
+
+function handleCancel() {
+  // mockup only
+}
+
+// init
+window.addEventListener('load', positionAutocomplete);
+window.addEventListener('resize', positionAutocomplete);
+</script>
+</body>
+</html>
