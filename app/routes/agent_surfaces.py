@@ -287,7 +287,9 @@ add this to your Claude Code or MCP-compatible agent config:
 Thin wrapper over this REST API. Install once, then compose with shell pipelines.
 
 ```bash
-pipx install wikihub-cli          # or: pip install -e cli/ from the repo
+curl -fsSL https://wikihub.md/install.sh | sh   # one-line installer (pipx)
+# or: pipx install wikihub-cli
+# or: pip install -e cli/ from the repo
 
 wikihub signup --username you     # saves key to ~/.wikihub/credentials.json
 wikihub new notes --title "Notes"
@@ -351,6 +353,23 @@ def mcp_discovery():
     })
 
 
+@main_bp.route("/install.sh")
+def install_sh():
+    """One-line CLI installer. Usage: curl -fsSL {host}/install.sh | sh"""
+    import os
+    script_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "scripts",
+        "install.sh",
+    )
+    try:
+        with open(script_path, "r") as f:
+            body = f.read()
+    except FileNotFoundError:
+        return Response("# install.sh missing on server\nexit 1\n", status=503, content_type="text/plain; charset=utf-8")
+    return Response(body, content_type="text/x-shellscript; charset=utf-8")
+
+
 @main_bp.route("/.well-known/wikihub.json")
 def wikihub_bootstrap():
     """site bootstrap manifest."""
@@ -364,6 +383,7 @@ def wikihub_bootstrap():
         "cli": {
             "name": "wikihub-cli",
             "install": "pipx install wikihub-cli",
+            "install_url": base + "/install.sh",
             "repo": "https://github.com/harqian/wikihub/tree/main/cli",
         },
     })

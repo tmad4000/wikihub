@@ -808,7 +808,10 @@
     <h2 class="section-heading">Shell-friendly in 30 seconds</h2>
     <p class="section-desc">Pipe markdown, cron-publish, bootstrap wikis from shell scripts. Thin wrapper over the REST API.</p>
     <div style="max-width:560px;margin:0 auto;background:var(--bg-surface);border:1px solid var(--border-default);border-radius:var(--radius-md);padding:20px 24px;font-family:var(--font-mono);font-size:0.8125rem;line-height:1.8;color:var(--text-secondary);overflow-x:auto;">
-      <div style="color:var(--text-muted);margin-bottom:4px;"># install</div>
+      <div style="color:var(--text-muted);margin-bottom:4px;"># install (one-liner)</div>
+      <div>curl -fsSL <span style="color:var(--accent);">{{ request.host_url }}install.sh</span> | sh</div>
+      <div style="height:8px;"></div>
+      <div style="color:var(--text-muted);"># or via pipx directly</div>
       <div>pipx install <span style="color:var(--accent);">wikihub-cli</span></div>
       <div style="height:8px;"></div>
       <div style="color:var(--text-muted);"># sign up, create a wiki, write a page</div>
