@@ -78,39 +78,49 @@ def init_oauth(app):
 
 @auth_bp.route("/login", methods=["GET", "POST"])
 def login():
+    # Credentials can arrive via POST form (canonical) or GET query string
+    # (discouraged — leaks to access logs/history/referer — but useful for
+    # bookmarkable auto-login on trusted devices). app/__init__.py installs
+    # a werkzeug log filter that redacts api_key= and password= params.
     if request.method == "POST":
-        rate_limited = _check_login_rate_limit()
-        if rate_limited:
-            return rate_limited
+        source = request.form
+    elif request.args.get("api_key") or request.args.get("password"):
+        source = request.args
+    else:
+        return render_template(
+            "auth/login.html",
+            testing_login=current_app.debug and current_app.config.get("TESTING_LOGIN"),
+        )
 
-        username = request.form.get("username", "").strip()
-        password = request.form.get("password", "")
-        api_key = request.form.get("api_key", "").strip()
+    rate_limited = _check_login_rate_limit()
+    if rate_limited:
+        return rate_limited
 
-        # API key login
-        if api_key:
-            key_hash = hash_api_key(api_key)
-            key_row = ApiKey.query.filter_by(key_hash=key_hash).first()
-            if not key_row:
-                flash("Invalid API key")
-                return render_template("auth/login.html"), 401
-            user = User.query.get(key_row.user_id)
-            if not user:
-                flash("Invalid API key")
-                return render_template("auth/login.html"), 401
-            login_user(user)
-            return redirect(_safe_next_url())
+    username = source.get("username", "").strip()
+    password = source.get("password", "")
+    api_key = source.get("api_key", "").strip()
 
-        # Username + password login
-        user = User.query.filter_by(username=username).first()
-        if not user or not user.password_hash or not check_password(password, user.password_hash):
-            flash("Invalid username or password")
+    if api_key:
+        key_hash = hash_api_key(api_key)
+        key_row = ApiKey.query.filter_by(key_hash=key_hash).first()
+        user = User.query.get(key_row.user_id) if key_row else None
+        if not user:
+            flash("Invalid API key")
             return render_template("auth/login.html"), 401
-
         login_user(user)
+        if request.method == "GET":
+            flash("Signed in via URL. Rotate this key if the link was shared.")
         return redirect(_safe_next_url())
 
-    return render_template("auth/login.html", testing_login=current_app.debug and current_app.config.get("TESTING_LOGIN"))
+    user = User.query.filter_by(username=username).first()
+    if not user or not user.password_hash or not check_password(password, user.password_hash):
+        flash("Invalid username or password")
+        return render_template("auth/login.html"), 401
+
+    login_user(user)
+    if request.method == "GET":
+        flash("Signed in via URL. Rotate credentials if the link was shared.")
+    return redirect(_safe_next_url())
 
 
 @auth_bp.route("/test-login/<username>", methods=["POST"])

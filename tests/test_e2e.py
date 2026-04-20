@@ -436,6 +436,83 @@ def test_login_redirect_back(client):
     )
 
 
+def test_url_login(client):
+    """GET /auth/login?api_key=... and ?username=&password= create a session.
+
+    Discouraged (URL creds leak to logs/history) but supported for
+    bookmarkable auto-login on trusted devices.
+    """
+    from app.routes.auth import _login_attempts
+    _login_attempts.clear()
+
+    r = client.post("/api/v1/accounts", json={"username": "urllogin", "password": "urlpass12345"})
+    assert r.status_code == 201
+    api_key = r.get_json()["api_key"]
+
+    # 1. GET with api_key → session + 302 to next
+    c1 = client.application.test_client()
+    r = c1.get(f"/auth/login?api_key={api_key}&next=/settings", follow_redirects=False)
+    assert r.status_code == 302, f"expected 302, got {r.status_code}"
+    assert r.headers["Location"].endswith("/settings")
+    r = c1.get("/settings")
+    assert r.status_code == 200, "session cookie not issued"
+
+    # 2. GET with username+password → session + 302
+    c2 = client.application.test_client()
+    r = c2.get("/auth/login?username=urllogin&password=urlpass12345&next=/explore",
+               follow_redirects=False)
+    assert r.status_code == 302
+    assert r.headers["Location"].endswith("/explore")
+
+    # 3. GET with bad api_key → 401
+    c3 = client.application.test_client()
+    r = c3.get("/auth/login?api_key=wh_not_a_real_key", follow_redirects=False)
+    assert r.status_code == 401
+
+    # 4. GET with bad password → 401
+    c4 = client.application.test_client()
+    r = c4.get("/auth/login?username=urllogin&password=wrong", follow_redirects=False)
+    assert r.status_code == 401
+
+    # 5. Bare GET still renders the login form (no creds in query)
+    c5 = client.application.test_client()
+    r = c5.get("/auth/login")
+    assert r.status_code == 200
+    assert b"api_key" in r.data or b"API Key" in r.data
+
+    # 6. Cross-origin next= still rejected on GET path (open-redirect guard)
+    c6 = client.application.test_client()
+    r = c6.get(f"/auth/login?api_key={api_key}&next=https://evil.example.com/x",
+               follow_redirects=False)
+    assert r.status_code == 302
+    assert "evil.example.com" not in r.headers["Location"]
+
+
+def test_url_login_log_redaction():
+    """werkzeug access log filter scrubs api_key= and password= from URLs."""
+    import logging
+    from app import _RedactQueryParams
+
+    f = _RedactQueryParams()
+    rec = logging.LogRecord(
+        name="werkzeug", level=logging.INFO, pathname="", lineno=0,
+        msg='GET /auth/login?api_key=wh_SECRET&next=/x HTTP/1.1',
+        args=(), exc_info=None,
+    )
+    f.filter(rec)
+    assert "wh_SECRET" not in rec.msg
+    assert "api_key=REDACTED" in rec.msg
+
+    # args tuple path (werkzeug uses %s format strings)
+    rec2 = logging.LogRecord(
+        name="werkzeug", level=logging.INFO, pathname="", lineno=0,
+        msg='%s', args=('GET /auth/login?password=hunter2 HTTP/1.1',), exc_info=None,
+    )
+    f.filter(rec2)
+    assert "hunter2" not in rec2.args[0]
+    assert "password=REDACTED" in rec2.args[0]
+
+
 def test_client_config_hint(client):
     """signup and token responses include client_config telling agents where to save credentials"""
     # signup
@@ -1179,6 +1256,8 @@ def run_all():
             ("client_config hint", lambda: test_client_config_hint(client)),
             ("magic link login", lambda: test_magic_link_login(client)),
             ("login redirects back (?next + Referer fallback)", lambda: test_login_redirect_back(client)),
+            ("URL login (GET ?api_key / ?password)", lambda: test_url_login(client)),
+            ("URL login — log redaction", lambda: test_url_login_log_redaction()),
             ("magic link from password", lambda: test_magic_link_from_password(client)),
             ("ACL permissions", lambda: test_acl_permissions(client, key)),
             ("anonymous public edit", lambda: test_anonymous_public_edit(client, key)),
