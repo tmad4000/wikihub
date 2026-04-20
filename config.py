@@ -21,3 +21,7 @@ class Config:
     SESSION_COOKIE_SECURE = os.environ.get("SESSION_COOKIE_SECURE", "1").lower() in ("1", "true", "yes")
     SESSION_COOKIE_SAMESITE = "Lax"
     SESSION_COOKIE_HTTPONLY = True
+    # Scope session cookie to the whole wikihub.md zone so users stay logged in
+    # when moving between apex and user/wiki subdomains. Leave unset locally
+    # (Flask defaults to current host) unless SESSION_COOKIE_DOMAIN is provided.
+    SESSION_COOKIE_DOMAIN = os.environ.get("SESSION_COOKIE_DOMAIN") or None

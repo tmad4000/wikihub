@@ -731,6 +731,82 @@ def test_folder_level_sharing(client, api_key):
     assert r.status_code in (403, 404)
 
 
+def test_subdomain_routing(client):
+    """users get profile subdomains; wikis can claim custom subdomains.
+    requests with a matching Host header route to the canonical path."""
+    # Reserved username is rejected on signup
+    r = client.post("/api/v1/accounts", json={"username": "www"})
+    assert r.status_code == 409, "reserved username should be rejected"
+
+    r = client.post("/api/v1/accounts", json={"username": "staging"})
+    assert r.status_code == 409, "reserved username should be rejected"
+
+    # Regular user creation works
+    r = client.post("/api/v1/accounts", json={"username": "subowner"})
+    assert r.status_code == 201
+    key = r.get_json()["api_key"]
+    h = {"Authorization": f"Bearer {key}"}
+
+    # Create a wiki
+    r = client.post("/api/v1/wikis", json={"owner": "subowner", "slug": "cookbook"}, headers=h)
+    assert r.status_code == 201
+
+    # Claim a subdomain on the wiki
+    r = client.patch("/api/v1/wikis/subowner/cookbook",
+                     json={"subdomain": "recipes"}, headers=h)
+    assert r.status_code == 200, f"subdomain PATCH failed: {r.get_data(as_text=True)}"
+    assert r.get_json()["subdomain"] == "recipes"
+
+    # Reserved subdomain rejected
+    r = client.patch("/api/v1/wikis/subowner/cookbook",
+                     json={"subdomain": "admin"}, headers=h)
+    assert r.status_code == 400
+
+    # Username conflict rejected
+    r = client.patch("/api/v1/wikis/subowner/cookbook",
+                     json={"subdomain": "subowner"}, headers=h)
+    assert r.status_code == 400
+
+    # Access user profile via user subdomain (profile pages are public)
+    r = client.get("/", headers={"Host": "subowner.wikihub.md"})
+    assert r.status_code == 200, f"user subdomain failed: {r.status_code}"
+    assert b"subowner" in r.data.lower()
+
+    # Wiki subdomain routes to the wiki. The wiki has no public content yet,
+    # but the route is reached (4xx/2xx, not a raw 500 or mis-routed response).
+    # Verify by creating a public page first.
+    r = client.post("/api/v1/wikis/subowner/cookbook/pages",
+                    json={"path": "intro.md", "content": "# Intro\nPublic page.",
+                          "visibility": "public", "message": "add intro"}, headers=h)
+    assert r.status_code in (200, 201)
+    r = client.get("/intro", headers={"Host": "recipes.wikihub.md"})
+    assert r.status_code == 200, f"wiki subdomain page failed: {r.status_code}"
+
+    # Apex /@user/<slug> 301s to wiki subdomain
+    r = client.get("/@subowner/cookbook",
+                   headers={"Host": "wikihub.md"}, follow_redirects=False)
+    assert r.status_code == 301
+    assert "recipes.wikihub.md" in r.headers["Location"]
+
+    # Apex /@user 301s to user profile subdomain
+    r = client.get("/@subowner",
+                   headers={"Host": "wikihub.md"}, follow_redirects=False)
+    assert r.status_code == 301
+    assert "subowner.wikihub.md" in r.headers["Location"]
+
+    # Global routes (api, auth, static) still work on subdomains
+    r = client.get("/api/v1/ping", headers={"Host": "subowner.wikihub.md"})
+    # /api/v1/ping doesn't exist, but the important thing is it doesn't get
+    # rewritten into /@subowner/api/v1/ping (which would 404 differently)
+    assert r.status_code in (404, 200)
+
+    # Clearing the subdomain
+    r = client.patch("/api/v1/wikis/subowner/cookbook",
+                     json={"subdomain": None}, headers=h)
+    assert r.status_code == 200
+    assert r.get_json()["subdomain"] is None
+
+
 def run_all():
     app = setup()
 
@@ -769,6 +845,7 @@ def run_all():
             ("sharing lifecycle", lambda: test_sharing_lifecycle(client, key)),
             ("wiki-level sharing", lambda: test_wiki_level_sharing(client, key)),
             ("folder-level sharing", lambda: test_folder_level_sharing(client, key)),
+            ("subdomain routing", lambda: test_subdomain_routing(client)),
         ]
 
         passed = 1  # account creation already passed

@@ -33,6 +33,7 @@ class Wiki(db.Model):
     slug = db.Column(db.String(128), nullable=False)
     title = db.Column(db.String(256))
     description = db.Column(db.Text)
+    subdomain = db.Column(db.String(63), unique=True, nullable=True)
     forked_from_id = db.Column(db.Integer, db.ForeignKey("wikis.id"), nullable=True)
     star_count = db.Column(db.Integer, default=0, nullable=False)
     fork_count = db.Column(db.Integer, default=0, nullable=False)

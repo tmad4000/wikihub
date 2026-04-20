@@ -17,6 +17,9 @@ def create_app(config_class="config.Config"):
     app.config.from_object(config_class)
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
+    from app.subdomain_middleware import SubdomainMiddleware
+    app.wsgi_app = SubdomainMiddleware(app.wsgi_app, app)
+
     db.init_app(app)
     login_manager.init_app(app)
     login_manager.login_view = "auth.login"
@@ -47,6 +50,9 @@ def create_app(config_class="config.Config"):
     from app.routes.auth import init_oauth
     init_oauth(app)
 
+    from app.canonical_redirect import maybe_redirect
+    app.before_request(maybe_redirect)
+
     from app.url_utils import url_path_from_page_path
 
     @app.template_filter("page_url")
@@ -59,6 +65,11 @@ def create_app(config_class="config.Config"):
         db.session.execute(db.text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
         db.session.commit()
         db.create_all()
+        # idempotent in-place migrations (SQLAlchemy create_all does not alter existing tables)
+        db.session.execute(db.text(
+            "ALTER TABLE wikis ADD COLUMN IF NOT EXISTS subdomain VARCHAR(63) UNIQUE"
+        ))
+        db.session.commit()
         from app.wiki_ops import ensure_official_wiki
         ensure_official_wiki()
         db.session.commit()

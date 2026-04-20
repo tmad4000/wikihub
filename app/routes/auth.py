@@ -11,6 +11,7 @@ from app import db
 from app.models import User, ApiKey, MagicLoginToken, utcnow
 from app.auth_utils import hash_password, check_password, hash_api_key, hash_one_time_token
 from app.routes import auth_bp
+from app.subdomains import validate_username
 from app.wiki_ops import ensure_personal_wiki
 
 oauth = OAuth()
@@ -146,6 +147,11 @@ def signup():
             flash("Username already taken")
             return render_template("auth/signup.html"), 409
 
+        conflict = validate_username(username)
+        if conflict:
+            flash(conflict)
+            return render_template("auth/signup.html"), 409
+
         if email and User.query.filter_by(email=email).first():
             flash("Email already registered")
             return render_template("auth/signup.html"), 409
@@ -237,9 +243,16 @@ def google_callback():
 
     if not user:
         base_username = (email.split("@")[0] if email else name.lower().replace(" ", ""))[:32]
+        # sanitize to allowed charset, then ensure it doesn't collide with reserved names or wiki subdomains
+        base_username = re.sub(r"[^a-z0-9_-]", "", base_username.lower()) or "user"
+        if len(base_username) < 2:
+            base_username = base_username + "user"
         username = base_username
         counter = 1
-        while User.query.filter_by(username=username).first():
+        while (
+            User.query.filter_by(username=username).first()
+            or validate_username(username) is not None
+        ):
             username = f"{base_username}{counter}"
             counter += 1
 

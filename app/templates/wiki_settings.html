@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Settings — {{ wiki.title or wiki.slug }} — wikihub{% endblock %}
+
+{% block body %}
+<div style="max-width:640px;margin:2rem auto;padding:0 1rem;">
+  <div style="margin-bottom:1.25rem;">
+    <a href="/@{{ owner.username }}/{{ wiki.slug }}" style="font-size:0.875rem;color:var(--text-muted);">← back to wiki</a>
+    <h1 style="margin:0.5rem 0 0.25rem;font-size:1.5rem;">Settings</h1>
+    <div style="font-size:0.875rem;color:var(--text-muted);">{{ wiki.title or wiki.slug }}</div>
+  </div>
+
+  <section style="border:1px solid var(--border-default);border-radius:var(--radius-md);padding:1.25rem;margin-bottom:1.5rem;background:var(--bg-surface);">
+    <h2 style="margin:0 0 0.5rem;font-size:1rem;">Custom URL</h2>
+    <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:0.75rem;">
+      Claim a subdomain so this wiki is reachable at <code>&lt;your-name&gt;.wikihub.md</code>.
+      Leave empty to stay at <code>/@{{ owner.username }}/{{ wiki.slug }}</code>.
+    </p>
+
+    <form id="subdomain-form" style="display:flex;gap:0.5rem;align-items:center;">
+      <input type="text" id="subdomain-input" name="subdomain"
+             value="{{ wiki.subdomain or '' }}"
+             placeholder="my-wiki"
+             autocomplete="off" spellcheck="false"
+             pattern="[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?"
+             maxlength="63"
+             style="flex:1;padding:0.5rem 0.625rem;font-family:var(--font-mono);font-size:0.875rem;background:var(--bg-input);border:1px solid var(--border-default);border-radius:var(--radius-sm);color:var(--text-primary);">
+      <span style="font-family:var(--font-mono);font-size:0.875rem;color:var(--text-muted);">.wikihub.md</span>
+      <button type="submit"
+              style="padding:0.5rem 1rem;font-size:0.875rem;font-weight:600;background:var(--accent);color:var(--bg-primary);border:none;border-radius:var(--radius-sm);cursor:pointer;">
+        Save
+      </button>
+    </form>
+
+    <div id="subdomain-status" style="margin-top:0.75rem;font-size:0.8125rem;min-height:1.25rem;"></div>
+
+    {% if wiki.subdomain %}
+      <div style="margin-top:0.75rem;font-size:0.8125rem;color:var(--text-muted);">
+        Live at
+        <a href="https://{{ wiki.subdomain }}.wikihub.md" target="_blank" rel="noopener">
+          https://{{ wiki.subdomain }}.wikihub.md
+        </a>
+      </div>
+    {% endif %}
+  </section>
+</div>
+
+<script>
+(function() {
+  var form = document.getElementById('subdomain-form');
+  var input = document.getElementById('subdomain-input');
+  var status = document.getElementById('subdomain-status');
+
+  form.addEventListener('submit', async function(e) {
+    e.preventDefault();
+    var value = input.value.trim().toLowerCase();
+    status.textContent = 'Saving…';
+    status.style.color = 'var(--text-muted)';
+
+    try {
+      var res = await fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}', {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({subdomain: value || null})
+      });
+      var data = await res.json();
+      if (!res.ok) {
+        status.textContent = data.message || 'Error';
+        status.style.color = 'var(--color-private, #d44)';
+        return;
+      }
+      status.textContent = 'Saved.';
+      status.style.color = 'var(--accent)';
+      setTimeout(function() { window.location.reload(); }, 600);
+    } catch (err) {
+      status.textContent = 'Network error: ' + err.message;
+      status.style.color = 'var(--color-private, #d44)';
+    }
+  });
+})();
+</script>
+{% endblock %}

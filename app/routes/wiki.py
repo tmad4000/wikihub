@@ -601,6 +601,15 @@ def sidebar_json(username, slug):
     return jsonify(tree)
 
 
+@wiki_bp.route("/@<username>/<slug>/settings", strict_slashes=False)
+def wiki_settings(username, slug):
+    """wiki settings page — subdomain, visibility, danger zone."""
+    owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
+    if not _is_owner(wiki):
+        abort(403)
+    return render_template("wiki_settings.html", owner=owner, wiki=wiki)
+
+
 @wiki_bp.route("/@<username>/<slug>", strict_slashes=False)
 def wiki_index(username, slug):
     owner, wiki, redirect_row = _get_owner_and_wiki_or_404(username, slug)

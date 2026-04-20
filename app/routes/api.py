@@ -14,6 +14,7 @@ from app.auth_utils import (
 from app.credentials_hint import build_client_config, resolve_server_url
 from app.git_backend import _repo_path
 from app.routes import api_bp
+from app.subdomains import validate_username, validate_wiki_subdomain
 from app.wiki_ops import ensure_personal_wiki
 
 _USERNAME_RE = re.compile(r'^[a-z0-9_-]+$')
@@ -39,6 +40,10 @@ def create_account():
 
     if User.query.filter_by(username=username).first():
         return {"error": "conflict", "message": f"Username '{username}' already taken"}, 409
+
+    conflict = validate_username(username)
+    if conflict:
+        return {"error": "conflict", "message": conflict}, 409
 
     if email and User.query.filter_by(email=email).first():
         return {"error": "conflict", "message": "Email already registered"}, 409
@@ -206,8 +211,13 @@ def update_account():
     if "username" in data:
         new_username = data["username"].strip().lower()
         if new_username != user.username:
+            if not _USERNAME_RE.match(new_username) or len(new_username) < 2 or len(new_username) > 40:
+                return {"error": "bad_request", "message": "Username must be 2-40 chars: lowercase letters, numbers, hyphens, or underscores"}, 400
             if User.query.filter_by(username=new_username).first():
                 return {"error": "conflict", "message": "Username taken"}, 409
+            conflict = validate_username(new_username, exclude_user_id=user.id)
+            if conflict:
+                return {"error": "conflict", "message": conflict}, 409
             UsernameRedirect.query.filter_by(old_username=new_username).delete()
             db.session.add(
                 UsernameRedirect(

@@ -152,6 +152,7 @@ def get_wiki(owner, slug):
         "slug": wiki.slug,
         "title": wiki.title,
         "description": wiki.description,
+        "subdomain": wiki.subdomain,
         "star_count": wiki.star_count,
         "fork_count": wiki.fork_count,
         "page_count": wiki.pages.count(),
@@ -175,9 +176,26 @@ def update_wiki(owner, slug):
         wiki.title = data["title"]
     if "description" in data:
         wiki.description = data["description"]
+    if "subdomain" in data:
+        from app.subdomains import validate_wiki_subdomain
+        raw = data["subdomain"]
+        if raw in (None, ""):
+            wiki.subdomain = None
+        else:
+            new_sub = str(raw).strip().lower()
+            if new_sub != (wiki.subdomain or ""):
+                err = validate_wiki_subdomain(new_sub, exclude_wiki_id=wiki.id)
+                if err:
+                    return {"error": "bad_request", "message": err}, 400
+                wiki.subdomain = new_sub
     db.session.commit()
 
-    return jsonify({"id": wiki.id, "title": wiki.title, "description": wiki.description})
+    return jsonify({
+        "id": wiki.id,
+        "title": wiki.title,
+        "description": wiki.description,
+        "subdomain": wiki.subdomain,
+    })
 
 
 @api_bp.route("/wikis/<owner>/<slug>", methods=["DELETE"])
