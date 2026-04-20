@@ -17,6 +17,13 @@ from app.models import User, Wiki
 CANONICAL_SUFFIX = ".wikihub.md"
 LOCAL_SUFFIX = ".wikihub.localhost"  # for local dev via caddy
 
+# Reserved names that ALSO route to a system user's profile subdomain when hit.
+# These users are auto-created by the app (see wiki_ops.ensure_official_wiki)
+# and get the nicer <name>.wikihub.md URL even though users can't claim <name>
+# as a wiki subdomain or username.
+SYSTEM_SUBDOMAIN_USERS = frozenset({"wikihub"})
+
+
 RESERVED_SUBDOMAINS = frozenset({
     # infrastructure
     "www", "api", "app", "admin", "staging", "dev", "test", "prod",
@@ -116,6 +123,16 @@ def resolve_host(host: str) -> Optional[Tuple[str, str]]:
     # sub-subdomains (foo.bar.wikihub.md) not supported in MVP
     if "." in label:
         return None
+
+    # System users (e.g. @wikihub) get their profile subdomain even though
+    # the label is otherwise reserved. Claim-blocking still applies: no one
+    # can register the username or claim it as a wiki subdomain.
+    if label in SYSTEM_SUBDOMAIN_USERS:
+        user = User.query.filter(db.func.lower(User.username) == label).first()
+        if user:
+            return ("user", user.username)
+        return None
+
     if is_reserved(label):
         return None
 

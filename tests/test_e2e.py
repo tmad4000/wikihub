@@ -806,6 +806,22 @@ def test_subdomain_routing(client):
     assert r.status_code == 200
     assert r.get_json()["subdomain"] is None
 
+    # System user @wikihub gets a special subdomain override: wikihub.wikihub.md
+    # resolves to /@wikihub even though "wikihub" is a reserved label.
+    # (ensure the user exists — truncated by reset_database at test start)
+    from app.wiki_ops import ensure_official_wiki
+    ensure_official_wiki()
+    db.session.commit()
+
+    r = client.get("/", headers={"Host": "wikihub.wikihub.md"})
+    assert r.status_code == 200, f"system subdomain failed: {r.status_code}"
+
+    # Apex /@wikihub 301s to wikihub.wikihub.md
+    r = client.get("/@wikihub",
+                   headers={"Host": "wikihub.md"}, follow_redirects=False)
+    assert r.status_code == 301, f"expected 301, got {r.status_code}"
+    assert "wikihub.wikihub.md" in r.headers["Location"]
+
 
 def run_all():
     app = setup()

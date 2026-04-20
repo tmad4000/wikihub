@@ -22,7 +22,7 @@ import re
 from flask import request, redirect
 
 from app.models import User, Wiki
-from app.subdomains import CANONICAL_SUFFIX, is_reserved
+from app.subdomains import CANONICAL_SUFFIX, is_reserved, SYSTEM_SUBDOMAIN_USERS
 
 _USER_PATH_RE = re.compile(r"^/@([a-z0-9_-]+)(?:/([^/]+)(?:/(.*))?)?$")
 
@@ -85,10 +85,10 @@ def maybe_redirect():
     user = User.query.filter(User.username == username).first()
     if not user:
         return None
-    # Legacy users whose names collide with reserved subdomains (e.g. `wikihub`)
-    # keep working at /@<user>/... but do NOT get a subdomain redirect.
-    if is_reserved(username):
-        # still allow wiki-level subdomain redirects below, but never user-only
+    # Legacy users whose names collide with reserved subdomains keep working
+    # at /@<user>/... but do NOT get a subdomain redirect — UNLESS they're
+    # a system user (e.g. @wikihub) which has a special subdomain override.
+    if is_reserved(username) and username not in SYSTEM_SUBDOMAIN_USERS:
         if slug is None:
             return None
 
@@ -108,8 +108,8 @@ def maybe_redirect():
     if wiki.subdomain:
         target = f"{scheme}://{wiki.subdomain}{CANONICAL_SUFFIX}{tail}{qs}"
     else:
-        # fall back to user profile subdomain (unless the username is reserved)
-        if is_reserved(username):
+        # fall back to user profile subdomain (reserved non-system users skip)
+        if is_reserved(username) and username not in SYSTEM_SUBDOMAIN_USERS:
             return None
         target = f"{scheme}://{username}{CANONICAL_SUFFIX}/{slug}{tail if rest else ''}{qs}"
         if not rest:
