@@ -575,13 +575,15 @@ document.addEventListener('DOMContentLoaded', () => {
         data._owner = parsed.owner;
         data._slug = parsed.slug;
         cache[key] = data;
-        // replace loading card with real card
+        // if loading card was already popped (user moved on before fetch resolved),
+        // drop the response on the floor — otherwise we leak an orphan card
         var idx = stack.findIndex(function(s) { return s.el === c; });
+        if (idx < 0) { c.remove(); return; }
         var newC = buildCard(data, depth);
         document.body.appendChild(newC);
         positionCard(newC, rect, depth);
         c.remove();
-        if (idx >= 0) stack[idx] = { el: newC, depth: depth };
+        stack[idx] = { el: newC, depth: depth };
       })
       .catch(function() { c.remove(); });
   }
