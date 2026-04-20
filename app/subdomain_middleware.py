@@ -38,12 +38,15 @@ _GLOBAL_PREFIXES = (
     "/favicon.ico",
     "/robots.txt",
     "/sitemap.xml",
-    "/@",  # /@user/... paths are already canonical — leave alone
 )
 
 
 def _should_rewrite(path: str) -> bool:
     if not path.startswith("/"):
+        return False
+    # /@<user>/... paths are already canonical — never rewrite, regardless of host.
+    # (this lets internal url_for() links keep working on subdomain hosts.)
+    if path.startswith("/@"):
         return False
     for prefix in _GLOBAL_PREFIXES:
         p = prefix.rstrip("/")

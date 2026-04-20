@@ -800,6 +800,20 @@ def test_subdomain_routing(client):
     # rewritten into /@subowner/api/v1/ping (which would 404 differently)
     assert r.status_code in (404, 200)
 
+    # Internal url_for()-generated links use the full /@user/slug/page form.
+    # On a wiki subdomain, those must resolve — either directly or 301 to the
+    # short form on the same host. Regression test for the double-prefix bug.
+    r = client.get("/@subowner/cookbook/intro",
+                   headers={"Host": "recipes.wikihub.md"}, follow_redirects=False)
+    assert r.status_code in (200, 301), f"/@user/slug/page on wiki subdomain: {r.status_code}"
+    if r.status_code == 301:
+        assert "recipes.wikihub.md/intro" in r.headers["Location"]
+
+    # Same regression check for user subdomain
+    r = client.get("/@subowner/cookbook/intro",
+                   headers={"Host": "subowner.wikihub.md"}, follow_redirects=False)
+    assert r.status_code in (200, 301), f"/@user/slug/page on user subdomain: {r.status_code}"
+
     # Clearing the subdomain
     r = client.patch("/api/v1/wikis/subowner/cookbook",
                      json={"subdomain": None}, headers=h)

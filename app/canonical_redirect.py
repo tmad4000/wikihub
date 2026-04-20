@@ -56,19 +56,9 @@ def maybe_redirect():
     """before_request handler. returns a Response if redirecting, else None."""
     if request.method not in ("GET", "HEAD"):
         return None
-    # Skip if we're already on a subdomain — middleware handled rewriting
-    if request.environ.get("wikihub.host_kind"):
-        return None
 
-    host = (request.host or "").lower().split(":")[0]
-    # Only redirect from the apex canonical host. On dev/staging hosts,
-    # users may prefer the path URL.
-    if not host.endswith(".wikihub.md") and host != "wikihub.md":
-        return None
-    # Never redirect when host is itself a subdomain of wikihub.md (middleware
-    # should have caught that). The suffix check above catches www.wikihub.md
-    # but the bare apex "wikihub.md" is where we want to redirect from.
-    if host != "wikihub.md" and host != "www.wikihub.md":
+    # If middleware rewrote the path from the user's short URL, don't bounce back.
+    if request.environ.get("wikihub.rewritten_from") is not None:
         return None
 
     path = request.path
@@ -77,10 +67,40 @@ def maybe_redirect():
     if _is_skipped(path):
         return None
 
+    host = (request.host or "").lower().split(":")[0]
+    only_wikihub_md = host == "wikihub.md" or host.endswith(".wikihub.md")
+    if not only_wikihub_md:
+        return None
+
     m = _USER_PATH_RE.match(path)
     if not m:
         return None
     username, slug, rest = m.group(1), m.group(2), m.group(3)
+
+    # Case 2: we're on a subdomain and the path redundantly includes /@<user>/<slug>.
+    # Rewrite to the short canonical form on the same host so URL bar stays pretty.
+    host_kind = request.environ.get("wikihub.host_kind")
+    host_name = request.environ.get("wikihub.host_name")
+    if host_kind == "user" and host_name == username:
+        # on <user>.wikihub.md, strip "/@<user>" prefix
+        short_tail = ""
+        if slug is not None:
+            short_tail = "/" + slug + (("/" + rest) if rest else "")
+        qs = "?" + request.query_string.decode() if request.query_string else ""
+        return redirect(f"https://{host}{short_tail or '/'}{qs}", code=301)
+    if host_kind == "wiki":
+        wiki = Wiki.query.filter(Wiki.subdomain == host_name).first()
+        if wiki and wiki.owner.username == username and wiki.slug == slug:
+            short_tail = "/" + rest if rest else "/"
+            qs = "?" + request.query_string.decode() if request.query_string else ""
+            return redirect(f"https://{host}{short_tail}{qs}", code=301)
+    if host_kind is not None:
+        # we're on a subdomain but the /@path doesn't match; leave alone
+        return None
+
+    # Case 1: we're on apex wikihub.md (or www). Redirect to canonical subdomain.
+    if host != "wikihub.md" and host != "www.wikihub.md":
+        return None
 
     user = User.query.filter(User.username == username).first()
     if not user:
