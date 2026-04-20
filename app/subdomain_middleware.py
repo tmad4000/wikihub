@@ -62,19 +62,25 @@ class SubdomainMiddleware:
 
     def __call__(self, environ, start_response):
         host = environ.get("HTTP_HOST", "")
-        with self.flask_app.app_context():
-            resolved = resolve_host(host)
-            if resolved is not None:
-                environ["wikihub.host_kind"] = resolved[0]
-                environ["wikihub.host_name"] = resolved[1]
-                path = environ.get("PATH_INFO", "/")
-                if _should_rewrite(path):
-                    prefix = self._prefix_for(resolved)
-                    if prefix:
-                        # keep Flask's SCRIPT_NAME empty; rewrite PATH_INFO in place
-                        new_path = prefix + path if path != "/" else prefix
-                        environ["PATH_INFO"] = new_path
-                        environ["wikihub.rewritten_from"] = path
+        try:
+            with self.flask_app.app_context():
+                resolved = resolve_host(host)
+                if resolved is not None:
+                    environ["wikihub.host_kind"] = resolved[0]
+                    environ["wikihub.host_name"] = resolved[1]
+                    path = environ.get("PATH_INFO", "/")
+                    if _should_rewrite(path):
+                        prefix = self._prefix_for(resolved)
+                        if prefix:
+                            # keep SCRIPT_NAME empty; rewrite PATH_INFO in place
+                            new_path = prefix + path if path != "/" else prefix
+                            environ["PATH_INFO"] = new_path
+                            environ["wikihub.rewritten_from"] = path
+        except Exception:
+            # DB hiccup, stale connection, etc — don't 500 the request.
+            # Fall through to non-subdomain routing; the apex app still works.
+            import logging
+            logging.getLogger(__name__).exception("subdomain middleware failed for host=%s", host)
 
         return self.wsgi_app(environ, start_response)
 
