@@ -19,13 +19,18 @@ need_cmd() {
 PIPX="$(command -v pipx || true)"
 PIP="$(command -v pip3 || command -v pip || true)"
 
-if [ -n "$PIPX" ]; then
-    log "using pipx ($PIPX)"
-    INSTALLER="pipx install --force wikihub-cli"
-elif [ -n "$PIP" ]; then
-    log "using $PIP (pipx not found — strongly prefer pipx)"
-    INSTALLER="$PIP install --user --upgrade wikihub-cli"
-else
+# PyPI target (preferred). If the PyPI package isn't published yet,
+# the installer falls back to pip-install-from-git so the one-liner
+# still works during the interim.
+PYPI_PKG="wikihub-cli"
+GIT_SPEC="git+https://github.com/tmad4000/wikihub.git#subdirectory=cli"
+
+install_via() {
+    # $1 = tool, $2 = args
+    sh -c "$1 $2"
+}
+
+if [ -z "$PIPX" ] && [ -z "$PIP" ]; then
     warn "neither pipx nor pip found. Install one first:"
     warn "  macOS:   brew install pipx && pipx ensurepath"
     warn "  Debian:  sudo apt install pipx && pipx ensurepath"
@@ -33,11 +38,28 @@ else
     exit 1
 fi
 
-log "installing wikihub-cli..."
-sh -c "$INSTALLER" || {
-    warn "install failed"
-    exit 1
-}
+TOOL=""
+if [ -n "$PIPX" ]; then
+    TOOL="pipx"
+    log "using pipx ($PIPX)"
+else
+    TOOL="$PIP"
+    log "using $TOOL (pipx not found — strongly prefer pipx)"
+fi
+
+# Try PyPI first; fall back to git if the package isn't published.
+log "installing $PYPI_PKG..."
+if [ "$TOOL" = "pipx" ]; then
+    if ! pipx install --force "$PYPI_PKG" 2>/dev/null; then
+        log "PyPI package not found — falling back to git install"
+        pipx install --force "$GIT_SPEC" || { warn "install failed"; exit 1; }
+    fi
+else
+    if ! "$TOOL" install --user --upgrade "$PYPI_PKG" 2>/dev/null; then
+        log "PyPI package not found — falling back to git install"
+        "$TOOL" install --user --upgrade "$GIT_SPEC" || { warn "install failed"; exit 1; }
+    fi
+fi
 
 BIN="$(command -v wikihub || true)"
 if [ -n "$BIN" ]; then
