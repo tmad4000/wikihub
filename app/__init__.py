@@ -1,4 +1,7 @@
+import logging
 import os
+import re
+
 import click
 
 from flask import Flask
@@ -10,6 +13,25 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 db = SQLAlchemy()
 login_manager = LoginManager()
 csrf = CSRFProtect()
+
+# Redact credentials passed via GET query string (/auth/login?api_key=...)
+# from werkzeug's access log. gunicorn/nginx need their own redaction in prod.
+_SECRET_IN_URL = re.compile(r'(api_key|password)=[^&"\'\s]+')
+
+
+class _RedactQueryParams(logging.Filter):
+    def filter(self, record):
+        if isinstance(record.msg, str):
+            record.msg = _SECRET_IN_URL.sub(r'\1=REDACTED', record.msg)
+        if record.args:
+            record.args = tuple(
+                _SECRET_IN_URL.sub(r'\1=REDACTED', a) if isinstance(a, str) else a
+                for a in record.args
+            )
+        return True
+
+
+logging.getLogger("werkzeug").addFilter(_RedactQueryParams())
 
 
 def create_app(config_class="config.Config"):
