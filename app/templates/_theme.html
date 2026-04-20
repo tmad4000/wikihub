@@ -1,0 +1,232 @@
+{# WikiHub theme — single source of truth for CSS tokens.
+   Include inside <head> before any page-specific <style>:
+       {{ '{' }}% include '_theme.html' %{{ '}' }}
+
+   Emits, in order:
+     1. <meta name="theme-color"> (media-gated, browser chrome)
+     2. No-flash inline <script> that applies a saved override before paint
+     3. <style> block with the full token palette (dark default, light
+        @media override, explicit html[data-theme="..."] overrides) and
+        the theme-toggle button styles
+
+   Every color in the app should come from these tokens. Hardcoded hex
+   / rgba in templates is a bug — add a token here instead.
+#}
+<meta name="theme-color" content="#0f0e0c" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#faf7f1" media="(prefers-color-scheme: light)">
+<script>(function(){try{var t=localStorage.getItem('wikihubTheme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<style>
+/* ───────── THEME TOKENS — dark default ───────── */
+:root {
+  color-scheme: dark;
+
+  /* surfaces — obsidian warm */
+  --bg-base: #0f0e0c;
+  --bg-surface: #191714;
+  --bg-elevated: #221f1b;
+  --bg-overlay: #2a2622;
+
+  /* text — warm ink */
+  --text-primary: #e8e0d4;
+  --text-secondary: #b8ad9e;
+  --text-tertiary: #887d6e;
+  --text-muted: #5a5248;
+  --text-on-accent: #0f0e0c;
+
+  /* accent — amber/gold */
+  --accent: #d4a04a;
+  --accent-hover: #e0b35a;
+  --accent-muted: rgba(212, 160, 74, 0.12);
+  --accent-subtle: rgba(212, 160, 74, 0.06);
+  --accent-glow: rgba(212, 160, 74, 0.22);
+
+  /* semantic */
+  --color-public: #7a9e6b;
+  --color-private: #c45c3c;
+  --color-unlisted: #b8ad9e;
+  --color-edit: #d4a04a;
+  --color-wikilink: #d4a04a;
+  --color-wikilink-broken: #c45c3c;
+  --color-external: #7a9bb5;
+  --color-success: #7a9e6b;
+  --color-warning: #d4a04a;
+  --color-error: #c45c3c;
+  --color-error-soft: #d88c75;
+
+  /* tinted rgba triplets for inline rgba(x,x,x, alpha) use */
+  --rgb-public: 122, 158, 107;
+  --rgb-private: 196, 92, 60;
+  --rgb-accent: 212, 160, 74;
+
+  /* borders — warm tinted */
+  --border-default: rgba(200, 180, 150, 0.08);
+  --border-emphasis: rgba(200, 180, 150, 0.15);
+  --border-strong: rgba(200, 180, 150, 0.25);
+  --border-accent: rgba(212, 160, 74, 0.4);
+
+  /* controls */
+  --control-bg: rgba(0, 0, 0, 0.2);
+  --control-bg-hover: rgba(200, 180, 150, 0.08);
+  --control-border: rgba(200, 180, 150, 0.12);
+  --search-trigger-bg: #1a1816;
+  --menu-bg: rgba(25, 23, 20, 0.98);
+  --scrim: rgba(0, 0, 0, 0.7);
+  --scrim-soft: rgba(0, 0, 0, 0.4);
+  --shadow-color: rgba(0, 0, 0, 0.35);
+  --hover-preview-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+
+  /* gradients (derived from tokens; light mode will re-point these) */
+  --gradient-person-card: linear-gradient(180deg, rgba(212, 160, 74, 0.08), rgba(25, 23, 20, 0.95));
+  --gradient-person-avatar: linear-gradient(135deg, rgba(212, 160, 74, 0.18), rgba(34, 31, 27, 1));
+  --gradient-subtle-tint: linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0.01));
+
+  /* typography */
+  --font-body: 'Inter', -apple-system, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'Menlo', monospace;
+
+  /* radius */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+}
+
+/* ───────── LIGHT PALETTE — warm paper under a desk lamp ───────── */
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+
+    /* warm paper under a desk lamp:
+       base is the lit desk surface, surfaces sit above with real elevation
+       (darker), not lighter — same direction as paper stacks catching shadow.
+       Accent is amber (not bronze); shadows are warm, not gray. */
+    --bg-base: #fbf5e8;       /* lit paper */
+    --bg-surface: #f4e9d4;    /* card on the desk */
+    --bg-elevated: #eddcbf;   /* lifted like a notebook */
+    --bg-overlay: #e5d0a8;    /* overlay / popover */
+
+    --text-primary: #2a1d0e;  /* warm sepia ink */
+    --text-secondary: #574532;
+    --text-tertiary: #7d6a4f;
+    --text-muted: #a59070;
+    --text-on-accent: #1a0f03;
+
+    /* brand amber — richer than my first pass, still passes AA as link text */
+    --accent: #a86212;
+    --accent-hover: #c87918;
+    --accent-muted: rgba(168, 98, 18, 0.15);
+    --accent-subtle: rgba(168, 98, 18, 0.08);
+    --accent-glow: rgba(212, 160, 74, 0.35);   /* lamp-glow focus ring */
+
+    --color-public: #4a7a41;
+    --color-private: #9a3e23;
+    --color-unlisted: #7d6a4f;
+    --color-edit: #a86212;
+    --color-wikilink: #a86212;
+    --color-wikilink-broken: #9a3e23;
+    --color-external: #395a78;
+    --color-success: #4a7a41;
+    --color-warning: #a86212;
+    --color-error: #9a3e23;
+    --color-error-soft: #b25640;
+
+    --rgb-public: 74, 122, 65;
+    --rgb-private: 154, 62, 35;
+    --rgb-accent: 168, 98, 18;
+
+    /* borders tinted warm sepia */
+    --border-default: rgba(90, 58, 18, 0.12);
+    --border-emphasis: rgba(90, 58, 18, 0.22);
+    --border-strong: rgba(90, 58, 18, 0.34);
+    --border-accent: rgba(168, 98, 18, 0.50);
+
+    --control-bg: rgba(255, 248, 230, 0.7);
+    --control-bg-hover: rgba(90, 58, 18, 0.07);
+    --control-border: rgba(90, 58, 18, 0.18);
+    --search-trigger-bg: #eee0c6;
+    --menu-bg: rgba(251, 245, 232, 0.98);
+    --scrim: rgba(40, 25, 10, 0.40);
+    --scrim-soft: rgba(40, 25, 10, 0.22);
+
+    /* warm amber-tinted shadows — "desk lamp spill", not neutral gray */
+    --shadow-color: rgba(90, 58, 18, 0.14);
+    --hover-preview-shadow: 0 8px 28px rgba(90, 58, 18, 0.18);
+    --card-shadow: 0 1px 2px rgba(90, 58, 18, 0.12);
+
+    /* light-mode gradients — paper warmth, amber glow, no dark endpoints */
+    --gradient-person-card: linear-gradient(180deg, rgba(212, 160, 74, 0.14), rgba(244, 233, 212, 1));
+    --gradient-person-avatar: linear-gradient(135deg, rgba(212, 160, 74, 0.45), rgba(245, 215, 160, 1));
+    --gradient-subtle-tint: linear-gradient(180deg, rgba(90, 58, 18, 0.035), rgba(90, 58, 18, 0.015));
+  }
+}
+
+/* ───────── Explicit override beats media query ───────── */
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --bg-base: #0f0e0c; --bg-surface: #191714; --bg-elevated: #221f1b; --bg-overlay: #2a2622;
+  --text-primary: #e8e0d4; --text-secondary: #b8ad9e; --text-tertiary: #887d6e; --text-muted: #5a5248;
+  --text-on-accent: #0f0e0c;
+  --accent: #d4a04a; --accent-hover: #e0b35a;
+  --accent-muted: rgba(212, 160, 74, 0.12); --accent-subtle: rgba(212, 160, 74, 0.06);
+  --accent-glow: rgba(212, 160, 74, 0.22);
+  --color-public: #7a9e6b; --color-private: #c45c3c; --color-unlisted: #b8ad9e;
+  --color-edit: #d4a04a; --color-wikilink: #d4a04a; --color-wikilink-broken: #c45c3c;
+  --color-external: #7a9bb5; --color-success: #7a9e6b; --color-warning: #d4a04a; --color-error: #c45c3c;
+  --color-error-soft: #d88c75;
+  --rgb-public: 122, 158, 107; --rgb-private: 196, 92, 60; --rgb-accent: 212, 160, 74;
+  --border-default: rgba(200, 180, 150, 0.08); --border-emphasis: rgba(200, 180, 150, 0.15);
+  --border-strong: rgba(200, 180, 150, 0.25); --border-accent: rgba(212, 160, 74, 0.4);
+  --control-bg: rgba(0, 0, 0, 0.2); --control-bg-hover: rgba(200, 180, 150, 0.08);
+  --control-border: rgba(200, 180, 150, 0.12); --search-trigger-bg: #1a1816;
+  --menu-bg: rgba(25, 23, 20, 0.98); --scrim: rgba(0, 0, 0, 0.7); --scrim-soft: rgba(0, 0, 0, 0.4);
+  --shadow-color: rgba(0, 0, 0, 0.35);
+  --hover-preview-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  --gradient-person-card: linear-gradient(180deg, rgba(212, 160, 74, 0.08), rgba(25, 23, 20, 0.95));
+  --gradient-person-avatar: linear-gradient(135deg, rgba(212, 160, 74, 0.18), rgba(34, 31, 27, 1));
+  --gradient-subtle-tint: linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0.01));
+}
+html[data-theme="light"] {
+  color-scheme: light;
+  --bg-base: #fbf5e8; --bg-surface: #f4e9d4; --bg-elevated: #eddcbf; --bg-overlay: #e5d0a8;
+  --text-primary: #2a1d0e; --text-secondary: #574532; --text-tertiary: #7d6a4f; --text-muted: #a59070;
+  --text-on-accent: #1a0f03;
+  --accent: #a86212; --accent-hover: #c87918;
+  --accent-muted: rgba(168, 98, 18, 0.15); --accent-subtle: rgba(168, 98, 18, 0.08);
+  --accent-glow: rgba(212, 160, 74, 0.35);
+  --color-public: #4a7a41; --color-private: #9a3e23; --color-unlisted: #7d6a4f;
+  --color-edit: #a86212; --color-wikilink: #a86212; --color-wikilink-broken: #9a3e23;
+  --color-external: #395a78; --color-success: #4a7a41; --color-warning: #a86212; --color-error: #9a3e23;
+  --color-error-soft: #b25640;
+  --rgb-public: 74, 122, 65; --rgb-private: 154, 62, 35; --rgb-accent: 168, 98, 18;
+  --border-default: rgba(90, 58, 18, 0.12); --border-emphasis: rgba(90, 58, 18, 0.22);
+  --border-strong: rgba(90, 58, 18, 0.34); --border-accent: rgba(168, 98, 18, 0.50);
+  --control-bg: rgba(255, 248, 230, 0.7); --control-bg-hover: rgba(90, 58, 18, 0.07);
+  --control-border: rgba(90, 58, 18, 0.18); --search-trigger-bg: #eee0c6;
+  --menu-bg: rgba(251, 245, 232, 0.98); --scrim: rgba(40, 25, 10, 0.40); --scrim-soft: rgba(40, 25, 10, 0.22);
+  --shadow-color: rgba(90, 58, 18, 0.14);
+  --hover-preview-shadow: 0 8px 28px rgba(90, 58, 18, 0.18);
+  --card-shadow: 0 1px 2px rgba(90, 58, 18, 0.12);
+  --gradient-person-card: linear-gradient(180deg, rgba(212, 160, 74, 0.14), rgba(244, 233, 212, 1));
+  --gradient-person-avatar: linear-gradient(135deg, rgba(212, 160, 74, 0.45), rgba(245, 215, 160, 1));
+  --gradient-subtle-tint: linear-gradient(180deg, rgba(90, 58, 18, 0.035), rgba(90, 58, 18, 0.015));
+}
+
+/* ───────── theme toggle ───────── */
+.theme-toggle {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px;
+  background: transparent; border: 1px solid transparent;
+  border-radius: var(--radius-sm); cursor: pointer;
+  color: var(--text-tertiary);
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+.theme-toggle:hover { color: var(--text-primary); border-color: var(--border-default); background: var(--control-bg-hover); }
+.theme-toggle svg { display: block; }
+.theme-toggle .theme-ico-auto,
+.theme-toggle .theme-ico-light,
+.theme-toggle .theme-ico-dark { display: none; }
+html:not([data-theme]) .theme-toggle .theme-ico-auto { display: block; }
+html[data-theme="light"] .theme-toggle .theme-ico-light { display: block; }
+html[data-theme="dark"] .theme-toggle .theme-ico-dark { display: block; }
+</style>

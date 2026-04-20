@@ -1,13 +1,23 @@
 {% extends "base.html" %}
 {% block title %}{{ page.title or page.path }} — {{ wiki.title or wiki.slug }} — wikihub{% endblock %}
+{% block og_title %}{{ page.title or page.path }} — {{ wiki.title or wiki.slug }}{% endblock %}
+{% block og_desc %}{{ page.excerpt or wiki.description or '' }}{% endblock %}
+{% block meta_desc %}{{ page.excerpt or wiki.description or '' }}{% endblock %}
 
 {% block extra_css %}
 .reader-layout { display: flex; min-height: calc(100vh - 56px); }
 
+.thin-scroll { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+.thin-scroll:hover { scrollbar-color: var(--border-emphasis) transparent; }
+.thin-scroll::-webkit-scrollbar { width: 4px; }
+.thin-scroll::-webkit-scrollbar-track { background: transparent; }
+.thin-scroll::-webkit-scrollbar-thumb { background: transparent; border-radius: 2px; }
+.thin-scroll:hover::-webkit-scrollbar-thumb { background: var(--border-emphasis); }
+
 .sidebar {
-  width: 240px; flex-shrink: 0;
+  width: 280px; flex-shrink: 0;
   border-right: 1px solid var(--border-default);
-  padding: 16px 0; overflow-y: auto;
+  padding: 16px 0; overflow-y: auto; overflow-x: hidden;
   display: none;
 }
 @media (min-width: 768px) { .sidebar { display: block; } }
@@ -17,30 +27,89 @@
   font-size: 0.6875rem; font-weight: 600; text-transform: uppercase;
   letter-spacing: 0.06em; color: var(--text-muted); padding: 6px 12px; margin-bottom: 2px;
 }
+.sidebar-sort {
+  display: inline-flex; align-items: center; gap: 2px;
+  font-size: 0.625rem; font-weight: 400; text-transform: none; letter-spacing: 0;
+}
+.sidebar-sort-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 20px; border: none; background: transparent;
+  color: var(--text-muted); cursor: pointer; padding: 0; border-radius: var(--radius-sm);
+  font-size: 0.625rem; font-family: var(--font-mono); opacity: 0.5;
+}
+.sidebar-sort-btn:hover { opacity: 1; background: var(--control-bg-hover); }
+.sidebar-sort-btn.active { opacity: 1; color: var(--accent); }
+.sidebar-folder-row { display: flex; align-items: center; gap: 0; }
+.sidebar-folder-toggle {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; border: none; background: transparent;
+  color: var(--text-muted); cursor: pointer; padding: 0; flex-shrink: 0;
+  border-radius: var(--radius-sm);
+}
+.sidebar-folder-toggle:hover { background: var(--control-bg-hover); }
+.sidebar-folder-toggle svg { transition: transform 0.15s ease; }
+.sidebar-folder.open > .sidebar-folder-row .sidebar-folder-toggle svg { transform: rotate(90deg); }
+.sidebar-children { display: none; padding-left: 20px; }
+.sidebar-folder.open > .sidebar-children { display: block; }
 .sidebar-item {
   display: flex; align-items: center; gap: 8px;
-  padding: 5px 12px; border-radius: var(--radius-sm);
+  padding: 5px 8px; border-radius: var(--radius-sm);
   font-size: 0.8125rem; color: var(--text-tertiary);
   text-decoration: none; border-left: 2px solid transparent;
-  margin-bottom: 1px;
+  margin-bottom: 1px; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .sidebar-item:hover { color: var(--text-primary); background: var(--accent-subtle); text-decoration: none; }
 .sidebar-item.active {
   color: var(--text-primary); background: var(--accent-subtle);
   border-left-color: var(--accent);
 }
-.sidebar-item.indent-1 { padding-left: 28px; }
-.sidebar-item.indent-2 { padding-left: 44px; }
+.sidebar-folder-row .sidebar-item { flex: 1; min-width: 0; }
 .sidebar-icon { flex-shrink: 0; color: var(--text-muted); }
 .sidebar-item:hover .sidebar-icon { color: var(--text-tertiary); }
+.sidebar-vis { margin-left: auto; flex-shrink: 0; color: var(--text-muted); opacity: 0.6; display: inline-flex; }
 .sidebar-item.active .sidebar-icon { color: var(--accent); }
 
 .content-wrap { flex: 1; min-width: 0; padding: 32px 20px 80px; }
 @media (min-width: 768px) { .content-wrap { padding: 40px 48px 80px; } }
 
+.right-panel {
+  display: none; width: 240px; flex-shrink: 0;
+  border-left: none;
+  padding: 24px 0 24px 0; position: relative;
+  pointer-events: none;
+}
+.right-panel-inner, .resize-handle { pointer-events: auto; }
+@media (min-width: 1100px) { .right-panel { display: block; } }
+.resize-handle {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 5px;
+  cursor: col-resize; z-index: 10;
+  background: var(--border-default);
+  transition: background 0.15s ease;
+}
+.resize-handle:hover, .resize-handle.dragging { background: var(--accent); }
+.right-panel-inner {
+  position: sticky; top: 72px;
+  max-height: calc(100vh - 88px); overflow-y: auto;
+  padding: 0 12px 0 16px;
+}
+
+.right-panel .toc-block {
+  max-width: none; margin-bottom: 20px; padding: 0;
+  border: none; border-radius: 0; background: transparent;
+}
+.right-panel .backlinks-block {
+  max-width: none; margin-top: 20px; padding: 0;
+  border: none; border-top: 1px solid var(--border-default);
+  padding-top: 16px; border-radius: 0; background: transparent;
+}
+
+.inline-toc, .inline-backlinks { display: block; }
+@media (min-width: 1100px) { .inline-toc, .inline-backlinks { display: none; } }
+
 .breadcrumb {
   font-size: 0.8125rem; color: var(--text-muted); margin-bottom: 12px;
-  font-family: var(--font-mono);
+  font-family: var(--font-mono); display: flex; align-items: center; flex-wrap: wrap;
 }
 .breadcrumb a { color: var(--text-muted); }
 .breadcrumb a:hover { color: var(--accent); text-decoration: none; }
@@ -51,11 +120,149 @@
   border-radius: var(--radius-sm); margin-bottom: 20px;
 }
 .vis-badge svg { width: 14px; height: 14px; }
-.vis-badge.public { color: var(--color-public); background: rgba(122, 158, 107, 0.1); border: 1px solid rgba(122, 158, 107, 0.2); }
+.vis-badge.public, .vis-badge.public-view { color: var(--color-public); background: rgba(122, 158, 107, 0.1); border: 1px solid rgba(122, 158, 107, 0.2); }
 .vis-badge.private { color: var(--color-private); background: rgba(196, 92, 60, 0.1); border: 1px solid rgba(196, 92, 60, 0.2); }
-.vis-badge.unlisted { color: var(--color-unlisted); background: rgba(184, 173, 158, 0.1); border: 1px solid rgba(184, 173, 158, 0.2); }
+.vis-badge.unlisted, .vis-badge.unlisted-view { color: var(--color-unlisted); background: rgba(184, 173, 158, 0.1); border: 1px solid rgba(184, 173, 158, 0.2); }
+.vis-pill { font-size: 0.7rem; padding: 3px 8px; border-radius: var(--radius-sm); border: 1px solid var(--border-emphasis); color: var(--text-secondary); }
+.vis-pill.public, .vis-pill.public-view, .vis-pill.public-edit { color: var(--color-public); border-color: rgba(122, 158, 107, 0.2); }
+.vis-pill.private { color: var(--color-private); border-color: rgba(196, 92, 60, 0.2); }
+.vis-pill.unlisted, .vis-pill.unlisted-view, .vis-pill.unlisted-edit { color: var(--color-unlisted); border-color: rgba(184, 173, 158, 0.2); }
+.vis-pill.mixed { color: var(--text-muted); border-color: rgba(184, 173, 158, 0.2); font-style: italic; }
 .vis-badge.public-edit { color: var(--accent); background: rgba(212, 160, 74, 0.1); border: 1px solid rgba(212, 160, 74, 0.2); }
 .vis-badge.unlisted-edit { color: var(--accent); background: rgba(212, 160, 74, 0.1); border: 1px solid rgba(212, 160, 74, 0.2); }
+
+.toc-block {
+  max-width: 720px; margin-bottom: 28px; padding: 16px 20px;
+  border: 1px solid var(--border-default); border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+.toc-title {
+  font-size: 0.8125rem; font-weight: 600; color: var(--text-secondary);
+  margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+}
+.toc-list { list-style: none; padding: 0; margin: 0; counter-reset: toc-counter; }
+.toc-item { margin-bottom: 4px; }
+.toc-item a {
+  color: var(--text-tertiary); text-decoration: none; font-size: 0.8125rem;
+  line-height: 1.6; display: block; padding: 1px 0;
+}
+.toc-item a:hover { color: var(--accent); }
+.toc-level-3 { padding-left: 16px; }
+.toc-level-4 { padding-left: 32px; }
+
+.backlinks-block {
+  max-width: 720px; margin-top: 48px; padding: 16px 20px;
+  border: 1px solid var(--border-default); border-radius: var(--radius-md);
+  background: var(--bg-surface);
+}
+.backlinks-title {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 0.8125rem; font-weight: 600; color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+.backlinks-title svg { color: var(--text-muted); }
+.backlinks-list { list-style: none; padding: 0; margin: 0; }
+.backlinks-list li { margin-bottom: 3px; }
+.backlinks-list a {
+  color: var(--color-wikilink); text-decoration: none; font-size: 0.8125rem;
+}
+.backlinks-list a:hover { text-decoration: underline; }
+
+.shared-with-block { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border-default); }
+.shared-with-title {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 0.8125rem; font-weight: 600; color: var(--text-secondary);
+  margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.04em;
+}
+.shared-with-title svg { color: var(--text-muted); }
+.shared-with-list { list-style: none; padding: 0; margin: 0; }
+.shared-with-list li {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 4px; font-size: 0.8125rem;
+}
+.shared-with-list a { color: var(--color-wikilink); text-decoration: none; }
+.shared-with-list a:hover { text-decoration: underline; }
+.role-badge {
+  font-size: 0.6875rem; padding: 1px 6px; border-radius: 3px;
+  font-family: var(--font-mono); letter-spacing: 0.02em;
+}
+.role-badge.role-read { background: rgba(212, 160, 74, 0.12); color: var(--accent); }
+.role-badge.role-edit { background: rgba(74, 158, 212, 0.12); color: #4a9ed4; }
+
+/* share modal */
+.share-overlay {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(0,0,0,0.5); display: none;
+  align-items: flex-start; justify-content: center;
+  padding-top: 15vh;
+}
+.share-overlay.open { display: flex; }
+.share-modal {
+  background: var(--bg-surface); border: 1px solid var(--border-emphasis);
+  border-radius: var(--radius-lg); width: 100%; max-width: 420px;
+  padding: 24px; box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+}
+.share-modal h3 {
+  margin: 0 0 16px; font-size: 1rem; color: var(--text-primary);
+}
+.share-form { display: flex; gap: 8px; margin-bottom: 16px; }
+.share-form input {
+  flex: 1; padding: 8px 10px; font-size: 0.8125rem;
+  background: var(--bg-input); border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm); color: var(--text-primary);
+  font-family: var(--font-mono);
+}
+.share-form input:focus { border-color: var(--accent); outline: none; }
+.share-form select {
+  padding: 8px; font-size: 0.8125rem;
+  background: var(--bg-input); border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm); color: var(--text-primary);
+}
+.share-form button {
+  padding: 8px 16px; font-size: 0.8125rem; font-weight: 600;
+  background: var(--accent); color: var(--bg-primary); border: none;
+  border-radius: var(--radius-sm); cursor: pointer;
+}
+.share-form button:hover { opacity: 0.9; }
+.share-suggestions {
+  display: none; position: absolute; top: 100%; left: 0; right: 0; z-index: 10;
+  background: var(--bg-elevated); border: 1px solid var(--border-emphasis);
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm); max-height: 160px; overflow-y: auto;
+}
+.share-suggestions.open { display: block; }
+.share-suggestion {
+  padding: 8px 12px; cursor: pointer; font-size: 0.8125rem; display: flex; gap: 8px; align-items: center;
+}
+.share-suggestion:hover, .share-suggestion.active { background: var(--accent-subtle); }
+.share-suggestion .sg-user { color: var(--text-primary); font-weight: 500; }
+.share-suggestion .sg-name { color: var(--text-muted); font-size: 0.75rem; }
+.share-grants { list-style: none; padding: 0; margin: 0; }
+.share-grants li {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 0; border-bottom: 1px solid var(--border-default);
+  font-size: 0.8125rem;
+}
+.share-grants li:last-child { border-bottom: none; }
+.share-grants .grant-info { display: flex; align-items: center; gap: 8px; }
+.share-grants .revoke-btn {
+  font-size: 0.75rem; color: var(--color-private); cursor: pointer;
+  background: none; border: none; padding: 2px 6px;
+}
+.share-grants .revoke-btn:hover { text-decoration: underline; }
+.share-empty { color: var(--text-muted); font-size: 0.8125rem; font-style: italic; }
+
+.graph-block {
+  margin-top: 16px; padding-top: 16px;
+  border-top: 1px solid var(--border-default);
+}
+.graph-title {
+  font-size: 0.8125rem; font-weight: 600; color: var(--text-secondary);
+  margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.04em;
+}
+#link-graph { width: 100%; aspect-ratio: 1 / 1; min-height: 200px; }
+#link-graph svg { width: 100%; height: 100%; }
+
+.article [id] { scroll-margin-top: 72px; }
 
 .article { max-width: 720px; }
 .article h1 {
@@ -103,10 +310,12 @@
 .article strong { color: var(--text-primary); }
 
 .hamburger {
-  display: flex; align-items: center; justify-content: center;
-  width: 44px; height: 44px; background: none; border: none;
-  color: var(--text-secondary); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; background: none; border: none;
+  color: var(--text-muted); cursor: pointer; border-radius: var(--radius-sm);
+  margin-right: 4px; flex-shrink: 0;
 }
+.hamburger:hover { color: var(--text-secondary); background: var(--accent-subtle); }
 @media (min-width: 768px) { .hamburger { display: none; } }
 
 .sidebar-overlay {
@@ -133,22 +342,228 @@
 .action-btn.primary { background: var(--accent); color: #0f0e0c; border-color: var(--accent); }
 .action-btn.primary:hover { background: var(--accent-hover); }
 .action-btn .count { font-family: var(--font-mono); font-size: 0.75rem; }
+.action-btn-mini {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border: none; border-radius: var(--radius-sm);
+  background: transparent; color: var(--text-muted); cursor: pointer;
+  text-decoration: none; padding: 0;
+}
+.action-btn-mini:hover { color: var(--text-secondary); background: var(--accent-subtle); }
+.action-btn-mini svg { width: 14px; height: 14px; }
+.download-menu { position: relative; display: inline-flex; }
+.download-dropdown {
+  display: none; position: absolute; top: 100%; right: 0; margin-top: 4px;
+  min-width: 340px; padding: 4px; border-radius: var(--radius-md);
+  border: 1px solid var(--border-emphasis); background: rgba(25, 23, 20, 0.98);
+  backdrop-filter: blur(12px); z-index: 50;
+}
+.download-dropdown::before {
+  content: ''; position: absolute; top: -8px; left: 0; right: 0; height: 8px;
+}
+.download-menu.open .download-dropdown { display: block; }
+.download-option {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+  border-radius: var(--radius-sm); color: var(--text-secondary);
+  font-size: 0.8125rem; text-decoration: none; border: none;
+  background: transparent; cursor: pointer; width: 100%; font-family: var(--font-body);
+}
+.download-option:hover { background: var(--accent-subtle); color: var(--text-primary); text-decoration: none; }
 .actions-spacer { flex: 1; }
+.private-band-warning {
+  margin-bottom: 20px; padding: 12px 14px;
+  border: 1px solid rgba(212, 160, 74, 0.2);
+  background: rgba(212, 160, 74, 0.08);
+  border-radius: var(--radius-md); color: var(--text-secondary);
+  font-size: 0.8125rem; line-height: 1.5;
+}
+/* --- Curator panel --- */
+.curator-toggle {
+  position: fixed; bottom: 24px; right: 24px; z-index: 100;
+  width: 48px; height: 48px; border-radius: 50%;
+  background: var(--accent); color: #0f0e0c; border: none;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s ease, transform 0.15s ease;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.4);
+}
+.curator-toggle:hover { background: var(--accent-hover); transform: scale(1.05); }
+.curator-toggle svg { width: 22px; height: 22px; }
+
+.curator-panel {
+  position: fixed; top: 56px; right: 0; bottom: 0; width: 400px;
+  background: var(--bg-surface); border-left: 1px solid var(--border-emphasis);
+  z-index: 200; display: flex; flex-direction: column;
+  transform: translateX(100%); transition: transform 0.25s ease;
+}
+.curator-panel.open { transform: translateX(0); }
+@media (max-width: 480px) { .curator-panel { width: 100%; } }
+
+.curator-overlay {
+  display: none; position: fixed; inset: 0; top: 56px;
+  background: rgba(0,0,0,0.4); z-index: 199;
+}
+.curator-overlay.open { display: block; }
+
+.curator-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; border-bottom: 1px solid var(--border-default);
+  flex-shrink: 0;
+}
+.curator-title {
+  font-family: var(--font-mono); font-size: 0.875rem; font-weight: 500;
+  color: var(--accent); letter-spacing: 0.02em;
+}
+.curator-close {
+  width: 28px; height: 28px; border: none; background: transparent;
+  color: var(--text-muted); cursor: pointer; border-radius: var(--radius-sm);
+  font-size: 1.25rem; display: flex; align-items: center; justify-content: center;
+}
+.curator-close:hover { color: var(--text-secondary); background: var(--accent-subtle); }
+
+.curator-messages {
+  flex: 1; overflow-y: auto; padding: 16px;
+  scrollbar-width: thin; scrollbar-color: var(--border-emphasis) transparent;
+}
+.curator-messages::-webkit-scrollbar { width: 4px; }
+.curator-messages::-webkit-scrollbar-thumb { background: var(--border-emphasis); border-radius: 2px; }
+
+.curator-message {
+  margin-bottom: 16px; font-size: 0.875rem; line-height: 1.65;
+  color: var(--text-secondary); word-wrap: break-word;
+}
+.curator-message.user {
+  background: var(--accent-muted); border: 1px solid rgba(212, 160, 74, 0.15);
+  border-radius: var(--radius-md); padding: 10px 14px; color: var(--text-primary);
+}
+.curator-message.assistant p { margin-bottom: 8px; }
+.curator-message.assistant p:last-child { margin-bottom: 0; }
+.curator-message.assistant strong { color: var(--text-primary); }
+.curator-message.assistant code {
+  font-family: var(--font-mono); font-size: 0.8rem;
+  background: var(--bg-elevated); padding: 1px 5px; border-radius: 3px;
+  border: 1px solid var(--border-default);
+}
+
+.curator-message .tool-call {
+  margin: 8px 0; font-size: 0.8rem;
+}
+.curator-message .tool-call summary {
+  cursor: pointer; color: var(--text-tertiary); padding: 4px 0;
+  font-family: var(--font-mono); font-size: 0.75rem;
+}
+.curator-message .tool-call summary:hover { color: var(--accent); }
+.curator-message .tool-call pre {
+  background: var(--bg-elevated); border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm); padding: 8px 10px; margin-top: 4px;
+  font-family: var(--font-mono); font-size: 0.7rem; line-height: 1.5;
+  overflow-x: auto; color: var(--text-tertiary); white-space: pre-wrap;
+  word-break: break-all;
+}
+.curator-message .tool-call pre.tool-result {
+  border-color: rgba(122, 158, 107, 0.2);
+  color: var(--color-public);
+}
+
+.curator-input-area {
+  flex-shrink: 0; padding: 12px 16px;
+  border-top: 1px solid var(--border-default);
+  display: flex; gap: 8px; align-items: flex-end;
+}
+#curator-input {
+  flex: 1; resize: none; border: 1px solid var(--control-border);
+  background: var(--control-bg); color: var(--text-primary);
+  font-family: var(--font-body); font-size: 0.875rem;
+  padding: 8px 12px; border-radius: var(--radius-sm);
+  line-height: 1.5; min-height: 38px; max-height: 120px;
+  outline: none;
+}
+#curator-input:focus { border-color: var(--border-accent); }
+#curator-input::placeholder { color: var(--text-muted); }
+#curator-send {
+  padding: 8px 16px; border: none; border-radius: var(--radius-sm);
+  background: var(--accent); color: #0f0e0c; font-weight: 600;
+  font-family: var(--font-body); font-size: 0.8125rem;
+  cursor: pointer; white-space: nowrap; min-height: 38px;
+}
+#curator-send:hover { background: var(--accent-hover); }
+#curator-send:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.curator-thinking {
+  display: inline-flex; align-items: center; gap: 6px;
+  color: var(--text-muted); font-size: 0.8rem; font-style: italic;
+  padding: 4px 0;
+}
+.curator-thinking .dots span {
+  display: inline-block; width: 4px; height: 4px;
+  background: var(--text-muted); border-radius: 50%;
+  animation: curatorDot 1.4s infinite ease-in-out;
+}
+.curator-thinking .dots span:nth-child(2) { animation-delay: 0.2s; }
+.curator-thinking .dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes curatorDot {
+  0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
+  40% { opacity: 1; transform: scale(1); }
+}
 {% endblock %}
 
 {% block body %}
+{% macro render_sidebar(items, level=0) %}
+  {% for item in items %}
+    {% if item.kind == 'folder' %}
+    <div class="sidebar-folder {{ 'open' if item.active else '' }}" data-folder-path="{{ item.path }}" data-name="{{ item.name }}" data-kind="folder" data-updated="{{ item.updated_at or '' }}">
+      <div class="sidebar-folder-row">
+        <button type="button" class="sidebar-folder-toggle">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
+        </button>
+        <a href="{{ item.url }}" class="sidebar-item {{ 'active' if item.active else '' }}">
+          <span class="sidebar-icon">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h5l2 2h11v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>
+          </span>
+          {{ item.name }}
+        </a>
+      </div>
+      <div class="sidebar-children">
+        {{ render_sidebar(item.children, level + 1) }}
+      </div>
+    </div>
+    {% else %}
+    <a href="{{ item.url }}" class="sidebar-item {{ 'active' if item.active else '' }}" data-name="{{ item.name }}" data-kind="page" data-updated="{{ item.updated_at or '' }}" data-path="{{ item.path }}">
+      <span class="sidebar-icon">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      </span>
+      {{ item.name }}
+      {% if item.visibility is defined and item.visibility == 'private' %}
+      <span class="sidebar-vis" title="Private"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
+      {% elif item.visibility is defined and item.visibility == 'unlisted' %}
+      <span class="sidebar-vis" title="Unlisted"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></span>
+      {% endif %}
+    </a>
+    {% endif %}
+  {% endfor %}
+{% endmacro %}
 <div class="reader-layout">
-  <aside class="sidebar" id="sidebar">
+  <aside class="sidebar thin-scroll" id="sidebar">
     <div class="sidebar-section">
-      <div class="sidebar-heading">Pages</div>
-      {% for item in sidebar_items %}
-      <a href="{{ item.url }}" class="sidebar-item {{ 'active' if item.active else '' }} {{ item.indent_class }}">
-        <span class="sidebar-icon">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-        </span>
-        {{ item.label }}
-      </a>
-      {% endfor %}
+      {% if wiki.slug == owner.username %}
+      <a href="/@{{ owner.username }}" class="sidebar-heading" style="text-decoration:none;display:block;">{{ owner.display_name or owner.username }}</a>
+      {% else %}
+      <a href="/@{{ owner.username }}/{{ wiki.slug }}" class="sidebar-heading" style="text-decoration:none;display:block;">{{ wiki.title or wiki.slug }}</a>
+      {% endif %}
+      <div class="sidebar-sort" style="padding:0 12px 4px;display:flex;gap:2px;">
+        <button class="sidebar-sort-btn active" data-sort="alpha" title="A → Z">A↓</button>
+        <button class="sidebar-sort-btn" data-sort="alpha-desc" title="Z → A">Z↓</button>
+        <button class="sidebar-sort-btn" data-sort="recent" title="Recently updated">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        </button>
+      </div>
+      <div id="sidebar-tree">
+      {% if sidebar_items %}
+      {{ render_sidebar(sidebar_items) }}
+      {% else %}
+      <div id="async-sidebar" data-url="/@{{ owner.username }}/{{ wiki.slug }}/sidebar.json" data-current="{{ page.path }}">
+        <div style="padding:8px 12px;color:var(--text-muted);font-size:0.8125rem;">Loading...</div>
+      </div>
+      {% endif %}
+      </div>
       {% if current_user.is_authenticated and current_user.id == wiki.owner_id %}
       <a href="/@{{ owner.username }}/{{ wiki.slug }}/new" class="sidebar-item" style="color:var(--accent);margin-top:8px;">
         <span class="sidebar-icon" style="color:var(--accent);">
@@ -156,16 +571,58 @@
         </span>
         New page
       </a>
+      <a href="/@{{ owner.username }}/{{ wiki.slug }}/new-folder{% if '/' in page.path %}?parent={{ page.path.rsplit('/', 1)[0] | urlencode }}{% endif %}" class="sidebar-item" style="color:var(--accent);">
+        <span class="sidebar-icon" style="color:var(--accent);">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/><path d="M3 7h5l2 2h11v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>
+        </span>
+        New folder
+      </a>
       {% endif %}
     </div>
+    {% if recently_updated %}
+    <div class="sidebar-section" style="border-top:1px solid var(--border-default);padding-top:12px;">
+      <div class="sidebar-heading">Recently updated</div>
+      {% for rp in recently_updated[:6] %}
+      <a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ rp.path | page_url }}" class="sidebar-item" title="{{ rp.updated_at.strftime('%Y-%m-%d') if rp.updated_at else '' }}">
+        <span class="sidebar-icon" style="color:var(--text-muted);font-size:0.6875rem;font-family:var(--font-mono);min-width:38px;">{{ rp.updated_at.strftime('%m/%d') if rp.updated_at else '' }}</span>
+        {{ rp.title or rp.path.replace('.md', '').split('/')[-1] }}
+      </a>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% if sibling_wikis is defined and sibling_wikis %}
+    <div class="sidebar-section" style="margin-top: 16px; border-top: 1px solid var(--border-default); padding-top: 12px;">
+      <div class="sidebar-heading">{{ owner.display_name or owner.username }}'s Wikis</div>
+      {% for w in sibling_wikis %}
+      <a href="/@{{ owner.username }}/{{ w.slug }}" class="sidebar-item" style="padding-left: 12px;">
+        <span class="sidebar-icon">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+        </span>
+        {{ w.title or w.slug }}
+      </a>
+      {% endfor %}
+    </div>
+    {% endif %}
   </aside>
   <div class="sidebar-overlay" id="sidebar-overlay" onclick="toggleSidebar()"></div>
 
   <main class="content-wrap">
     <div class="breadcrumb">
-      <a href="/@{{ owner.username }}">@{{ owner.username }}</a> /
-      <a href="/@{{ owner.username }}/{{ wiki.slug }}">{{ wiki.slug }}</a>
-      {% if page.path %} / {{ page.path.replace('.md', '').split('/')[-1] }}{% endif %}
+      <button class="hamburger" onclick="toggleSidebar()" aria-label="Open sidebar">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
+      <a href="/@{{ owner.username }}">@{{ owner.username }}</a>
+      {% if wiki.slug != owner.username %}
+        / <a href="/@{{ owner.username }}/{{ wiki.slug }}">{{ wiki.title or wiki.slug }}</a>
+      {% endif %}
+      {% if page.path %}
+        {% set parts = page.path.replace('.md', '').split('/') %}
+        <span style="color:var(--accent);margin:0 4px;font-size:1em">›</span>
+        {% for part in parts %}
+          {% if not loop.first %}/{% endif %}
+          {% if not loop.last %}<a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ '/'.join(parts[:loop.index]) | page_url }}/">{{ part }}</a>{% else %}{{ part }}{% endif %}
+        {% endfor %}
+      {% endif %}
     </div>
 
     <div class="page-actions">
@@ -177,13 +634,77 @@
         {% else %}
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
         {% endif %}
-        {{ page.visibility | replace('-', ' ') | title }}
+        {{ page.visibility | replace('public-view', 'Public View') | replace('public-edit', 'Public Edit') | replace('unlisted-view', 'Unlisted') | replace('unlisted-edit', 'Unlisted Edit') | replace('public', 'Public View') | replace('private', 'Private') | replace('unlisted', 'Unlisted') }}
       </span>
 
       <div class="actions-spacer"></div>
 
+      <a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ page.path | page_url }}/history" class="action-btn-mini" title="Page history">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      </a>
+
+      <div class="download-menu" id="download-menu">
+        <button class="action-btn-mini" title="Download / Clone" onclick="event.stopPropagation(); this.parentElement.classList.toggle('open')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        </button>
+        <div class="download-dropdown">
+          <a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ page.path|page_url }}.md" class="download-option" download>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            Download this page (.md)
+          </a>
+          <a href="/@{{ owner.username }}/{{ wiki.slug }}.zip" class="download-option">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Download entire wiki (.zip)
+          </a>
+          <div style="border-top:1px solid var(--border-default);margin:4px 0;"></div>
+          <div style="padding:6px 10px;">
+            <div style="font-size:0.6875rem;font-weight:600;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;">Clone entire wiki</div>
+            <div style="display:flex;align-items:center;gap:0;border:1px solid var(--border-emphasis);border-radius:var(--radius-sm);background:var(--control-bg);overflow:hidden;">
+              <input type="text" value="git clone {{ request.host_url.rstrip('/') }}/@{{ owner.username }}/{{ wiki.slug }}.git" readonly style="flex:1;padding:6px 8px;font-family:var(--font-mono);font-size:0.6875rem;color:var(--text-primary);background:transparent;border:none;outline:none;min-width:0;" onclick="this.select()">
+              <button title="Copy" style="display:flex;align-items:center;justify-content:center;width:32px;height:32px;border:none;border-left:1px solid var(--border-emphasis);background:transparent;color:var(--text-tertiary);cursor:pointer;flex-shrink:0;" onclick="event.stopPropagation();var inp=this.previousElementSibling;navigator.clipboard.writeText(inp.value);this.innerHTML='<svg width=12 height=12 viewBox=&quot;0 0 24 24&quot; fill=none stroke=&quot;var(--color-success)&quot; stroke-width=2.5><polyline points=&quot;20 6 9 17 4 12&quot;/></svg>';setTimeout(()=>{this.innerHTML='<svg width=12 height=12 viewBox=&quot;0 0 24 24&quot; fill=none stroke=currentColor stroke-width=2><rect x=9 y=9 width=13 height=13 rx=2 ry=2/><path d=&quot;M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1&quot;/></svg>'},1500)">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              </button>
+            </div>
+          </div>
+          {% if current_user.is_authenticated and current_user.id == wiki.owner_id and wiki.slug != owner.username %}
+          <div style="border-top:1px solid var(--border-default);margin:4px 0;"></div>
+          <button class="download-option" style="color:var(--color-private);" onclick="deleteWiki()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            Delete wiki
+          </button>
+          {% endif %}
+        </div>
+      </div>
+
       {% if current_user.is_authenticated and current_user.id == wiki.owner_id %}
-      <a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ page.path.replace('.md', '') }}/edit" class="action-btn">
+      <a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ page.path | page_url }}/edit" class="action-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+        Edit
+      </a>
+      <a href="/@{{ owner.username }}/{{ wiki.slug }}/new-folder{% if '/' in page.path %}?parent={{ page.path.rsplit('/', 1)[0] | urlencode }}{% endif %}" class="action-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/><path d="M3 7h5l2 2h11v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>
+        New folder
+      </a>
+      <button class="action-btn" style="color:var(--color-private);" onclick="deletePage()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+        Delete
+      </button>
+      <button class="action-btn" onclick="openShareModal()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
+        Share
+      </button>
+      {% if management_items is defined and management_items is not none %}
+      <button class="action-btn" id="manage-toggle" onclick="toggleManage()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+        Manage
+      </button>
+      {% endif %}
+      <button class="action-btn" onclick="reindexWiki(this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
+        Reindex
+      </button>
+      {% elif user_can_edit is defined and user_can_edit %}
+      <a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ page.path | page_url }}/edit" class="action-btn">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
         Edit
       </a>
@@ -207,29 +728,958 @@
       {% endif %}
     </div>
 
+    {% if private_band_warning %}
+    <div class="private-band-warning">
+      This page has sections visible only to editors; not a security boundary. Don’t use private bands for real secrets.
+    </div>
+    {% endif %}
+
+    {% if management_items is defined and management_items is not none %}
+    <div id="manage-panel" style="display:none;margin-bottom:24px;">
+      <div style="border:1px solid var(--border-default);border-radius:var(--radius-md);overflow:hidden;">
+        {% for item in management_items %}
+        <div style="display:grid;grid-template-columns:24px minmax(0,1fr) auto auto auto;gap:12px;align-items:center;padding:10px 14px;{{ 'border-bottom:1px solid var(--border-default);' if not loop.last else '' }}font-size:0.8125rem;">
+          <input type="checkbox" class="mgmt-check" style="width:16px;height:16px;accent-color:var(--accent);cursor:pointer;margin:0;" onclick="syncMgmt(this)" data-path="{{ item.path }}{{ '/' if item.kind == 'folder' else '' }}">
+          <a href="{{ item.url }}" style="display:flex;align-items:center;gap:8px;color:var(--text-primary);text-decoration:none;min-width:0;">
+            {% if item.kind == 'folder' %}
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h5l2 2h11v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>
+            {% else %}
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            {% endif %}
+            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ item.name }}</span>
+          </a>
+          <span class="vis-pill {{ item.visibility }}" style="font-size:0.7rem;padding:2px 6px;">{{ item.visibility | replace('mixed', 'Mixed') | replace('public-view', 'Public View') | replace('public-edit', 'Public Edit') | replace('unlisted-view', 'Unlisted') | replace('unlisted-edit', 'Unlisted Edit') | replace('public', 'Public View') | replace('private', 'Private') | replace('unlisted', 'Unlisted') }}</span>
+          <span style="font-size:0.7rem;color:var(--text-muted);font-family:var(--font-mono);">{{ item.updated_at.strftime('%Y-%m-%d') if item.updated_at else '' }}</span>
+          <button style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border:none;background:transparent;color:var(--text-muted);cursor:pointer;border-radius:var(--radius-sm);" title="Delete" onclick="deleteMgmtItem('{{ item.path }}{{ '/' if item.kind == 'folder' else '' }}', '{{ item.name }}', '{{ item.kind }}')">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          </button>
+        </div>
+        {% else %}
+        <div style="padding:14px;color:var(--text-tertiary);font-size:0.8125rem;">No pages yet.</div>
+        {% endfor %}
+      </div>
+      <div id="mgmt-bar" style="display:none;margin-top:10px;align-items:center;gap:10px;padding:8px 14px;background:var(--bg-surface);border:1px solid var(--border-default);border-radius:var(--radius-md);font-size:0.8125rem;">
+        <span id="mgmt-count" style="color:var(--accent);font-weight:600;font-family:var(--font-mono);">0</span>
+        <span style="color:var(--text-secondary);">selected</span>
+        <select id="mgmt-vis-select" style="background:var(--bg-surface);color:var(--text-primary);border:1px solid var(--border-emphasis);border-radius:var(--radius-sm);padding:3px 8px;font-size:0.8125rem;font-family:var(--font-body);">
+          <option value="public-view">Public View</option>
+          <option value="public-edit">Public Edit</option>
+          <option value="unlisted-view">Unlisted</option>
+          <option value="unlisted-edit">Unlisted Edit</option>
+          <option value="private">Private</option>
+        </select>
+        <button style="padding:4px 10px;border-radius:var(--radius-sm);font-size:0.8125rem;font-weight:600;border:none;cursor:pointer;background:var(--accent);color:#0f0e0c;font-family:var(--font-body);" onclick="mgmtBulkVis()">Set visibility</button>
+        <button style="padding:4px 10px;border-radius:var(--radius-sm);font-size:0.8125rem;font-weight:600;border:1px solid rgba(196,92,60,0.3);cursor:pointer;background:rgba(196,92,60,0.1);color:var(--color-private);font-family:var(--font-body);" onclick="mgmtBulkDel()">Delete</button>
+      </div>
+      {% if wiki.slug != owner.username %}
+      <div style="margin-top:12px;display:flex;justify-content:space-between;align-items:center;">
+        <button style="font-size:0.75rem;padding:4px 10px;border-radius:var(--radius-sm);border:1px solid var(--border-emphasis);background:transparent;color:var(--text-secondary);cursor:pointer;font-family:var(--font-body);font-weight:600;" onclick="renameWiki()">Rename wiki</button>
+        <button style="font-size:0.75rem;padding:4px 10px;border-radius:var(--radius-sm);border:1px solid rgba(196,92,60,0.3);background:rgba(196,92,60,0.1);color:var(--color-private);cursor:pointer;font-family:var(--font-body);font-weight:600;" onclick="deleteWiki()">Delete wiki</button>
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {% if toc and toc|length >= 3 %}
+    <nav class="toc-block inline-toc">
+      <div class="toc-title">Contents</div>
+      <ol class="toc-list">
+        {% for level, id, text in toc %}
+        <li class="toc-item toc-level-{{ level }}"><a href="#{{ id }}">{{ text }}</a></li>
+        {% endfor %}
+      </ol>
+    </nav>
+    {% endif %}
+
     <article class="article">
       {{ rendered_html | safe }}
     </article>
+
+    {% if backlinks %}
+    <nav class="backlinks-block inline-backlinks">
+      <div class="backlinks-title">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 1 1 0 10h-2"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+        What links here
+      </div>
+      <ul class="backlinks-list">
+        {% for bl in backlinks %}
+        <li><a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ bl.path | page_url }}">{{ bl.title or bl.path.replace('.md', '') }}</a></li>
+        {% endfor %}
+      </ul>
+    </nav>
+    {% endif %}
+
   </main>
+
+  {% if (toc and toc|length >= 3) or backlinks or (link_graph and link_graph.nodes|length > 1) or (page_grants is defined and page_grants) %}
+  <aside class="right-panel" id="right-panel">
+    <div class="resize-handle" id="resize-handle"></div>
+    <div class="right-panel-inner thin-scroll">
+      {% if toc and toc|length >= 3 %}
+      <nav class="toc-block">
+        <div class="toc-title">Contents</div>
+        <ol class="toc-list">
+          {% for level, id, text in toc %}
+          <li class="toc-item toc-level-{{ level }}"><a href="#{{ id }}">{{ text }}</a></li>
+          {% endfor %}
+        </ol>
+      </nav>
+      {% endif %}
+
+      {% if backlinks %}
+      <nav class="backlinks-block">
+        <div class="backlinks-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 1 1 0 10h-2"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+          What links here
+        </div>
+        <ul class="backlinks-list">
+          {% for bl in backlinks %}
+          <li><a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ bl.path | page_url }}">{{ bl.title or bl.path.replace('.md', '') }}</a></li>
+          {% endfor %}
+        </ul>
+      </nav>
+      {% endif %}
+
+      {% if page_grants is defined and page_grants %}
+      <nav class="shared-with-block">
+        <div class="shared-with-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
+          Shared with
+        </div>
+        <ul class="shared-with-list">
+          {% for username, role in page_grants %}
+          <li>
+            <a href="/@{{ username }}">@{{ username }}</a>
+            <span class="role-badge role-{{ role }}">{{ role }}</span>
+          </li>
+          {% endfor %}
+        </ul>
+      </nav>
+      {% endif %}
+
+      {% if link_graph and link_graph.nodes|length > 1 %}
+      <div class="graph-block">
+        <div class="graph-title" style="display:flex;align-items:center;justify-content:space-between;">
+          Links
+          {% if full_graph_url %}<a href="{{ full_graph_url }}" style="font-size:0.6875rem;color:var(--accent);text-decoration:none;text-transform:none;letter-spacing:0;font-weight:400;">full graph →</a>{% endif %}
+        </div>
+        <div id="link-graph"></div>
+      </div>
+      {% endif %}
+    </div>
+  </aside>
+  {% endif %}
 </div>
+
+<!-- Curator AI sidebar -->
+<button class="curator-toggle" onclick="toggleCurator()" title="Open Curator" aria-label="Open Curator">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+</button>
+<div class="curator-panel" id="curator-panel">
+  <div class="curator-header">
+    <span class="curator-title">[[curator]]</span>
+    <button onclick="toggleCurator()" class="curator-close" aria-label="Close Curator">&times;</button>
+  </div>
+  <div class="curator-messages" id="curator-messages">
+    <div class="curator-message assistant">
+      I'm the Curator. I can help you navigate, organize, and curate this wiki. What would you like to do?
+    </div>
+  </div>
+  <div class="curator-input-area">
+    <textarea id="curator-input" placeholder="Ask the Curator..." rows="1"></textarea>
+    <button onclick="sendCuratorMessage()" id="curator-send">Send</button>
+  </div>
+</div>
+<div class="curator-overlay" id="curator-overlay" onclick="toggleCurator()"></div>
+
 {% endblock %}
 
 {% block scripts %}
 <script>
+const folderStorageKey = 'wikihub-sidebar-folders';
+
 function toggleSidebar() {
   document.getElementById('sidebar').classList.toggle('open');
   document.getElementById('sidebar-overlay').classList.toggle('open');
 }
 
+function loadFolders() {
+  try {
+    return JSON.parse(localStorage.getItem(folderStorageKey) || '{}');
+  } catch (e) {
+    return {};
+  }
+}
+
+function saveFolders(state) {
+  localStorage.setItem(folderStorageKey, JSON.stringify(state));
+}
+
+function applyFolderState() {
+  const state = loadFolders();
+  let changed = false;
+  document.querySelectorAll('.sidebar-folder').forEach(folder => {
+    const path = folder.dataset.folderPath;
+    if (state[path] === false) {
+      folder.classList.remove('open');
+    } else if (state[path] === true || folder.classList.contains('open')) {
+      folder.classList.add('open');
+      // Persist open state (including server-side auto-expand for active page)
+      // so folders stay open when user navigates to a page in a different branch.
+      if (state[path] !== true) { state[path] = true; changed = true; }
+    }
+    // non-active folders with no localStorage state stay collapsed (server default)
+  });
+  if (changed) saveFolders(state);
+  // scroll active sidebar item into view
+  requestAnimationFrame(() => {
+    const active = document.querySelector('.sidebar-item.active');
+    if (active) active.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+  });
+}
+
+function toggleFolder(path) {
+  const folder = document.querySelector(`.sidebar-folder[data-folder-path="${CSS.escape(path)}"]`);
+  if (!folder) return;
+  folder.classList.toggle('open');
+  const state = loadFolders();
+  state[path] = folder.classList.contains('open');
+  saveFolders(state);
+}
+
+// Event delegation for folder toggles (avoids inline onclick with unescaped paths)
+document.addEventListener('click', function(e) {
+  var btn = e.target.closest('.sidebar-folder-toggle');
+  if (!btn) return;
+  var folder = btn.closest('.sidebar-folder');
+  if (folder) toggleFolder(folder.dataset.folderPath);
+});
+
+// --- Sidebar sort ---
+const sortStorageKey = 'wikihub-sidebar-sort';
+
+function getSidebarSort() {
+  return localStorage.getItem(sortStorageKey) || 'alpha';
+}
+
+function sortSidebarChildren(container, mode) {
+  // Get direct children that are sortable (folders + page links)
+  var items = [];
+  Array.from(container.children).forEach(function(el) {
+    if (el.classList.contains('sidebar-folder') || (el.tagName === 'A' && el.classList.contains('sidebar-item'))) {
+      items.push(el);
+    }
+  });
+  if (items.length < 2) return;
+
+  items.sort(function(a, b) {
+    var aKind = a.dataset.kind || (a.classList.contains('sidebar-folder') ? 'folder' : 'page');
+    var bKind = b.dataset.kind || (b.classList.contains('sidebar-folder') ? 'folder' : 'page');
+    var aName = (a.dataset.name || '').toLowerCase();
+    var bName = (b.dataset.name || '').toLowerCase();
+    var aUpdated = a.dataset.updated || '';
+    var bUpdated = b.dataset.updated || '';
+    var aPath = a.dataset.path || a.dataset.folderPath || '';
+    var bPath = b.dataset.path || b.dataset.folderPath || '';
+
+    // Folders always first
+    if (aKind !== bKind) return aKind === 'folder' ? -1 : 1;
+
+    if (mode === 'alpha') {
+      return aName < bName ? -1 : aName > bName ? 1 : (aPath < bPath ? -1 : aPath > bPath ? 1 : 0);
+    } else if (mode === 'alpha-desc') {
+      return aName > bName ? -1 : aName < bName ? 1 : (aPath > bPath ? -1 : aPath < bPath ? 1 : 0);
+    } else if (mode === 'recent') {
+      // Most recently updated first; items without updated_at go last
+      if (!aUpdated && !bUpdated) return aName < bName ? -1 : aName > bName ? 1 : 0;
+      if (!aUpdated) return 1;
+      if (!bUpdated) return -1;
+      return aUpdated > bUpdated ? -1 : aUpdated < bUpdated ? 1 : 0;
+    }
+    return 0;
+  });
+
+  // Re-insert in sorted order
+  items.forEach(function(el) { container.appendChild(el); });
+
+  // Recurse into folder children
+  container.querySelectorAll(':scope > .sidebar-folder > .sidebar-children').forEach(function(sub) {
+    sortSidebarChildren(sub, mode);
+  });
+}
+
+function applySidebarSort(mode) {
+  localStorage.setItem(sortStorageKey, mode);
+  // Update active button state
+  document.querySelectorAll('.sidebar-sort-btn').forEach(function(btn) {
+    btn.classList.toggle('active', btn.dataset.sort === mode);
+  });
+  // Sort the tree container
+  var tree = document.getElementById('sidebar-tree');
+  if (tree) sortSidebarChildren(tree, mode);
+}
+
+// Initialize sort buttons
+document.querySelectorAll('.sidebar-sort-btn').forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    applySidebarSort(btn.dataset.sort);
+  });
+});
+
+// Apply saved sort on load (after sidebar rendered)
+(function() {
+  var saved = getSidebarSort();
+  if (saved !== 'alpha') {
+    // Wait for async sidebar if needed
+    var asyncEl = document.getElementById('async-sidebar');
+    if (asyncEl) {
+      var observer = new MutationObserver(function() {
+        observer.disconnect();
+        applySidebarSort(saved);
+      });
+      observer.observe(asyncEl, { childList: true });
+    } else {
+      applySidebarSort(saved);
+    }
+  }
+  // Mark initial active button
+  document.querySelectorAll('.sidebar-sort-btn').forEach(function(btn) {
+    btn.classList.toggle('active', btn.dataset.sort === saved);
+  });
+})();
+
+function setButtonLoading(btn, text) {
+  btn.classList.add('btn-loading');
+  btn.textContent = '';
+  var sp = document.createElement('span');
+  sp.className = 'wh-spinner';
+  btn.appendChild(sp);
+  btn.appendChild(document.createTextNode(text));
+}
+
 function starWiki() {
+  var btn = event.currentTarget;
+  setButtonLoading(btn, 'Starring...');
   fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}/star', {method: 'POST'})
-    .then(r => { if (r.ok) location.reload(); else alert('Already starred or not logged in'); });
+    .then(r => { if (r.ok) location.reload(); else { btn.classList.remove('btn-loading'); btn.textContent = 'Star'; alert('Already starred or not logged in'); } });
 }
 
 function forkWiki() {
+  var btn = event.currentTarget;
+  setButtonLoading(btn, 'Forking...');
   fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}/fork', {method: 'POST'})
     .then(r => r.json())
-    .then(d => { if (d.web_url) location.href = d.web_url; else alert(d.message || 'Fork failed'); });
+    .then(d => { if (d.web_url) location.href = d.web_url; else { btn.classList.remove('btn-loading'); btn.textContent = 'Fork'; alert(d.message || 'Fork failed'); } });
 }
+
+function deletePage() {
+  if (!confirm('Delete "{{ page.path }}"? This cannot be undone.')) return;
+  var btn = event.currentTarget;
+  setButtonLoading(btn, 'Deleting...');
+  fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}/pages/{{ page.path }}', {method: 'DELETE'})
+    .then(r => { if (r.ok) location.href = '/@{{ owner.username }}/{{ wiki.slug }}'; else { btn.classList.remove('btn-loading'); btn.textContent = 'Delete'; alert('Delete failed'); } });
+}
+
+function renameWiki() {
+  var newSlug = prompt('New slug for this wiki (URL-safe, lowercase):', '{{ wiki.slug }}');
+  if (!newSlug || newSlug === '{{ wiki.slug }}') return;
+  newSlug = newSlug.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '-');
+  if (!confirm('Rename "{{ wiki.slug }}" to "' + newSlug + '"? Old URLs will redirect.')) return;
+  fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}/rename', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({slug: newSlug})
+  }).then(r => r.json().then(d => {
+    if (r.ok) { location.href = d.url; }
+    else { alert(d.message || 'Rename failed'); }
+  }));
+}
+
+function deleteWiki() {
+  if (!confirm('Delete the entire wiki "{{ wiki.slug }}"? All pages and history will be lost. This cannot be undone.')) return;
+  if (!confirm('Are you sure? Click OK to permanently delete this wiki.')) return;
+  fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}', {method: 'DELETE'})
+    .then(r => { if (r.ok) location.href = '/@{{ owner.username }}'; else r.json().then(d => alert(d.message || 'Delete failed')); });
+}
+
+function toggleManage() {
+  var panel = document.getElementById('manage-panel');
+  var btn = document.getElementById('manage-toggle');
+  if (!panel) return;
+  var show = panel.style.display === 'none';
+  panel.style.display = show ? 'block' : 'none';
+  if (btn) btn.classList.toggle('primary', show);
+}
+
+var mgmtSelected = new Set();
+function syncMgmt(cb) {
+  if (cb.checked) mgmtSelected.add(cb.dataset.path);
+  else mgmtSelected.delete(cb.dataset.path);
+  var bar = document.getElementById('mgmt-bar');
+  var cnt = document.getElementById('mgmt-count');
+  if (bar) { bar.style.display = mgmtSelected.size > 0 ? 'flex' : 'none'; cnt.textContent = mgmtSelected.size; }
+}
+async function mgmtBulkVis() {
+  var vis = document.getElementById('mgmt-vis-select').value;
+  var paths = Array.from(mgmtSelected);
+  if (!confirm('Set ' + paths.length + ' item(s) to "' + vis + '"?')) return;
+  var btn = event.currentTarget;
+  setButtonLoading(btn, 'Setting visibility…');
+  var r = await fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}/bulk-visibility', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({paths:paths,visibility:vis})});
+  if (r.ok) location.reload(); else { btn.classList.remove('btn-loading'); btn.textContent = 'Set visibility'; alert('Failed'); }
+}
+async function mgmtBulkDel() {
+  var paths = Array.from(mgmtSelected);
+  if (!confirm('Delete ' + paths.length + ' item(s)? This cannot be undone.')) return;
+  var btn = event.currentTarget;
+  setButtonLoading(btn, 'Deleting…');
+  var r = await fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}/bulk-delete', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({paths:paths})});
+  if (r.ok) location.reload(); else { btn.classList.remove('btn-loading'); btn.textContent = 'Delete'; alert('Failed'); }
+}
+async function deleteMgmtItem(path, name, kind) {
+  var label = kind === 'folder' ? 'folder "' + name + '" and all contents' : '"' + name + '"';
+  if (!confirm('Delete ' + label + '? This cannot be undone.')) return;
+  var btn = event.currentTarget;
+  btn.disabled = true;
+  btn.style.opacity = '0.5';
+  var r = await fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}/bulk-delete', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({paths:[path]})});
+  if (r.ok) location.reload(); else { btn.disabled = false; btn.style.opacity = '1'; alert('Failed'); }
+}
+
+applyFolderState();
+
+// async sidebar for large wikis — data from our own API, safe to render
+(function() {
+  var el = document.getElementById('async-sidebar');
+  if (!el) return;
+  var url = el.dataset.url;
+  var currentPath = el.dataset.current;
+
+  function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+  function renderItem(item, level) {
+    if (item.kind === 'folder') {
+      var isActive = item.active ? ' open' : '';
+      var upd = item.updated_at ? esc(item.updated_at) : '';
+      var h = '<div class="sidebar-folder' + isActive + '" data-folder-path="' + esc(item.path) + '" data-name="' + esc(item.name) + '" data-kind="folder" data-updated="' + upd + '">';
+      h += '<div class="sidebar-folder-row">';
+      h += '<button type="button" class="sidebar-folder-toggle">';
+      h += '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>';
+      h += '</button>';
+      h += '<a href="' + esc(item.url) + '" class="sidebar-item' + (item.active ? ' active' : '') + '">';
+      h += '<span class="sidebar-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h5l2 2h11v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg></span>';
+      h += esc(item.name) + '</a></div>';
+      h += '<div class="sidebar-children">' + (item.children || []).map(function(c) { return renderItem(c, level + 1); }).join('') + '</div>';
+      h += '</div>';
+      return h;
+    } else {
+      var cls = item.path === currentPath ? ' active' : '';
+      var upd = item.updated_at ? esc(item.updated_at) : '';
+      return '<a href="' + esc(item.url) + '" class="sidebar-item' + cls + '" data-name="' + esc(item.name) + '" data-kind="page" data-updated="' + upd + '" data-path="' + esc(item.path) + '"><span class="sidebar-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>' + esc(item.name) + '</a>';
+    }
+  }
+
+  fetch(url)
+    .then(function(r) { return r.json(); })
+    .then(function(items) {
+      el.textContent = '';
+      el.insertAdjacentHTML('beforeend', items.map(function(item) { return renderItem(item, 0); }).join(''));
+      applyFolderState();
+    })
+    .catch(function() {
+      el.textContent = 'Search to navigate';
+      el.style.cssText = 'padding:8px 12px;color:var(--text-muted);font-size:0.75rem;';
+    });
+})();
+
+document.addEventListener('click', function(e) {
+  document.querySelectorAll('.download-menu.open').forEach(function(m) {
+    if (!m.contains(e.target)) m.classList.remove('open');
+  });
+});
+
+(function() {
+  const handle = document.getElementById('resize-handle');
+  const panel = document.getElementById('right-panel');
+  if (!handle || !panel) return;
+
+  const stored = localStorage.getItem('wikihub-right-panel-width');
+  if (stored) panel.style.width = stored + 'px';
+
+  let startX, startW;
+  handle.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    startX = e.clientX;
+    startW = panel.offsetWidth;
+    handle.classList.add('dragging');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    function onMove(e) {
+      const w = Math.max(180, Math.min(600, startW - (e.clientX - startX)));
+      panel.style.width = w + 'px';
+    }
+    function onUp() {
+      handle.classList.remove('dragging');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      localStorage.setItem('wikihub-right-panel-width', panel.offsetWidth);
+      if (window._resizeGraph) window._resizeGraph();
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+})();
+
+async function reindexWiki(btn) {
+  const origText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Reindexing…';
+  try {
+    const resp = await fetch('/@{{ owner.username }}/{{ wiki.slug }}/reindex', {method: 'POST'});
+    if (resp.ok) { btn.textContent = 'Done ✓'; setTimeout(() => location.reload(), 800); }
+    else { btn.textContent = 'Failed'; setTimeout(() => { btn.textContent = origText; btn.disabled = false; }, 2000); }
+  } catch (e) { btn.textContent = 'Error'; setTimeout(() => { btn.textContent = origText; btn.disabled = false; }, 2000); }
+}
+
+/* --- Curator panel --- */
+let curatorConversationId = null;
+
+function toggleCurator() {
+  const panel = document.getElementById('curator-panel');
+  const overlay = document.getElementById('curator-overlay');
+  const toggle = document.querySelector('.curator-toggle');
+  panel.classList.toggle('open');
+  overlay.classList.toggle('open');
+  if (panel.classList.contains('open')) {
+    document.getElementById('curator-input').focus();
+    if (toggle) toggle.style.display = 'none';
+  } else {
+    if (toggle) toggle.style.display = '';
+  }
+}
+
+async function sendCuratorMessage() {
+  const input = document.getElementById('curator-input');
+  const message = input.value.trim();
+  if (!message) return;
+
+  input.value = '';
+  input.style.height = 'auto';
+  curatorAppendMessage('user', message);
+
+  const msgDiv = curatorAppendMessage('assistant', '');
+  const sendBtn = document.getElementById('curator-send');
+  sendBtn.disabled = true;
+
+  try {
+    const response = await fetch('/api/v1/agent/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: message,
+        conversation_id: curatorConversationId,
+        context: {
+          owner: {{ owner.username | tojson }},
+          wiki: {{ wiki.slug | tojson }},
+          page_path: {{ page.path | tojson }}
+        }
+      })
+    });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      msgDiv.textContent = 'Error: ' + (err.message || response.statusText);
+      sendBtn.disabled = false;
+      return;
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let fullText = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        let data;
+        try { data = JSON.parse(line.slice(6)); } catch (e) { continue; }
+
+        if (data.conversation_id) {
+          curatorConversationId = data.conversation_id;
+        }
+
+        if (data.type === 'text') {
+          fullText += data.content;
+          msgDiv.innerHTML = curatorRenderMarkdown(fullText);
+          const msgs = document.getElementById('curator-messages');
+          msgs.scrollTop = msgs.scrollHeight;
+        } else if (data.type === 'tool_use' && data.input && Object.keys(data.input).length > 0) {
+          const toolDiv = document.createElement('div');
+          toolDiv.className = 'tool-call';
+          const inputStr = JSON.stringify(data.input, null, 2);
+          toolDiv.innerHTML = '<details><summary>\u{1f527} ' + curatorEscape(data.name) + '</summary><pre>' + curatorEscape(inputStr) + '</pre></details>';
+          msgDiv.appendChild(toolDiv);
+        } else if (data.type === 'tool_result') {
+          const lastTool = msgDiv.querySelector('.tool-call:last-child details');
+          if (lastTool) {
+            const resultPre = document.createElement('pre');
+            resultPre.className = 'tool-result';
+            const content = typeof data.content === 'string' ? data.content : JSON.stringify(data.content);
+            resultPre.textContent = content.length > 800 ? content.slice(0, 800) + '...' : content;
+            lastTool.appendChild(resultPre);
+          }
+        } else if (data.type === 'error') {
+          const errP = document.createElement('p');
+          errP.style.color = 'var(--color-private)';
+          errP.textContent = data.content;
+          msgDiv.appendChild(errP);
+        }
+      }
+    }
+  } catch (err) {
+    msgDiv.textContent = 'Error: ' + err.message;
+  } finally {
+    sendBtn.disabled = false;
+    document.getElementById('curator-input').focus();
+  }
+}
+
+function curatorAppendMessage(role, content) {
+  const messages = document.getElementById('curator-messages');
+  const div = document.createElement('div');
+  div.className = 'curator-message ' + role;
+  if (content) {
+    if (role === 'user') {
+      div.textContent = content;
+    } else {
+      div.innerHTML = curatorRenderMarkdown(content);
+    }
+  }
+  messages.appendChild(div);
+  messages.scrollTop = messages.scrollHeight;
+  return div;
+}
+
+function curatorEscape(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function curatorRenderMarkdown(text) {
+  return text
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" style="color:var(--accent)">$1</a>')
+    .replace(/\n\n/g, '</p><p>')
+    .replace(/\n/g, '<br>')
+    .replace(/^/, '<p>').replace(/$/, '</p>')
+    .replace(/<p><\/p>/g, '');
+}
+
+// Auto-resize textarea + Enter to send
+document.addEventListener('DOMContentLoaded', function() {
+  const input = document.getElementById('curator-input');
+  if (!input) return;
+  input.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendCuratorMessage();
+    }
+  });
+  input.addEventListener('input', function() {
+    this.style.height = 'auto';
+    this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+  });
+});
 </script>
+{% if link_graph and link_graph.nodes|length > 1 %}
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script>
+(function() {
+  const container = document.getElementById('link-graph');
+  if (!container) return;
+
+  const data = {{ link_graph | tojson }};
+  if (!data.nodes.length) return;
+
+  let width = container.clientWidth || 240;
+  let height = container.clientHeight || width;
+
+  // directory-based coloring
+  const dirColors = ['#d4a04a', '#7a9e6b', '#c45c3c', '#6b9ec4', '#b8ad9e', '#9e6bc4', '#c4946b'];
+  const dirMap = new Map();
+  let dirIdx = 0;
+  function dirColor(url) {
+    if (!url) return dirColors[0];
+    const parts = url.split('/').filter(Boolean);
+    const dir = parts.length > 3 ? parts[3] : '_root';
+    if (!dirMap.has(dir)) dirMap.set(dir, dirColors[dirIdx++ % dirColors.length]);
+    return dirMap.get(dir);
+  }
+
+  // count links per node for sizing
+  const linkCount = new Map();
+  data.links.forEach(l => {
+    linkCount.set(l.source, (linkCount.get(l.source) || 0) + 1);
+    linkCount.set(l.target, (linkCount.get(l.target) || 0) + 1);
+  });
+
+  const svg = d3.select(container).append('svg')
+    .attr('viewBox', `0 0 ${width} ${height}`);
+
+  const nodeMap = new Map(data.nodes.map(n => [n.id, n]));
+  const links = data.links.filter(l => nodeMap.has(l.source) && nodeMap.has(l.target));
+
+  const sim = d3.forceSimulation(data.nodes)
+    .force('link', d3.forceLink(links).id(d => d.id).distance(60))
+    .force('charge', d3.forceManyBody().strength(-100))
+    .force('center', d3.forceCenter(width / 2, height / 2))
+    .force('collision', d3.forceCollide(25))
+    .alphaDecay(0.05);
+
+  const link = svg.append('g')
+    .selectAll('line')
+    .data(links)
+    .join('line')
+    .attr('stroke', '#6b6560')
+    .attr('stroke-width', 1.5)
+    .attr('stroke-opacity', 0.7);
+
+  const node = svg.append('g')
+    .selectAll('g')
+    .data(data.nodes)
+    .join('g')
+    .style('cursor', 'pointer')
+    .on('click', (e, d) => { if (d.url) window.location.href = d.url; });
+
+  node.append('circle')
+    .attr('r', d => {
+      const lc = linkCount.get(d.id) || 0;
+      const base = d.current ? 7 : 4;
+      return base + Math.min(lc * 1.5, 8);
+    })
+    .attr('fill', d => d.current ? '#d4a04a' : dirColor(d.url))
+    .attr('fill-opacity', d => d.current ? 1 : 0.8)
+    .attr('stroke', d => d.current ? '#d4a04a' : 'none')
+    .attr('stroke-width', 2)
+    .attr('stroke-opacity', 0.4);
+
+  node.append('text')
+    .text(d => d.title)
+    .attr('font-size', '10px')
+    .attr('fill', d => d.current ? '#e8e0d4' : '#8a8480')
+    .attr('dx', d => { const lc = linkCount.get(d.id) || 0; return (d.current ? 7 : 4) + Math.min(lc * 1.5, 8) + 4; })
+    .attr('dy', 3)
+    .style('pointer-events', 'none');
+
+  sim.on('tick', () => {
+    link.attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+        .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+    node.attr('transform', d => {
+      d.x = Math.max(10, Math.min(width - 10, d.x));
+      d.y = Math.max(10, Math.min(height - 10, d.y));
+      return `translate(${d.x},${d.y})`;
+    });
+  });
+
+  // re-fit graph when panel resizes (triggered on drag end)
+  window._resizeGraph = function() {
+    const newW = container.clientWidth;
+    const newH = container.clientHeight;
+    if (newW > 0 && newH > 0 && (newW !== width || newH !== height)) {
+      width = newW; height = newH;
+      svg.attr('viewBox', `0 0 ${width} ${height}`);
+      sim.force('center', d3.forceCenter(width / 2, height / 2));
+      sim.alpha(0.3).restart();
+    }
+  };
+})();
+</script>
+{% endif %}
+
+{% if page and json_ld_author %}
+<script type="application/ld+json">
+{{ {
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "headline": page.title or page.path,
+  "author": {"@type": "Person", "name": json_ld_author},
+  "datePublished": (page.created_at.isoformat() if page.created_at else wiki.created_at.isoformat()),
+  "dateModified": (page.updated_at.isoformat() if page.updated_at else wiki.updated_at.isoformat()),
+  "license": "https://wikihub.md/terms"
+}|tojson }}
+</script>
+{% endif %}
+
+{% if current_user.is_authenticated and current_user.id == wiki.owner_id %}
+<!-- share modal -->
+<div class="share-overlay" id="share-overlay" onclick="if(event.target===this)closeShareModal()">
+  <div class="share-modal">
+    <h3>Share "{{ page.title or page.path }}"</h3>
+    <div class="share-form">
+      <div style="position:relative;flex:1;">
+        <input type="text" id="share-username" placeholder="username or email" autocomplete="off" style="width:100%;margin:0;">
+        <div id="share-suggestions" class="share-suggestions"></div>
+      </div>
+      <select id="share-role">
+        <option value="read">read</option>
+        <option value="edit">edit</option>
+      </select>
+      <button onclick="submitShare()">Share</button>
+    </div>
+    <div id="share-status" style="font-size:0.75rem;margin-bottom:12px;display:none;"></div>
+    <ul class="share-grants" id="share-grants-list">
+      {% for username, role in page_grants %}
+      <li data-user="{{ username }}">
+        <span class="grant-info">
+          <a href="/@{{ username }}">@{{ username }}</a>
+          <span class="role-badge role-{{ role }}">{{ role }}</span>
+        </span>
+        <button class="revoke-btn" onclick="revokeShare('{{ username }}')">revoke</button>
+      </li>
+      {% endfor %}
+    </ul>
+    {% if not page_grants %}<p class="share-empty" id="share-empty">No one has access yet.</p>{% endif %}
+  </div>
+</div>
+<script>
+function openShareModal() {
+  document.getElementById('share-overlay').classList.add('open');
+  document.getElementById('share-username').focus();
+}
+function closeShareModal() {
+  document.getElementById('share-overlay').classList.remove('open');
+}
+function submitShare() {
+  var input = document.getElementById('share-username').value.trim().toLowerCase();
+  var role = document.getElementById('share-role').value;
+  var status = document.getElementById('share-status');
+  if (!input) return;
+  status.style.display = 'block';
+  status.style.color = 'var(--text-muted)';
+  status.textContent = 'Sharing...';
+  // Detect email vs username
+  var body = {pattern: '{{ page.path }}', role: role};
+  if (input.includes('@') && input.includes('.')) {
+    body.email = input;
+  } else {
+    body.username = input;
+  }
+  fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}/share', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body)
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (d.error) {
+      status.style.color = 'var(--color-private)';
+      status.textContent = d.message || 'Error';
+    } else {
+      var grantedUser = d.grant.split(':')[0].replace('@', '');
+      status.style.color = 'var(--color-success, #4a9)';
+      status.textContent = 'Shared with @' + grantedUser;
+      document.getElementById('share-username').value = '';
+      closeSuggestions();
+      var empty = document.getElementById('share-empty');
+      if (empty) empty.remove();
+      var li = document.createElement('li');
+      li.setAttribute('data-user', grantedUser);
+      li.innerHTML = '<span class="grant-info"><a href="/@' + grantedUser + '">@' + grantedUser + '</a> <span class="role-badge role-' + role + '">' + role + '</span></span><button class="revoke-btn" onclick="revokeShare(\'' + grantedUser + '\')">revoke</button>';
+      document.getElementById('share-grants-list').appendChild(li);
+    }
+  });
+}
+
+// --- Autocomplete ---
+var shareInput = document.getElementById('share-username');
+var suggestionsEl = document.getElementById('share-suggestions');
+var debounceTimer = null;
+var activeSuggestion = -1;
+
+function closeSuggestions() {
+  suggestionsEl.classList.remove('open');
+  suggestionsEl.innerHTML = '';
+  activeSuggestion = -1;
+}
+
+shareInput.addEventListener('input', function() {
+  var q = this.value.trim();
+  clearTimeout(debounceTimer);
+  if (q.length < 2) { closeSuggestions(); return; }
+  debounceTimer = setTimeout(function() {
+    fetch('/api/v1/users/search?q=' + encodeURIComponent(q))
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (!d.users || !d.users.length) { closeSuggestions(); return; }
+        suggestionsEl.innerHTML = '';
+        d.users.forEach(function(u, i) {
+          var div = document.createElement('div');
+          div.className = 'share-suggestion';
+          div.innerHTML = '<span class="sg-user">@' + u.username + '</span>' +
+            (u.display_name ? '<span class="sg-name">' + u.display_name + '</span>' : '');
+          div.addEventListener('click', function() {
+            shareInput.value = u.username;
+            closeSuggestions();
+            shareInput.focus();
+          });
+          suggestionsEl.appendChild(div);
+        });
+        suggestionsEl.classList.add('open');
+        activeSuggestion = -1;
+      });
+  }, 200);
+});
+
+shareInput.addEventListener('keydown', function(e) {
+  var items = suggestionsEl.querySelectorAll('.share-suggestion');
+  if (!items.length) return;
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    activeSuggestion = Math.min(activeSuggestion + 1, items.length - 1);
+    items.forEach(function(el, i) { el.classList.toggle('active', i === activeSuggestion); });
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    activeSuggestion = Math.max(activeSuggestion - 1, 0);
+    items.forEach(function(el, i) { el.classList.toggle('active', i === activeSuggestion); });
+  } else if (e.key === 'Enter' && activeSuggestion >= 0) {
+    e.preventDefault();
+    items[activeSuggestion].click();
+  } else if (e.key === 'Escape') {
+    closeSuggestions();
+  }
+});
+
+shareInput.addEventListener('blur', function() {
+  setTimeout(closeSuggestions, 200);
+});
+function revokeShare(username) {
+  fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}/share', {
+    method: 'DELETE',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({pattern: '{{ page.path }}', username: username})
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (d.revoked) {
+      var li = document.querySelector('#share-grants-list li[data-user="' + username + '"]');
+      if (li) li.remove();
+      if (!document.querySelector('#share-grants-list li')) {
+        var list = document.getElementById('share-grants-list');
+        list.insertAdjacentHTML('afterend', '<p class="share-empty" id="share-empty">No one has access yet.</p>');
+      }
+    }
+  });
+}
+document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeShareModal(); });
+</script>
+{% endif %}
 {% endblock %}

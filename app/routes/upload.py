@@ -14,14 +14,12 @@ from flask import render_template, request, redirect, url_for, flash
 from flask_login import current_user, login_required
 
 from app import db
+from app.acl import resolve_visibility
 from app.models import Wiki, Page
-from app.git_backend import init_wiki_repo
-from app.git_sync import (
-    scaffold_wiki, sync_page_to_repo, read_file_from_repo,
-    list_files_in_repo, regenerate_public_mirror,
-)
-from app.acl import parse_acl, resolve_visibility
+from app.content_utils import parse_markdown_document
+from app.git_sync import regenerate_public_mirror, read_file_from_repo, scaffold_wiki, sync_page_to_repo
 from app.routes import main_bp
+from app.wiki_ops import create_wiki_for_user, index_repo_pages, load_acl_rules, refresh_wikilinks_for_page, update_page_metadata
 
 
 @main_bp.route("/new", methods=["GET", "POST"])
@@ -47,16 +45,8 @@ def create_wiki_web():
             flash(f"You've reached the limit of {current_app.config['MAX_WIKIS_PER_USER']} wikis")
             return render_template("new_wiki.html"), 429
 
-        wiki = Wiki(
-            owner_id=current_user.id,
-            slug=slug,
-            title=title,
-            description=description,
-        )
-        db.session.add(wiki)
+        wiki = create_wiki_for_user(current_user, slug=slug, title=title, description=description, scaffold=False)
         db.session.commit()
-
-        init_wiki_repo(current_user.username, slug)
 
         # check for uploaded files
         uploaded = request.files.getlist("files")
@@ -67,22 +57,16 @@ def create_wiki_web():
                 flash(str(e))
                 return render_template("new_wiki.html"), 413
         else:
-            scaffold_wiki(current_user.username, slug)
+            template = request.form.get("template", "structured")
+            scaffold_wiki(current_user.username, slug, template=template)
             _index_repo_pages(current_user.username, slug, wiki.id)
 
-        acl_rules = _load_acl(current_user.username, slug)
+        acl_rules = load_acl_rules(current_user.username, slug)
         regenerate_public_mirror(current_user.username, slug, acl_rules)
 
         return redirect(url_for("wiki.wiki_index", username=current_user.username, slug=slug))
 
     return render_template("new_wiki.html")
-
-
-def _load_acl(username, slug):
-    acl_content = read_file_from_repo(username, slug, ".wikihub/acl")
-    return parse_acl(acl_content) if acl_content else []
-
-
 def _process_uploads(username, slug, wiki_id, files):
     """process uploaded files — writes each to git and indexes in DB."""
     for f in files:
@@ -104,7 +88,6 @@ def _process_uploads(username, slug, wiki_id, files):
         # write to git
         sync_page_to_repo(username, slug, filename, text if text else content.decode("latin-1"))
 
-        # index .md files in DB
         if filename.endswith(".md") and text:
             _index_page(wiki_id, filename, text, username, slug)
 
@@ -124,10 +107,29 @@ def _process_zip(username, slug, wiki_id, zip_file):
     max_page = current_app.config["MAX_PAGE_SIZE"]
 
     data = zip_file.read()
-    with zipfile.ZipFile(io.BytesIO(data)) as zf:
-        entries = [i for i in zf.infolist() if not i.is_dir()
-                   and not i.filename.startswith("__MACOSX/")
-                   and not i.filename.startswith(".")]
+    if not data or len(data) < 4:
+        raise ValueError("Uploaded file is empty or too small to be a zip")
+    try:
+        zf_obj = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile:
+        raise ValueError("Uploaded file is not a valid zip archive")
+    with zf_obj as zf:
+        def _skip(name):
+            parts = name.split("/")
+            return any(p.startswith(".") for p in parts) or name.startswith("__MACOSX/")
+        entries = [i for i in zf.infolist() if not i.is_dir() and not _skip(i.filename)]
+
+        # strip common top-level directory wrapper (e.g. notes/ wrapping everything)
+        if entries:
+            prefixes = set()
+            for e in entries:
+                first = e.filename.split("/", 1)[0]
+                prefixes.add(first)
+            if len(prefixes) == 1 and all("/" in e.filename for e in entries):
+                prefix = prefixes.pop() + "/"
+                for e in entries:
+                    e.filename = e.filename[len(prefix):]
+                entries = [e for e in entries if e.filename]  # drop empty after strip
 
         if len(entries) > max_files:
             raise ValueError(f"Zip contains {len(entries)} files, max is {max_files}")
@@ -139,7 +141,6 @@ def _process_zip(username, slug, wiki_id, zip_file):
             raise ValueError(f"Files too large (2MB max): {names}{more}")
 
         for info in entries:
-
             filepath = info.filename
             content = zf.read(info)
             try:
@@ -155,40 +156,24 @@ def _process_zip(username, slug, wiki_id, zip_file):
 
 def _index_page(wiki_id, path, content, username, slug):
     """create a Page row from content."""
-    import hashlib
-
-    fm = {}
-    body = content
-    if content.startswith("---"):
-        parts = content.split("---", 2)
-        if len(parts) >= 3:
-            for line in parts[1].strip().split("\n"):
-                if ":" in line:
-                    k, v = line.split(":", 1)
-                    fm[k.strip().lower()] = v.strip()
-            body = parts[2].strip()
-
-    acl_rules = _load_acl(username, slug)
-    vis = resolve_visibility(path, acl_rules, fm.get("visibility"))
-
-    page = Page(
-        wiki_id=wiki_id,
-        path=path,
-        title=fm.get("title", os.path.splitext(os.path.basename(path))[0]),
-        visibility=vis,
-        frontmatter_json=fm,
-        excerpt=body[:200].replace("\n", " ").strip(),
-        content_hash=hashlib.sha256(content.encode()).hexdigest(),
-        search_vector=db.func.to_tsvector("english", f"{fm.get('title', '')} {body}"),
-    )
-    db.session.add(page)
+    acl_rules = load_acl_rules(username, slug)
+    try:
+        frontmatter, _ = parse_markdown_document(content)
+    except Exception:
+        frontmatter = {}
+    page = Page.query.filter_by(wiki_id=wiki_id, path=path).first()
+    if not page:
+        page = Page(wiki_id=wiki_id, path=path)
+        db.session.add(page)
+    page.visibility = resolve_visibility(path, acl_rules, frontmatter.get("visibility"))
+    update_page_metadata(page, content, frontmatter)
+    db.session.flush()
+    refresh_wikilinks_for_page(page, content)
     db.session.commit()
 
 
 def _index_repo_pages(username, slug, wiki_id):
     """index all .md files from a repo into the DB."""
-    for fpath in list_files_in_repo(username, slug):
-        if fpath.endswith(".md"):
-            content = read_file_from_repo(username, slug, fpath)
-            if content:
-                _index_page(wiki_id, fpath, content, username, slug)
+    wiki = Wiki.query.get(wiki_id)
+    if wiki:
+        index_repo_pages(username, slug, wiki, reset=True)

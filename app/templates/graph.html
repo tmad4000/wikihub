@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title %}Graph — {{ wiki.title or wiki.slug }} — wikihub{% endblock %}
+
+{% block extra_css %}
+.graph-page {
+  display: flex; flex-direction: column;
+  height: calc(100vh - 56px); overflow: hidden;
+}
+.graph-header {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 20px; border-bottom: 1px solid var(--border-default);
+  font-size: 0.8125rem;
+}
+.graph-header a { color: var(--text-muted); text-decoration: none; font-family: var(--font-mono); }
+.graph-header a:hover { color: var(--accent); }
+.graph-header .title { color: var(--text-primary); font-weight: 600; }
+.graph-header .stats { color: var(--text-muted); font-family: var(--font-mono); font-size: 0.75rem; margin-left: auto; }
+.graph-container { flex: 1; position: relative; }
+#full-graph { width: 100%; height: 100%; }
+#full-graph svg { width: 100%; height: 100%; }
+{% endblock %}
+
+{% block body %}
+<div class="graph-page">
+  <div class="graph-header">
+    <a href="/@{{ owner.username }}">@{{ owner.username }}</a>
+    <span style="color:var(--text-muted);">/</span>
+    <a href="/@{{ owner.username }}/{{ wiki.slug }}">{{ wiki.title or wiki.slug }}</a>
+    <span style="color:var(--text-muted);">/</span>
+    <span class="title">graph</span>
+    <span class="stats">{{ graph_data.nodes|length }} pages &middot; {{ graph_data.links|length }} connections</span>
+  </div>
+  <div class="graph-container">
+    <div id="full-graph"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script>
+(function() {
+  const container = document.getElementById('full-graph');
+  const data = {{ graph_data | tojson }};
+  if (!data.nodes.length) { container.textContent = 'No connections found.'; return; }
+
+  const width = container.clientWidth;
+  const height = container.clientHeight;
+
+  const svg = d3.select(container).append('svg')
+    .attr('viewBox', `0 0 ${width} ${height}`)
+    .call(d3.zoom().scaleExtent([0.2, 5]).on('zoom', (e) => g.attr('transform', e.transform)));
+
+  const g = svg.append('g');
+
+  // directory coloring
+  const dirColors = ['#d4a04a', '#7a9e6b', '#c45c3c', '#6b9ec4', '#b8ad9e', '#9e6bc4', '#c4946b', '#6bc4a0', '#c46b9e'];
+  const dirMap = new Map();
+  let dirIdx = 0;
+  data.nodes.forEach(n => {
+    if (!dirMap.has(n.dir || '')) dirMap.set(n.dir || '', dirColors[dirIdx++ % dirColors.length]);
+  });
+
+  // link counts for sizing
+  const linkCount = new Map();
+  data.links.forEach(l => {
+    linkCount.set(l.source, (linkCount.get(l.source) || 0) + 1);
+    linkCount.set(l.target, (linkCount.get(l.target) || 0) + 1);
+  });
+
+  const nodeMap = new Map(data.nodes.map(n => [n.id, n]));
+  const links = data.links.filter(l => nodeMap.has(l.source) && nodeMap.has(l.target));
+
+  const sim = d3.forceSimulation(data.nodes)
+    .force('link', d3.forceLink(links).id(d => d.id).distance(80))
+    .force('charge', d3.forceManyBody().strength(-120))
+    .force('center', d3.forceCenter(width / 2, height / 2))
+    .force('collision', d3.forceCollide(30));
+
+  const link = g.append('g')
+    .selectAll('line')
+    .data(links)
+    .join('line')
+    .attr('stroke', '#6b6560')
+    .attr('stroke-width', 1)
+    .attr('stroke-opacity', 0.5);
+
+  const node = g.append('g')
+    .selectAll('g')
+    .data(data.nodes)
+    .join('g')
+    .style('cursor', 'pointer')
+    .on('click', (e, d) => { if (d.url) window.location.href = d.url; })
+    .call(d3.drag()
+      .on('start', (e, d) => { if (!e.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+      .on('drag', (e, d) => { d.fx = e.x; d.fy = e.y; })
+      .on('end', (e, d) => { if (!e.active) sim.alphaTarget(0); d.fx = null; d.fy = null; })
+    );
+
+  node.append('circle')
+    .attr('r', d => { const lc = linkCount.get(d.id) || 0; return 4 + Math.min(lc * 1.5, 12); })
+    .attr('fill', d => dirMap.get(d.dir || '') || '#d4a04a')
+    .attr('fill-opacity', 0.85)
+    .attr('stroke', '#0f0e0c')
+    .attr('stroke-width', 1);
+
+  node.append('text')
+    .text(d => d.title)
+    .attr('font-size', '11px')
+    .attr('fill', '#b8ad9e')
+    .attr('dx', d => { const lc = linkCount.get(d.id) || 0; return 4 + Math.min(lc * 1.5, 12) + 4; })
+    .attr('dy', 4)
+    .style('pointer-events', 'none');
+
+  sim.on('tick', () => {
+    link.attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+        .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+    node.attr('transform', d => `translate(${d.x},${d.y})`);
+  });
+})();
+</script>
+{% endblock %}

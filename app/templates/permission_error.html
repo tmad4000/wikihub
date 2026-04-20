@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Access denied — wikihub{% endblock %}
+{% block title %}Not found — wikihub{% endblock %}
 
 {% block extra_css %}
 .error-page {
@@ -24,13 +24,18 @@
   <div class="lock-icon">
     <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
   </div>
-  <h1>You don't have access to this page</h1>
-  <p>This page is private. If you think you should have access, contact the wiki owner.</p>
-  {% if wiki %}
-  <div class="wiki-ref">@{{ owner.username }} / {{ wiki.slug }}</div>
+  <h1>This page is private or doesn't exist</h1>
+  {% if current_user.is_authenticated %}
+  <p>If you think you should have access, try signing in with a different account or contact the owner.</p>
+  {% else %}
+  <p>If you think you should have access, try signing in or contact the owner.</p>
   {% endif %}
   <div class="error-actions">
+    {% if current_user.is_authenticated %}
+    <a href="/auth/logout" class="btn btn-primary">Switch account</a>
+    {% else %}
     <a href="/auth/login" class="btn btn-primary">Sign in</a>
+    {% endif %}
     <a href="/explore" class="btn btn-secondary">Go to Explore</a>
   </div>
 </div>

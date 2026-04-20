@@ -4,43 +4,25 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{% block title %}wikihub{% endblock %}</title>
+<link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+<link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+<link rel="apple-touch-icon" href="{{ url_for('static', filename='favicon.svg') }}">
+<meta property="og:title" content="{% block og_title %}{{ self.title() }}{% endblock %}">
+<meta property="og:description" content="{% block og_desc %}GitHub for LLM wikis. Publish markdown knowledge bases in seconds.{% endblock %}">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="wikihub">
+<meta name="description" content="{% block meta_desc %}GitHub for LLM wikis. Publish markdown knowledge bases in seconds.{% endblock %}">
+{% include '_theme.html' %}
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github-dark-dimmed.min.css">
+<!-- highlight.js: two themes, media-gated for auto mode; JS flips media= for explicit override -->
+<link id="hljs-theme-dark" rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github-dark-dimmed.min.css" media="(prefers-color-scheme: dark)">
+<link id="hljs-theme-light" rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)">
 <style>
-:root {
-  --bg-base: #0f0e0c;
-  --bg-surface: #191714;
-  --bg-elevated: #221f1b;
-  --bg-overlay: #2a2622;
-  --text-primary: #e8e0d4;
-  --text-secondary: #b8ad9e;
-  --text-tertiary: #887d6e;
-  --text-muted: #5a5248;
-  --accent: #d4a04a;
-  --accent-hover: #e0b35a;
-  --accent-muted: rgba(212, 160, 74, 0.12);
-  --accent-subtle: rgba(212, 160, 74, 0.06);
-  --color-public: #7a9e6b;
-  --color-private: #c45c3c;
-  --color-unlisted: #b8ad9e;
-  --color-wikilink: #d4a04a;
-  --color-wikilink-broken: #c45c3c;
-  --color-external: #7a9bb5;
-  --border-default: rgba(200, 180, 150, 0.08);
-  --border-emphasis: rgba(200, 180, 150, 0.15);
-  --border-strong: rgba(200, 180, 150, 0.25);
-  --border-accent: rgba(212, 160, 74, 0.4);
-  --control-bg: rgba(0, 0, 0, 0.2);
-  --control-border: rgba(200, 180, 150, 0.12);
-  --font-body: 'Inter', -apple-system, sans-serif;
-  --font-mono: 'IBM Plex Mono', 'Menlo', monospace;
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 10px;
-}
+/* Theme tokens live in _theme.html (included above). This <style> block
+   holds base-layout rules only. Colors must come from tokens. */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 body {
   font-family: var(--font-body);
@@ -69,6 +51,36 @@ a:hover { text-decoration: underline; }
 .nav-spacer { flex: 1; }
 .nav-link { color: var(--text-tertiary); font-size: 0.875rem; text-decoration: none; }
 .nav-link:hover { color: var(--text-primary); text-decoration: none; }
+.nav-agents { color: var(--accent); font-weight: 500; font-family: var(--font-mono); font-size: 0.8125rem; }
+.nav-agents:hover { color: var(--accent-hover); }
+@media (max-width: 640px) { .nav-hide-mobile { display: none; } }
+.nav-account {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.nav-account-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 2px 6px 2px 2px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: var(--font-body);
+}
+.nav-account-trigger:hover,
+.nav-account:focus-within .nav-account-trigger,
+.nav-account.open .nav-account-trigger {
+  color: var(--text-primary);
+  background: var(--accent-subtle);
+  border-color: var(--border-default);
+}
+.nav-avatar-link { text-decoration: none; display: flex; }
+.nav-avatar-link:hover { text-decoration: none; }
 .nav-avatar {
   width: 32px; height: 32px; border-radius: 50%;
   background: var(--accent-muted); border: 1px solid var(--border-accent);
@@ -76,11 +88,91 @@ a:hover { text-decoration: underline; }
   font-family: var(--font-mono); font-size: 0.75rem; color: var(--accent);
   text-decoration: none;
 }
+.nav-avatar-link:hover .nav-avatar { border-color: var(--accent); }
+.nav-account-chevron {
+  color: var(--text-muted);
+  transition: transform 0.14s ease;
+}
+.nav-account.open .nav-account-chevron {
+  transform: rotate(180deg);
+}
+.nav-account-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 200;
+  width: 220px;
+  padding: 8px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-emphasis);
+  background: rgba(25, 23, 20, 0.98);
+  backdrop-filter: blur(12px);
+  box-shadow: none;
+  opacity: 0;
+  transform: translateY(-4px);
+  pointer-events: none;
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+.nav-account.open .nav-account-menu {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+.nav-account-menu::before {
+  content: '';
+  position: absolute;
+  top: -12px;
+  left: 0;
+  right: 0;
+  height: 12px;
+}
+.nav-account-summary {
+  padding: 10px 12px 12px;
+  border-bottom: 1px solid var(--border-default);
+  margin-bottom: 4px;
+}
+.nav-account-summary strong {
+  display: block;
+  font-size: 0.875rem;
+  color: var(--text-primary);
+}
+.nav-account-summary span {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+.nav-account-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  text-decoration: none;
+}
+.nav-account-item:hover {
+  background: var(--accent-subtle);
+  color: var(--text-primary);
+  text-decoration: none;
+}
+.nav-account-item.logout {
+  color: var(--color-error-soft);
+}
+.nav-account-item .menu-hint {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+}
 @media (min-width: 640px) { .nav { padding: 0 24px; } }
 
 .search-trigger {
   display: none; align-items: center; gap: 6px; padding: 6px 12px;
-  background: var(--control-bg); border: 1px solid var(--control-border);
+  -webkit-appearance: none; appearance: none;
+  background: var(--search-trigger-bg) !important; border: 1px solid var(--control-border);
   border-radius: var(--radius-sm); color: var(--text-muted); cursor: pointer;
   font-size: 0.75rem; font-family: var(--font-body); min-height: 32px;
 }
@@ -88,7 +180,7 @@ a:hover { text-decoration: underline; }
 .search-trigger:hover { border-color: var(--border-emphasis); color: var(--text-secondary); }
 .search-trigger kbd { font-family: var(--font-mono); font-size: 0.625rem; background: var(--bg-elevated); padding: 1px 4px; border-radius: 3px; border: 1px solid var(--border-default); }
 
-.search-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 200; }
+.search-overlay { display: none; position: fixed; inset: 0; background: var(--scrim); z-index: 200; }
 .search-overlay.open { display: block; }
 .search-modal {
   display: none; position: fixed; top: 15vh; left: 50%; transform: translateX(-50%);
@@ -107,13 +199,35 @@ a:hover { text-decoration: underline; }
   border-bottom: 1px solid var(--border-default);
 }
 .search-input::placeholder { color: var(--text-muted); }
+.search-scope {
+  display: none; align-items: center; gap: 6px; padding: 4px 12px;
+  font-size: 0.75rem; color: var(--text-tertiary);
+  border-bottom: 1px solid var(--border-default);
+}
+.search-scope.active { display: flex; }
+.search-scope-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; border-radius: 99px;
+  border: 1px solid var(--border-accent, var(--accent)); color: var(--accent);
+  font-family: var(--font-mono); font-size: 0.6875rem;
+}
+.search-scope-pill button {
+  background: none; border: none; color: var(--text-muted);
+  cursor: pointer; padding: 0; font-size: 0.75rem; line-height: 1;
+}
+.search-scope-pill button:hover { color: var(--text-primary); }
+.search-scope-global {
+  font-family: var(--font-mono); font-size: 0.6875rem;
+  color: var(--text-muted); cursor: pointer;
+}
+.search-scope-global:hover { color: var(--text-secondary); }
 #search-results { max-height: 400px; overflow-y: auto; }
 .search-result {
   display: block; padding: 12px 20px; text-decoration: none;
   border-bottom: 1px solid var(--border-default);
   transition: background 0.1s ease;
 }
-.search-result:hover { background: var(--accent-subtle); text-decoration: none; }
+.search-result:hover, .search-result.active { background: var(--accent-subtle); text-decoration: none; }
 .search-result-path { font-size: 0.6875rem; color: var(--text-muted); font-family: var(--font-mono); margin-bottom: 2px; }
 .search-result-title { font-size: 0.875rem; color: var(--text-primary); font-weight: 500; margin-bottom: 2px; }
 .search-result-excerpt { font-size: 0.75rem; color: var(--text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -121,30 +235,45 @@ a:hover { text-decoration: underline; }
 .search-create { display: block; padding: 12px 20px; color: var(--accent); font-size: 0.875rem; text-decoration: none; font-weight: 500; }
 .search-create:hover { background: var(--accent-subtle); text-decoration: none; }
 
+@keyframes wh-spin { to { transform: rotate(360deg); } }
+.wh-spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border-emphasis); border-top-color: var(--accent); border-radius: 50%; animation: wh-spin 0.6s linear infinite; vertical-align: middle; margin-right: 6px; }
+.btn-primary .wh-spinner, .btn-save .wh-spinner { border-color: color-mix(in srgb, var(--text-on-accent) 25%, transparent); border-top-color: var(--text-on-accent); }
+.btn-loading { pointer-events: none; opacity: 0.7; }
+
+.hover-preview {
+  position: fixed; z-index: 300; pointer-events: auto;
+  width: 320px; max-height: 400px; overflow-y: auto; overflow-x: hidden;
+  background: var(--bg-elevated); border: 1px solid var(--border-emphasis);
+  border-radius: var(--radius-md); padding: 16px 18px;
+  box-shadow: var(--hover-preview-shadow);
+  font-size: 0.8125rem; line-height: 1.6; color: var(--text-secondary);
+}
+.hover-preview-title {
+  font-size: 0.9375rem; font-weight: 600; color: var(--text-primary);
+  margin-bottom: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.hover-preview-excerpt { display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; }
+.hover-preview-more { display: block; margin-top: 8px; font-size: 0.75rem; color: var(--accent); text-decoration: none; }
+.hover-preview-loading { color: var(--text-muted); font-style: italic; }
+.hover-preview-related { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border-default); }
+.hover-preview-related-label { font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 4px; }
+.hover-preview-link { display: block; font-size: 0.75rem; color: var(--accent); text-decoration: none; padding: 2px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hover-preview-link:hover { text-decoration: underline; }
+
+/* .theme-toggle styles live in _theme.html */
+
 {% block extra_css %}{% endblock %}
 </style>
 {% block head %}{% endblock %}
+<meta name="csrf-token" content="{{ csrf_token() }}">
 </head>
 <body>
-<nav class="nav">
-  <a href="/" class="nav-logo"><span class="bracket">[[</span><span class="wordmark">wikihub</span><span class="bracket">]]</span></a>
-  <button class="search-trigger" onclick="wikihubSearch && wikihubSearch.open()">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-    Search <kbd>&#8984;K</kbd>
-  </button>
-  <div class="nav-spacer"></div>
-  {% if current_user and current_user.is_authenticated %}
-    <a href="/explore" class="nav-link">Explore</a>
-    <a href="/@{{ current_user.username }}" class="nav-avatar">{{ current_user.username[0]|upper }}</a>
-  {% else %}
-    <a href="/explore" class="nav-link">Explore</a>
-    <a href="/auth/login" class="nav-link">Sign in</a>
-  {% endif %}
-</nav>
+{% include '_nav.html' %}
 
 <div class="search-overlay" id="search-overlay"></div>
-<div class="search-modal" id="search-modal">
+<div class="search-modal" id="search-modal"{% if current_user and current_user.is_authenticated %} data-username="{{ current_user.username }}"{% endif %}>
   <input type="text" class="search-input" id="search-input" placeholder="Search wikis..." autocomplete="off">
+  <div class="search-scope" id="search-scope"></div>
   <div id="search-results"></div>
 </div>
 
@@ -154,20 +283,351 @@ a:hover { text-decoration: underline; }
 <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/highlight.min.js"></script>
 <script>
+(function(){var m=document.querySelector('meta[name="csrf-token"]');if(!m)return;var F=window.fetch;window.fetch=function(u,o){o=o||{};var mt=(o.method||'GET').toUpperCase();if(mt!=='GET'&&mt!=='HEAD'){var s=typeof u==='string'?u:u.url||'';if(!s.startsWith('/api/')){o.headers=o.headers||{};if(o.headers instanceof Headers){if(!o.headers.has('X-CSRFToken'))o.headers.set('X-CSRFToken',m.content)}else{if(!o.headers['X-CSRFToken'])o.headers['X-CSRFToken']=m.content}}}return F.call(this,u,o)}})();
 document.addEventListener('DOMContentLoaded', () => {
-  // render KaTeX
-  renderMathInElement(document.body, {
-    delimiters: [
-      {left: '$$', right: '$$', display: true},
-      {left: '$', right: '$', display: false},
-    ],
-    throwOnError: false,
+  var katexMacros = {"\\Sum": "\\sum"};
+  try {
+    renderMathInElement(document.body, {
+      delimiters: [
+        {left: '$$', right: '$$', display: true},
+        {left: '$', right: '$', display: false},
+      ],
+      macros: katexMacros,
+      throwOnError: false,
+    });
+  } catch(e) {}
+  try {
+    document.querySelectorAll('.math.amsmath').forEach(function(el) {
+      katex.render(el.textContent.trim(), el, {displayMode: true, throwOnError: false, macros: katexMacros});
+    });
+  } catch(e) {}
+  try {
+    document.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
+  } catch(e) {}
+
+  // ── Theme toggle: cycles Auto → Light → Dark. Persists in localStorage.
+  //    Keeps the highlight.js stylesheets aligned with the effective theme.
+  (function(){
+    const order = ['auto', 'light', 'dark'];
+    const labels = {auto: 'Theme: Auto (follow system)', light: 'Theme: Light', dark: 'Theme: Dark'};
+    const hljsDark = document.getElementById('hljs-theme-dark');
+    const hljsLight = document.getElementById('hljs-theme-light');
+    const darkMq = window.matchMedia('(prefers-color-scheme: dark)');
+
+    function current() {
+      var t = document.documentElement.getAttribute('data-theme');
+      return (t === 'light' || t === 'dark') ? t : 'auto';
+    }
+    function effective() {
+      var c = current();
+      if (c !== 'auto') return c;
+      return darkMq.matches ? 'dark' : 'light';
+    }
+    function syncHljs() {
+      if (!hljsDark || !hljsLight) return;
+      var c = current();
+      if (c === 'auto') {
+        hljsDark.media = '(prefers-color-scheme: dark)';
+        hljsLight.media = '(prefers-color-scheme: light)';
+      } else if (c === 'dark') {
+        hljsDark.media = 'all'; hljsLight.media = 'not all';
+      } else {
+        hljsDark.media = 'not all'; hljsLight.media = 'all';
+      }
+    }
+    function apply(mode) {
+      if (mode === 'auto') document.documentElement.removeAttribute('data-theme');
+      else document.documentElement.setAttribute('data-theme', mode);
+      try {
+        if (mode === 'auto') localStorage.removeItem('wikihubTheme');
+        else localStorage.setItem('wikihubTheme', mode);
+      } catch(e) {}
+      syncHljs();
+      document.querySelectorAll('[data-theme-toggle]').forEach(function(b) {
+        b.setAttribute('aria-label', labels[mode]);
+        b.setAttribute('title', labels[mode]);
+      });
+    }
+    syncHljs();
+    darkMq.addEventListener && darkMq.addEventListener('change', syncHljs);
+
+    document.querySelectorAll('[data-theme-toggle]').forEach(function(btn) {
+      btn.setAttribute('aria-label', labels[current()]);
+      btn.setAttribute('title', labels[current()]);
+      btn.addEventListener('click', function() {
+        var next = order[(order.indexOf(current()) + 1) % order.length];
+        apply(next);
+      });
+    });
+  })();
+
+  const accountMenus = document.querySelectorAll('[data-account-menu]');
+  accountMenus.forEach((menu) => {
+    const trigger = menu.querySelector('[data-account-trigger]');
+    if (!trigger) return;
+
+    const closeMenu = () => {
+      menu.classList.remove('open');
+      trigger.setAttribute('aria-expanded', 'false');
+    };
+
+    const openMenu = () => {
+      menu.classList.add('open');
+      trigger.setAttribute('aria-expanded', 'true');
+    };
+
+    trigger.addEventListener('click', (event) => {
+      event.preventDefault();
+      if (menu.classList.contains('open')) closeMenu();
+      else openMenu();
+    });
+
+    document.addEventListener('click', (event) => {
+      if (!menu.contains(event.target)) closeMenu();
+    });
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') closeMenu();
+    });
   });
-  // highlight code blocks
-  document.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
 });
 </script>
+{% include '_footer.html' %}
 <script src="{{ url_for('static', filename='js/search.js') }}"></script>
+<script>
+// hover preview cards — LessWrong-style stacking
+(function() {
+  var stack = []; // array of {el: card element, depth: number}
+  var hideTimer = null;
+  var cache = {};
+
+  function parseWikiUrl(href) {
+    try {
+      var url = new URL(href, window.location.origin);
+      var m = url.pathname.match(/^\/@([^/]+)\/([^/]+)\/(.+)/);
+      if (!m) return null;
+      return { owner: m[1], slug: m[2], path: m[3] };
+    } catch (e) { return null; }
+  }
+
+  function extractWikilinks(content) {
+    if (!content) return [];
+    var re = /\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/g;
+    var links = [], seen = {}, m;
+    while ((m = re.exec(content)) !== null) {
+      var name = m[1].trim();
+      if (!seen[name]) { seen[name] = true; links.push(name); }
+      if (links.length >= 5) break;
+    }
+    return links;
+  }
+
+  function closeFromDepth(depth) {
+    while (stack.length > depth) {
+      var entry = stack.pop();
+      entry.el.remove();
+    }
+  }
+
+  function closeAll() {
+    hideTimer = setTimeout(function() {
+      closeFromDepth(0);
+    }, 200);
+  }
+
+  function cancelClose() {
+    clearTimeout(hideTimer);
+  }
+
+  function positionCard(c, rect, depth) {
+    var preferBelow = (depth % 2 === 0);
+    var left = rect.left;
+    if (left + 320 > window.innerWidth) left = window.innerWidth - 330;
+    if (left < 10) left = 10;
+
+    var top;
+    if (preferBelow) {
+      top = rect.bottom + 6;
+      if (top + 400 > window.innerHeight) top = rect.top - c.offsetHeight - 6;
+    } else {
+      top = rect.top - c.offsetHeight - 6;
+      if (top < 10) top = rect.bottom + 6;
+    }
+    c.style.top = top + 'px';
+    c.style.left = left + 'px';
+  }
+
+  function buildCard(data, depth) {
+    var c = document.createElement('div');
+    c.className = 'hover-preview';
+    c.style.zIndex = 300 + depth;
+    c.dataset.depth = depth;
+
+    var pageUrl = '/@' + (data._owner || '') + '/' + (data._slug || '') + '/' + (data.path || '');
+
+    var titleEl = document.createElement('div');
+    titleEl.className = 'hover-preview-title';
+    titleEl.textContent = data.title || data.path;
+    c.appendChild(titleEl);
+
+    if (data.excerpt) {
+      var excerptEl = document.createElement('div');
+      excerptEl.className = 'hover-preview-excerpt';
+      excerptEl.textContent = data.excerpt;
+      c.appendChild(excerptEl);
+    }
+
+    var moreEl = document.createElement('a');
+    moreEl.className = 'hover-preview-more';
+    moreEl.textContent = '(read more)';
+    moreEl.href = pageUrl;
+    c.appendChild(moreEl);
+
+    var links = extractWikilinks(data.content);
+    if (links.length > 0 && data._owner && data._slug) {
+      var relatedEl = document.createElement('div');
+      relatedEl.className = 'hover-preview-related';
+      var labelEl = document.createElement('div');
+      labelEl.className = 'hover-preview-related-label';
+      labelEl.textContent = 'Related to';
+      relatedEl.appendChild(labelEl);
+
+      // build lookup of resolved wikilink URLs from the page
+      var resolvedLinks = {};
+      document.querySelectorAll('.wikilink[data-target]').forEach(function(a) {
+        resolvedLinks[a.dataset.target.toLowerCase()] = a.href;
+      });
+
+      links.forEach(function(name) {
+        var linkEl = document.createElement('a');
+        linkEl.className = 'hover-preview-link';
+        linkEl.textContent = name;
+        // use resolved URL from page if available, otherwise construct best guess
+        var resolved = resolvedLinks[name.toLowerCase()];
+        if (resolved) {
+          linkEl.href = resolved;
+        } else {
+          var linkSlug = name.replace(/\s+/g, '_');
+          linkEl.href = '/@' + data._owner + '/' + data._slug + '/' + encodeURIComponent(linkSlug);
+        }
+
+        linkEl.addEventListener('mouseenter', function() {
+          cancelClose();
+          var rect = linkEl.getBoundingClientRect();
+          var parsed = parseWikiUrl(linkEl.href);
+          if (!parsed) return;
+          // close any cards deeper than this one, then open a new one
+          closeFromDepth(depth + 1);
+          openPreview(parsed, rect, depth + 1);
+        });
+        relatedEl.appendChild(linkEl);
+      });
+      c.appendChild(relatedEl);
+    }
+
+    // keep stack alive while mouse is on any card
+    c.addEventListener('mouseenter', function() { cancelClose(); });
+    c.addEventListener('mouseleave', function(e) {
+      // don't close if moving to another card in the stack
+      if (e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest('.hover-preview')) return;
+      closeAll();
+    });
+
+    return c;
+  }
+
+  function openPreview(parsed, rect, depth) {
+    var key = parsed.owner + '/' + parsed.slug + '/' + parsed.path;
+    cancelClose();
+
+    if (cache[key]) {
+      var c = buildCard(cache[key], depth);
+      document.body.appendChild(c);
+      positionCard(c, rect, depth);
+      stack.push({ el: c, depth: depth });
+      return;
+    }
+
+    // loading card
+    var c = document.createElement('div');
+    c.className = 'hover-preview';
+    c.style.zIndex = 300 + depth;
+    var loading = document.createElement('div');
+    loading.className = 'hover-preview-loading';
+    loading.textContent = 'Loading\u2026';
+    c.appendChild(loading);
+    c.addEventListener('mouseenter', function() { cancelClose(); });
+    c.addEventListener('mouseleave', function(e) {
+      if (e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest('.hover-preview')) return;
+      closeAll();
+    });
+    document.body.appendChild(c);
+    positionCard(c, rect);
+    stack.push({ el: c, depth: depth });
+
+    var apiPath = '/api/v1/wikis/' + parsed.owner + '/' + parsed.slug + '/pages/' + parsed.path;
+    if (!apiPath.endsWith('.md')) apiPath += '.md';
+
+    fetch(apiPath)
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(data) {
+        if (!data) { c.remove(); return; }
+        data._owner = parsed.owner;
+        data._slug = parsed.slug;
+        cache[key] = data;
+        // replace loading card with real card
+        var idx = stack.findIndex(function(s) { return s.el === c; });
+        var newC = buildCard(data, depth);
+        document.body.appendChild(newC);
+        positionCard(newC, rect, depth);
+        c.remove();
+        if (idx >= 0) stack[idx] = { el: newC, depth: depth };
+      })
+      .catch(function() { c.remove(); });
+  }
+
+  // page-level hover detection — immediate, no delay
+  var lastHoverEl = null;
+  document.addEventListener('mouseover', function(e) {
+    var el = e.target.closest('.wikilink, .article a[href^="/@"]');
+    if (!el || el === lastHoverEl) return;
+    if (el.closest('.hover-preview')) return;
+    lastHoverEl = el;
+    var href = el.getAttribute('href');
+    if (!href || href.startsWith('#')) return;
+    var parsed = parseWikiUrl(href);
+    if (!parsed) return;
+
+    cancelClose();
+    closeFromDepth(0);
+    openPreview(parsed, el.getBoundingClientRect(), 0);
+  });
+
+  document.addEventListener('mouseout', function(e) {
+    var el = e.target.closest('.wikilink, .article a[href^="/@"]');
+    if (!el) return;
+    if (el.closest('.hover-preview')) return;
+    var related = e.relatedTarget;
+    if (related && related.closest && related.closest('.hover-preview')) return;
+    lastHoverEl = null;
+    closeAll();
+  });
+
+  // click anywhere outside cards closes entire stack
+  document.addEventListener('click', function(e) {
+    if (stack.length === 0) return;
+    if (e.target.closest('.hover-preview')) return;
+    cancelClose();
+    closeFromDepth(0);
+    lastHoverEl = null;
+  });
+})();
+</script>
+<script>
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/static/sw.js', { scope: '/' });
+}
+</script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

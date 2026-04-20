@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}People — wikihub{% endblock %}
+
+{% block extra_css %}
+.people-page { max-width: 1040px; margin: 0 auto; padding: 32px 16px 64px; }
+@media (min-width: 640px) { .people-page { padding: 48px 24px 72px; } }
+.people-page h1 { font-size: 1.9rem; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 8px; }
+.people-page .subtitle { color: var(--text-secondary); margin-bottom: 28px; font-size: 0.9375rem; max-width: 680px; }
+.people-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+@media (min-width: 720px) { .people-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (min-width: 960px) { .people-grid { grid-template-columns: repeat(3, 1fr); } }
+.person-card {
+  display: block; background: var(--bg-surface); border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg); padding: 20px; text-decoration: none;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+.person-card:hover { border-color: var(--border-accent); text-decoration: none; transform: translateY(-1px); }
+.person-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.person-avatar {
+  width: 46px; height: 46px; border-radius: 50%;
+  background: var(--gradient-person-avatar);
+  border: 1px solid var(--border-accent);
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-mono); color: var(--accent); font-size: 1rem; flex-shrink: 0;
+}
+.person-name { font-weight: 600; color: var(--text-primary); }
+.person-handle { font-size: 0.75rem; color: var(--text-tertiary); font-family: var(--font-mono); }
+.person-summary { font-size: 0.8125rem; color: var(--text-secondary); line-height: 1.65; margin-bottom: 14px; min-height: 3.2em; }
+.person-meta {
+  display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px;
+  font-size: 0.75rem; color: var(--text-muted); font-family: var(--font-mono);
+}
+.person-wikis { display: grid; gap: 6px; }
+.person-wiki {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  border-top: 1px solid var(--border-default); padding-top: 8px;
+  color: var(--text-secondary); font-size: 0.8125rem;
+}
+.person-wiki strong { color: var(--text-primary); font-weight: 600; }
+{% endblock %}
+
+{% block body %}
+<div class="people-page">
+  <h1>People</h1>
+  <p class="subtitle">Every account has a first-class personal wiki at <code>/@username</code>. Browse people here, then drill into their personal wiki and project wikis from their person page.</p>
+
+  <div class="people-grid">
+    {% for person in people %}
+    <a href="/@{{ person.user.username }}" class="person-card">
+      <div class="person-head">
+        <div class="person-avatar">{{ person.user.username[0]|upper }}</div>
+        <div>
+          <div class="person-name">{{ person.user.display_name or person.user.username }}</div>
+          <div class="person-handle">@{{ person.user.username }}</div>
+        </div>
+      </div>
+      {% if person.profile_excerpt %}
+      <div class="person-summary">
+        {{ person.profile_excerpt }}
+      </div>
+      {% endif %}
+      <div class="person-meta">
+        <span>{{ person.project_count }} public {{ 'wiki' if person.project_count == 1 else 'wikis' }}</span>
+        <span>{{ person.total_stars }} stars</span>
+        <span>{{ 'Personal wiki published' if person.profile_is_public else 'Personal wiki private' }}</span>
+      </div>
+      <div class="person-wikis">
+        {% for wiki in person.latest_wikis %}
+        <div class="person-wiki">
+          <strong>{{ wiki.title or wiki.slug }}</strong>
+          <span>&#9733; {{ wiki.star_count }}</span>
+        </div>
+        {% else %}
+        <div class="person-wiki">
+          <strong>Personal wiki</strong>
+          <span>{{ 'published' if person.profile_is_public else 'private' }}</span>
+        </div>
+        {% endfor %}
+      </div>
+    </a>
+    {% else %}
+    <p style="color: var(--text-tertiary);">No people yet.</p>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

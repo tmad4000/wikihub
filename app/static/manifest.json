@@ -1,0 +1,17 @@
+{
+  "name": "wikihub",
+  "short_name": "wikihub",
+  "description": "GitHub for LLM wikis",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f0e0c",
+  "theme_color": "#d4a04a",
+  "icons": [
+    {
+      "src": "/static/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
