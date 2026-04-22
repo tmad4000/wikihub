@@ -7,6 +7,9 @@
 <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
 <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
 <link rel="apple-touch-icon" href="{{ url_for('static', filename='favicon.svg') }}">
+<!-- agent discovery: point AI agents at plain-markdown + LLM index. wikihub-5764 -->
+<link rel="alternate" type="text/markdown" href="/AGENTS.md" title="Agent setup (markdown)">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="LLM index">
 <meta property="og:title" content="{% block og_title %}{{ self.title() }}{% endblock %}">
 <meta property="og:description" content="{% block og_desc %}GitHub for LLM wikis. Publish markdown knowledge bases in seconds.{% endblock %}">
 <meta property="og:type" content="website">

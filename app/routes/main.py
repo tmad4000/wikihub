@@ -1,11 +1,11 @@
-from flask import current_app, jsonify, render_template, request
+from flask import current_app, flash, jsonify, redirect, render_template, request, url_for
 from flask_login import login_required, logout_user, current_user
 
 from app import db
 from app.acl import grants_for_user, list_all_grants, parse_acl
 from app.discovery import discoverable_page_for_wiki, visible_wikis_for_owner
 from app.git_sync import read_file_from_repo
-from app.models import Wiki, Page, ApiKey, User, Star, Fork, MagicLoginToken, UsernameRedirect
+from app.models import Wiki, Page, ApiKey, User, Star, Fork, MagicLoginToken, UsernameRedirect, utcnow
 from app.routes import main_bp
 import os
 import shutil
@@ -16,6 +16,14 @@ from app.wiki_ops import delete_wiki_repos
 def index():
     from app.models import Wiki, Page
     from app.discovery import discoverable_wiki_ids
+
+    # agent content negotiation: if the client asks for markdown, serve AGENTS.md
+    # directly instead of the human landing page. wikihub-55jv
+    accept = request.headers.get("Accept", "")
+    if "text/markdown" in accept and "text/html" not in accept:
+        from app.routes.agent_surfaces import agents_md
+        return agents_md()
+
     visible_ids = discoverable_wiki_ids()
     featured = (
         Wiki.query.filter(Wiki.id.in_(visible_ids))
@@ -23,7 +31,13 @@ def index():
         .limit(3)
         .all()
     ) if visible_ids else []
-    return render_template("landing.html", featured_wikis=featured)
+    resp = current_app.make_response(render_template("landing.html", featured_wikis=featured))
+    # agent discovery: HTTP Link header pointing at /AGENTS.md. wikihub-5764
+    resp.headers["Link"] = (
+        '</AGENTS.md>; rel="alternate"; type="text/markdown"; title="Agent setup", '
+        '</llms.txt>; rel="alternate"; type="text/plain"; title="LLM index"'
+    )
+    return resp
 
 
 @main_bp.route("/roadmap")
@@ -81,6 +95,29 @@ def settings():
         personal_wiki=personal_wiki,
         project_count=project_count,
     )
+
+
+@main_bp.route("/delete-account", methods=["POST"])
+@login_required
+def delete_account():
+    """Soft-delete the signed-in user (wikihub-ks5t.7).
+
+    Body: JSON {"confirm": "<username>"}. The user must type their own
+    username to confirm — cheap guard against an accidental form submit.
+    On success, sets users.deleted_at and logs the user out. Login is
+    blocked for deleted users; data is retained for a 30-day grace period
+    before a hard-delete cron purges it (separate ticket).
+    """
+    user = current_user
+    data = request.get_json(silent=True) or {}
+    typed = (data.get("confirm") or "").strip().lower()
+    if typed != user.username:
+        return {"error": "bad_request", "message": "Type your username to confirm."}, 400
+
+    user.deleted_at = utcnow()
+    db.session.commit()
+    logout_user()
+    return jsonify({"ok": True, "grace_period_days": 30})
 
 
 @main_bp.route("/claim-email", methods=["POST"])
@@ -154,7 +191,8 @@ def shared():
 
 @main_bp.route("/delete-account", methods=["POST"])
 @login_required
-def delete_account():
+def delete_account_api():
+    """legacy JSON-body delete — /settings/delete-account is the primary path."""
     data = request.get_json(silent=True) or {}
     if data.get("confirm") != current_user.username:
         return {"error": "bad_request", "message": "Type your username to confirm"}, 400

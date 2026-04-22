@@ -3,9 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>wikihub — GitHub for LLM wikis</title>
+  <title>wikihub — GitHub for LLM wikis · agents see /AGENTS.md</title>
   <meta name="csrf-token" content="{{ csrf_token() }}">
   <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+  <!-- agent discovery: point AI agents at plain-markdown + LLM index. wikihub-5764 -->
+  <link rel="alternate" type="text/markdown" href="/AGENTS.md" title="Agent setup (markdown)">
+  <link rel="alternate" type="text/plain" href="/llms.txt" title="LLM index">
   <meta property="og:title" content="wikihub — GitHub for LLM wikis">
   <meta property="og:description" content="The home for markdown knowledge bases. Bring your files or let your agent build it.">
   <meta property="og:type" content="website">
@@ -703,6 +706,13 @@
 </head>
 <body>
 
+  <!-- agent discovery: visible body signal — WebFetch-style extractors often
+       drop <head>, so we put the pointer in the first extractable block.
+       wikihub-5hon -->
+  <div class="agent-banner" role="note" aria-label="For AI agents" style="text-align:center;padding:6px 16px;font-family:var(--font-mono);font-size:0.75rem;color:var(--text-muted);background:var(--bg-surface);border-bottom:1px solid var(--border-default);">
+    🤖 <strong>Agents</strong>: read <a href="/AGENTS.md" style="color:var(--accent);">/AGENTS.md</a> for one-shot setup.
+  </div>
+
   <!-- nav -->
   {% include '_nav.html' %}
 
@@ -730,7 +740,7 @@
         <div class="hero-panel-desc">Paste this into your agent</div>
         <div class="agent-code">
           <button class="copy-btn" onclick="navigator.clipboard.writeText(this.parentElement.querySelector('pre').textContent).then(()=>{this.textContent='copied!';setTimeout(()=>this.textContent='copy',1500)})">copy</button>
-          <pre>Go to wikihub.md/agents for setup instructions, then create a wiki called "research" with a note about what wikis are good for.</pre>
+          <pre>Go to wikihub.md/AGENTS.md for setup instructions, then create a wiki called "research" with a note about what wikis are good for.</pre>
         </div>
       </div>
     </div>
