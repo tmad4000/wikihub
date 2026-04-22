@@ -176,7 +176,7 @@ def signup():
             return render_template("auth/signup.html"), 429
 
         username = request.form.get("username", "").strip().lower()
-        email = request.form.get("email", "").strip() or None
+        email = request.form.get("email", "").strip().lower() or None
         password = request.form.get("password", "")
 
         if not username or not password:
@@ -239,7 +239,7 @@ def signup():
         existing = User.query.filter_by(email=prefill_email).first()
         if existing:
             flash("You already have an account — sign in to apply your invite.")
-            return redirect(url_for("auth.login", email=prefill_email, next="/shared-with-me"))
+            return redirect(url_for("auth.login", email=prefill_email, next="/shared"))
     return render_template("auth/signup.html", prefill_email=prefill_email)
 
 

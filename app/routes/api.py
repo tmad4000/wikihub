@@ -31,7 +31,7 @@ def create_account():
     if not username:
         username = "user_" + secrets.token_hex(4)
 
-    email = data.get("email", "").strip() or None
+    email = data.get("email", "").strip().lower() or None
     display_name = data.get("display_name", "").strip() or None
     password = data.get("password", "").strip() or None
 
@@ -237,7 +237,7 @@ def update_account():
         user.display_name = data["display_name"].strip() or None
 
     if "email" in data:
-        new_email = data["email"].strip() or None
+        new_email = data["email"].strip().lower() or None
         if new_email and new_email != user.email:
             if User.query.filter_by(email=new_email).first():
                 return {"error": "conflict", "message": "Email taken"}, 409

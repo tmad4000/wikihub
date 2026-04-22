@@ -1112,15 +1112,19 @@ def bulk_share_wiki(owner, slug):
 
     # fire notifications after commit so we never send email on rolled-back state
     ctx = _email_share_context(owner_user, wiki, request.current_user)
-    seen_emails = set()
+    notified_users = set()
+    notified_emails = set()
     for g in added:
         if g["username"] == request.current_user.username:
             continue
+        if g["username"] in notified_users:
+            continue
+        notified_users.add(g["username"])
         _notify_existing_user(target_username=g["username"], role=g["role"], ctx=ctx)
     for inv in invited:
-        if inv["email"] in seen_emails:
+        if inv["email"] in notified_emails:
             continue
-        seen_emails.add(inv["email"])
+        notified_emails.add(inv["email"])
         _notify_pending_email(email=inv["email"], role=inv["role"], ctx=ctx)
 
     return jsonify({"added": added, "invited": invited, "skipped": skipped, "failed": failed})
