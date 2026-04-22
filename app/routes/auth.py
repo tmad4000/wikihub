@@ -4,15 +4,51 @@ from time import time
 from urllib.parse import urlparse
 
 from flask import render_template, redirect, url_for, flash, request, session, current_app, abort
-from flask_login import login_user, logout_user, login_required
+from flask_login import login_user, logout_user, login_required, current_user
 from authlib.integrations.flask_client import OAuth
 
+from datetime import timedelta
+
 from app import db
-from app.models import User, ApiKey, MagicLoginToken, PendingInvite, utcnow
-from app.auth_utils import hash_password, check_password, hash_api_key, hash_one_time_token
+from app.models import User, ApiKey, MagicLoginToken, PendingInvite, EmailVerificationToken, utcnow
+from app.auth_utils import hash_password, check_password, hash_api_key, hash_one_time_token, generate_email_verification_token
 from app.routes import auth_bp
 from app.subdomains import validate_username
 from app.wiki_ops import ensure_personal_wiki, materialize_pending_invites_for
+from app.credentials_hint import resolve_server_url
+from app import email_service
+
+
+_EMAIL_VERIFY_TTL_HOURS = 24
+
+
+def send_verification_if_needed(user):
+    """Mint a verification token and email a verify link to the user's email,
+    iff they have an email and it's not yet verified. No-op otherwise.
+
+    Non-blocking: signup / account creation completes normally whether or not
+    this returns success. Email-send failures are logged inside email_service,
+    never raised."""
+    if not user or not user.email or user.email_verified_at is not None:
+        return
+
+    raw, token_hash = generate_email_verification_token()
+    token = EmailVerificationToken(
+        user_id=user.id,
+        token_hash=token_hash,
+        new_email=user.email,
+        expires_at=utcnow() + timedelta(hours=_EMAIL_VERIFY_TTL_HOURS),
+    )
+    db.session.add(token)
+    db.session.commit()
+
+    server_url = resolve_server_url(current_app, request)
+    verify_url = f"{server_url}/auth/verify/{raw}"
+    email_service.send_email_verification(
+        to=user.email,
+        verify_url=verify_url,
+        username=user.username,
+    )
 
 oauth = OAuth()
 
@@ -227,6 +263,10 @@ def signup():
         db.session.commit()
         attempts.append(now)
 
+        # Non-blocking verification email for form signups that supply an email
+        # but weren't marked verified via a pending-invite match.
+        send_verification_if_needed(user)
+
         login_user(user)
         return redirect(url_for("wiki.user_profile", username=user.username))
 
@@ -241,6 +281,61 @@ def signup():
             flash("You already have an account — sign in to apply your invite.")
             return redirect(url_for("auth.login", email=prefill_email, next="/shared"))
     return render_template("auth/signup.html", prefill_email=prefill_email)
+
+
+@auth_bp.route("/resend-verification", methods=["POST"])
+@login_required
+def resend_verification():
+    """Re-send the verification link to the signed-in user's current email."""
+    if not current_user.email:
+        flash("No email on your account. Add one in settings.")
+        return redirect(url_for("main.settings"))
+    if current_user.email_verified_at is not None:
+        flash("Your email is already verified.")
+        return redirect(url_for("main.settings"))
+    send_verification_if_needed(current_user)
+    flash(f"Verification email sent to {current_user.email}.")
+    return redirect(request.referrer or url_for("main.settings"))
+
+
+@auth_bp.route("/verify/<token>")
+def verify_email(token):
+    """Consume an email-verification token; sets users.email_verified_at.
+    Verification is non-blocking everywhere else — this endpoint just clears
+    the 'unverified' banner and lets pending invites for the address
+    materialize."""
+    token_hash = hash_one_time_token(token)
+    row = EmailVerificationToken.query.filter_by(token_hash=token_hash).first()
+    if not row or row.used_at is not None or row.expires_at <= utcnow():
+        flash("This verification link is invalid or expired.")
+        return redirect(url_for("auth.login"))
+
+    user = User.query.get(row.user_id)
+    if not user:
+        flash("This verification link is invalid.")
+        return redirect(url_for("auth.login"))
+
+    # If the user's current email still matches the token's captured email,
+    # mark verified. If it differs (user changed email in settings after
+    # minting), update to the token's address and mark verified — the token
+    # proves ownership of `new_email` specifically.
+    if user.email != row.new_email:
+        user.email = row.new_email
+    user.email_verified_at = utcnow()
+    row.used_at = utcnow()
+    db.session.commit()
+
+    # Pending invites scoped to this address can now apply.
+    materialize_pending_invites_for(user)
+    db.session.commit()
+
+    if current_user.is_authenticated and current_user.id == user.id:
+        flash("Email verified.")
+        return redirect(url_for("main.settings"))
+    # user clicked from a different browser / not signed in — sign them in
+    login_user(user)
+    flash("Email verified. You're signed in.")
+    return redirect(url_for("wiki.user_profile", username=user.username))
 
 
 @auth_bp.route("/logout")

@@ -278,6 +278,30 @@ a:hover { text-decoration: underline; }
 <body>
 {% include '_nav.html' %}
 
+{% if current_user and current_user.is_authenticated and current_user.email and not current_user.email_verified_at %}
+<div class="email-verify-banner" role="status" aria-label="Email verification needed">
+  <span><strong>Unverified email.</strong> We sent a verification link to <code>{{ current_user.email }}</code>.</span>
+  <form method="post" action="{{ url_for('auth.resend_verification') }}" style="display:inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button type="submit" class="email-verify-resend">Resend</button>
+  </form>
+</div>
+<style>
+.email-verify-banner {
+  display: flex; gap: 0.75rem; align-items: center; justify-content: center;
+  padding: 0.5rem 1rem; font-size: 0.8125rem;
+  background: var(--bg-warn, #fff6e0); color: var(--text-warn, #6b4b00);
+  border-bottom: 1px solid var(--border-warn, #e0c97a);
+}
+.email-verify-banner code { font-family: var(--font-mono); font-size: 0.8125rem; }
+.email-verify-resend {
+  background: transparent; border: 1px solid currentColor; color: inherit;
+  padding: 0.15rem 0.5rem; font: inherit; cursor: pointer; border-radius: 3px;
+}
+.email-verify-resend:hover { background: rgba(0,0,0,0.05); }
+</style>
+{% endif %}
+
 <div class="search-overlay" id="search-overlay"></div>
 <div class="search-modal" id="search-modal"{% if current_user and current_user.is_authenticated %} data-username="{{ current_user.username }}"{% endif %}>
   <input type="text" class="search-input" id="search-input" placeholder="Search wikis..." autocomplete="off">

@@ -73,6 +73,11 @@ def create_account():
     if applied:
         db.session.commit()
 
+    # Non-blocking verification email if the caller supplied an email.
+    # Verification isn't required — the account is live and usable immediately.
+    from app.routes.auth import send_verification_if_needed
+    send_verification_if_needed(user)
+
     server_url = resolve_server_url(current_app, request)
     return jsonify({
         "user_id": user.id,

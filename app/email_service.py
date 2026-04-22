@@ -118,6 +118,34 @@ def _escape(s: str) -> str:
     return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+def send_email_verification(
+    *,
+    to: str,
+    verify_url: str,
+    username: str,
+) -> bool:
+    """Send the 'verify your email' link sent right after signup (or when a
+    user changes their email). Non-blocking — the user can use the app
+    before clicking; verification just stops the 'unverified' banner and
+    lets pending invites for that address materialize."""
+    subject = "Verify your WikiHub email"
+    text = (
+        f"Hi @{username},\n\n"
+        f"Click this link to confirm your email address on WikiHub:\n{verify_url}\n\n"
+        f"This link expires in 24 hours. If you didn't sign up for WikiHub, "
+        f"you can ignore this email.\n\n"
+        f"— WikiHub"
+    )
+    html = f"""\
+<p>Hi <strong>@{_escape(username)}</strong>,</p>
+<p>Click the link to confirm your email address on WikiHub:</p>
+<p><a href="{verify_url}">{verify_url}</a></p>
+<p style="color:#887d6e;font-size:0.875rem;">This link expires in 24 hours. If you didn't sign up for WikiHub, you can ignore this email.</p>
+<p style="color:#887d6e;font-size:0.875rem;margin-top:2rem;">— WikiHub</p>
+"""
+    return send(to, subject, html, text)
+
+
 def send_share_invite_existing_user(
     *,
     to: str,

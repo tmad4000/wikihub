@@ -452,6 +452,56 @@ def test_logout(client):
     assert "/auth/login" in r.headers["Location"], f"expected login redirect after logout, got {r.headers.get('Location')}"
 
 
+def test_email_verification_flow(client):
+    """wikihub-ks5t.3: signup with email is non-blocking — account works
+    immediately, and a verification link is emailed. Clicking the link sets
+    email_verified_at."""
+    import os
+    os.environ["EMAIL_MODE"] = "mock"
+    from app import email_service
+    from app.models import User
+    email_service.mock_clear()
+
+    # Signup via API with email — should succeed AND queue a verify email.
+    r = client.post("/api/v1/accounts", json={"username": "verifyme", "email": "verifyme@example.com"})
+    assert r.status_code == 201
+
+    user = User.query.filter_by(username="verifyme").first()
+    assert user is not None
+    assert user.email_verified_at is None, "should start unverified"
+
+    # Account is immediately usable — non-blocking.
+    api_key = r.get_json()["api_key"]
+    r2 = client.get("/api/v1/accounts/me", headers={"Authorization": f"Bearer {api_key}"})
+    assert r2.status_code == 200
+
+    # The verify email should be in the mock outbox.
+    msgs = [m for m in email_service.mock_outbox() if "Verify" in m["subject"] and m["to"] == "verifyme@example.com"]
+    assert len(msgs) == 1, f"expected one verify email for verifyme, got {len(msgs)}"
+    msg = msgs[0]
+    # Pull the verify URL out of the email body.
+    import re
+    match = re.search(r"/auth/verify/(ev_[A-Za-z0-9_-]+)", msg["text"])
+    assert match, f"verify URL not found in email text: {msg['text'][:200]}"
+    verify_path = "/auth/verify/" + match.group(1)
+
+    # A clean browser session clicking the link signs the user in AND verifies.
+    browser = client.application.test_client()
+    r3 = browser.get(verify_path, follow_redirects=False)
+    assert r3.status_code == 302, f"expected redirect, got {r3.status_code}"
+    assert "/auth/login" not in r3.headers.get("Location", "")
+
+    user = User.query.filter_by(username="verifyme").first()
+    assert user.email_verified_at is not None, "email_verified_at should be set after clicking link"
+
+    # A second click on the same link is invalid (single-use) — redirects to login.
+    r4 = browser.get(verify_path, follow_redirects=False)
+    assert r4.status_code == 302
+    assert "/auth/login" in r4.headers["Location"]
+
+    os.environ.pop("EMAIL_MODE", None)
+
+
 def test_login_redirect_back(client):
     """Login form should redirect back to the page the user came from.
 
@@ -1301,7 +1351,9 @@ def test_share_sends_email(client, api_key):
     }, headers=h)
     assert r.status_code == 200
 
-    outbox = email_service.mock_outbox()
+    # filter out the email-verification email triggered by creating notify1
+    # with an email (wikihub-ks5t.3); this test only cares about share emails.
+    outbox = [m for m in email_service.mock_outbox() if "Verify" not in m["subject"]]
     assert len(outbox) == 2, outbox
     tos = {m["to"] for m in outbox}
     assert tos == {"notify1@example.com", "future2@example.com"}
@@ -1675,6 +1727,7 @@ def run_all():
             ("client_config hint", lambda: test_client_config_hint(client)),
             ("magic link login", lambda: test_magic_link_login(client)),
             ("logout (wikihub-uq9)", lambda: test_logout(client)),
+            ("email verification flow (wikihub-ks5t.3)", lambda: test_email_verification_flow(client)),
             ("login redirects back (?next + Referer fallback)", lambda: test_login_redirect_back(client)),
             ("URL login (GET ?api_key / ?password)", lambda: test_url_login(client)),
             ("URL login — log redaction", lambda: test_url_login_log_redaction()),
