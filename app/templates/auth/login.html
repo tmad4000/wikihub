@@ -47,7 +47,7 @@
     You were invited at <strong>{{ prefill_email }}</strong>. Sign in below and your invite will apply automatically.
   </p>
   {% endif %}
-  <a href="{{ url_for('auth.google_login') }}" class="btn btn-google">Sign in with Google</a>
+  <a href="{{ url_for('auth.google_login', next=request.args.get('next') or None, email=prefill_email or None, it=request.args.get('it') or None) }}" class="btn btn-google">Sign in with Google</a>
   <div class="divider">or</div>
 
   <form method="POST">

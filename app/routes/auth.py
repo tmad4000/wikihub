@@ -1,7 +1,7 @@
 import re
 from collections import defaultdict, deque
 from time import time
-from urllib.parse import urlparse, quote
+from urllib.parse import urlparse, quote, parse_qs
 
 from flask import render_template, redirect, url_for, flash, request, session, current_app, abort
 from flask_login import login_user, logout_user, login_required, current_user
@@ -28,6 +28,7 @@ from app import email_service
 
 _EMAIL_VERIFY_TTL_HOURS = 24
 _PASSWORD_RESET_TTL_MINUTES = 30
+_GOOGLE_OAUTH_CONTEXTS_SESSION_KEY = "google_oauth_contexts"
 
 
 def send_verification_if_needed(user):
@@ -98,6 +99,45 @@ def _safe_next_url(fallback=None):
             return parsed.path + (f"?{parsed.query}" if parsed.query else "")
 
     return fallback or url_for("main.index")
+
+
+def _safe_redirect_target(target, fallback=None):
+    parsed = urlparse(target or "")
+    if target and not parsed.scheme and not parsed.netloc:
+        return target
+    return fallback or url_for("main.index")
+
+
+def _google_oauth_context_from_request():
+    context = {"next": _safe_next_url()}
+    invite_email = request.args.get("email", "").strip().lower()
+    invite_token = request.args.get("it", "").strip()
+    if invite_email:
+        context["email"] = invite_email
+    if invite_token:
+        context["it"] = invite_token
+    return context
+
+
+def _stash_google_oauth_context(state, context):
+    if not state:
+        return
+    pending = dict(session.get(_GOOGLE_OAUTH_CONTEXTS_SESSION_KEY, {}))
+    pending[state] = context
+    session[_GOOGLE_OAUTH_CONTEXTS_SESSION_KEY] = pending
+
+
+def _pop_google_oauth_context():
+    state = request.args.get("state", "").strip()
+    if not state:
+        return {}
+    pending = dict(session.get(_GOOGLE_OAUTH_CONTEXTS_SESSION_KEY, {}))
+    context = pending.pop(state, {})
+    if pending:
+        session[_GOOGLE_OAUTH_CONTEXTS_SESSION_KEY] = pending
+    else:
+        session.pop(_GOOGLE_OAUTH_CONTEXTS_SESSION_KEY, None)
+    return context
 
 
 def _check_login_rate_limit():
@@ -217,7 +257,7 @@ def login():
     return redirect(_safe_next_url())
 
 
-def _apply_pending_invites_on_login(user):
+def _apply_pending_invites_on_login(user, *, invite_email=None, invite_token=None):
     """After a successful login, apply any pending invites for this user.
 
     Verification model: if the user arrived via an invite link carrying a
@@ -226,8 +266,8 @@ def _apply_pending_invites_on_login(user):
     Token-less invite links fall through to the separate verify-email flow."""
     if not user or not user.email:
         return
-    invite_email = request.args.get("email", "").strip().lower()
-    invite_token = request.args.get("it", "").strip()
+    invite_email = (invite_email if invite_email is not None else request.args.get("email", "")).strip().lower()
+    invite_token = (invite_token if invite_token is not None else request.args.get("it", "")).strip()
     if (
         invite_email
         and invite_token
@@ -521,7 +561,11 @@ def google_login():
         flash("Google OAuth not configured")
         return redirect(url_for("auth.login"))
     redirect_uri = url_for("auth.google_callback", _external=True)
-    return client.authorize_redirect(redirect_uri)
+    response = client.authorize_redirect(redirect_uri)
+    location = response.headers.get("Location", "")
+    state = parse_qs(urlparse(location).query).get("state", [""])[0]
+    _stash_google_oauth_context(state, _google_oauth_context_from_request())
+    return response
 
 
 @auth_bp.route("/google/callback")
@@ -533,6 +577,7 @@ def google_callback():
         return redirect(url_for("auth.login"))
 
     token = client.authorize_access_token()
+    oauth_context = _pop_google_oauth_context()
     userinfo = token.get("userinfo", {})
     google_id = userinfo.get("sub")
     email = userinfo.get("email")
@@ -551,7 +596,12 @@ def google_callback():
     )
 
     login_user(user)
-    return redirect(url_for("main.index"))
+    _apply_pending_invites_on_login(
+        user,
+        invite_email=oauth_context.get("email"),
+        invite_token=oauth_context.get("it"),
+    )
+    return redirect(_safe_redirect_target(oauth_context.get("next")))
 
 
 def _resolve_or_create_google_user(*, google_id, email, email_verified, name):

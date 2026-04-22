@@ -1,6 +1,7 @@
 import os
 import subprocess
 from datetime import timezone
+from urllib.parse import unquote, urlparse
 
 from flask import Response, abort, jsonify, redirect, render_template, request, url_for
 
@@ -249,7 +250,76 @@ def _page_url(username, slug, page_path):
     return f"/@{username}/{slug}/{url_path_from_page_path(page_path, strip_md=True)}"
 
 
+_SIDEBAR_NON_CONTENT_ROOTS = {
+    "commit",
+    "graph",
+    "graph.json",
+    "history",
+    "llms.txt",
+    "preview",
+    "reindex",
+    "settings",
+    "sidebar.json",
+    "tag",
+}
+
+
+def _normalize_sidebar_current_path(current_path):
+    if current_path is None:
+        return None
+
+    path = unquote((current_path or "").strip())
+    if not path or path == "/":
+        return None
+
+    path = path.lstrip("/")
+    if path.endswith("/"):
+        return _normalize_folder_path(path)
+    return path.removesuffix("/")
+
+
+def _sidebar_current_path_from_referrer(username, slug):
+    if not request.referrer:
+        return None
+
+    parsed = urlparse(request.referrer)
+    prefix = f"/@{username}/{slug}"
+    if parsed.path == prefix or parsed.path == prefix + "/":
+        return "index.md"
+    if not parsed.path.startswith(prefix + "/"):
+        return None
+
+    relative = unquote(parsed.path[len(prefix) + 1 :])
+    if not relative:
+        return "index.md"
+    if relative.endswith("/"):
+        return _normalize_folder_path(page_path_from_url_path(relative.rstrip("/")))
+
+    parts = [part for part in relative.split("/") if part]
+    if not parts:
+        return "index.md"
+    if parts[0] in _SIDEBAR_NON_CONTENT_ROOTS:
+        return None
+    if parts[-1] in {"edit", "history"} and len(parts) > 1:
+        parts = parts[:-1]
+
+    page_path = page_path_from_url_path("/".join(parts))
+    if not page_path:
+        return None
+    if "." not in os.path.basename(page_path):
+        page_path = f"{page_path}.md"
+    return page_path
+
+
+def _sidebar_current_path_from_request(username, slug):
+    explicit_current = _normalize_sidebar_current_path(request.args.get("current"))
+    if explicit_current:
+        return explicit_current
+    return _sidebar_current_path_from_referrer(username, slug)
+
+
 def _build_sidebar_tree(username, slug, wiki, public=False, current_path=None, acl_filter_user=None):
+    current_path = _normalize_sidebar_current_path(current_path)
     root = {"children": {}}
     pages_by_path = {p.path: p for p in Page.query.filter_by(wiki_id=wiki.id).all()}
 
@@ -258,6 +328,7 @@ def _build_sidebar_tree(username, slug, wiki, public=False, current_path=None, a
         cursor = root["children"]
         for depth, part in enumerate(parts[:-1]):
             folder_path = "/".join(parts[: depth + 1])
+            folder_is_current = current_path == folder_path
             node = cursor.setdefault(
                 ("folder", folder_path),
                 {
@@ -265,7 +336,9 @@ def _build_sidebar_tree(username, slug, wiki, public=False, current_path=None, a
                     "name": part,
                     "path": folder_path,
                     "url": _folder_url(username, slug, folder_path),
-                    "active": current_path == folder_path,
+                    "active": folder_is_current,
+                    "current": folder_is_current,
+                    "ancestor_of_current": False,
                     "children": {},
                 },
             )
@@ -277,12 +350,15 @@ def _build_sidebar_tree(username, slug, wiki, public=False, current_path=None, a
 
         page = pages_by_path.get(path)
         updated = page.updated_at.isoformat() if page and page.updated_at else None
+        page_is_current = current_path == path
         cursor[("page", path)] = {
             "kind": "page",
             "name": filename.replace(".md", ""),
             "path": path,
             "url": _page_url(username, slug, path),
-            "active": current_path == path,
+            "active": page_is_current,
+            "current": page_is_current,
+            "ancestor_of_current": False,
             "visibility": page.visibility if page else "private",
             "updated_at": updated,
             "children": {},
@@ -293,7 +369,8 @@ def _build_sidebar_tree(username, slug, wiki, public=False, current_path=None, a
         for item in items:
             if item["kind"] == "folder":
                 item["children"] = normalize(item["children"])
-                item["active"] = item["active"] or any(child["active"] for child in item["children"])
+                item["ancestor_of_current"] = any(child["active"] for child in item["children"])
+                item["active"] = item["current"] or item["ancestor_of_current"]
                 child_dates = [c["updated_at"] for c in item["children"] if c.get("updated_at")]
                 item["updated_at"] = max(child_dates) if child_dates else None
             else:
@@ -596,8 +673,16 @@ def _sidebar_for_wiki(username, slug, wiki, public=False, current_path=None, acl
 def sidebar_json(username, slug):
     """lightweight JSON manifest for client-side sidebar rendering."""
     owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
-    use_public = not _is_owner(wiki)
-    tree = _build_sidebar_tree(owner.username, wiki.slug, wiki, public=use_public)
+    acl_rules = load_acl_rules(owner.username, wiki.slug)
+    use_public, acl_filter_user = _repo_access(wiki, acl_rules)
+    tree = _build_sidebar_tree(
+        owner.username,
+        wiki.slug,
+        wiki,
+        public=use_public,
+        current_path=_sidebar_current_path_from_request(owner.username, wiki.slug),
+        acl_filter_user=acl_filter_user,
+    )
     return jsonify(tree)
 
 

@@ -73,7 +73,7 @@
 /* wikihub-58bd: padding-left MUST exceed .sidebar-folder-toggle width (20px)
    so file children (which have no toggle) are visibly indented past their
    parent folder's icon. 20px == toggle width = no visible nesting. */
-.sidebar-children { display: none; padding-left: 28px; }
+.sidebar-children { display: none; padding-left: 20px; }
 .sidebar-folder.open > .sidebar-children { display: block; }
 .sidebar-item {
   display: flex; align-items: center; gap: 8px;
@@ -584,12 +584,12 @@
 {% macro render_sidebar(items, level=0) %}
   {% for item in items %}
     {% if item.kind == 'folder' %}
-    <div class="sidebar-folder {{ 'open' if item.active else '' }}" data-folder-path="{{ item.path }}" data-name="{{ item.name }}" data-kind="folder" data-updated="{{ item.updated_at or '' }}">
+    <div class="sidebar-folder {{ 'open' if item.active else '' }}" data-folder-path="{{ item.path }}" data-name="{{ item.name }}" data-kind="folder" data-updated="{{ item.updated_at or '' }}" data-level="{{ level }}">
       <div class="sidebar-folder-row">
         <button type="button" class="sidebar-folder-toggle">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
         </button>
-        <a href="{{ item.url }}" class="sidebar-item {{ 'active' if item.active else '' }}">
+        <a href="{{ item.url }}" class="sidebar-item {{ 'active' if item.active else '' }}" style="padding-left: {{ 12 + (level * 16) }}px;">
           <span class="sidebar-icon">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h5l2 2h11v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>
           </span>
@@ -601,7 +601,7 @@
       </div>
     </div>
     {% else %}
-    <a href="{{ item.url }}" class="sidebar-item {{ 'active' if item.active else '' }}" data-name="{{ item.name }}" data-kind="page" data-updated="{{ item.updated_at or '' }}" data-path="{{ item.path }}">
+    <a href="{{ item.url }}" class="sidebar-item {{ 'active' if item.active else '' }}" data-name="{{ item.name }}" data-kind="page" data-updated="{{ item.updated_at or '' }}" data-path="{{ item.path }}" data-level="{{ level }}" style="padding-left: {{ 28 + (level * 16) }}px;">
       <span class="sidebar-icon">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
       </span>
@@ -809,7 +809,7 @@
         Manage
       </button>
       {% endif %}
-      <button class="action-btn" onclick="reindexWiki(this)">
+      <button class="action-btn" onclick="reindexWiki(this)" title="Rebuild the wiki's search index, wikilinks, and derived metadata. Safe to run again; it does not rewrite page content.">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
         Reindex
       </button>
@@ -1012,10 +1012,12 @@
 
 {% block scripts %}
 <script>
-const folderStorageKey = 'wikihub-sidebar-folders';
+const sidebarStorageScope = '{{ owner.username }}/{{ wiki.slug }}';
+const folderStorageKey = 'wikihub-sidebar-folders:' + sidebarStorageScope;
 const leftSidebarCollapsedKey = 'wikihub-left-sidebar-collapsed';
 const rightPanelCollapsedKey = 'wikihub-right-panel-collapsed';
 const readerLayout = document.querySelector('.reader-layout');
+const currentSidebarPath = {{ page.path | tojson }};
 
 function toggleSidebar() {
   document.getElementById('sidebar').classList.toggle('open');
@@ -1080,22 +1082,23 @@ function saveFolders(state) {
   localStorage.setItem(folderStorageKey, JSON.stringify(state));
 }
 
+function isCurrentSidebarBranch(folderPath) {
+  if (!currentSidebarPath || !folderPath) return false;
+  return currentSidebarPath === folderPath || currentSidebarPath.startsWith(folderPath + '/');
+}
+
 function applyFolderState() {
   const state = loadFolders();
-  let changed = false;
   document.querySelectorAll('.sidebar-folder').forEach(folder => {
     const path = folder.dataset.folderPath;
-    if (state[path] === false) {
-      folder.classList.remove('open');
-    } else if (state[path] === true || folder.classList.contains('open')) {
+    if (Object.prototype.hasOwnProperty.call(state, path)) {
+      folder.classList.toggle('open', state[path] === true);
+    } else if (folder.classList.contains('open') || isCurrentSidebarBranch(path)) {
       folder.classList.add('open');
-      // Persist open state (including server-side auto-expand for active page)
-      // so folders stay open when user navigates to a page in a different branch.
-      if (state[path] !== true) { state[path] = true; changed = true; }
+    } else {
+      folder.classList.remove('open');
     }
-    // non-active folders with no localStorage state stay collapsed (server default)
   });
-  if (changed) saveFolders(state);
   // scroll active sidebar item into view
   requestAnimationFrame(() => {
     const active = document.querySelector('.sidebar-item.active');
@@ -1384,12 +1387,12 @@ applyFolderState();
     if (item.kind === 'folder') {
       var isActive = item.active ? ' open' : '';
       var upd = item.updated_at ? esc(item.updated_at) : '';
-      var h = '<div class="sidebar-folder' + isActive + '" data-folder-path="' + esc(item.path) + '" data-name="' + esc(item.name) + '" data-kind="folder" data-updated="' + upd + '">';
+      var h = '<div class="sidebar-folder' + isActive + '" data-folder-path="' + esc(item.path) + '" data-name="' + esc(item.name) + '" data-kind="folder" data-updated="' + upd + '" data-level="' + level + '">';
       h += '<div class="sidebar-folder-row">';
       h += '<button type="button" class="sidebar-folder-toggle">';
       h += '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>';
       h += '</button>';
-      h += '<a href="' + esc(item.url) + '" class="sidebar-item' + (item.active ? ' active' : '') + '">';
+      h += '<a href="' + esc(item.url) + '" class="sidebar-item' + (item.active ? ' active' : '') + '" style="padding-left:' + (12 + (level * 16)) + 'px;">';
       h += '<span class="sidebar-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h5l2 2h11v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg></span>';
       h += esc(item.name) + '</a></div>';
       h += '<div class="sidebar-children">' + (item.children || []).map(function(c) { return renderItem(c, level + 1); }).join('') + '</div>';
@@ -1398,7 +1401,7 @@ applyFolderState();
     } else {
       var cls = item.path === currentPath ? ' active' : '';
       var upd = item.updated_at ? esc(item.updated_at) : '';
-      return '<a href="' + esc(item.url) + '" class="sidebar-item' + cls + '" data-name="' + esc(item.name) + '" data-kind="page" data-updated="' + upd + '" data-path="' + esc(item.path) + '"><span class="sidebar-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>' + esc(item.name) + '</a>';
+      return '<a href="' + esc(item.url) + '" class="sidebar-item' + cls + '" data-name="' + esc(item.name) + '" data-kind="page" data-updated="' + upd + '" data-path="' + esc(item.path) + '" data-level="' + level + '" style="padding-left:' + (28 + (level * 16)) + 'px;"><span class="sidebar-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>' + esc(item.name) + '</a>';
     }
   }
 

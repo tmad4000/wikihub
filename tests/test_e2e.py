@@ -662,6 +662,169 @@ def test_google_auto_link_security(app):
         assert carol_after.google_id is None
 
 
+def test_google_oauth_preserves_next_and_invite_context(app, client, api_key):
+    """wikihub-gtrq: Google OAuth must carry next + invite token through the callback."""
+    import app.routes.auth as auth_routes
+    from flask import redirect
+    from app.models import PendingInvite, User
+
+    h = {"Authorization": f"Bearer {api_key}"}
+
+    r = client.post("/api/v1/wikis", json={"slug": "oauth-invite-test", "title": "OAuth Invite Test"}, headers=h)
+    assert r.status_code == 201
+    r = client.post("/api/v1/wikis/agent1/oauth-invite-test/pages", json={
+        "path": "secret.md", "content": "# oauth secret", "visibility": "private",
+    }, headers=h)
+    assert r.status_code == 201
+    r = client.post("/api/v1/wikis/agent1/oauth-invite-test/share", json={
+        "pattern": "*", "email": "oauth-invite@example.com", "role": "read",
+    }, headers=h)
+    assert r.status_code == 200
+
+    pending = PendingInvite.query.filter_by(email="oauth-invite@example.com").first()
+    assert pending and pending.token
+
+    signup_page = client.get(
+        f"/auth/signup?next=/shared&email=oauth-invite@example.com&it={pending.token}"
+    )
+    assert signup_page.status_code == 200
+    signup_html = signup_page.get_data(as_text=True)
+    assert f'/auth/google?next=/shared&amp;email=oauth-invite@example.com&amp;it={pending.token}' in signup_html
+
+    login_page = client.get(
+        f"/auth/login?next=/shared&email=oauth-invite@example.com&it={pending.token}"
+    )
+    assert login_page.status_code == 200
+    login_html = login_page.get_data(as_text=True)
+    assert f'/auth/google?next=/shared&amp;email=oauth-invite@example.com&amp;it={pending.token}' in login_html
+
+    class FakeGoogleClient:
+        def authorize_redirect(self, redirect_uri):
+            return redirect(f"https://accounts.google.test/o/oauth2/auth?state=fake-google-state&redirect_uri={redirect_uri}")
+
+        def authorize_access_token(self):
+            return {
+                "userinfo": {
+                    "sub": "google-sub-oauth-invite",
+                    "email": "oauth-invite@example.com",
+                    "email_verified": False,
+                    "name": "OAuth Invite User",
+                }
+            }
+
+    try:
+        original_google = auth_routes.oauth.google
+        had_original = True
+    except AttributeError:
+        original_google = None
+        had_original = False
+
+    auth_routes.oauth.google = FakeGoogleClient()
+    try:
+        browser = app.test_client()
+        r = browser.get(
+            f"/auth/google?next=/shared&email=oauth-invite@example.com&it={pending.token}",
+            follow_redirects=False,
+        )
+        assert r.status_code == 302
+        assert "state=fake-google-state" in r.headers["Location"]
+
+        with browser.session_transaction() as sess:
+            pending_contexts = sess.get("google_oauth_contexts", {})
+            assert pending_contexts["fake-google-state"]["next"] == "/shared"
+            assert pending_contexts["fake-google-state"]["email"] == "oauth-invite@example.com"
+            assert pending_contexts["fake-google-state"]["it"] == pending.token
+
+        r = browser.get("/auth/google/callback?state=fake-google-state&code=fake", follow_redirects=False)
+        assert r.status_code == 302
+        assert r.headers["Location"].endswith("/shared"), r.headers["Location"]
+
+        with browser.session_transaction() as sess:
+            assert "google_oauth_contexts" not in sess
+
+        user = User.query.filter_by(google_id="google-sub-oauth-invite").first()
+        assert user is not None
+        assert user.email == "oauth-invite@example.com"
+        assert user.email_verified_at is not None, "invite token should verify the Google-created account"
+        assert PendingInvite.query.filter_by(email="oauth-invite@example.com").count() == 0
+
+        r = browser.get("/@agent1/oauth-invite-test/secret")
+        assert r.status_code == 200
+        assert b"oauth secret" in r.data
+    finally:
+        if had_original:
+            auth_routes.oauth.google = original_google
+        else:
+            delattr(auth_routes.oauth, "google")
+
+
+def test_sidebar_json_preserves_current_path_and_acl_shares(app, client, api_key):
+    """wikihub-oud7 + wikihub-aozp: async sidebar keeps current branch and ACL-shared pages."""
+    import app.routes.wiki as wiki_routes
+
+    h = {"Authorization": f"Bearer {api_key}"}
+
+    r = client.post("/api/v1/accounts", json={"username": "sideguest", "password": "testpass12345"})
+    assert r.status_code == 201
+
+    r = client.post("/api/v1/wikis", json={"slug": "async-share", "title": "Async Share"}, headers=h)
+    assert r.status_code == 201
+    r = client.post("/api/v1/wikis/agent1/async-share/pages", json={
+        "path": "welcome.md",
+        "content": "---\ntitle: Welcome\nvisibility: public\n---\n\n# Welcome",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201
+    r = client.post("/api/v1/wikis/agent1/async-share/pages", json={
+        "path": "team/secret.md",
+        "content": "---\ntitle: Secret\nvisibility: private\n---\n\n# Secret",
+        "visibility": "private",
+    }, headers=h)
+    assert r.status_code == 201
+    r = client.post("/api/v1/wikis/agent1/async-share/share", json={
+        "pattern": "team/*", "username": "sideguest", "role": "read",
+    }, headers=h)
+    assert r.status_code == 200
+
+    browser = app.test_client()
+    login = browser.post(
+        "/auth/login",
+        data={"username": "sideguest", "password": "testpass12345"},
+        follow_redirects=False,
+    )
+    assert login.status_code == 302
+
+    original_threshold = wiki_routes.SIDEBAR_ASYNC_THRESHOLD
+    wiki_routes.SIDEBAR_ASYNC_THRESHOLD = 1
+    try:
+        r = browser.get("/@agent1/async-share/sidebar.json?current=team/secret.md")
+        assert r.status_code == 200, f"sidebar.json fetch failed: {r.status_code} {r.data[:200]}"
+        tree = r.get_json()
+    finally:
+        wiki_routes.SIDEBAR_ASYNC_THRESHOLD = original_threshold
+
+    def find_item(items, path):
+        for item in items:
+            if item.get("path") == path:
+                return item
+            found = find_item(item.get("children") or [], path)
+            if found:
+                return found
+        return None
+
+    welcome = find_item(tree, "welcome.md")
+    assert welcome is not None, "public page should still appear in async sidebar"
+
+    team = find_item(tree, "team")
+    assert team is not None, "shared folder should appear in collaborator async sidebar"
+    assert team["active"] is True, "folder containing current page should be marked active"
+    assert team["ancestor_of_current"] is True, "folder should be marked as ancestor of current page"
+
+    secret = find_item(tree, "team/secret.md")
+    assert secret is not None, "ACL-shared private page should appear in collaborator async sidebar"
+    assert secret["current"] is True, "current shared page should be marked current in async sidebar JSON"
+
+
 def test_email_verification_flow(client):
     """wikihub-ks5t.3: signup with email is non-blocking — account works
     immediately, and a verification link is emailed. Clicking the link sets
@@ -1245,6 +1408,8 @@ def test_sidebar_indentation(client, api_key):
       1. The .sidebar-children CSS rule exists with padding-left >= 16px.
       2. A folder with a child page renders <div class="sidebar-children">
          wrapping the child row in the rendered HTML.
+      3. Parent folder rows and child page rows encode explicit depth-based
+         padding so the nested tree remains visually legible.
     """
     import re
 
@@ -1279,23 +1444,9 @@ def test_sidebar_indentation(client, api_key):
         "app/templates/reader.html."
     )
     px = int(m.group(1))
-
-    # wikihub-58bd: the real invariant is that padding-left must exceed the
-    # sidebar-folder-toggle width. Files inside a folder have no toggle button,
-    # so when .sidebar-children padding == toggle width, file icons end up at
-    # exactly the same x as their parent folder's icon — zero visible nesting.
-    tog = re.search(r"\.sidebar-folder-toggle\s*\{[^}]*width:\s*(\d+)px", html)
-    assert tog, (
-        "wikihub-58c REGRESSION: .sidebar-folder-toggle width rule missing. "
-        "Cannot verify nesting invariant."
-    )
-    toggle_width = int(tog.group(1))
-    assert px > toggle_width + 4, (
-        f"wikihub-58bd REGRESSION: .sidebar-children padding-left is {px}px "
-        f"but .sidebar-folder-toggle width is {toggle_width}px. Children need "
-        f"padding-left > toggle_width + 4 so file icons appear visibly indented "
-        f"past the parent folder's icon. (Was: padding=={toggle_width} made the "
-        f"tree look flat at the second nesting level.)"
+    assert px >= 16, (
+        f"wikihub-58bd REGRESSION: .sidebar-children padding-left is only {px}px. "
+        "Nested rows need a real wrapper offset before any per-level row padding."
     )
 
     # 2) HTML structure: folder wraps child rows in .sidebar-children
@@ -1304,6 +1455,30 @@ def test_sidebar_indentation(client, api_key):
         '<div class="sidebar-children">. Child rows will render as siblings of '
         "the folder instead of nested. Check the render_sidebar macro in "
         "app/templates/reader.html."
+    )
+
+    # 3) Depth-based row padding exists for both the folder row and the child row.
+    folder_pad = re.search(
+        r'<a href="/@agent1/indent-test/plans/" class="sidebar-item active" style="padding-left:\s*(\d+)px;',
+        html,
+    )
+    assert folder_pad, (
+        "wikihub-ivdg REGRESSION: folder rows in the reader sidebar no longer "
+        "encode explicit depth-based padding."
+    )
+    child_pad = re.search(
+        r'data-path="plans/roadmap\.md"[^>]*style="padding-left:\s*(\d+)px;',
+        html,
+    )
+    assert child_pad, (
+        "wikihub-ivdg REGRESSION: child page rows in the reader sidebar no "
+        "longer encode explicit depth-based padding."
+    )
+    folder_px = int(folder_pad.group(1))
+    child_px = int(child_pad.group(1))
+    assert child_px > folder_px, (
+        f"wikihub-ivdg REGRESSION: child page padding-left ({child_px}px) must "
+        f"exceed parent folder padding-left ({folder_px}px) so nesting remains visible."
     )
 
 
@@ -1361,6 +1536,10 @@ def test_reader_sidebar_collapse_controls(client, api_key):
     assert "wikihub-right-panel-collapsed" in html, (
         "wikihub-adhu REGRESSION: right sidebar collapse state key missing "
         "from reader JavaScript."
+    )
+    assert "wikihub-sidebar-folders:" in html and "agent1/sidebar-controls" in html, (
+        "wikihub-oud7 REGRESSION: sidebar folder state should be namespaced by "
+        "owner/wiki rather than stored in one global localStorage bucket."
     )
 
 
@@ -2208,6 +2387,7 @@ def run_all():
             ("email verification flow (wikihub-ks5t.3)", lambda: test_email_verification_flow(client)),
             ("password reset flow (wikihub-ks5t.5)", lambda: test_password_reset_lifecycle(client)),
             ("Google auto-link security (wikihub-ks5t.4)", lambda: test_google_auto_link_security(app)),
+            ("Google OAuth preserves next + invite context (wikihub-gtrq)", lambda: test_google_oauth_preserves_next_and_invite_context(app, client, key)),
             ("login redirects back (?next + Referer fallback)", lambda: test_login_redirect_back(client)),
             ("URL login (GET ?api_key / ?password)", lambda: test_url_login(client)),
             ("URL login — log redaction", lambda: test_url_login_log_redaction()),
