@@ -875,6 +875,78 @@ def test_email_verification_flow(client):
     os.environ.pop("EMAIL_MODE", None)
 
 
+def test_settings_email_change_requires_reverification(client):
+    """wikihub-tzgn: changing email in settings clears verification, sends a
+    fresh verify link, and still preserves claimed-email conflicts."""
+    import os
+    import re
+    from app import db, email_service
+    from app.models import User
+
+    os.environ["EMAIL_MODE"] = "mock"
+    email_service.mock_clear()
+
+    r = client.post("/api/v1/accounts", json={"username": "swapuser", "email": "old@example.com"})
+    assert r.status_code == 201
+
+    messages = [
+        m for m in email_service.mock_outbox()
+        if "Verify" in m["subject"] and m["to"] == "old@example.com"
+    ]
+    assert len(messages) == 1
+    match = re.search(r"/auth/verify/(ev_[A-Za-z0-9_-]+)", messages[0]["text"])
+    assert match, f"verify URL not found in email text: {messages[0]['text'][:200]}"
+
+    browser = client.application.test_client()
+    r = browser.get("/auth/verify/" + match.group(1), follow_redirects=False)
+    assert r.status_code == 302
+
+    db.session.expire_all()
+    user = User.query.filter_by(username="swapuser").first()
+    assert user is not None
+    assert user.email == "old@example.com"
+    assert user.email_verified_at is not None
+
+    r = client.post("/api/v1/accounts", json={"username": "claimeduser", "email": "claimed@example.com"})
+    assert r.status_code == 201
+    email_service.mock_clear()
+
+    r = browser.post("/claim-email", json={"email": "claimed@example.com"})
+    assert r.status_code == 409
+    db.session.expire_all()
+    user = User.query.filter_by(username="swapuser").first()
+    assert user.email == "old@example.com"
+    assert user.email_verified_at is not None
+    assert email_service.mock_outbox() == []
+
+    r = browser.post("/claim-email", json={"email": "new@example.com"})
+    assert r.status_code == 200
+    assert r.get_json()["email"] == "new@example.com"
+
+    db.session.expire_all()
+    user = User.query.filter_by(username="swapuser").first()
+    assert user.email == "new@example.com"
+    assert user.email_verified_at is None, "email change should clear verification"
+
+    messages = [
+        m for m in email_service.mock_outbox()
+        if "Verify" in m["subject"] and m["to"] == "new@example.com"
+    ]
+    assert len(messages) == 1, f"expected one verify email for new@example.com, got {len(messages)}"
+    match = re.search(r"/auth/verify/(ev_[A-Za-z0-9_-]+)", messages[0]["text"])
+    assert match, f"verify URL not found in email text: {messages[0]['text'][:200]}"
+
+    r = browser.get("/auth/verify/" + match.group(1), follow_redirects=False)
+    assert r.status_code == 302
+
+    db.session.expire_all()
+    user = User.query.filter_by(username="swapuser").first()
+    assert user.email == "new@example.com"
+    assert user.email_verified_at is not None, "new email should verify after clicking the fresh link"
+
+    os.environ.pop("EMAIL_MODE", None)
+
+
 def test_password_reset_lifecycle(client):
     """wikihub-ks5t.5: forgot-password + reset flow with single-use, expiry,
     non-enumeration, and verified-on-reset semantics."""
