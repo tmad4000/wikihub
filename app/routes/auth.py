@@ -12,7 +12,7 @@ from app.models import User, ApiKey, MagicLoginToken, utcnow
 from app.auth_utils import hash_password, check_password, hash_api_key, hash_one_time_token
 from app.routes import auth_bp
 from app.subdomains import validate_username
-from app.wiki_ops import ensure_personal_wiki
+from app.wiki_ops import ensure_personal_wiki, materialize_pending_invites_for
 
 oauth = OAuth()
 
@@ -187,6 +187,10 @@ def signup():
         db.session.flush()
         ensure_personal_wiki(user)
         db.session.commit()
+
+        # no-op until email is verified (wikihub-ks5t / 769d)
+        materialize_pending_invites_for(user)
+        db.session.commit()
         attempts.append(now)
 
         login_user(user)
@@ -281,6 +285,7 @@ def google_callback():
         user = User(
             username=username,
             email=email,
+            email_verified_at=utcnow() if email else None,
             display_name=name,
             google_id=google_id,
         )
@@ -288,6 +293,18 @@ def google_callback():
         db.session.flush()
         ensure_personal_wiki(user)
         db.session.commit()
+
+        # Google verified the email — apply any pending invites now
+        applied = materialize_pending_invites_for(user)
+        if applied:
+            db.session.commit()
+    elif email and not user.email_verified_at:
+        # existing user just linked Google — treat as verification event
+        user.email_verified_at = utcnow()
+        db.session.commit()
+        applied = materialize_pending_invites_for(user)
+        if applied:
+            db.session.commit()
 
     login_user(user)
     return redirect(url_for("main.index"))

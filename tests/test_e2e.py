@@ -47,6 +47,7 @@ def reset_database():
         "forks",
         "stars",
         "pages",
+        "pending_invites",
         "wikis",
         "magic_login_tokens",
         "api_keys",
@@ -1117,6 +1118,135 @@ def test_bulk_sharing(client, api_key):
     assert r.status_code == 403
 
 
+def test_pending_invite_lifecycle(client, api_key):
+    """share by email before the user exists → PendingInvite stashed → user signs up
+    via Google (auto-verified email) → invite materializes as a real ACL grant and
+    the user can read the private page."""
+    from app.models import PendingInvite, User, utcnow
+    from app import db
+    from app.wiki_ops import materialize_pending_invites_for
+    h = {"Authorization": f"Bearer {api_key}"}
+
+    r = client.post("/api/v1/wikis", json={"slug": "invite-test", "title": "Invite Test"}, headers=h)
+    assert r.status_code == 201
+    r = client.post("/api/v1/wikis/agent1/invite-test/pages", json={
+        "path": "secret.md", "content": "# secret", "visibility": "private",
+    }, headers=h)
+    assert r.status_code == 201
+
+    # share to an email that has no account yet
+    r = client.post("/api/v1/wikis/agent1/invite-test/share", json={
+        "pattern": "*", "email": "future-user@example.com", "role": "edit",
+    }, headers=h)
+    assert r.status_code == 200, r.get_json()
+    body = r.get_json()
+    assert body.get("invited") == "future-user@example.com"
+    assert body.get("role") == "edit"
+
+    # PendingInvite row created
+    pending = PendingInvite.query.filter_by(email="future-user@example.com").all()
+    assert len(pending) == 1
+    assert pending[0].pattern == "*" and pending[0].role == "edit"
+
+    # /grants exposes both granted and pending
+    r = client.get("/api/v1/wikis/agent1/invite-test/grants", headers=h)
+    assert r.status_code == 200
+    g = r.get_json()
+    assert len(g["pending"]) == 1 and g["pending"][0]["email"] == "future-user@example.com"
+
+    # bulk share to the same email is idempotent
+    r = client.post("/api/v1/wikis/agent1/invite-test/share/bulk", json={
+        "grants": [{"email": "future-user@example.com", "role": "edit"}],
+        "pattern": "*",
+    }, headers=h)
+    assert r.status_code == 200
+    assert len(PendingInvite.query.filter_by(email="future-user@example.com").all()) == 1
+
+    # user signs up with password — no email verification yet, so invite should NOT apply
+    r = client.post("/api/v1/accounts", json={
+        "username": "future1",
+        "email": "future-user@example.com",
+        "password": "testpass12345",
+    })
+    assert r.status_code == 201
+    future_key = r.get_json()["api_key"]
+    hf = {"Authorization": f"Bearer {future_key}"}
+
+    r = client.get("/api/v1/wikis/agent1/invite-test/pages/secret.md", headers=hf)
+    assert r.status_code in (403, 404), "unverified email must NOT unlock pending invite"
+    assert len(PendingInvite.query.filter_by(email="future-user@example.com").all()) == 1, \
+        "pending invite should still be waiting"
+
+    # simulate email verification (Google OAuth path in prod, direct flag here)
+    future = User.query.filter_by(username="future1").first()
+    future.email_verified_at = utcnow()
+    db.session.commit()
+    applied = materialize_pending_invites_for(future)
+    db.session.commit()
+    assert len(applied) == 1
+
+    # PendingInvite row consumed
+    assert PendingInvite.query.filter_by(email="future-user@example.com").count() == 0
+
+    # user now has edit access
+    r = client.get("/api/v1/wikis/agent1/invite-test/pages/secret.md", headers=hf)
+    assert r.status_code == 200
+
+    # /grants no longer shows the pending entry but shows the materialized grant
+    r = client.get("/api/v1/wikis/agent1/invite-test/grants", headers=h)
+    assert r.status_code == 200
+    g = r.get_json()
+    assert not g["pending"]
+    assert any(row["username"] == "future1" and row["role"] == "edit" for row in g["grants"])
+
+    # revoke a fresh pending invite by email (before signup) via DELETE
+    r = client.post("/api/v1/wikis/agent1/invite-test/share", json={
+        "pattern": "*", "email": "another@example.com", "role": "read",
+    }, headers=h)
+    assert r.status_code == 200
+    r = client.delete("/api/v1/wikis/agent1/invite-test/share", json={
+        "pattern": "*", "email": "another@example.com",
+    }, headers=h)
+    assert r.status_code == 200
+    assert r.get_json()["revoked"] is True
+    assert PendingInvite.query.filter_by(email="another@example.com").count() == 0
+
+
+def test_share_sends_email(client, api_key):
+    """share endpoints emit share-invite emails via email_service (mock mode)."""
+    import os
+    os.environ["EMAIL_MODE"] = "mock"
+    from app import email_service
+    email_service.mock_clear()
+
+    h = {"Authorization": f"Bearer {api_key}"}
+    client.post("/api/v1/wikis", json={"slug": "email-test", "title": "Email Share Test"}, headers=h)
+    client.post("/api/v1/accounts", json={"username": "notify1", "email": "notify1@example.com"})
+
+    # existing user: should get an 'X shared a wiki' email
+    r = client.post("/api/v1/wikis/agent1/email-test/share", json={
+        "pattern": "*", "username": "notify1", "role": "read",
+    }, headers=h)
+    assert r.status_code == 200
+
+    # pending email: should get a 'sign up to get access' email
+    r = client.post("/api/v1/wikis/agent1/email-test/share", json={
+        "pattern": "*", "email": "future2@example.com", "role": "edit",
+    }, headers=h)
+    assert r.status_code == 200
+
+    outbox = email_service.mock_outbox()
+    assert len(outbox) == 2, outbox
+    tos = {m["to"] for m in outbox}
+    assert tos == {"notify1@example.com", "future2@example.com"}
+
+    # pending email template should link to signup
+    pending_email = next(m for m in outbox if m["to"] == "future2@example.com")
+    assert "signup" in pending_email["text"].lower() or "create your" in pending_email["html"].lower()
+
+    os.environ.pop("EMAIL_MODE", None)
+
+
 def test_subdomain_routing(client):
     """users get profile subdomains; wikis can claim custom subdomains.
     requests with a matching Host header route to the canonical path."""
@@ -1431,6 +1561,8 @@ def run_all():
             ("wiki-level sharing", lambda: test_wiki_level_sharing(client, key)),
             ("folder-level sharing", lambda: test_folder_level_sharing(client, key)),
             ("bulk sharing (wikihub-iga9)", lambda: test_bulk_sharing(client, key)),
+            ("pending invite lifecycle (wikihub-skp7)", lambda: test_pending_invite_lifecycle(client, key)),
+            ("share sends email (wikihub-exj1 mock)", lambda: test_share_sends_email(client, key)),
             ("subdomain routing", lambda: test_subdomain_routing(client)),
             ("CLI end-to-end", lambda: test_cli(client)),
         ]

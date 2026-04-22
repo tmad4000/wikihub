@@ -15,7 +15,7 @@ from app.credentials_hint import build_client_config, resolve_server_url
 from app.git_backend import _repo_path
 from app.routes import api_bp
 from app.subdomains import validate_username, validate_wiki_subdomain
-from app.wiki_ops import ensure_personal_wiki
+from app.wiki_ops import ensure_personal_wiki, materialize_pending_invites_for
 
 _USERNAME_RE = re.compile(r'^[a-z0-9_-]+$')
 
@@ -67,6 +67,11 @@ def create_account():
     )
     db.session.add(api_key)
     db.session.commit()
+
+    # apply any pending invites addressed to this email (no-op unless verified)
+    applied = materialize_pending_invites_for(user)
+    if applied:
+        db.session.commit()
 
     server_url = resolve_server_url(current_app, request)
     return jsonify({

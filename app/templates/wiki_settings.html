@@ -294,7 +294,7 @@
         addBtn.disabled = false;
         if (!res.ok) { setStatus(res.body.message || 'Error', 'error'); return; }
         var b = res.body;
-        var added = b.added || [], skipped = b.skipped || [], failed = b.failed || [];
+        var added = b.added || [], invited = b.invited || [], skipped = b.skipped || [], failed = b.failed || [];
         var failedIds = new Set(failed.map(function(f) { return f.input; }));
         // keep failed tokens, drop the rest
         tokens = tokens.filter(function(t) { return failedIds.has(t.id); })
@@ -302,6 +302,7 @@
         renderTokens();
         var parts = [];
         if (added.length) parts.push('added ' + added.length);
+        if (invited.length) parts.push('invited ' + invited.length);
         if (skipped.length) parts.push(skipped.length + ' already granted');
         if (failed.length) parts.push(failed.length + ' failed');
         setStatus(parts.join(' · ') || 'Nothing changed', failed.length ? 'error' : 'ok');
@@ -316,59 +317,88 @@
       });
   });
 
-  // --- grants list ---
-  function renderGrants(grants) {
-    listEl.innerHTML = '';
-    if (!grants.length) {
-      var li = document.createElement('li');
-      li.className = 'empty';
-      li.textContent = 'No collaborators yet.';
-      listEl.appendChild(li);
-      return;
-    }
-    grants.forEach(function(g) {
-      var li = document.createElement('li');
+  // --- grants list (granted + pending) ---
+  function renderGrantItem(g, kind) {
+    var li = document.createElement('li');
+    var meta = document.createElement('span');
+    meta.className = 'grant-meta';
+
+    if (kind === 'pending') {
+      li.setAttribute('data-email', g.email);
+      li.setAttribute('data-pattern', g.pattern);
+      var label = document.createElement('span');
+      label.textContent = g.email;
+      label.style.color = 'var(--text-primary)';
+      meta.appendChild(label);
+    } else {
       li.setAttribute('data-user', g.username);
       li.setAttribute('data-pattern', g.pattern);
-      var meta = document.createElement('span');
-      meta.className = 'grant-meta';
       var link = document.createElement('a');
       link.href = '/@' + g.username;
       link.textContent = '@' + g.username;
       link.style.color = 'var(--text-primary)';
       link.style.textDecoration = 'none';
       meta.appendChild(link);
-      var role = document.createElement('span');
-      role.className = 'role-badge';
-      role.textContent = g.role;
-      meta.appendChild(role);
-      if (g.pattern && g.pattern !== '*') {
-        var pat = document.createElement('span');
-        pat.className = 'pattern-badge';
-        pat.textContent = g.pattern;
-        meta.appendChild(pat);
+    }
+
+    var role = document.createElement('span');
+    role.className = 'role-badge';
+    role.textContent = g.role;
+    meta.appendChild(role);
+
+    if (kind === 'pending') {
+      var pend = document.createElement('span');
+      pend.className = 'pattern-badge';
+      pend.textContent = 'pending signup';
+      pend.style.color = 'var(--color-warning, var(--text-muted))';
+      meta.appendChild(pend);
+    }
+    if (g.pattern && g.pattern !== '*') {
+      var pat = document.createElement('span');
+      pat.className = 'pattern-badge';
+      pat.textContent = g.pattern;
+      meta.appendChild(pat);
+    }
+
+    li.appendChild(meta);
+    var btn = document.createElement('button');
+    btn.className = 'revoke-btn';
+    btn.type = 'button';
+    btn.textContent = 'revoke';
+    btn.addEventListener('click', function() {
+      if (kind === 'pending') {
+        revoke({pattern: g.pattern, email: g.email});
+      } else {
+        revoke({pattern: g.pattern, username: g.username});
       }
-      li.appendChild(meta);
-      var btn = document.createElement('button');
-      btn.className = 'revoke-btn';
-      btn.type = 'button';
-      btn.textContent = 'revoke';
-      btn.addEventListener('click', function() { revoke(g.pattern, g.username); });
-      li.appendChild(btn);
-      listEl.appendChild(li);
     });
+    li.appendChild(btn);
+    return li;
+  }
+
+  function renderGrants(grants, pending) {
+    listEl.innerHTML = '';
+    if (!grants.length && !pending.length) {
+      var li = document.createElement('li');
+      li.className = 'empty';
+      li.textContent = 'No collaborators yet.';
+      listEl.appendChild(li);
+      return;
+    }
+    grants.forEach(function(g) { listEl.appendChild(renderGrantItem(g, 'granted')); });
+    pending.forEach(function(p) { listEl.appendChild(renderGrantItem(p, 'pending')); });
   }
 
   function loadGrants() {
-    fetch(API + '/grants').then(function(r) { return r.ok ? r.json() : {grants: []}; })
-      .then(function(d) { renderGrants(d.grants || []); });
+    fetch(API + '/grants').then(function(r) { return r.ok ? r.json() : {grants: [], pending: []}; })
+      .then(function(d) { renderGrants(d.grants || [], d.pending || []); });
   }
 
-  function revoke(pattern, username) {
+  function revoke(body) {
     fetch(API + '/share', {
       method: 'DELETE',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({pattern: pattern, username: username}),
+      body: JSON.stringify(body),
     }).then(function(r) { return r.json(); })
       .then(function(d) { if (d.revoked) loadGrants(); });
   }

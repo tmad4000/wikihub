@@ -129,6 +129,27 @@ class Fork(db.Model):
     )
 
 
+class PendingInvite(db.Model):
+    """a share grant addressed to an email that has no account yet.
+    materialized into an ACL grant when a user signs up and verifies that email."""
+    __tablename__ = "pending_invites"
+
+    id = db.Column(db.Integer, primary_key=True)
+    wiki_id = db.Column(db.Integer, db.ForeignKey("wikis.id", ondelete="CASCADE"), nullable=False)
+    pattern = db.Column(db.String(512), nullable=False)  # e.g. "*" or "research/*"
+    email = db.Column(db.String(256), nullable=False, index=True)
+    role = db.Column(db.String(16), nullable=False)  # "read" | "edit"
+    invited_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
+
+    wiki = db.relationship("Wiki")
+    invited_by = db.relationship("User", foreign_keys=[invited_by_id])
+
+    __table_args__ = (
+        db.UniqueConstraint("wiki_id", "pattern", "email", name="uq_pending_invite"),
+    )
+
+
 class ApiKey(db.Model):
     __tablename__ = "api_keys"
 

@@ -11,7 +11,7 @@ from flask import Response, current_app, jsonify, request
 from app.url_utils import url_path_from_page_path
 
 from app import db
-from app.models import User, Wiki, Page, Star, Fork, Wikilink, WikiSlugRedirect, utcnow
+from app.models import User, Wiki, Page, Star, Fork, Wikilink, WikiSlugRedirect, PendingInvite, utcnow
 from app.auth_utils import api_auth_optional, api_auth_required, rate_limit_writes
 from app.git_backend import init_wiki_repo
 from app.git_sync import (
@@ -25,6 +25,8 @@ from app.git_sync import (
     update_mirror_page,
 )
 from app.acl import can_read, can_write, list_all_grants, remove_grant, resolve_grants, resolve_visibility
+from app.email_service import send_share_invite_existing_user, send_share_invite_pending
+from app.credentials_hint import resolve_server_url
 from app.content_utils import (
     page_reference_aliases,
     parse_markdown_document,
@@ -921,22 +923,37 @@ def share_wiki(owner, slug):
     username = (data.get("username") or "").strip().lower()
     email = (data.get("email") or "").strip().lower()
     role = (data.get("role") or "").strip().lower()
-    if not username and email:
-        target = User.query.filter_by(email=email).first()
-        if not target:
-            return {"error": "not_found", "message": f"No user found with email '{email}'"}, 404
-        username = target.username
-    if not pattern or not username or role not in {"read", "edit"}:
-        return {"error": "bad_request", "message": "pattern, username (or email), and role (read|edit) are required"}, 400
+    if not pattern or role not in {"read", "edit"}:
+        return {"error": "bad_request", "message": "pattern and role (read|edit) are required"}, 400
+    if not username and not email:
+        return {"error": "bad_request", "message": "username or email is required"}, 400
 
-    # verify target user exists
+    # resolve email → username if an account already exists
+    if not username and email:
+        existing = User.query.filter_by(email=email).first()
+        if existing:
+            username = existing.username
+
+    ctx = _email_share_context(owner_user, wiki, request.current_user)
+
+    # no resolvable username yet — stash as a pending invite by email
+    if not username:
+        _upsert_pending_invite(
+            wiki_id=wiki.id, pattern=pattern, email=email, role=role,
+            invited_by_id=request.current_user.id,
+        )
+        db.session.commit()
+        _notify_pending_email(email=email, role=role, ctx=ctx)
+        return jsonify({"pattern": pattern, "invited": email, "role": role})
+
     target = User.query.filter_by(username=username).first()
     if not target:
         return {"error": "not_found", "message": f"User '{username}' not found"}, 404
 
     acl_text = read_file_from_repo(owner_user.username, wiki.slug, ".wikihub/acl", public=False) or "* private\n"
     acl_line = f"{pattern} @{username}:{role}"
-    if acl_line not in acl_text.splitlines():
+    newly_granted = acl_line not in acl_text.splitlines()
+    if newly_granted:
         acl_text = acl_text.rstrip() + f"\n{acl_line}\n"
         sync_page_to_repo(owner_user.username, wiki.slug, ".wikihub/acl", acl_text,
                           message=f"Share {pattern} with @{username}:{role}")
@@ -946,8 +963,51 @@ def share_wiki(owner, slug):
         index_repo_pages(owner_user.username, wiki.slug, wiki, reset=True)
         regenerate_public_mirror(owner_user.username, wiki.slug, load_acl_rules(owner_user.username, wiki.slug))
         db.session.commit()
+    if newly_granted and target.id != request.current_user.id:
+        _notify_existing_user(target_username=username, role=role, ctx=ctx)
 
     return jsonify({"pattern": pattern, "grant": f"@{username}:{role}"})
+
+
+def _email_share_context(owner_user, wiki, inviter_user):
+    """Gather the shared fields every share-invite email needs."""
+    return {
+        "inviter_name": inviter_user.display_name or inviter_user.username,
+        "wiki_owner": owner_user.username,
+        "wiki_slug": wiki.slug,
+        "wiki_title": wiki.title or wiki.slug,
+        "server_url": resolve_server_url(current_app, request),
+    }
+
+
+def _notify_existing_user(*, target_username, role, ctx):
+    """Fire a share-invite email to an already-registered user; safe no-op if no email."""
+    target = User.query.filter_by(username=target_username).first()
+    if not target or not target.email:
+        return
+    send_share_invite_existing_user(to=target.email, role=role, **ctx)
+
+
+def _notify_pending_email(*, email, role, ctx):
+    send_share_invite_pending(to=email, role=role, **ctx)
+
+
+def _upsert_pending_invite(*, wiki_id, pattern, email, role, invited_by_id):
+    """Insert or update a PendingInvite row. Returns (row, created_bool)."""
+    existing = PendingInvite.query.filter_by(
+        wiki_id=wiki_id, pattern=pattern, email=email
+    ).first()
+    if existing:
+        if existing.role != role:
+            existing.role = role
+            existing.invited_by_id = invited_by_id
+        return existing, False
+    row = PendingInvite(
+        wiki_id=wiki_id, pattern=pattern, email=email, role=role,
+        invited_by_id=invited_by_id,
+    )
+    db.session.add(row)
+    return row, True
 
 
 @api_bp.route("/wikis/<owner>/<slug>/share/bulk", methods=["POST"])
@@ -981,8 +1041,9 @@ def bulk_share_wiki(owner, slug):
     acl_text = read_file_from_repo(owner_user.username, wiki.slug, ".wikihub/acl", public=False) or "* private\n"
     existing_lines = set(acl_text.splitlines())
 
-    added, skipped, failed = [], [], []
+    added, skipped, failed, invited = [], [], [], []
     new_lines = []
+    invite_writes = False
 
     for item in grants_in:
         if not isinstance(item, dict):
@@ -994,17 +1055,29 @@ def bulk_share_wiki(owner, slug):
         role = (item.get("role") or default_role or "").strip().lower()
         pattern = (item.get("pattern") or default_pattern).strip() or default_pattern
 
-        if not username and email:
-            target = User.query.filter_by(email=email).first()
-            if not target:
-                failed.append({"input": email, "error": f"no user with email '{email}'"})
-                continue
-            username = target.username
-        if not username:
-            failed.append({"input": raw_input, "error": "username or email required"})
-            continue
         if role not in {"read", "edit"}:
-            failed.append({"input": username, "error": "role must be 'read' or 'edit'"})
+            failed.append({"input": raw_input or username or email, "error": "role must be 'read' or 'edit'"})
+            continue
+        if not pattern:
+            failed.append({"input": raw_input or username or email, "error": "pattern required"})
+            continue
+
+        if not username and email:
+            existing = User.query.filter_by(email=email).first()
+            if existing:
+                username = existing.username
+
+        # no user yet — stash as pending invite (keyed on email)
+        if not username:
+            if not email:
+                failed.append({"input": raw_input, "error": "username or email required"})
+                continue
+            _upsert_pending_invite(
+                wiki_id=wiki.id, pattern=pattern, email=email, role=role,
+                invited_by_id=request.current_user.id,
+            )
+            invite_writes = True
+            invited.append({"pattern": pattern, "email": email, "role": role})
             continue
 
         target = User.query.filter_by(username=username).first()
@@ -1034,9 +1107,23 @@ def bulk_share_wiki(owner, slug):
             )
         index_repo_pages(owner_user.username, wiki.slug, wiki, reset=True)
         regenerate_public_mirror(owner_user.username, wiki.slug, load_acl_rules(owner_user.username, wiki.slug))
+    if new_lines or invite_writes:
         db.session.commit()
 
-    return jsonify({"added": added, "skipped": skipped, "failed": failed})
+    # fire notifications after commit so we never send email on rolled-back state
+    ctx = _email_share_context(owner_user, wiki, request.current_user)
+    seen_emails = set()
+    for g in added:
+        if g["username"] == request.current_user.username:
+            continue
+        _notify_existing_user(target_username=g["username"], role=g["role"], ctx=ctx)
+    for inv in invited:
+        if inv["email"] in seen_emails:
+            continue
+        seen_emails.add(inv["email"])
+        _notify_pending_email(email=inv["email"], role=inv["role"], ctx=ctx)
+
+    return jsonify({"added": added, "invited": invited, "skipped": skipped, "failed": failed})
 
 
 @api_bp.route("/wikis/<owner>/<slug>/share", methods=["DELETE"])
@@ -1052,8 +1139,9 @@ def unshare(owner, slug, page_path=None):
 
     data = request.get_json(silent=True) or {}
     username = (data.get("username") or "").strip().lower()
-    if not username:
-        return {"error": "bad_request", "message": "username is required"}, 400
+    email = (data.get("email") or "").strip().lower()
+    if not username and not email:
+        return {"error": "bad_request", "message": "username or email is required"}, 400
 
     if page_path is not None:
         pattern = _normalize_page_path_param(page_path)
@@ -1062,22 +1150,36 @@ def unshare(owner, slug, page_path=None):
         if not pattern:
             return {"error": "bad_request", "message": "pattern is required"}, 400
 
-    acl_text = read_file_from_repo(owner_user.username, wiki.slug, ".wikihub/acl", public=False)
-    if not acl_text:
-        return {"error": "not_found", "message": "No ACL file"}, 404
+    revoked = False
 
-    new_acl = remove_grant(acl_text, pattern, username)
-    if new_acl != acl_text:
-        sync_page_to_repo(owner_user.username, wiki.slug, ".wikihub/acl", new_acl,
-                          message=f"Unshare {pattern} from @{username}")
-        append_event_to_repo(owner_user.username, wiki.slug, "page.unshare",
-                             pattern=pattern, target_user=username,
-                             actor=request.current_user.username)
-        index_repo_pages(owner_user.username, wiki.slug, wiki, reset=True)
-        regenerate_public_mirror(owner_user.username, wiki.slug, load_acl_rules(owner_user.username, wiki.slug))
+    # revoke a pending invite if addressed by email
+    if email:
+        q = PendingInvite.query.filter_by(wiki_id=wiki.id, pattern=pattern, email=email)
+        hits = q.all()
+        if hits:
+            for row in hits:
+                db.session.delete(row)
+            revoked = True
+
+    # revoke an ACL grant if addressed by username
+    if username:
+        acl_text = read_file_from_repo(owner_user.username, wiki.slug, ".wikihub/acl", public=False)
+        if acl_text:
+            new_acl = remove_grant(acl_text, pattern, username)
+            if new_acl != acl_text:
+                sync_page_to_repo(owner_user.username, wiki.slug, ".wikihub/acl", new_acl,
+                                  message=f"Unshare {pattern} from @{username}")
+                append_event_to_repo(owner_user.username, wiki.slug, "page.unshare",
+                                     pattern=pattern, target_user=username,
+                                     actor=request.current_user.username)
+                index_repo_pages(owner_user.username, wiki.slug, wiki, reset=True)
+                regenerate_public_mirror(owner_user.username, wiki.slug, load_acl_rules(owner_user.username, wiki.slug))
+                revoked = True
+
+    if revoked:
         db.session.commit()
 
-    return jsonify({"pattern": pattern, "username": username, "revoked": new_acl != acl_text})
+    return jsonify({"pattern": pattern, "username": username, "email": email, "revoked": revoked})
 
 
 @api_bp.route("/wikis/<owner>/<slug>/grants", methods=["GET"])
@@ -1099,7 +1201,15 @@ def list_grants(owner, slug, page_path=None):
         return jsonify({"path": page_path, "grants": [{"username": u, "role": r} for u, r in grants]})
 
     all_grants = list_all_grants(acl_rules)
-    return jsonify({"grants": [{"pattern": p, "username": u, "role": r} for p, u, r in all_grants]})
+    pending = PendingInvite.query.filter_by(wiki_id=wiki.id).all()
+    return jsonify({
+        "grants": [{"pattern": p, "username": u, "role": r} for p, u, r in all_grants],
+        "pending": [
+            {"pattern": row.pattern, "email": row.email, "role": row.role,
+             "invited_at": row.created_at.isoformat()}
+            for row in pending
+        ],
+    })
 
 
 @api_bp.route("/shared-with-me", methods=["GET"])
