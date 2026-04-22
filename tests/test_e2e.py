@@ -1566,11 +1566,72 @@ def test_cli(client):
         assert cfg["mcpServers"]["wikihub"]["url"].endswith("/mcp")
         assert "Authorization" in cfg["mcpServers"]["wikihub"]["headers"]
 
-        # logout
+        # ----- gh-style multi-account auth (wikihub-0gj2) -----
+        # cliuser is still signed in (default profile, active).
+        # add a second account via `auth login --signup`; it should get auto-named.
+        rc, out, err = run_cli("auth", "login", "--signup", "--username", "cliuser2", "--password", "testpass12345")
+        assert rc == 0, err
+        assert "added profile" in out and "now active" in out, out
+        # credentials.json should have _active pointing at the new profile, plus both profiles
+        creds_multi = _json.loads(wh.CREDENTIALS_PATH.read_text())
+        assert "default" in creds_multi and creds_multi["_active"] != "default", creds_multi
+        new_profile = creds_multi["_active"]
+        assert new_profile.startswith("cliuser2@"), new_profile
+
+        # whoami (with no --profile) follows _active and returns the second account
+        rc, out, err = run_cli("whoami")
+        assert rc == 0, err
+        assert "cliuser2" in out
+
+        # auth status lists both, marks the active one
+        rc, out, err = run_cli("auth", "status")
+        assert rc == 0, err
+        assert "default" in out and new_profile in out
+        active_line = next(l for l in out.splitlines() if l.startswith("*"))
+        assert new_profile in active_line, f"active marker on wrong line: {active_line!r}"
+
+        # switch back to default
+        rc, out, err = run_cli("auth", "switch", "default")
+        assert rc == 0, err
+        rc, out, err = run_cli("whoami")
+        assert rc == 0 and "cliuser" in out and "cliuser2" not in out, out
+
+        # --profile NAME still overrides _active for a single invocation
+        rc, out, err = run_cli("--profile", new_profile, "whoami")
+        assert rc == 0 and "cliuser2" in out, out
+
+        # auth logout (no arg) removes the active profile; active falls back to the other
+        rc, out, err = run_cli("auth", "logout")
+        assert rc == 0, err
+        assert "removed profile 'default'" in out, out
+        creds_after_alogout = _json.loads(wh.CREDENTIALS_PATH.read_text())
+        assert "default" not in creds_after_alogout
+        assert creds_after_alogout.get("_active") == new_profile
+
+        # auth switch to unknown profile fails
+        rc, out, err = run_cli("auth", "switch", "nope")
+        assert rc != 0
+        assert "no profile named 'nope'" in err
+
+        # clean up the second profile via auth logout with explicit name
+        rc, out, err = run_cli("auth", "logout", new_profile)
+        assert rc == 0, err
+        creds_final = _json.loads(wh.CREDENTIALS_PATH.read_text())
+        assert not [k for k in creds_final.keys() if k != "_active"]
+
+        # logout (back-compat path) when "default" already removed — should say "no profile"
+        rc, out, err = run_cli("logout")
+        assert rc == 0, err
+        assert "no profile 'default' found" in out
+
+        # re-signup so the legacy assertion below has something to remove
+        rc, out, err = run_cli("signup", "--username", "cliuser3", "--password", "testpass12345")
+        assert rc == 0, err
+
+        # legacy back-compat: bare `wikihub logout` still removes "default"
         rc, out, err = run_cli("logout")
         assert rc == 0, err
         assert "removed profile" in out
-        # re-read — should NOT have 'default'
         creds_after = _json.loads(wh.CREDENTIALS_PATH.read_text())
         assert "default" not in creds_after
 
