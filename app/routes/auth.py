@@ -1,7 +1,7 @@
 import re
 from collections import defaultdict, deque
 from time import time
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 
 from flask import render_template, redirect, url_for, flash, request, session, current_app, abort
 from flask_login import login_user, logout_user, login_required, current_user
@@ -164,19 +164,22 @@ def login():
 def _apply_pending_invites_on_login(user):
     """After a successful login, apply any pending invites for this user.
 
-    Verification model: if the signed-in user's email matches the ?email=
-    query param (set by an invite link) and they have pending invites at that
-    address, treat the login as proof of email ownership and mark verified.
-    Otherwise only materialize when the email is already verified.
-    """
+    Verification model: if the user arrived via an invite link carrying a
+    valid ?it= token (matching a PendingInvite for their own email), the
+    click itself is proof of email receipt — treat as verified, materialize.
+    Token-less invite links fall through to the separate verify-email flow."""
     if not user or not user.email:
         return
     invite_email = request.args.get("email", "").strip().lower()
+    invite_token = request.args.get("it", "").strip()
     if (
         invite_email
+        and invite_token
         and invite_email == (user.email or "").lower()
         and not user.email_verified_at
-        and PendingInvite.query.filter_by(email=invite_email).first()
+        and PendingInvite.query.filter_by(
+            email=invite_email, token=invite_token
+        ).first()
     ):
         user.email_verified_at = utcnow()
         db.session.commit()
@@ -240,18 +243,25 @@ def signup():
             flash("Email already registered")
             return render_template("auth/signup.html"), 409
 
-        # If the signup email matches a pending invite, the person clicked a
-        # link we sent to that address — that's a valid proof of email
-        # ownership for wikihub's purposes. Mark verified so the invite
-        # materializes. Without this, invited users would land with accounts
-        # but no access (see wikihub-skp7).
-        has_pending_invite = bool(
-            email and PendingInvite.query.filter_by(email=email.lower()).first()
+        # Token-backed one-click verify (wikihub-yjsv): if the signup came
+        # via an invite link with a valid ?it= matching a PendingInvite for
+        # this email, the click itself proves email receipt — mark verified
+        # so the invite materializes without a separate verify-email round-
+        # trip. Token-less signups fall through to the normal verify-by-
+        # email flow shipped in ks5t.3.
+        invite_token = (
+            request.form.get("it", "").strip()
+            or request.args.get("it", "").strip()
+        )
+        invite_verified = bool(
+            email and invite_token and PendingInvite.query.filter_by(
+                email=email.lower(), token=invite_token
+            ).first()
         )
         user = User(
             username=username,
             email=email,
-            email_verified_at=utcnow() if has_pending_invite else None,
+            email_verified_at=utcnow() if invite_verified else None,
             password_hash=hash_password(password),
         )
         db.session.add(user)
@@ -270,17 +280,25 @@ def signup():
         login_user(user)
         return redirect(url_for("wiki.user_profile", username=user.username))
 
-    # GET — prefill email from the invite-link query param
+    # GET — prefill email + invite token from the invite-link query params
     prefill_email = request.args.get("email", "").strip().lower()
+    prefill_token = request.args.get("it", "").strip()
     # If they already have an account at that email, bounce them to login
-    # with a message. Otherwise they'd just get "email already registered"
-    # on submit, which is hostile to someone following an invite link.
+    # with a message. Preserve the invite token so /auth/login can still
+    # turn the click into a verification event (one-click verify on login).
     if prefill_email:
         existing = User.query.filter_by(email=prefill_email).first()
         if existing:
             flash("You already have an account — sign in to apply your invite.")
-            return redirect(url_for("auth.login", email=prefill_email, next="/shared"))
-    return render_template("auth/signup.html", prefill_email=prefill_email)
+            login_url = url_for("auth.login", email=prefill_email, next="/shared")
+            if prefill_token:
+                login_url += f"&it={quote(prefill_token, safe='')}"
+            return redirect(login_url)
+    return render_template(
+        "auth/signup.html",
+        prefill_email=prefill_email,
+        prefill_token=prefill_token,
+    )
 
 
 @auth_bp.route("/resend-verification", methods=["POST"])

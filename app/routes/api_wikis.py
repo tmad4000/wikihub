@@ -4,6 +4,7 @@ wiki + page REST API endpoints.
 
 import json
 import os
+import secrets
 import subprocess
 
 from flask import Response, current_app, jsonify, request
@@ -991,12 +992,12 @@ def share_wiki(owner, slug):
 
     # no resolvable username yet — stash as a pending invite by email
     if not username:
-        _upsert_pending_invite(
+        row, _ = _upsert_pending_invite(
             wiki_id=wiki.id, pattern=pattern, email=email, role=role,
             invited_by_id=request.current_user.id,
         )
         db.session.commit()
-        _notify_pending_email(email=email, role=role, ctx=ctx)
+        _notify_pending_email(email=email, role=role, ctx=ctx, token=row.token)
         return jsonify({"pattern": pattern, "invited": email, "role": role})
 
     target = User.query.filter_by(username=username).first()
@@ -1041,12 +1042,14 @@ def _notify_existing_user(*, target_username, role, ctx):
     send_share_invite_existing_user(to=target.email, role=role, **ctx)
 
 
-def _notify_pending_email(*, email, role, ctx):
-    send_share_invite_pending(to=email, role=role, **ctx)
+def _notify_pending_email(*, email, role, ctx, token=None):
+    send_share_invite_pending(to=email, role=role, token=token, **ctx)
 
 
 def _upsert_pending_invite(*, wiki_id, pattern, email, role, invited_by_id):
-    """Insert or update a PendingInvite row. Returns (row, created_bool)."""
+    """Insert or update a PendingInvite row. Returns (row, created_bool).
+    Newly-created rows get a random token; existing rows keep theirs so
+    re-invites don't invalidate previously-sent emails."""
     existing = PendingInvite.query.filter_by(
         wiki_id=wiki_id, pattern=pattern, email=email
     ).first()
@@ -1054,9 +1057,12 @@ def _upsert_pending_invite(*, wiki_id, pattern, email, role, invited_by_id):
         if existing.role != role:
             existing.role = role
             existing.invited_by_id = invited_by_id
+        if not existing.token:
+            existing.token = secrets.token_urlsafe(32)
         return existing, False
     row = PendingInvite(
         wiki_id=wiki_id, pattern=pattern, email=email, role=role,
+        token=secrets.token_urlsafe(32),
         invited_by_id=invited_by_id,
     )
     db.session.add(row)
@@ -1178,7 +1184,14 @@ def bulk_share_wiki(owner, slug):
         if inv["email"] in notified_emails:
             continue
         notified_emails.add(inv["email"])
-        _notify_pending_email(email=inv["email"], role=inv["role"], ctx=ctx)
+        # look up the token we just stashed on the row to embed in the email URL
+        row = PendingInvite.query.filter_by(
+            wiki_id=wiki.id, pattern=inv["pattern"], email=inv["email"]
+        ).first()
+        _notify_pending_email(
+            email=inv["email"], role=inv["role"], ctx=ctx,
+            token=row.token if row else None,
+        )
 
     return jsonify({"added": added, "invited": invited, "skipped": skipped, "failed": failed})
 

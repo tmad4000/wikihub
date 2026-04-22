@@ -183,9 +183,17 @@ def send_share_invite_pending(
     wiki_title: str,
     role: str,
     server_url: str = "https://wikihub.md",
+    token: Optional[str] = None,
 ) -> bool:
-    """Send 'X invited you — sign up to get access' to a not-yet-registered email."""
-    signup_url = f"{server_url}/auth/signup?email={quote(to, safe='')}"
+    """Send 'X invited you — sign up to get access' to a not-yet-registered email.
+
+    The `token` arg is the PendingInvite.token — when included as ?it=, the
+    click itself becomes proof of email ownership (1-click verify). Without it,
+    signup still works but falls back to the separate verify-email round-trip."""
+    params = f"email={quote(to, safe='')}"
+    if token:
+        params += f"&it={quote(token, safe='')}"
+    signup_url = f"{server_url}/auth/signup?{params}"
     subject = f"{inviter_name} invited you to {wiki_title} on WikiHub"
     text = (
         f"{inviter_name} invited you to \"{wiki_title}\" on WikiHub with {role} access.\n\n"

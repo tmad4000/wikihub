@@ -143,6 +143,11 @@ class PendingInvite(db.Model):
     pattern = db.Column(db.String(512), nullable=False)  # e.g. "*" or "research/*"
     email = db.Column(db.String(256), nullable=False, index=True)
     role = db.Column(db.String(16), nullable=False)  # "read" | "edit"
+    # Random per-invite token embedded in the invite-email URL as ?it=.
+    # Valid token at signup/login = proof the user received our email = one-click
+    # verify. Nullable so pre-token rows (from before wikihub-yjsv) keep working
+    # via the fallback verify-email flow.
+    token = db.Column(db.String(64), nullable=True, index=True)
     invited_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
 

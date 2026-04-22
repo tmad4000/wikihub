@@ -1347,10 +1347,11 @@ def test_pending_invite_lifecycle(client, api_key):
     assert body.get("invited") == "future-user@example.com"
     assert body.get("role") == "edit"
 
-    # PendingInvite row created
+    # PendingInvite row created — and it has a random token
     pending = PendingInvite.query.filter_by(email="future-user@example.com").all()
     assert len(pending) == 1
     assert pending[0].pattern == "*" and pending[0].role == "edit"
+    assert pending[0].token and len(pending[0].token) >= 32, "invite token must be set (wikihub-yjsv)"
 
     # /grants exposes both granted and pending
     r = client.get("/api/v1/wikis/agent1/invite-test/grants", headers=h)
@@ -1414,6 +1415,64 @@ def test_pending_invite_lifecycle(client, api_key):
     assert r.status_code == 200
     assert r.get_json()["revoked"] is True
     assert PendingInvite.query.filter_by(email="another@example.com").count() == 0
+
+    # --- wikihub-yjsv: one-click invite verification via the form signup path ---
+    # create a fresh invite, simulate the user clicking the invite link and
+    # submitting the signup form WITH the token. Their email should be
+    # auto-verified and the invite materialized — no separate verify round-trip.
+    r = client.post("/api/v1/wikis/agent1/invite-test/share", json={
+        "pattern": "*", "email": "oneclick@example.com", "role": "edit",
+    }, headers=h)
+    assert r.status_code == 200
+    row = PendingInvite.query.filter_by(email="oneclick@example.com").first()
+    assert row and row.token, "invite token must be present"
+    invite_token = row.token
+
+    # form signup carrying the invite token (hidden input)
+    r = client.post("/auth/signup", data={
+        "username": "oneclick",
+        "email": "oneclick@example.com",
+        "password": "testpass12345",
+        "it": invite_token,
+    }, follow_redirects=False)
+    assert r.status_code in (302, 303), r.get_data(as_text=True)[:200]
+    user = User.query.filter_by(username="oneclick").first()
+    assert user and user.email_verified_at is not None, "valid token must auto-verify"
+    assert PendingInvite.query.filter_by(email="oneclick@example.com").count() == 0, \
+        "invite should materialize on token-backed signup"
+
+    # negative: signup WITHOUT the token must NOT auto-verify
+    r = client.post("/api/v1/wikis/agent1/invite-test/share", json={
+        "pattern": "*", "email": "notoken@example.com", "role": "read",
+    }, headers=h)
+    assert r.status_code == 200
+    r = client.post("/auth/signup", data={
+        "username": "notoken",
+        "email": "notoken@example.com",
+        "password": "testpass12345",
+        # deliberately no 'it' field
+    }, follow_redirects=False)
+    assert r.status_code in (302, 303)
+    notoken = User.query.filter_by(username="notoken").first()
+    assert notoken and notoken.email_verified_at is None, \
+        "tokenless signup must NOT auto-verify (yjsv security invariant)"
+    assert PendingInvite.query.filter_by(email="notoken@example.com").count() == 1, \
+        "tokenless signup leaves the invite pending for the real verify flow"
+
+    # negative: wrong token must NOT auto-verify either
+    r = client.post("/api/v1/wikis/agent1/invite-test/share", json={
+        "pattern": "*", "email": "badtoken@example.com", "role": "read",
+    }, headers=h)
+    assert r.status_code == 200
+    r = client.post("/auth/signup", data={
+        "username": "badtoken",
+        "email": "badtoken@example.com",
+        "password": "testpass12345",
+        "it": "obviously-wrong-token",
+    }, follow_redirects=False)
+    assert r.status_code in (302, 303)
+    bad = User.query.filter_by(username="badtoken").first()
+    assert bad and bad.email_verified_at is None, "wrong token must NOT auto-verify"
 
 
 def test_share_sends_email(client, api_key):

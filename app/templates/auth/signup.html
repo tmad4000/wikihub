@@ -48,6 +48,7 @@
 
   <form method="POST">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {% if prefill_token %}<input type="hidden" name="it" value="{{ prefill_token }}">{% endif %}
     <label for="username">Username</label>
     <input type="text" id="username" name="username" autocomplete="username" required pattern="[a-z0-9_-]+" title="lowercase letters, numbers, hyphens, underscores">
     <label for="email">Email{% if not prefill_email %} (optional){% endif %}</label>
