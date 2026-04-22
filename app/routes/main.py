@@ -107,8 +107,18 @@ def claim_email_web():
     existing = User.query.filter_by(email=email).first()
     if existing and existing.id != current_user.id:
         return {"error": "conflict", "message": "Email already claimed"}, 409
+    current_email = (current_user.email or "").strip().lower()
+    email_changed = current_email != email
+
     current_user.email = email
+    if email_changed:
+        current_user.email_verified_at = None
     db.session.commit()
+
+    if email_changed:
+        from app.routes.auth import send_verification_if_needed
+
+        send_verification_if_needed(current_user)
     if request.is_json:
         return jsonify({"email": current_user.email})
     return jsonify({"email": current_user.email})
