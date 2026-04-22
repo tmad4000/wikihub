@@ -11,7 +11,7 @@ import time
 from collections import defaultdict
 
 import bcrypt
-from flask import request
+from flask import request, session
 from functools import wraps
 
 from app import db
@@ -83,7 +83,10 @@ def get_current_user_from_request():
             db.session.commit()
             return User.query.get(api_key.user_id)
 
-    if current_user.is_authenticated:
+    # Only trust flask-login session auth when this request actually carries
+    # a logged-in session. In tests with a long-lived app context, the
+    # `current_user` proxy can otherwise outlive the request that set it.
+    if session.get("_user_id") and current_user.is_authenticated:
         return current_user
 
     return None

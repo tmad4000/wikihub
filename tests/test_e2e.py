@@ -375,6 +375,7 @@ def test_reader_owner_visibility_control(client, api_key):
 def test_search_respects_acl_shares(client, api_key):
     """shared private pages appear in search for grantees, but not unrelated users."""
     h = {"Authorization": f"Bearer {api_key}"}
+    anon_client = client.application.test_client()
 
     r = client.post("/api/v1/wikis", json={"slug": "search-share", "title": "Search Share"}, headers=h)
     assert r.status_code == 201
@@ -422,7 +423,7 @@ def test_search_respects_acl_shares(client, api_key):
     outsider_results = r.get_json()
     assert not any(row["page"] == "roadmap/secret-plan.md" for row in outsider_results["results"]), outsider_results
 
-    r = client.get(f"/api/v1/search?q={unique_term}")
+    r = anon_client.get(f"/api/v1/search?q={unique_term}")
     assert r.status_code == 200
     anon_results = r.get_json()
     assert not any(row["page"] == "roadmap/secret-plan.md" for row in anon_results["results"]), anon_results
