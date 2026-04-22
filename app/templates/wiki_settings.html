@@ -42,7 +42,59 @@
       </div>
     {% endif %}
   </section>
+
+  <section id="collab-section" style="border:1px solid var(--border-default);border-radius:var(--radius-md);padding:1.25rem;margin-bottom:1.5rem;background:var(--bg-surface);">
+    <h2 style="margin:0 0 0.5rem;font-size:1rem;">Collaborators</h2>
+    <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:0.75rem;">
+      Grant people access to this wiki by username or email. Paste a comma- or
+      newline-separated list to add many at once.
+    </p>
+
+    <div id="collab-input-wrap" style="position:relative;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:var(--bg-input);padding:0.4rem 0.5rem;min-height:2.4rem;display:flex;flex-wrap:wrap;gap:0.35rem;align-items:center;cursor:text;">
+      <div id="collab-tokens" style="display:contents;"></div>
+      <input type="text" id="collab-input" placeholder="username or email…"
+             autocomplete="off" spellcheck="false"
+             style="flex:1;min-width:10rem;border:none;outline:none;background:transparent;color:var(--text-primary);font-size:0.875rem;padding:0.2rem 0.1rem;">
+      <div id="collab-suggestions" style="display:none;position:absolute;top:100%;left:0;right:0;margin-top:4px;background:var(--bg-surface);border:1px solid var(--border-default);border-radius:var(--radius-sm);max-height:240px;overflow-y:auto;z-index:10;"></div>
+    </div>
+
+    <div style="display:flex;gap:0.5rem;align-items:center;margin-top:0.75rem;">
+      <label style="font-size:0.875rem;color:var(--text-muted);">Role</label>
+      <select id="collab-role" style="padding:0.4rem 0.5rem;font-size:0.875rem;background:var(--bg-input);border:1px solid var(--border-default);border-radius:var(--radius-sm);color:var(--text-primary);">
+        <option value="read">read</option>
+        <option value="edit">edit</option>
+      </select>
+      <button id="collab-add-btn" type="button"
+              style="padding:0.5rem 1rem;font-size:0.875rem;font-weight:600;background:var(--accent);color:var(--bg-primary);border:none;border-radius:var(--radius-sm);cursor:pointer;">
+        Add
+      </button>
+      <span id="collab-status" style="font-size:0.8125rem;color:var(--text-muted);margin-left:auto;"></span>
+    </div>
+
+    <div id="collab-list-wrap" style="margin-top:1rem;">
+      <div style="font-size:0.8125rem;color:var(--text-muted);margin-bottom:0.35rem;">Current access</div>
+      <ul id="collab-list" style="list-style:none;padding:0;margin:0;border:1px solid var(--border-default);border-radius:var(--radius-sm);"></ul>
+    </div>
+  </section>
 </div>
+
+<style>
+  .collab-token { display:inline-flex; align-items:center; gap:0.3rem; padding:0.15rem 0.45rem; background:var(--bg-primary); border:1px solid var(--border-default); border-radius:var(--radius-sm); font-size:0.8125rem; font-family:var(--font-mono); }
+  .collab-token button { all:unset; cursor:pointer; color:var(--text-muted); padding:0 0.15rem; line-height:1; }
+  .collab-token button:hover { color:var(--color-private, #d44); }
+  .collab-token.invalid { border-color:var(--color-private, #d44); color:var(--color-private, #d44); }
+  .collab-suggestion { padding:0.4rem 0.6rem; cursor:pointer; font-size:0.875rem; display:flex; justify-content:space-between; align-items:center; }
+  .collab-suggestion:hover, .collab-suggestion.active { background:var(--bg-primary); }
+  .collab-suggestion .sg-name { color:var(--text-muted); font-size:0.8125rem; margin-left:0.5rem; }
+  #collab-list li { display:flex; justify-content:space-between; align-items:center; padding:0.5rem 0.75rem; border-bottom:1px solid var(--border-default); font-size:0.875rem; }
+  #collab-list li:last-child { border-bottom:none; }
+  #collab-list li .grant-meta { display:flex; align-items:center; gap:0.5rem; }
+  #collab-list li .role-badge { font-size:0.7rem; text-transform:uppercase; padding:0.1rem 0.4rem; border-radius:var(--radius-sm); background:var(--bg-primary); border:1px solid var(--border-default); color:var(--text-muted); font-family:var(--font-mono); }
+  #collab-list li .pattern-badge { font-size:0.75rem; color:var(--text-muted); font-family:var(--font-mono); }
+  #collab-list li .revoke-btn { all:unset; cursor:pointer; color:var(--text-muted); font-size:0.8125rem; padding:0.15rem 0.4rem; border-radius:var(--radius-sm); }
+  #collab-list li .revoke-btn:hover { color:var(--color-private, #d44); background:var(--bg-primary); }
+  #collab-list .empty { padding:0.75rem; color:var(--text-muted); font-size:0.8125rem; text-align:center; }
+</style>
 
 <script>
 (function() {
@@ -76,6 +128,252 @@
       status.style.color = 'var(--color-private, #d44)';
     }
   });
+})();
+</script>
+
+<script>
+(function() {
+  var OWNER = {{ owner.username|tojson }};
+  var SLUG = {{ wiki.slug|tojson }};
+  var API = '/api/v1/wikis/' + encodeURIComponent(OWNER) + '/' + encodeURIComponent(SLUG);
+
+  var wrap = document.getElementById('collab-input-wrap');
+  var tokensEl = document.getElementById('collab-tokens');
+  var input = document.getElementById('collab-input');
+  var suggestionsEl = document.getElementById('collab-suggestions');
+  var roleSel = document.getElementById('collab-role');
+  var addBtn = document.getElementById('collab-add-btn');
+  var statusEl = document.getElementById('collab-status');
+  var listEl = document.getElementById('collab-list');
+
+  var tokens = [];       // [{id, valid}]
+  var activeSuggestion = -1;
+  var debounceTimer = null;
+
+  wrap.addEventListener('click', function(e) { if (e.target === wrap) input.focus(); });
+
+  function setStatus(msg, kind) {
+    statusEl.textContent = msg || '';
+    statusEl.style.color = kind === 'error' ? 'var(--color-private, #d44)'
+                         : kind === 'ok'    ? 'var(--accent)'
+                         : 'var(--text-muted)';
+  }
+
+  function looksLikeEmail(s) { return /@.+\..+/.test(s); }
+
+  function renderTokens() {
+    tokensEl.innerHTML = '';
+    tokens.forEach(function(t, i) {
+      var span = document.createElement('span');
+      span.className = 'collab-token' + (t.valid === false ? ' invalid' : '');
+      span.textContent = t.id;
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.setAttribute('aria-label', 'remove ' + t.id);
+      btn.textContent = '×';
+      btn.addEventListener('click', function() { tokens.splice(i, 1); renderTokens(); });
+      span.appendChild(btn);
+      tokensEl.appendChild(span);
+    });
+  }
+
+  function addTokens(raw) {
+    var parts = raw.split(/[,\s;]+/).map(function(s) { return s.trim().replace(/^@/, '').toLowerCase(); }).filter(Boolean);
+    parts.forEach(function(p) {
+      if (!tokens.some(function(t) { return t.id === p; })) tokens.push({id: p});
+    });
+    renderTokens();
+  }
+
+  function commitCurrent() {
+    var v = input.value.trim();
+    if (v) { addTokens(v); input.value = ''; closeSuggestions(); }
+  }
+
+  input.addEventListener('keydown', function(e) {
+    var items = suggestionsEl.querySelectorAll('.collab-suggestion');
+    if (e.key === 'ArrowDown' && items.length) {
+      e.preventDefault();
+      activeSuggestion = Math.min(activeSuggestion + 1, items.length - 1);
+      items.forEach(function(el, i) { el.classList.toggle('active', i === activeSuggestion); });
+      return;
+    }
+    if (e.key === 'ArrowUp' && items.length) {
+      e.preventDefault();
+      activeSuggestion = Math.max(activeSuggestion - 1, 0);
+      items.forEach(function(el, i) { el.classList.toggle('active', i === activeSuggestion); });
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (activeSuggestion >= 0 && items[activeSuggestion]) { items[activeSuggestion].click(); return; }
+      if (input.value.trim()) { commitCurrent(); return; }
+      // empty enter = submit batch
+      addBtn.click();
+      return;
+    }
+    if (e.key === 'Tab' && input.value.trim()) { e.preventDefault(); commitCurrent(); return; }
+    if ((e.key === ',' || e.key === ';') && input.value.trim()) { e.preventDefault(); commitCurrent(); return; }
+    if (e.key === 'Backspace' && !input.value && tokens.length) { tokens.pop(); renderTokens(); return; }
+    if (e.key === 'Escape') { closeSuggestions(); }
+  });
+
+  input.addEventListener('paste', function(e) {
+    var text = (e.clipboardData || window.clipboardData).getData('text') || '';
+    if (/[,\n;\s]/.test(text)) {
+      e.preventDefault();
+      addTokens(input.value + ' ' + text);
+      input.value = '';
+      closeSuggestions();
+    }
+  });
+
+  input.addEventListener('blur', function() {
+    setTimeout(function() {
+      if (input.value.trim()) commitCurrent();
+      closeSuggestions();
+    }, 150);
+  });
+
+  function closeSuggestions() {
+    suggestionsEl.style.display = 'none';
+    suggestionsEl.innerHTML = '';
+    activeSuggestion = -1;
+  }
+
+  input.addEventListener('input', function() {
+    var q = this.value.trim().replace(/^@/, '');
+    clearTimeout(debounceTimer);
+    if (q.length < 2) { closeSuggestions(); return; }
+    debounceTimer = setTimeout(function() {
+      fetch('/api/v1/users/search?q=' + encodeURIComponent(q))
+        .then(function(r) { return r.ok ? r.json() : {users: []}; })
+        .then(function(d) {
+          var users = (d.users || []).filter(function(u) {
+            return !tokens.some(function(t) { return t.id === u.username; });
+          });
+          if (!users.length) { closeSuggestions(); return; }
+          suggestionsEl.innerHTML = '';
+          users.forEach(function(u) {
+            var div = document.createElement('div');
+            div.className = 'collab-suggestion';
+            div.innerHTML = '<span>@' + u.username + '</span>' +
+              (u.display_name ? '<span class="sg-name">' + u.display_name + '</span>' : '');
+            div.addEventListener('mousedown', function(e) {
+              e.preventDefault();
+              addTokens(u.username);
+              input.value = '';
+              closeSuggestions();
+              input.focus();
+            });
+            suggestionsEl.appendChild(div);
+          });
+          suggestionsEl.style.display = 'block';
+          activeSuggestion = -1;
+        });
+    }, 180);
+  });
+
+  // --- submit bulk ---
+  addBtn.addEventListener('click', function() {
+    if (input.value.trim()) commitCurrent();
+    if (!tokens.length) { setStatus('Add at least one username or email.', 'error'); return; }
+    var role = roleSel.value;
+    var grants = tokens.map(function(t) {
+      var field = looksLikeEmail(t.id) ? {email: t.id} : {username: t.id};
+      return Object.assign(field, {role: role, pattern: '*'});
+    });
+    setStatus('Adding ' + tokens.length + '…');
+    addBtn.disabled = true;
+    fetch(API + '/share/bulk', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({grants: grants}),
+    }).then(function(r) { return r.json().then(function(d) { return {ok: r.ok, body: d}; }); })
+      .then(function(res) {
+        addBtn.disabled = false;
+        if (!res.ok) { setStatus(res.body.message || 'Error', 'error'); return; }
+        var b = res.body;
+        var added = b.added || [], skipped = b.skipped || [], failed = b.failed || [];
+        var failedIds = new Set(failed.map(function(f) { return f.input; }));
+        // keep failed tokens, drop the rest
+        tokens = tokens.filter(function(t) { return failedIds.has(t.id); })
+                       .map(function(t) { return Object.assign(t, {valid: false}); });
+        renderTokens();
+        var parts = [];
+        if (added.length) parts.push('added ' + added.length);
+        if (skipped.length) parts.push(skipped.length + ' already granted');
+        if (failed.length) parts.push(failed.length + ' failed');
+        setStatus(parts.join(' · ') || 'Nothing changed', failed.length ? 'error' : 'ok');
+        if (failed.length) {
+          var first = failed[0];
+          setStatus(parts.join(' · ') + ' — ' + (first.input || '') + ': ' + (first.error || ''), 'error');
+        }
+        loadGrants();
+      }).catch(function(err) {
+        addBtn.disabled = false;
+        setStatus('Network error: ' + err.message, 'error');
+      });
+  });
+
+  // --- grants list ---
+  function renderGrants(grants) {
+    listEl.innerHTML = '';
+    if (!grants.length) {
+      var li = document.createElement('li');
+      li.className = 'empty';
+      li.textContent = 'No collaborators yet.';
+      listEl.appendChild(li);
+      return;
+    }
+    grants.forEach(function(g) {
+      var li = document.createElement('li');
+      li.setAttribute('data-user', g.username);
+      li.setAttribute('data-pattern', g.pattern);
+      var meta = document.createElement('span');
+      meta.className = 'grant-meta';
+      var link = document.createElement('a');
+      link.href = '/@' + g.username;
+      link.textContent = '@' + g.username;
+      link.style.color = 'var(--text-primary)';
+      link.style.textDecoration = 'none';
+      meta.appendChild(link);
+      var role = document.createElement('span');
+      role.className = 'role-badge';
+      role.textContent = g.role;
+      meta.appendChild(role);
+      if (g.pattern && g.pattern !== '*') {
+        var pat = document.createElement('span');
+        pat.className = 'pattern-badge';
+        pat.textContent = g.pattern;
+        meta.appendChild(pat);
+      }
+      li.appendChild(meta);
+      var btn = document.createElement('button');
+      btn.className = 'revoke-btn';
+      btn.type = 'button';
+      btn.textContent = 'revoke';
+      btn.addEventListener('click', function() { revoke(g.pattern, g.username); });
+      li.appendChild(btn);
+      listEl.appendChild(li);
+    });
+  }
+
+  function loadGrants() {
+    fetch(API + '/grants').then(function(r) { return r.ok ? r.json() : {grants: []}; })
+      .then(function(d) { renderGrants(d.grants || []); });
+  }
+
+  function revoke(pattern, username) {
+    fetch(API + '/share', {
+      method: 'DELETE',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({pattern: pattern, username: username}),
+    }).then(function(r) { return r.json(); })
+      .then(function(d) { if (d.revoked) loadGrants(); });
+  }
+
+  loadGrants();
 })();
 </script>
 {% endblock %}

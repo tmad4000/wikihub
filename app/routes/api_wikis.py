@@ -950,6 +950,95 @@ def share_wiki(owner, slug):
     return jsonify({"pattern": pattern, "grant": f"@{username}:{role}"})
 
 
+@api_bp.route("/wikis/<owner>/<slug>/share/bulk", methods=["POST"])
+@api_auth_required
+def bulk_share_wiki(owner, slug):
+    """grant access to multiple users in one call.
+    body: {
+      "grants": [{"username"|"email": "...", "role": "read|edit", "pattern"?: "*"}, ...],
+      "role"?: "read|edit",    # default for entries without their own
+      "pattern"?: "*"          # default for entries without their own
+    }
+    returns: {"added": [...], "skipped": [...], "failed": [...]}
+    - added:   grant(s) appended to the ACL
+    - skipped: grant already present (idempotent)
+    - failed:  could not resolve (unknown user/email, bad role/pattern, etc.)
+    """
+    owner_user, wiki, err = _get_wiki_or_404(owner, slug)
+    if err:
+        return err
+    if request.current_user.id != wiki.owner_id:
+        return {"error": "forbidden", "message": "Only the owner can manage sharing"}, 403
+
+    data = request.get_json(silent=True) or {}
+    grants_in = data.get("grants") or []
+    if not isinstance(grants_in, list) or not grants_in:
+        return {"error": "bad_request", "message": "grants array required"}, 400
+
+    default_role = (data.get("role") or "").strip().lower()
+    default_pattern = (data.get("pattern") or "*").strip() or "*"
+
+    acl_text = read_file_from_repo(owner_user.username, wiki.slug, ".wikihub/acl", public=False) or "* private\n"
+    existing_lines = set(acl_text.splitlines())
+
+    added, skipped, failed = [], [], []
+    new_lines = []
+
+    for item in grants_in:
+        if not isinstance(item, dict):
+            failed.append({"input": str(item), "error": "entry must be an object"})
+            continue
+        raw_input = item.get("username") or item.get("email") or ""
+        username = (item.get("username") or "").strip().lower()
+        email = (item.get("email") or "").strip().lower()
+        role = (item.get("role") or default_role or "").strip().lower()
+        pattern = (item.get("pattern") or default_pattern).strip() or default_pattern
+
+        if not username and email:
+            target = User.query.filter_by(email=email).first()
+            if not target:
+                failed.append({"input": email, "error": f"no user with email '{email}'"})
+                continue
+            username = target.username
+        if not username:
+            failed.append({"input": raw_input, "error": "username or email required"})
+            continue
+        if role not in {"read", "edit"}:
+            failed.append({"input": username, "error": "role must be 'read' or 'edit'"})
+            continue
+
+        target = User.query.filter_by(username=username).first()
+        if not target:
+            failed.append({"input": username, "error": f"user '{username}' not found"})
+            continue
+
+        acl_line = f"{pattern} @{username}:{role}"
+        if acl_line in existing_lines:
+            skipped.append({"pattern": pattern, "username": username, "role": role})
+            continue
+        existing_lines.add(acl_line)
+        new_lines.append(acl_line)
+        added.append({"pattern": pattern, "username": username, "role": role})
+
+    if new_lines:
+        acl_text = acl_text.rstrip() + "\n" + "\n".join(new_lines) + "\n"
+        sync_page_to_repo(
+            owner_user.username, wiki.slug, ".wikihub/acl", acl_text,
+            message=f"Share with {len(new_lines)} user(s)",
+        )
+        for g in added:
+            append_event_to_repo(
+                owner_user.username, wiki.slug, "page.share",
+                pattern=g["pattern"], grant=f"@{g['username']}:{g['role']}",
+                actor=request.current_user.username,
+            )
+        index_repo_pages(owner_user.username, wiki.slug, wiki, reset=True)
+        regenerate_public_mirror(owner_user.username, wiki.slug, load_acl_rules(owner_user.username, wiki.slug))
+        db.session.commit()
+
+    return jsonify({"added": added, "skipped": skipped, "failed": failed})
+
+
 @api_bp.route("/wikis/<owner>/<slug>/share", methods=["DELETE"])
 @api_bp.route("/wikis/<owner>/<slug>/pages/<path:page_path>/share", methods=["DELETE"])
 @api_auth_required

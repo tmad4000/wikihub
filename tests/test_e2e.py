@@ -989,6 +989,87 @@ def test_folder_level_sharing(client, api_key):
     assert r.status_code in (403, 404)
 
 
+def test_bulk_sharing(client, api_key):
+    """bulk share grants access to multiple users in one call; idempotent; reports failures."""
+    h = {"Authorization": f"Bearer {api_key}"}
+
+    r = client.post("/api/v1/wikis", json={"slug": "bulk-share-test", "title": "Bulk Share"}, headers=h)
+    assert r.status_code == 201
+
+    # create three guest accounts — two with emails, one without
+    client.post("/api/v1/accounts", json={"username": "bulka", "email": "bulka@example.com"})
+    client.post("/api/v1/accounts", json={"username": "bulkb", "email": "bulkb@example.com"})
+    r = client.post("/api/v1/accounts", json={"username": "bulkc"})
+    guest_c_key = r.get_json()["api_key"]
+    hc = {"Authorization": f"Bearer {guest_c_key}"}
+
+    # a private page everyone should be able to read once granted
+    r = client.post("/api/v1/wikis/agent1/bulk-share-test/pages", json={
+        "path": "secret.md", "content": "# secret", "visibility": "private",
+    }, headers=h)
+    assert r.status_code == 201
+
+    # first bulk: mix of username + email + one nonexistent
+    r = client.post("/api/v1/wikis/agent1/bulk-share-test/share/bulk", json={
+        "grants": [
+            {"username": "bulka", "role": "read"},
+            {"email": "bulkb@example.com", "role": "read"},
+            {"username": "bulkc", "role": "edit"},
+            {"username": "nobody-xyz", "role": "read"},
+        ],
+        "pattern": "*",
+    }, headers=h)
+    assert r.status_code == 200, r.get_json()
+    body = r.get_json()
+    assert len(body["added"]) == 3, body
+    assert len(body["failed"]) == 1, body
+    assert body["failed"][0]["input"] == "nobody-xyz"
+    added_users = {g["username"] for g in body["added"]}
+    assert added_users == {"bulka", "bulkb", "bulkc"}
+
+    # all three can now read the private page
+    for u, k in [("bulkc", guest_c_key)]:
+        r = client.get("/api/v1/wikis/agent1/bulk-share-test/pages/secret.md",
+                       headers={"Authorization": f"Bearer {k}"})
+        assert r.status_code == 200, f"{u} should have read access"
+
+    # second bulk: re-adding same grants should all show up as skipped (idempotent)
+    r = client.post("/api/v1/wikis/agent1/bulk-share-test/share/bulk", json={
+        "grants": [
+            {"username": "bulka", "role": "read"},
+            {"username": "bulkb", "role": "read"},
+        ],
+        "pattern": "*",
+    }, headers=h)
+    assert r.status_code == 200
+    body = r.get_json()
+    assert len(body["added"]) == 0
+    assert len(body["skipped"]) == 2
+
+    # bad role rejected as failed, other entries still added
+    r = client.post("/api/v1/wikis/agent1/bulk-share-test/share/bulk", json={
+        "grants": [
+            {"username": "bulka", "role": "admin"},
+            {"username": "bulkb", "role": "edit"},  # new role → new line, still "added"
+        ],
+        "pattern": "docs/*",
+    }, headers=h)
+    assert r.status_code == 200
+    body = r.get_json()
+    assert any(f["input"] == "bulka" and "role" in f["error"] for f in body["failed"]), body
+    assert any(g["username"] == "bulkb" and g["pattern"] == "docs/*" for g in body["added"]), body
+
+    # empty grants array rejected
+    r = client.post("/api/v1/wikis/agent1/bulk-share-test/share/bulk", json={"grants": []}, headers=h)
+    assert r.status_code == 400
+
+    # non-owner forbidden
+    r = client.post("/api/v1/wikis/agent1/bulk-share-test/share/bulk", json={
+        "grants": [{"username": "bulka", "role": "read"}], "pattern": "*",
+    }, headers=hc)
+    assert r.status_code == 403
+
+
 def test_subdomain_routing(client):
     """users get profile subdomains; wikis can claim custom subdomains.
     requests with a matching Host header route to the canonical path."""
@@ -1202,6 +1283,39 @@ def test_cli(client):
         assert rc == 0, err
         assert "deleted" in out
 
+        # share: create two teammates, bulk add by username + email, list, revoke
+        client.post("/api/v1/accounts", json={"username": "climate1", "email": "climate1@example.com"})
+        client.post("/api/v1/accounts", json={"username": "climate2"})
+
+        rc, out, err = run_cli("share", "add", "cliuser/notes", "climate1@example.com", "climate2", "--role", "edit")
+        assert rc == 0, err
+        assert "added" in out and "climate1" in out and "climate2" in out, out
+
+        # re-running is idempotent → both reported as skipped
+        rc, out, err = run_cli("share", "add", "cliuser/notes", "climate1", "climate2", "--role", "edit")
+        assert rc == 0, err
+        assert "skipped" in out, out
+
+        # unknown user → nonzero exit, message on stderr
+        rc, out, err = run_cli("share", "add", "cliuser/notes", "nobody-xyz", "--role", "read")
+        assert rc != 0
+        assert "nobody-xyz" in err
+
+        # ls shows both
+        rc, out, err = run_cli("share", "ls", "cliuser/notes")
+        assert rc == 0, err
+        assert "climate1" in out and "climate2" in out
+
+        # rm one of them
+        rc, out, err = run_cli("share", "rm", "cliuser/notes", "climate1")
+        assert rc == 0, err
+        assert "revoked" in out and "climate1" in out
+
+        rc, out, err = run_cli("share", "ls", "cliuser/notes")
+        assert rc == 0
+        assert "climate2" in out
+        assert "climate1" not in out
+
         # mcp-config
         rc, out, err = run_cli("mcp-config")
         assert rc == 0, err
@@ -1268,6 +1382,7 @@ def run_all():
             ("sharing lifecycle", lambda: test_sharing_lifecycle(client, key)),
             ("wiki-level sharing", lambda: test_wiki_level_sharing(client, key)),
             ("folder-level sharing", lambda: test_folder_level_sharing(client, key)),
+            ("bulk sharing (wikihub-iga9)", lambda: test_bulk_sharing(client, key)),
             ("subdomain routing", lambda: test_subdomain_routing(client)),
             ("CLI end-to-end", lambda: test_cli(client)),
         ]

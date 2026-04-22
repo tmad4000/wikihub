@@ -340,6 +340,92 @@ def cmd_search(args: argparse.Namespace) -> int:
     return 0
 
 
+def _id_to_grant_field(identifier: str) -> dict[str, str]:
+    """an identifier is an email if it contains '@' and '.', else a username."""
+    s = identifier.strip().lstrip("@").lower()
+    if "@" in s and "." in s.split("@", 1)[1]:
+        return {"email": s}
+    return {"username": s}
+
+
+def cmd_share_add(args: argparse.Namespace) -> int:
+    server, headers = get_client(args)
+    owner, slug = _parse_wiki_spec(args.wiki)
+    grants = [{**_id_to_grant_field(u), "role": args.role, "pattern": args.pattern} for u in args.users]
+    resp = api_request(
+        "POST", f"{server}/api/v1/wikis/{owner}/{slug}/share/bulk", headers,
+        json={"grants": grants},
+    )
+    raise_for_api_error(resp)
+    body = resp.json()
+    if args.json:
+        print(json.dumps(body, indent=2))
+        return 0
+    for g in body.get("added", []):
+        print(f"added   @{g['username']}:{g['role']} → {g['pattern']}")
+    for g in body.get("skipped", []):
+        print(f"skipped @{g['username']}:{g['role']} → {g['pattern']} (already granted)")
+    for g in body.get("failed", []):
+        print(f"failed  {g.get('input', '?')} — {g.get('error', 'unknown')}", file=sys.stderr)
+    return 0 if not body.get("failed") else 2
+
+
+def cmd_share_ls(args: argparse.Namespace) -> int:
+    server, headers = get_client(args)
+    owner, slug = _parse_wiki_spec(args.wiki)
+    resp = api_request("GET", f"{server}/api/v1/wikis/{owner}/{slug}/grants", headers)
+    raise_for_api_error(resp)
+    body = resp.json()
+    if args.json:
+        print(json.dumps(body, indent=2))
+        return 0
+    grants = body.get("grants", [])
+    if not grants:
+        print("(no grants)")
+        return 0
+    for g in grants:
+        print(f"{g['pattern']:<20} @{g['username']}:{g['role']}")
+    return 0
+
+
+def cmd_share_rm(args: argparse.Namespace) -> int:
+    server, headers = get_client(args)
+    owner, slug = _parse_wiki_spec(args.wiki)
+    exit_code = 0
+    for identifier in args.users:
+        field = _id_to_grant_field(identifier)
+        username = field.get("username")
+        if not username and "email" in field:
+            # resolve email → username via user search (email prefix matches)
+            r = api_request("GET", f"{server}/api/v1/users/search", headers, params={"q": field["email"]})
+            if r.status_code == 200:
+                matches = r.json().get("users", [])
+                if matches:
+                    username = matches[0]["username"]
+        if not username:
+            print(f"failed  {identifier} — could not resolve to a username", file=sys.stderr)
+            exit_code = 2
+            continue
+        resp = api_request(
+            "DELETE", f"{server}/api/v1/wikis/{owner}/{slug}/share", headers,
+            json={"pattern": args.pattern, "username": username},
+        )
+        if resp.status_code >= 400:
+            try:
+                msg = resp.json().get("message", resp.text)
+            except Exception:
+                msg = resp.text
+            print(f"failed  @{username} — {msg}", file=sys.stderr)
+            exit_code = 2
+            continue
+        body = resp.json()
+        if body.get("revoked"):
+            print(f"revoked @{username} → {args.pattern}")
+        else:
+            print(f"skipped @{username} → {args.pattern} (no matching grant)")
+    return exit_code
+
+
 def cmd_mcp_config(args: argparse.Namespace) -> int:
     server, headers = get_client(args, require_auth=False)
     # Try to pull credentials for the Authorization header
@@ -424,6 +510,26 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--wiki", help="scope to owner/slug")
     s.add_argument("--limit", type=int, default=20)
     s.set_defaults(func=cmd_search)
+
+    s = sub.add_parser("share", help="manage collaborators on a wiki")
+    share_sub = s.add_subparsers(dest="share_cmd", required=True)
+
+    sa = share_sub.add_parser("add", help="grant one or more users access to a wiki")
+    sa.add_argument("wiki", help="owner/slug")
+    sa.add_argument("users", nargs="+", help="usernames or emails")
+    sa.add_argument("--role", choices=["read", "edit"], default="read")
+    sa.add_argument("--pattern", default="*", help="path pattern (default: '*' = whole wiki)")
+    sa.set_defaults(func=cmd_share_add)
+
+    sl = share_sub.add_parser("ls", help="list current grants on a wiki")
+    sl.add_argument("wiki", help="owner/slug")
+    sl.set_defaults(func=cmd_share_ls)
+
+    sr = share_sub.add_parser("rm", help="revoke one or more users from a wiki")
+    sr.add_argument("wiki", help="owner/slug")
+    sr.add_argument("users", nargs="+", help="usernames or emails")
+    sr.add_argument("--pattern", default="*", help="path pattern to revoke (default: '*')")
+    sr.set_defaults(func=cmd_share_rm)
 
     s = sub.add_parser("mcp-config", help="print mcpServers JSON to wire WikiHub's MCP endpoint into an agent")
     s.set_defaults(func=cmd_mcp_config)
