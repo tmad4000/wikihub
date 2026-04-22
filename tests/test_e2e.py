@@ -140,6 +140,37 @@ def test_wiki_lifecycle(client, api_key):
     assert r.status_code == 201
 
 
+def test_page_etag_conflict(client, api_key):
+    """stale If-Match writes are rejected with 409 instead of silently overwriting."""
+    h = {"Authorization": f"Bearer {api_key}"}
+
+    r = client.post("/api/v1/wikis", json={"slug": "etag-wiki", "title": "ETag Wiki"}, headers=h)
+    assert r.status_code == 201
+
+    r = client.post("/api/v1/wikis/agent1/etag-wiki/pages", json={
+        "path": "wiki/conflict.md",
+        "content": "---\ntitle: Conflict\nvisibility: public\n---\n\n# Conflict\n\nBase.",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201
+
+    r = client.get("/api/v1/wikis/agent1/etag-wiki/pages/wiki/conflict.md", headers=h)
+    assert r.status_code == 200
+    etag = r.headers.get("ETag")
+    assert etag
+
+    r = client.put("/api/v1/wikis/agent1/etag-wiki/pages/wiki/conflict.md", json={
+        "content": "# Conflict\n\nFirst edit.",
+    }, headers={**h, "If-Match": etag})
+    assert r.status_code == 200
+
+    r = client.put("/api/v1/wikis/agent1/etag-wiki/pages/wiki/conflict.md", json={
+        "content": "# Conflict\n\nStale edit should fail.",
+    }, headers={**h, "If-Match": etag})
+    assert r.status_code == 409
+    assert r.get_json()["error"] == "conflict"
+
+
 def test_binary_file_serving(client, api_key):
     """upload and serve binary files (images, PDFs) from wiki repos"""
     h = {"Authorization": f"Bearer {api_key}"}
@@ -307,6 +338,94 @@ def test_search(client, api_key):
     data = r.get_json()
     assert "results" in data
     assert "total" in data
+
+
+def test_reader_owner_visibility_control(client, api_key):
+    """owners get a direct page-visibility control on the reader surface."""
+    h = {"Authorization": f"Bearer {api_key}"}
+
+    r = client.post("/api/v1/wikis", json={"slug": "vis-ui", "title": "Visibility UI"}, headers=h)
+    assert r.status_code == 201
+
+    r = client.post("/api/v1/wikis/agent1/vis-ui/pages", json={
+        "path": "wiki/page.md",
+        "content": "---\ntitle: Visibility UI\nvisibility: public\n---\n\n# Visibility UI\n",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201
+
+    r = client.get(f"/auth/login?api_key={api_key}&next=/", follow_redirects=False)
+    assert r.status_code == 302
+
+    r = client.get("/@agent1/vis-ui/wiki/page")
+    assert r.status_code == 200
+    assert b'id="page-vis-trigger"' in r.data
+    assert b'id="page-vis-menu"' in r.data
+
+    r = client.post("/api/v1/wikis/agent1/vis-ui/pages/wiki/page.md/visibility", json={
+        "visibility": "private",
+    }, headers=h)
+    assert r.status_code == 200
+
+    r = client.get("/api/v1/wikis/agent1/vis-ui/pages/wiki/page.md", headers=h)
+    assert r.status_code == 200
+    assert r.get_json()["visibility"] == "private"
+
+
+def test_search_respects_acl_shares(client, api_key):
+    """shared private pages appear in search for grantees, but not unrelated users."""
+    h = {"Authorization": f"Bearer {api_key}"}
+
+    r = client.post("/api/v1/wikis", json={"slug": "search-share", "title": "Search Share"}, headers=h)
+    assert r.status_code == 201
+
+    r = client.post("/api/v1/accounts", json={"username": "searchguest"})
+    assert r.status_code == 201
+    guest_key = r.get_json()["api_key"]
+    hg = {"Authorization": f"Bearer {guest_key}"}
+
+    r = client.post("/api/v1/accounts", json={"username": "outsider"})
+    assert r.status_code == 201
+    outsider_key = r.get_json()["api_key"]
+    ho = {"Authorization": f"Bearer {outsider_key}"}
+
+    unique_term = "zephyrsearchneedle"
+    r = client.post("/api/v1/wikis/agent1/search-share/pages", json={
+        "path": "roadmap/secret-plan.md",
+        "content": f"# Secret Plan\n\n{unique_term} lives here.",
+        "visibility": "private",
+    }, headers=h)
+    assert r.status_code == 201
+
+    r = client.get(f"/api/v1/search?q={unique_term}", headers=hg)
+    assert r.status_code == 200
+    guest_results = r.get_json()
+    assert guest_results["total"] == 0
+
+    r = client.post("/api/v1/wikis/agent1/search-share/share", json={
+        "pattern": "roadmap/*",
+        "username": "searchguest",
+        "role": "read",
+    }, headers=h)
+    assert r.status_code == 200
+
+    r = client.get(f"/api/v1/search?q={unique_term}", headers=hg)
+    assert r.status_code == 200
+    guest_results = r.get_json()
+    assert any(
+        row["wiki"] == "agent1/search-share" and row["page"] == "roadmap/secret-plan.md"
+        for row in guest_results["results"]
+    ), guest_results
+
+    r = client.get(f"/api/v1/search?q={unique_term}", headers=ho)
+    assert r.status_code == 200
+    outsider_results = r.get_json()
+    assert not any(row["page"] == "roadmap/secret-plan.md" for row in outsider_results["results"]), outsider_results
+
+    r = client.get(f"/api/v1/search?q={unique_term}")
+    assert r.status_code == 200
+    anon_results = r.get_json()
+    assert not any(row["page"] == "roadmap/secret-plan.md" for row in anon_results["results"]), anon_results
 
 
 def test_social(client, api_key):
@@ -997,6 +1116,27 @@ def test_acl_permissions(client, api_key):
     # unauthenticated read should fail
     r = client.get("/api/v1/wikis/agent1/test-wiki/pages/secret.md")
     assert r.status_code in (401, 403, 404)
+
+
+def test_private_new_page_requires_write_access(client, api_key):
+    """anonymous users cannot open or submit /new inside a private wiki."""
+    h = {"Authorization": f"Bearer {api_key}"}
+
+    r = client.post("/api/v1/wikis", json={"slug": "private-new", "title": "Private New"}, headers=h)
+    assert r.status_code == 201
+
+    r = client.get("/@agent1/private-new/new?path=notes/secret")
+    assert r.status_code == 403
+
+    r = client.post("/@agent1/private-new/new", data={
+        "path": "notes/secret",
+        "content": "# Secret\n\nShould not be created anonymously.",
+        "visibility": "private",
+    }, follow_redirects=False)
+    assert r.status_code == 403
+
+    r = client.get("/api/v1/wikis/agent1/private-new/pages/notes/secret.md", headers=h)
+    assert r.status_code == 404
 
 
 def test_people_directory_and_profiles(client, api_key):
@@ -1995,8 +2135,11 @@ def run_all():
 
         test_funcs = [
             ("wiki lifecycle", lambda: test_wiki_lifecycle(client, key)),
+            ("page ETag conflict", lambda: test_page_etag_conflict(client, key)),
             ("binary file serving", lambda: test_binary_file_serving(client, key)),
             ("search", lambda: test_search(client, key)),
+            ("reader owner visibility control", lambda: test_reader_owner_visibility_control(client, key)),
+            ("search respects ACL shares", lambda: test_search_respects_acl_shares(client, key)),
             ("social (star + fork)", lambda: test_social(client, key)),
             ("zip upload", lambda: test_zip_upload(client, key)),
             ("anonymous upload (wikihub-i2xm)", lambda: test_anonymous_upload(app)),
@@ -2013,6 +2156,7 @@ def run_all():
             ("URL login — log redaction", lambda: test_url_login_log_redaction()),
             ("magic link from password", lambda: test_magic_link_from_password(client)),
             ("ACL permissions", lambda: test_acl_permissions(client, key)),
+            ("private /new requires write access", lambda: test_private_new_page_requires_write_access(client, key)),
             ("anonymous public edit", lambda: test_anonymous_public_edit(client, key)),
             ("anonymous posting + claim (wikihub-7b2r)", lambda: test_anonymous_posting_and_claim(client)),
             ("people directory + profiles", lambda: test_people_directory_and_profiles(client, key)),

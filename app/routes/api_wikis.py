@@ -1350,6 +1350,7 @@ def search_pages():
     offset = int(request.args.get("offset", 0))
 
     query = Page.query.join(Wiki).join(User, Wiki.owner_id == User.id)
+    public_search_visibilities = ("public", "public-view", "public-edit")
 
     # scope to specific wiki
     if scope == "wiki" and wiki_param:
@@ -1364,16 +1365,8 @@ def search_pages():
 
     # only show pages the user can see
     user = getattr(request, "current_user", None)
-    if user:
-        query = query.filter(
-            db.or_(
-                Wiki.owner_id == user.id,
-                Page.visibility.in_(["public", "public-edit"]),
-                db.and_(Wiki.owner_id == user.id, Page.visibility.in_(["unlisted", "unlisted-edit"])),
-            )
-        )
-    else:
-        query = query.filter(Page.visibility.in_(["public", "public-edit"]))
+    if not user:
+        query = query.filter(Page.visibility.in_(public_search_visibilities))
 
     # tag filter — search tags as text cast of the JSON field
     if tag:
@@ -1391,13 +1384,32 @@ def search_pages():
     )
     query = query.filter(fuzzy_filter)
 
-    total = query.count()
     # rank: full-text rank + trigram similarity on title for ordering
     ts_rank = db.func.ts_rank(Page.search_vector, ts_query)
     trgm_sim = db.func.similarity(db.func.coalesce(Page.title, Page.path), q)
-    results = query.order_by(
-        (ts_rank + trgm_sim).desc()
-    ).offset(offset).limit(limit).all()
+    ordered_query = query.order_by((ts_rank + trgm_sim).desc())
+
+    if user:
+        acl_rules_by_wiki = {}
+        visible_results = []
+        for page in ordered_query.all():
+            if page.wiki.owner_id == user.id or page.visibility in public_search_visibilities:
+                visible_results.append(page)
+                continue
+
+            acl_rules = acl_rules_by_wiki.get(page.wiki_id)
+            if acl_rules is None:
+                acl_rules = load_acl_rules(page.wiki.owner.username, page.wiki.slug)
+                acl_rules_by_wiki[page.wiki_id] = acl_rules
+
+            if any(username == user.username for username, _role in resolve_grants(page.path, acl_rules)):
+                visible_results.append(page)
+
+        total = len(visible_results)
+        results = visible_results[offset:offset + limit]
+    else:
+        total = query.count()
+        results = ordered_query.offset(offset).limit(limit).all()
 
     return jsonify({
         "results": [{

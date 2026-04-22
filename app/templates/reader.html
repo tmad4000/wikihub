@@ -133,6 +133,24 @@
 .vis-pill.mixed { color: var(--text-muted); border-color: rgba(184, 173, 158, 0.2); font-style: italic; }
 .vis-badge.public-edit { color: var(--accent); background: rgba(212, 160, 74, 0.1); border: 1px solid rgba(212, 160, 74, 0.2); }
 .vis-badge.unlisted-edit { color: var(--accent); background: rgba(212, 160, 74, 0.1); border: 1px solid rgba(212, 160, 74, 0.2); }
+.page-vis-control { position: relative; display: inline-flex; align-items: center; gap: 8px; }
+.page-vis-trigger {
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  background: none; font: inherit;
+}
+.page-vis-menu {
+  display: none; position: absolute; top: calc(100% + 6px); left: 0;
+  min-width: 190px; background: var(--bg-elevated); border: 1px solid var(--border-emphasis);
+  border-radius: var(--radius-md); padding: 4px; z-index: 25; box-shadow: var(--card-shadow);
+}
+.page-vis-menu.open { display: block; }
+.page-vis-option {
+  display: block; width: 100%; padding: 8px 10px; border: none; border-radius: var(--radius-sm);
+  background: none; color: var(--text-secondary); text-align: left; cursor: pointer;
+  font-size: 0.8125rem; font-family: var(--font-body);
+}
+.page-vis-option:hover, .page-vis-option.active { background: var(--accent-subtle); color: var(--text-primary); }
+.page-vis-status { font-size: 0.7rem; color: var(--text-muted); min-width: 70px; }
 
 .toc-block {
   max-width: 720px; margin-bottom: 28px; padding: 16px 20px;
@@ -629,6 +647,26 @@
     </div>
 
     <div class="page-actions">
+      {% if current_user.is_authenticated and current_user.id == wiki.owner_id %}
+      <div class="page-vis-control">
+        <button type="button" class="vis-badge {{ page.visibility }} page-vis-trigger" id="page-vis-trigger" onclick="togglePageVisibilityMenu(event)">
+          {% if page.visibility in ('public', 'public-edit') %}
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+          {% elif page.visibility == 'private' %}
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          {% else %}
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+          {% endif %}
+          <span id="page-vis-label">{{ page.visibility | replace('public-view', 'Public View') | replace('public-edit', 'Public Edit') | replace('unlisted-view', 'Unlisted') | replace('unlisted-edit', 'Unlisted Edit') | replace('public', 'Public View') | replace('private', 'Private') | replace('unlisted', 'Unlisted') }}</span>
+        </button>
+        <div class="page-vis-menu" id="page-vis-menu">
+          {% for v in ['private', 'public', 'public-edit', 'unlisted', 'unlisted-edit'] %}
+          <button type="button" class="page-vis-option {{ 'active' if v == page.visibility }}" onclick="setPageVisibility('{{ v }}')">{{ v | replace('public-view', 'Public View') | replace('public-edit', 'Public Edit') | replace('unlisted-view', 'Unlisted') | replace('unlisted-edit', 'Unlisted Edit') | replace('public', 'Public View') | replace('private', 'Private') | replace('unlisted', 'Unlisted') }}</button>
+          {% endfor %}
+        </div>
+        <span class="page-vis-status" id="page-vis-status"></span>
+      </div>
+      {% else %}
       <span class="vis-badge {{ page.visibility }}">
         {% if page.visibility in ('public', 'public-edit') %}
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
@@ -639,6 +677,7 @@
         {% endif %}
         {{ page.visibility | replace('public-view', 'Public View') | replace('public-edit', 'Public Edit') | replace('unlisted-view', 'Unlisted') | replace('unlisted-edit', 'Unlisted Edit') | replace('public', 'Public View') | replace('private', 'Private') | replace('unlisted', 'Unlisted') }}
       </span>
+      {% endif %}
 
       <div class="actions-spacer"></div>
 
@@ -1083,6 +1122,54 @@ function deletePage() {
     .then(r => { if (r.ok) location.href = '/@{{ owner.username }}/{{ wiki.slug }}'; else { btn.classList.remove('btn-loading'); btn.textContent = 'Delete'; alert('Delete failed'); } });
 }
 
+function pageVisibilityLabel(vis) {
+  return ({
+    'private': 'Private',
+    'public': 'Public View',
+    'public-view': 'Public View',
+    'public-edit': 'Public Edit',
+    'unlisted': 'Unlisted',
+    'unlisted-view': 'Unlisted',
+    'unlisted-edit': 'Unlisted Edit',
+  })[vis] || vis;
+}
+
+function togglePageVisibilityMenu(event) {
+  event.stopPropagation();
+  var menu = document.getElementById('page-vis-menu');
+  if (menu) menu.classList.toggle('open');
+}
+
+async function setPageVisibility(visibility) {
+  var status = document.getElementById('page-vis-status');
+  var trigger = document.getElementById('page-vis-trigger');
+  var menu = document.getElementById('page-vis-menu');
+  if (!status || !trigger || !menu) return;
+  status.textContent = 'Saving…';
+  try {
+    var response = await fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}/pages/{{ page.path }}/visibility', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({visibility: visibility})
+    });
+    var data = await response.json();
+    if (!response.ok) {
+      status.textContent = data.message || 'Failed';
+      return;
+    }
+    trigger.className = 'vis-badge ' + visibility + ' page-vis-trigger';
+    document.getElementById('page-vis-label').textContent = pageVisibilityLabel(visibility);
+    document.querySelectorAll('.page-vis-option').forEach(function(option) {
+      option.classList.toggle('active', option.textContent.trim() === pageVisibilityLabel(visibility));
+    });
+    status.textContent = 'Saved';
+    menu.classList.remove('open');
+    setTimeout(function() { status.textContent = ''; }, 1500);
+  } catch (_error) {
+    status.textContent = 'Failed';
+  }
+}
+
 function renameWiki() {
   var newSlug = prompt('New slug for this wiki (URL-safe, lowercase):', '{{ wiki.slug }}');
   if (!newSlug || newSlug === '{{ wiki.slug }}') return;
@@ -1148,6 +1235,14 @@ async function deleteMgmtItem(path, name, kind) {
   var r = await fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}/bulk-delete', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({paths:[path]})});
   if (r.ok) location.reload(); else { btn.disabled = false; btn.style.opacity = '1'; alert('Failed'); }
 }
+
+document.addEventListener('click', function(event) {
+  var menu = document.getElementById('page-vis-menu');
+  var trigger = document.getElementById('page-vis-trigger');
+  if (menu && !menu.contains(event.target) && trigger && !trigger.contains(event.target)) {
+    menu.classList.remove('open');
+  }
+});
 
 applyFolderState();
 
@@ -1588,6 +1683,11 @@ function submitShare() {
     if (d.error) {
       status.style.color = 'var(--color-private)';
       status.textContent = d.message || 'Error';
+    } else if (d.invited) {
+      status.style.color = 'var(--color-success, #4a9)';
+      status.textContent = 'Invite sent to ' + d.invited;
+      document.getElementById('share-username').value = '';
+      closeSuggestions();
     } else {
       var grantedUser = d.grant.split(':')[0].replace('@', '');
       status.style.color = 'var(--color-success, #4a9)';

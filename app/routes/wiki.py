@@ -1062,6 +1062,8 @@ def edit_page(username, slug, page_path):
         visibility=visibility,
         is_owner=is_owner,
         page_grants=page_grants,
+        existing_page=bool(page),
+        initial_content_hash=(page.content_hash if page else None),
     )
 
 
@@ -1069,14 +1071,17 @@ def edit_page(username, slug, page_path):
 def new_page(username, slug):
     owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
     is_owner = _is_owner(wiki)
+    acl_rules = load_acl_rules(owner.username, wiki.slug)
+    username_for_acl = current_user.username if current_user.is_authenticated else None
 
     if request.method == "POST":
         page_path = request.form.get("path", "").strip()
         if not page_path.endswith(".md"):
             page_path += ".md"
+        if not is_owner and not can_write(page_path, acl_rules, username_for_acl):
+            return render_template("permission_error.html", owner=owner, wiki=wiki), 403
         content = request.form.get("content", "")
 
-        acl_rules = load_acl_rules(owner.username, wiki.slug)
         visibility = request.form.get("visibility", resolve_visibility(page_path, acl_rules))
         if is_owner:
             content = set_visibility_in_content(content, visibility)
@@ -1098,7 +1103,6 @@ def new_page(username, slug):
         db.session.commit()
         return redirect(_page_url(owner.username, wiki.slug, page_path))
 
-    acl_rules = load_acl_rules(owner.username, wiki.slug)
     requested_path = request.args.get("path", "").strip()
     if requested_path:
         # If path ends with / it's a folder prefix — generate a new page name inside it
@@ -1119,6 +1123,8 @@ def new_page(username, slug):
         while Page.query.filter_by(wiki_id=wiki.id, path=page_path).first():
             page_path = f"{base}-{n}.md"
             n += 1
+    if not is_owner and not can_write(page_path, acl_rules, username_for_acl):
+        return render_template("permission_error.html", owner=owner, wiki=wiki), 403
     default_vis = resolve_visibility(page_path, acl_rules)
     return render_template(
         "editor.html",
@@ -1128,6 +1134,8 @@ def new_page(username, slug):
         content="",
         visibility=default_vis,
         is_owner=_is_owner(wiki),
+        existing_page=False,
+        initial_content_hash=None,
     )
 
 

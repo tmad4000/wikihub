@@ -28,6 +28,27 @@
 .editor-tabs {
   display: flex; gap: 0; border-bottom: 1px solid var(--border-default); flex-shrink: 0;
 }
+.editor-banner {
+  display: none; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 16px; border-bottom: 1px solid var(--border-default); flex-wrap: wrap;
+  background: rgba(var(--rgb-accent), 0.08);
+}
+@media (min-width: 640px) { .editor-banner { padding: 10px 24px; } }
+.editor-banner.open { display: flex; }
+.editor-banner.conflict { background: rgba(196, 92, 60, 0.12); }
+.editor-banner.sync { background: rgba(212, 160, 74, 0.08); }
+.editor-banner-text {
+  flex: 1; min-width: 220px; color: var(--text-secondary); font-size: 0.8125rem;
+}
+.editor-banner-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.editor-banner-btn {
+  padding: 7px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-emphasis);
+  background: var(--bg-surface); color: var(--text-secondary); cursor: pointer;
+  font-size: 0.75rem; font-family: var(--font-body); font-weight: 600;
+}
+.editor-banner-btn.primary {
+  background: var(--accent); color: #0f0e0c; border-color: transparent;
+}
 .editor-tab {
   padding: 10px 20px; font-size: 0.8125rem; color: var(--text-tertiary);
   cursor: pointer; border-bottom: 2px solid transparent; background: none;
@@ -37,7 +58,7 @@
 .editor-tab.active { color: var(--text-primary); border-bottom-color: var(--accent); }
 .editor-tab:hover { color: var(--text-secondary); }
 
-.editor-wrap { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.editor-wrap { flex: 1; display: flex; flex-direction: column; overflow: hidden; position: relative; }
 .editor-textarea {
   flex: 1; width: 100%; resize: none; border: none; outline: none;
   background: var(--control-bg); color: var(--text-primary);
@@ -81,6 +102,36 @@
 }
 .vis-option:hover { background: var(--accent-subtle); color: var(--text-primary); }
 .vis-option.selected { background: var(--accent-muted); color: var(--accent); }
+.wikilink-menu {
+  display: none; position: absolute; left: 16px; right: 16px; bottom: 16px;
+  max-height: 240px; overflow: auto; background: var(--bg-elevated);
+  border: 1px solid var(--border-emphasis); border-radius: var(--radius-md);
+  box-shadow: var(--card-shadow); z-index: 20;
+}
+.wikilink-menu.open { display: block; }
+@media (min-width: 640px) { .wikilink-menu { left: 24px; right: auto; width: 420px; } }
+.wikilink-menu-empty {
+  padding: 10px 12px; color: var(--text-muted); font-size: 0.75rem;
+}
+.wikilink-item {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  width: 100%; padding: 10px 12px; border: none; background: none; cursor: pointer;
+  color: var(--text-primary); text-align: left; font-family: var(--font-body);
+}
+.wikilink-item + .wikilink-item { border-top: 1px solid var(--border-default); }
+.wikilink-item:hover, .wikilink-item.active { background: var(--accent-subtle); }
+.wikilink-item-main { min-width: 0; }
+.wikilink-item-title {
+  display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 0.8125rem;
+}
+.wikilink-item-path {
+  display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--text-muted); font-size: 0.6875rem; font-family: var(--font-mono);
+}
+.status-pill {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 20px;
+}
 {% endblock %}
 
 {% block body %}
@@ -124,6 +175,10 @@
       <button type="submit" class="btn-sm btn-save">Save</button>
     </div>
   </div>
+  <div class="editor-banner sync" id="editor-banner">
+    <div class="editor-banner-text" id="editor-banner-text"></div>
+    <div class="editor-banner-actions" id="editor-banner-actions"></div>
+  </div>
 
   <div class="editor-tabs">
     <button type="button" class="editor-tab active" onclick="showTab('edit')">Edit</button>
@@ -135,6 +190,9 @@
     <div class="preview-wrap" id="preview-wrap">
       <article class="article" id="preview-article"></article>
     </div>
+    <div class="wikilink-menu" id="wikilink-menu">
+      <div id="wikilink-items"></div>
+    </div>
   </div>
 
   <input type="hidden" name="visibility" id="visibility-input" value="{{ visibility or 'private' }}">
@@ -144,6 +202,7 @@
 
   <div class="editor-statusbar">
     <span>Markdown</span>
+    <span class="status-pill" id="save-status">Ready</span>
     <span id="line-count"></span>
   </div>
 </form>
@@ -151,6 +210,39 @@
 
 {% block scripts %}
 <script>
+const editorConfig = {
+  owner: {{ owner.username|tojson }},
+  slug: {{ wiki.slug|tojson }},
+  initialPath: {{ page_path|tojson }},
+  existingPage: {{ existing_page|tojson }},
+  initialHash: {{ initial_content_hash|tojson }},
+  isOwner: {{ is_owner|tojson }},
+};
+
+const ta = document.getElementById('editor-textarea');
+const form = document.getElementById('editor-form');
+const visibilityInput = document.getElementById('visibility-input');
+const pathInput = document.getElementById('path-input');
+const saveStatus = document.getElementById('save-status');
+const saveButton = form.querySelector('.btn-save');
+const banner = document.getElementById('editor-banner');
+const bannerText = document.getElementById('editor-banner-text');
+const bannerActions = document.getElementById('editor-banner-actions');
+const wikilinkMenu = document.getElementById('wikilink-menu');
+const wikilinkItems = document.getElementById('wikilink-items');
+
+const editorState = {
+  baseContent: ta.value,
+  baseVisibility: visibilityInput.value,
+  remoteHash: editorConfig.initialHash,
+  pendingRemote: null,
+  saving: false,
+  pages: null,
+  pagesPromise: null,
+  suggestions: [],
+  suggestionIndex: -1,
+};
+
 function showTab(tab) {
   const tabs = document.querySelectorAll('.editor-tab');
   tabs.forEach(t => t.classList.remove('active'));
@@ -179,22 +271,397 @@ function showTab(tab) {
 }
 
 function setVisibility(v) {
-  document.getElementById('visibility-input').value = v;
+  visibilityInput.value = v;
   document.getElementById('vis-label').textContent = v;
   document.querySelectorAll('.vis-option').forEach(opt => {
     opt.classList.toggle('selected', opt.textContent.trim() === v);
   });
   document.getElementById('vis-menu').classList.remove('open');
+  updateSaveStatus();
 }
 
-// line count
-const ta = document.getElementById('editor-textarea');
 function updateLineCount() {
   const lines = ta.value.split('\n').length;
   document.getElementById('line-count').textContent = lines + ' lines';
 }
-ta.addEventListener('input', updateLineCount);
+
+function normalizePath(path) {
+  const trimmed = (path || '').trim();
+  if (!trimmed) return editorConfig.initialPath;
+  return trimmed.endsWith('.md') ? trimmed : trimmed + '.md';
+}
+
+function currentPath() {
+  if (!pathInput) return editorConfig.initialPath;
+  return normalizePath(pathInput.value);
+}
+
+function encodedPath(path) {
+  return path.split('/').map(encodeURIComponent).join('/');
+}
+
+function isDirty() {
+  const pathDirty = pathInput ? normalizePath(pathInput.value) !== editorConfig.initialPath : false;
+  return ta.value !== editorState.baseContent || visibilityInput.value !== editorState.baseVisibility || pathDirty;
+}
+
+function updateSaveStatus(text) {
+  if (text) {
+    saveStatus.textContent = text;
+    return;
+  }
+  if (editorState.saving) {
+    saveStatus.textContent = 'Saving…';
+  } else if (editorState.pendingRemote) {
+    saveStatus.textContent = 'Conflict detected';
+  } else if (isDirty()) {
+    saveStatus.textContent = 'Unsaved changes';
+  } else {
+    saveStatus.textContent = 'Ready';
+  }
+}
+
+function setSaveButtonLoading(loading) {
+  editorState.saving = loading;
+  saveButton.classList.toggle('btn-loading', loading);
+  saveButton.disabled = loading;
+  saveButton.textContent = '';
+  if (loading) {
+    const sp = document.createElement('span');
+    sp.className = 'wh-spinner';
+    saveButton.appendChild(sp);
+    saveButton.appendChild(document.createTextNode('Saving...'));
+  } else {
+    saveButton.textContent = 'Save';
+  }
+  updateSaveStatus();
+}
+
+function setBanner(message, actions, kind) {
+  banner.classList.add('open');
+  banner.classList.toggle('conflict', kind === 'conflict');
+  banner.classList.toggle('sync', kind !== 'conflict');
+  bannerText.textContent = message;
+  bannerActions.innerHTML = '';
+  (actions || []).forEach(action => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'editor-banner-btn' + (action.primary ? ' primary' : '');
+    btn.textContent = action.label;
+    btn.addEventListener('click', action.onClick);
+    bannerActions.appendChild(btn);
+  });
+}
+
+function clearBanner() {
+  banner.classList.remove('open', 'conflict', 'sync');
+  bannerText.textContent = '';
+  bannerActions.innerHTML = '';
+}
+
+async function readRemotePage(path) {
+  const response = await fetch('/api/v1/wikis/' + encodeURIComponent(editorConfig.owner) + '/' + encodeURIComponent(editorConfig.slug) + '/pages/' + encodedPath(path));
+  if (!response.ok) throw new Error('Failed to fetch latest page state');
+  return response.json();
+}
+
+function applyRemoteState(remote) {
+  ta.value = remote.content || '';
+  updateLineCount();
+  if (editorConfig.isOwner && remote.visibility) {
+    setVisibility(remote.visibility);
+  }
+  editorState.baseContent = ta.value;
+  editorState.baseVisibility = visibilityInput.value;
+  editorState.remoteHash = remote.content_hash || null;
+  editorState.pendingRemote = null;
+  clearBanner();
+  closeWikilinkMenu();
+  updateSaveStatus('Loaded latest version');
+}
+
+function tryAutoMerge(base, local, remote) {
+  if (local === base) return {content: remote};
+  if (remote === base) return {content: local};
+
+  if (local.startsWith(base) && remote.startsWith(base)) {
+    const localTail = local.slice(base.length);
+    const remoteTail = remote.slice(base.length);
+    return {content: base + remoteTail + (remoteTail && localTail ? '\n' : '') + localTail};
+  }
+  if (local.startsWith(base) && !remote.includes(local.slice(base.length))) {
+    return {content: remote + local.slice(base.length)};
+  }
+  if (remote.startsWith(base) && !local.includes(remote.slice(base.length))) {
+    return {content: local + remote.slice(base.length)};
+  }
+
+  return {conflict: true};
+}
+
+async function saveExistingPage(mode) {
+  const payload = {
+    content: ta.value,
+    visibility: visibilityInput.value,
+  };
+  if (editorConfig.isOwner && pathInput) {
+    const nextPath = normalizePath(pathInput.value);
+    if (nextPath !== editorConfig.initialPath) payload.new_path = nextPath;
+  }
+
+  const headers = {'Content-Type': 'application/json'};
+  if (mode === 'normal' && editorState.remoteHash) {
+    headers['If-Match'] = '"' + editorState.remoteHash + '"';
+  }
+  if (mode === 'merge' && editorState.pendingRemote && editorState.pendingRemote.content_hash) {
+    headers['If-Match'] = '"' + editorState.pendingRemote.content_hash + '"';
+  }
+
+  setSaveButtonLoading(true);
+  try {
+    const response = await fetch(
+      '/api/v1/wikis/' + encodeURIComponent(editorConfig.owner) + '/' + encodeURIComponent(editorConfig.slug) + '/pages/' + encodedPath(editorConfig.initialPath),
+      {method: 'PUT', headers, body: JSON.stringify(payload)}
+    );
+    const data = await response.json().catch(() => ({}));
+    if (response.ok) {
+      const targetPath = data.path || payload.new_path || editorConfig.initialPath;
+      window.location.href = '/@' + editorConfig.owner + '/' + editorConfig.slug + '/' + targetPath.replace(/\.md$/, '').split('/').map(encodeURIComponent).join('/');
+      return;
+    }
+    if (response.status === 409) {
+      const remote = await readRemotePage(editorConfig.initialPath);
+      editorState.pendingRemote = remote;
+      setBanner(
+        'This page changed elsewhere while you were editing. Choose how to resolve it.',
+        [
+          {label: 'Discard local changes', onClick: discardLocalChanges},
+          {label: 'Auto-merge to history', onClick: autoMergeChanges, primary: true},
+          {label: 'Overwrite remote', onClick: overwriteRemoteVersion},
+        ],
+        'conflict'
+      );
+    } else {
+      setBanner(data.message || 'Save failed.', [], 'conflict');
+    }
+  } catch (_error) {
+    setBanner('Save failed because the latest page state could not be reached.', [], 'conflict');
+  } finally {
+    setSaveButtonLoading(false);
+    updateSaveStatus();
+  }
+}
+
+async function discardLocalChanges() {
+  const remote = editorState.pendingRemote || await readRemotePage(editorConfig.initialPath);
+  applyRemoteState(remote);
+}
+
+async function overwriteRemoteVersion() {
+  editorState.pendingRemote = null;
+  clearBanner();
+  await saveExistingPage('overwrite');
+}
+
+async function autoMergeChanges() {
+  const remote = editorState.pendingRemote || await readRemotePage(editorConfig.initialPath);
+  const merged = tryAutoMerge(editorState.baseContent, ta.value, remote.content || '');
+  if (merged.conflict) {
+    setBanner(
+      'Automatic merge could not confidently combine both versions. Reload latest or overwrite if you intend to replace it.',
+      [
+        {label: 'Discard local changes', onClick: discardLocalChanges},
+        {label: 'Overwrite remote', onClick: overwriteRemoteVersion, primary: true},
+      ],
+      'conflict'
+    );
+    return;
+  }
+  ta.value = merged.content;
+  editorState.pendingRemote = remote;
+  updateLineCount();
+  updateSaveStatus('Merged locally; saving…');
+  await saveExistingPage('merge');
+}
+
+async function pollForRemoteChanges() {
+  if (!editorConfig.existingPage || !editorState.remoteHash || editorState.saving) return;
+  try {
+    const remote = await readRemotePage(editorConfig.initialPath);
+    if (remote.content_hash && remote.content_hash !== editorState.remoteHash) {
+      editorState.pendingRemote = remote;
+      setBanner(
+        isDirty()
+          ? 'A newer version was saved elsewhere while you have local changes.'
+          : 'A newer version was saved elsewhere.',
+        isDirty()
+          ? [
+              {label: 'Discard local changes', onClick: discardLocalChanges},
+              {label: 'Auto-merge to history', onClick: autoMergeChanges, primary: true},
+              {label: 'Overwrite remote', onClick: overwriteRemoteVersion},
+            ]
+          : [
+              {label: 'Load latest version', onClick: discardLocalChanges, primary: true},
+            ],
+        isDirty() ? 'conflict' : 'sync'
+      );
+      updateSaveStatus();
+    }
+  } catch (_error) {
+    // Ignore transient polling failures; manual save will still surface conflicts.
+  }
+}
+
+function stripMd(path) {
+  return path.replace(/\.md$/, '');
+}
+
+function currentWikilinkContext() {
+  const caret = ta.selectionStart;
+  const before = ta.value.slice(0, caret);
+  const match = before.match(/\[\[([^\]\n]*)$/);
+  if (!match) return null;
+  return {
+    query: match[1].trim().toLowerCase(),
+    start: caret - match[0].length,
+    end: caret,
+  };
+}
+
+async function ensurePages() {
+  if (editorState.pages) return editorState.pages;
+  if (editorState.pagesPromise) return editorState.pagesPromise;
+  editorState.pagesPromise = fetch('/api/v1/wikis/' + encodeURIComponent(editorConfig.owner) + '/' + encodeURIComponent(editorConfig.slug) + '/pages')
+    .then(r => r.json())
+    .then(data => {
+      editorState.pages = (data.pages || []).map(page => ({
+        title: page.title || stripMd(page.path).split('/').pop(),
+        path: page.path,
+        target: stripMd(page.path),
+      }));
+      return editorState.pages;
+    });
+  return editorState.pagesPromise;
+}
+
+function rankSuggestions(pages, query) {
+  const scored = pages
+    .filter(page => page.path !== editorConfig.initialPath)
+    .map(page => {
+      const title = (page.title || '').toLowerCase();
+      const path = page.target.toLowerCase();
+      let score = 0;
+      if (!query) score = 1;
+      else if (title === query || path === query) score = 100;
+      else if (title.startsWith(query) || path.startsWith(query)) score = 70;
+      else if (title.includes(query)) score = 50;
+      else if (path.includes(query)) score = 40;
+      return {page, score};
+    })
+    .filter(item => item.score > 0)
+    .sort((a, b) => b.score - a.score || a.page.title.localeCompare(b.page.title));
+  return scored.slice(0, 8).map(item => item.page);
+}
+
+function closeWikilinkMenu() {
+  wikilinkMenu.classList.remove('open');
+  wikilinkItems.innerHTML = '';
+  editorState.suggestions = [];
+  editorState.suggestionIndex = -1;
+}
+
+function renderWikilinkSuggestions() {
+  if (!editorState.suggestions.length) {
+    wikilinkItems.innerHTML = '<div class="wikilink-menu-empty">No matching pages in this wiki.</div>';
+    wikilinkMenu.classList.add('open');
+    return;
+  }
+  wikilinkItems.innerHTML = '';
+  editorState.suggestions.forEach((page, index) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'wikilink-item' + (index === editorState.suggestionIndex ? ' active' : '');
+    btn.innerHTML =
+      '<span class="wikilink-item-main">' +
+        '<span class="wikilink-item-title">' + escapeHtml(page.title) + '</span>' +
+        '<span class="wikilink-item-path">' + escapeHtml(page.target) + '</span>' +
+      '</span>';
+    btn.addEventListener('mousedown', function(event) {
+      event.preventDefault();
+      insertWikilink(page);
+    });
+    wikilinkItems.appendChild(btn);
+  });
+  wikilinkMenu.classList.add('open');
+}
+
+function escapeHtml(text) {
+  var div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+function insertWikilink(page) {
+  const ctx = currentWikilinkContext();
+  if (!ctx) return;
+  const insertion = page.title && page.title !== page.target
+    ? '[[' + page.target + '|' + page.title + ']]'
+    : '[[' + page.target + ']]';
+  ta.setRangeText(insertion, ctx.start, ctx.end, 'end');
+  closeWikilinkMenu();
+  ta.focus();
+  updateLineCount();
+  updateSaveStatus();
+}
+
+async function updateWikilinkAutocomplete() {
+  const ctx = currentWikilinkContext();
+  if (!ctx) {
+    closeWikilinkMenu();
+    return;
+  }
+  const pages = await ensurePages();
+  editorState.suggestions = rankSuggestions(pages, ctx.query);
+  editorState.suggestionIndex = editorState.suggestions.length ? 0 : -1;
+  renderWikilinkSuggestions();
+}
+
+ta.addEventListener('keydown', function(event) {
+  if (!wikilinkMenu.classList.contains('open') || !editorState.suggestions.length) return;
+  if (event.key === 'ArrowDown') {
+    event.preventDefault();
+    editorState.suggestionIndex = Math.min(editorState.suggestionIndex + 1, editorState.suggestions.length - 1);
+    renderWikilinkSuggestions();
+  } else if (event.key === 'ArrowUp') {
+    event.preventDefault();
+    editorState.suggestionIndex = Math.max(editorState.suggestionIndex - 1, 0);
+    renderWikilinkSuggestions();
+  } else if ((event.key === 'Enter' || event.key === 'Tab') && editorState.suggestionIndex >= 0) {
+    event.preventDefault();
+    insertWikilink(editorState.suggestions[editorState.suggestionIndex]);
+  } else if (event.key === 'Escape') {
+    closeWikilinkMenu();
+  }
+});
+
+ta.addEventListener('input', function() {
+  updateLineCount();
+  updateSaveStatus();
+  updateWikilinkAutocomplete();
+});
+ta.addEventListener('click', updateWikilinkAutocomplete);
+ta.addEventListener('keyup', function(event) {
+  if (['ArrowUp', 'ArrowDown', 'Enter', 'Tab', 'Escape'].includes(event.key)) return;
+  updateWikilinkAutocomplete();
+});
+ta.addEventListener('blur', function() {
+  setTimeout(closeWikilinkMenu, 150);
+});
+if (pathInput) {
+  pathInput.addEventListener('input', updateSaveStatus);
+}
 updateLineCount();
+updateSaveStatus();
 
 if (navigator.modelContext && typeof navigator.modelContext.registerTool === 'function') {
   navigator.modelContext.registerTool({
@@ -217,14 +684,15 @@ if (navigator.modelContext && typeof navigator.modelContext.registerTool === 'fu
   });
 }
 
-document.getElementById('editor-form').addEventListener('submit', function() {
-  var btn = this.querySelector('.btn-save');
-  btn.classList.add('btn-loading');
-  btn.textContent = '';
-  var sp = document.createElement('span');
-  sp.className = 'wh-spinner';
-  btn.appendChild(sp);
-  btn.appendChild(document.createTextNode('Saving...'));
+document.getElementById('editor-form').addEventListener('submit', function(event) {
+  if (!editorConfig.existingPage) {
+    setSaveButtonLoading(true);
+    return;
+  }
+  event.preventDefault();
+  saveExistingPage('normal');
 });
+
+setInterval(pollForRemoteChanges, 15000);
 </script>
 {% endblock %}
