@@ -12,8 +12,9 @@ from typing import Optional, Tuple
 from app import db
 from app.models import User, Wiki
 
-# canonical host suffix. requests arriving at other hosts (wikihub.globalbr.ai,
-# *.localhost, etc.) fall through to the main app.
+# canonical host suffix. requests arriving at other hosts (the legacy
+# wikihub.globalbr.ai deploy host still redirects here; *.localhost, etc.)
+# fall through to the main app.
 CANONICAL_SUFFIX = ".wikihub.md"
 LOCAL_SUFFIX = ".wikihub.localhost"  # for local dev via caddy
 

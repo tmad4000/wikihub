@@ -20,7 +20,7 @@ if (process.platform === 'darwin') {
 const isDev = !app.isPackaged;
 const BASE_URL = isDev
   ? 'http://localhost:5100'
-  : 'https://wikihub.globalbr.ai';
+  : 'https://wikihub.md';
 
 const store = new Store({
   defaults: {
@@ -265,7 +265,7 @@ function buildMenu() {
       submenu: [
         {
           label: 'WikiHub Documentation',
-          click: () => shell.openExternal('https://wikihub.globalbr.ai/agents'),
+          click: () => shell.openExternal('https://wikihub.md/agents'),
         },
         {
           label: 'Report an Issue',

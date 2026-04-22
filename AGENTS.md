@@ -57,7 +57,7 @@ don't add unit tests for individual functions. if something breaks, add an e2e t
 
 ## deployment
 
-- **Live URL:** https://wikihub.globalbr.ai
+- **Live URL:** https://wikihub.md (legacy alias: https://wikihub.globalbr.ai, still redirects)
 - **Server:** AWS Lightsail instance `wikihub-dev` (54.145.123.7)
 - **SSH:** `ssh -i ~/.ssh/wikihub-dev-key ubuntu@54.145.123.7`
 - **Code on server:** `/opt/wikihub-app`
@@ -141,7 +141,7 @@ workflow:
    - `agent-browser eval "js expression"` — check DOM state
    - `agent-browser screenshot /tmp/name.png` — take a screenshot, then `Read` it to visually inspect
 4. screenshot the result and visually confirm it looks correct
-5. after deploying to production, repeat the smoke test against `https://wikihub.globalbr.ai`
+5. after deploying to production, repeat the smoke test against `https://wikihub.md`
 
 **do not skip agent-browser verification.** backend tests passing does not mean the UI works. the user will test in their browser and find the bug you missed.
 
@@ -153,7 +153,7 @@ see `docs/deploy.md` for full details. the short version:
 2. `git status` — **every modified file is committed** (most common deploy failure is a missing file)
 3. `git push origin main`
 4. `ssh -i ~/.ssh/wikihub-dev-key ubuntu@54.145.123.7 "cd /opt/wikihub-app && git pull && sudo systemctl restart wikihub"`
-5. `curl -s -o /dev/null -w "%{http_code}" https://wikihub.globalbr.ai/` — must be 200, not 502
+5. `curl -s -o /dev/null -w "%{http_code}" https://wikihub.md/` — must be 200, not 502
 6. if 502, check logs: `ssh -i ~/.ssh/wikihub-dev-key ubuntu@54.145.123.7 "sudo journalctl -u wikihub --no-pager -n 30"`
 7. agent-browser smoke test on production for the specific changes made
 

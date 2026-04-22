@@ -17,7 +17,7 @@ import time
 import requests
 from urllib.parse import unquote
 
-WIKIHUB_BASE = "https://wikihub.globalbr.ai"
+WIKIHUB_BASE = "https://wikihub.md"
 API_KEY = "wh_PSINkt8oJZuM9CbuRlXjRho6vJZ-PFIyTTsHy8ji2eY"
 WIKI_OWNER = "jeremynixon"
 WIKI_SLUG = "thinking"

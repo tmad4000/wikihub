@@ -6,7 +6,7 @@ agents can list wikis, search pages, read page content, and list pages.
 
 usage:
   python3 mcp_server.py                          # default: http://localhost:5100
-  python3 mcp_server.py --base-url https://wikihub.globalbr.ai
+  python3 mcp_server.py --base-url https://wikihub.md
   WIKIHUB_API_KEY=wh_xxx python3 mcp_server.py   # authenticated access
 
 add to claude code:
