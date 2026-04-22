@@ -8,7 +8,7 @@ from flask_login import login_user, logout_user, login_required
 from authlib.integrations.flask_client import OAuth
 
 from app import db
-from app.models import User, ApiKey, MagicLoginToken, utcnow
+from app.models import User, ApiKey, MagicLoginToken, PendingInvite, utcnow
 from app.auth_utils import hash_password, check_password, hash_api_key, hash_one_time_token
 from app.routes import auth_bp
 from app.subdomains import validate_username
@@ -90,6 +90,7 @@ def login():
         return render_template(
             "auth/login.html",
             testing_login=current_app.debug and current_app.config.get("TESTING_LOGIN"),
+            prefill_email=request.args.get("email", "").strip().lower(),
         )
 
     rate_limited = _check_login_rate_limit()
@@ -118,9 +119,34 @@ def login():
         return render_template("auth/login.html"), 401
 
     login_user(user)
+    _apply_pending_invites_on_login(user)
     if request.method == "GET":
         flash("Signed in via URL. Rotate credentials if the link was shared.")
     return redirect(_safe_next_url())
+
+
+def _apply_pending_invites_on_login(user):
+    """After a successful login, apply any pending invites for this user.
+
+    Verification model: if the signed-in user's email matches the ?email=
+    query param (set by an invite link) and they have pending invites at that
+    address, treat the login as proof of email ownership and mark verified.
+    Otherwise only materialize when the email is already verified.
+    """
+    if not user or not user.email:
+        return
+    invite_email = request.args.get("email", "").strip().lower()
+    if (
+        invite_email
+        and invite_email == (user.email or "").lower()
+        and not user.email_verified_at
+        and PendingInvite.query.filter_by(email=invite_email).first()
+    ):
+        user.email_verified_at = utcnow()
+        db.session.commit()
+    applied = materialize_pending_invites_for(user)
+    if applied:
+        db.session.commit()
 
 
 @auth_bp.route("/test-login/<username>", methods=["POST"])
@@ -178,9 +204,18 @@ def signup():
             flash("Email already registered")
             return render_template("auth/signup.html"), 409
 
+        # If the signup email matches a pending invite, the person clicked a
+        # link we sent to that address — that's a valid proof of email
+        # ownership for wikihub's purposes. Mark verified so the invite
+        # materializes. Without this, invited users would land with accounts
+        # but no access (see wikihub-skp7).
+        has_pending_invite = bool(
+            email and PendingInvite.query.filter_by(email=email.lower()).first()
+        )
         user = User(
             username=username,
             email=email,
+            email_verified_at=utcnow() if has_pending_invite else None,
             password_hash=hash_password(password),
         )
         db.session.add(user)
@@ -188,7 +223,6 @@ def signup():
         ensure_personal_wiki(user)
         db.session.commit()
 
-        # no-op until email is verified (wikihub-ks5t / 769d)
         materialize_pending_invites_for(user)
         db.session.commit()
         attempts.append(now)
@@ -196,7 +230,17 @@ def signup():
         login_user(user)
         return redirect(url_for("wiki.user_profile", username=user.username))
 
-    return render_template("auth/signup.html")
+    # GET — prefill email from the invite-link query param
+    prefill_email = request.args.get("email", "").strip().lower()
+    # If they already have an account at that email, bounce them to login
+    # with a message. Otherwise they'd just get "email already registered"
+    # on submit, which is hostile to someone following an invite link.
+    if prefill_email:
+        existing = User.query.filter_by(email=prefill_email).first()
+        if existing:
+            flash("You already have an account — sign in to apply your invite.")
+            return redirect(url_for("auth.login", email=prefill_email, next="/shared-with-me"))
+    return render_template("auth/signup.html", prefill_email=prefill_email)
 
 
 @auth_bp.route("/logout")

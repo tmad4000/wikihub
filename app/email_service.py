@@ -157,7 +157,7 @@ def send_share_invite_pending(
     server_url: str = "https://wikihub.md",
 ) -> bool:
     """Send 'X invited you — sign up to get access' to a not-yet-registered email."""
-    signup_url = f"{server_url}/signup?email={quote(to, safe='')}"
+    signup_url = f"{server_url}/auth/signup?email={quote(to, safe='')}"
     subject = f"{inviter_name} invited you to {wiki_title} on WikiHub"
     text = (
         f"{inviter_name} invited you to \"{wiki_title}\" on WikiHub with {role} access.\n\n"

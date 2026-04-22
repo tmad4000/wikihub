@@ -42,6 +42,11 @@
   {% endif %}
   {% endwith %}
 
+  {% if prefill_email %}
+  <p style="font-size:0.875rem;color:var(--text-muted);background:var(--accent-subtle);padding:0.6rem 0.75rem;border-radius:var(--radius-sm);margin-bottom:1rem;">
+    You were invited at <strong>{{ prefill_email }}</strong>. Sign in below and your invite will apply automatically.
+  </p>
+  {% endif %}
   <a href="{{ url_for('auth.google_login') }}" class="btn btn-google">Sign in with Google</a>
   <div class="divider">or</div>
 
