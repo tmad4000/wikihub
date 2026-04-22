@@ -256,6 +256,28 @@ def test_binary_file_serving(client, api_key):
     assert "application/octet-stream" in r.content_type, "XSS guard: .html must not be served inline"
     assert "attachment" in r.headers.get("Content-Disposition", "")
 
+    # wikihub-0idv: non-md Page row with visibility=public must grant anon access
+    # even when the file-path ACL is private. (Page visibility wins over ACL, matching
+    # the markdown handler's behavior.)
+    # "outside/" is not covered by the "wiki/** public" ACL rule, so it defaults to private.
+    r = client.post("/api/v1/wikis/agent1/media-wiki/pages", json={
+        "path": "outside/public-via-page.txt", "content": "visible via Page row",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201
+    anon_client = client.application.test_client()
+    r = anon_client.get("/@agent1/media-wiki/outside/public-via-page.txt")
+    assert r.status_code == 200, f"Page.visibility=public should grant anon access, got {r.status_code}"
+    assert b"visible via Page row" in r.data
+    # negative case: same directory, but Page.visibility=private → blocked
+    r = client.post("/api/v1/wikis/agent1/media-wiki/pages", json={
+        "path": "outside/private-via-page.txt", "content": "secret",
+        "visibility": "private",
+    }, headers=h)
+    assert r.status_code == 201
+    r = anon_client.get("/@agent1/media-wiki/outside/private-via-page.txt")
+    assert r.status_code == 404, f"Page.visibility=private should block anon access, got {r.status_code}"
+
     # Non-md Page rows must survive an index_repo_pages reset (regression: wikihub-0idv).
     # Previously index_repo_pages filtered out non-md, so any operation that triggered
     # reset=True (share/ACL change/fork) would silently delete .txt/.png Page rows.
@@ -321,6 +343,31 @@ def test_zip_upload(client, api_key):
         "files": (buf, "wiki.zip"),
     }, content_type="multipart/form-data", follow_redirects=False)
     assert r.status_code == 302
+
+
+def test_anonymous_upload(app):
+    """POST /new-anonymous mints an ephemeral account + wiki from dropped files.
+    Uses a fresh test_client AND explicitly logs out to bypass flask-login's
+    request-context login cache that can leak from prior login-heavy tests."""
+    from flask_login import logout_user
+    client = app.test_client()
+    with app.test_request_context():
+        logout_user()
+
+    buf = io.BytesIO(b"---\nvisibility: public\n---\n# anon page\n\nhello anon.\n")
+    r = client.post("/new-anonymous", data={
+        "slug": "anontest",
+        "title": "Anon Test",
+        "files": (buf, "anon.md"),
+    }, content_type="multipart/form-data", follow_redirects=False)
+    assert r.status_code == 201, f"expected 201, got {r.status_code}: {r.get_data(as_text=True)[:240]}"
+    body = r.get_json()
+    assert body["api_key"].startswith("wh_"), "api_key missing or malformed"
+    assert body["username"].startswith("anon-"), f"username should start with anon-, got {body['username']}"
+    assert body["wiki_url"].startswith(f"/@{body['username']}/anontest"), body["wiki_url"]
+    assert "client_config" in body
+    r2 = client.get(body["wiki_url"])
+    assert r2.status_code == 200, f"anon wiki not reachable: {r2.status_code}"
 
 
 def test_agent_surfaces(client):
@@ -1365,6 +1412,7 @@ def run_all():
             ("search", lambda: test_search(client, key)),
             ("social (star + fork)", lambda: test_social(client, key)),
             ("zip upload", lambda: test_zip_upload(client, key)),
+            ("anonymous upload (wikihub-i2xm)", lambda: test_anonymous_upload(app)),
             ("agent surfaces", lambda: test_agent_surfaces(client)),
             ("token + settings", lambda: test_token_and_settings(client)),
             ("client_config hint", lambda: test_client_config_hint(client)),

@@ -4,22 +4,26 @@ web upload routes for wikihub.
 supports:
 - folder/zip drag-drop upload → unpacks, commits, syncs to DB
 - create new wiki from scratch
+- anonymous upload: auto-mints an ephemeral account, returns the API key to claim later
 """
 
 import io
 import os
+import secrets
 import zipfile
 
-from flask import render_template, request, redirect, url_for, flash
-from flask_login import current_user, login_required
+from flask import current_app, jsonify, render_template, request, redirect, url_for, flash
+from flask_login import current_user, login_required, login_user
 
 from app import db
 from app.acl import resolve_visibility
-from app.models import Wiki, Page
+from app.auth_utils import generate_api_key, rate_limit_writes
+from app.credentials_hint import build_client_config, resolve_server_url
+from app.models import ApiKey, User, Wiki, Page
 from app.content_utils import parse_markdown_document
 from app.git_sync import regenerate_public_mirror, read_file_from_repo, scaffold_wiki, sync_page_to_repo
 from app.routes import main_bp
-from app.wiki_ops import create_wiki_for_user, index_repo_pages, load_acl_rules, refresh_wikilinks_for_page, update_page_metadata
+from app.wiki_ops import create_wiki_for_user, ensure_personal_wiki, index_repo_pages, load_acl_rules, refresh_wikilinks_for_page, update_page_metadata
 
 
 @main_bp.route("/new", methods=["GET", "POST"])
@@ -67,6 +71,75 @@ def create_wiki_web():
         return redirect(url_for("wiki.wiki_index", username=current_user.username, slug=slug))
 
     return render_template("new_wiki.html")
+
+
+@main_bp.route("/new-anonymous", methods=["POST"])
+@rate_limit_writes(max_per_minute=5, max_per_ip_per_minute=5)
+def create_wiki_anonymous():
+    """Mint an ephemeral account and publish the dropped files in one call.
+    Response body carries the api_key so the anon user can later claim/keep
+    the account; the session is also logged in so the redirect to the new
+    wiki lands the drafter as its owner."""
+    if current_user.is_authenticated:
+        return {"error": "already_authed", "redirect_to": url_for("main.create_wiki_web")}, 400
+
+    slug = request.form.get("slug", "").strip().lower()
+    slug = "".join(c for c in slug if c.isalnum() or c in "-_")
+    title = (request.form.get("title") or slug).strip()
+    description = request.form.get("description", "").strip()
+
+    if not slug:
+        return {"error": "bad_request", "message": "slug is required"}, 400
+
+    anon_name = None
+    for _ in range(8):
+        candidate = f"anon-{secrets.token_hex(4)}"
+        if not User.query.filter_by(username=candidate).first():
+            anon_name = candidate
+            break
+    if not anon_name:
+        return {"error": "conflict", "message": "could not mint anon username"}, 500
+
+    user = User(username=anon_name, email=None, display_name=None, password_hash=None)
+    db.session.add(user)
+    db.session.flush()
+    ensure_personal_wiki(user)
+
+    raw_key, key_hash, key_prefix = generate_api_key()
+    db.session.add(ApiKey(user_id=user.id, key_hash=key_hash, key_prefix=key_prefix, label="Anonymous upload key"))
+
+    if Wiki.query.filter_by(owner_id=user.id, slug=slug).first():
+        db.session.rollback()
+        return {"error": "conflict", "message": f"Wiki '{slug}' already exists"}, 409
+
+    wiki = create_wiki_for_user(user, slug=slug, title=title, description=description, scaffold=False)
+    db.session.commit()
+
+    uploaded = request.files.getlist("files")
+    if uploaded and uploaded[0].filename:
+        try:
+            _process_uploads(user.username, slug, wiki.id, uploaded)
+        except ValueError as e:
+            return {"error": "bad_request", "message": str(e)}, 413
+    else:
+        scaffold_wiki(user.username, slug)
+        _index_repo_pages(user.username, slug, wiki.id)
+
+    acl_rules = load_acl_rules(user.username, slug)
+    regenerate_public_mirror(user.username, slug, acl_rules)
+
+    login_user(user, remember=False)
+
+    server_url = resolve_server_url(current_app, request)
+    return jsonify({
+        "wiki_url": url_for("wiki.wiki_index", username=user.username, slug=slug),
+        "username": user.username,
+        "api_key": raw_key,
+        "client_config": build_client_config(user.username, raw_key, server_url),
+        "claim_hint": "Save your api_key to keep editing this wiki. You can add an email at /settings to claim the account permanently.",
+    }), 201
+
+
 def _process_uploads(username, slug, wiki_id, files):
     """process uploaded files — writes each to git and indexes in DB."""
     for f in files:

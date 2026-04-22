@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>wikihub — GitHub for LLM wikis</title>
+  <meta name="csrf-token" content="{{ csrf_token() }}">
   <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
   <meta property="og:title" content="wikihub — GitHub for LLM wikis">
   <meta property="og:description" content="The home for markdown knowledge bases. Bring your files or let your agent build it.">
@@ -658,6 +659,46 @@
 
     /* footer styles removed — using shared _footer.html partial */
     /* theme-toggle styles live in _theme.html */
+
+    /* ── anonymous-upload success modal ──── */
+    #anon-success-overlay {
+      position: fixed; inset: 0; z-index: 300;
+      background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);
+      display: flex; align-items: center; justify-content: center;
+      padding: 20px;
+    }
+    .anon-success-modal {
+      background: var(--bg-elevated); border: 1px solid var(--border-emphasis);
+      border-radius: var(--radius-lg); padding: 28px 24px; max-width: 520px; width: 100%;
+      text-align: center;
+    }
+    .anon-success-modal h3 { font-size: 1.25rem; font-weight: 700; color: var(--text-primary); margin-bottom: 6px; letter-spacing: -0.01em; }
+    .anon-success-modal .anon-wiki-url { font-family: var(--font-mono); font-size: 0.875rem; margin-bottom: 18px; }
+    .anon-success-modal .anon-wiki-url a { color: var(--accent); word-break: break-all; }
+    .anon-success-modal .anon-warn { font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 10px; }
+    .anon-success-modal .anon-warn strong { color: var(--accent); }
+    .anon-success-modal .anon-cred-row {
+      display: flex; gap: 8px; align-items: stretch;
+      background: var(--bg-base); border: 1px solid var(--border-default);
+      border-radius: var(--radius-md); padding: 10px 12px; margin-bottom: 14px;
+    }
+    .anon-success-modal .anon-cred-row code {
+      flex: 1; text-align: left; font-family: var(--font-mono); font-size: 0.75rem;
+      color: var(--text-primary); overflow-x: auto; white-space: nowrap; user-select: all;
+    }
+    .anon-success-modal .anon-cred-row button {
+      background: var(--accent); color: var(--text-on-accent); border: none;
+      border-radius: var(--radius-sm); padding: 4px 12px; font-family: var(--font-mono);
+      font-size: 0.75rem; font-weight: 600; cursor: pointer; min-height: 32px;
+    }
+    .anon-success-modal .anon-hint { font-size: 0.75rem; color: var(--text-tertiary); margin-bottom: 20px; line-height: 1.55; }
+    .anon-success-modal .anon-hint code { font-family: var(--font-mono); color: var(--text-secondary); }
+    .anon-success-modal .anon-actions .btn-primary {
+      background: var(--accent); color: var(--text-on-accent); border: none;
+      border-radius: var(--radius-md); padding: 12px 28px; font-weight: 600;
+      font-size: 0.9375rem; cursor: pointer; min-height: 44px;
+    }
+    .anon-success-modal .anon-actions .btn-primary:hover { background: var(--accent-hover); }
   </style>
 </head>
 <body>
@@ -878,6 +919,95 @@ document.addEventListener('drop', (e) => { e.preventDefault(); });
 const heroZone = document.getElementById('hero-drop-zone');
 const heroFileInput = document.getElementById('hero-file-input');
 const heroStatus = document.getElementById('hero-drop-status');
+const IS_AUTHED_FOR_UPLOAD = {{ 'true' if current_user and current_user.is_authenticated else 'false' }};
+
+function resetHeroZone() { if (heroZone) { heroZone.style.pointerEvents = ''; heroZone.style.opacity = ''; } }
+
+function startHeroUpload(names) {
+  heroStatus.textContent = '';
+  const spinner = document.createElement('span');
+  spinner.className = 'wh-spinner';
+  heroStatus.appendChild(spinner);
+  heroStatus.appendChild(document.createTextNode(names.join(', ') + ' — creating wiki...'));
+  heroZone.style.pointerEvents = 'none';
+  heroZone.style.opacity = '0.7';
+}
+
+function showAnonSuccess(data) {
+  resetHeroZone();
+  var overlay = document.createElement('div');
+  overlay.id = 'anon-success-overlay';
+  overlay.innerHTML =
+    '<div class="anon-success-modal">' +
+      '<h3>Your wiki is live</h3>' +
+      '<p class="anon-wiki-url"><a href="' + data.wiki_url + '">' + data.wiki_url + '</a></p>' +
+      '<p class="anon-warn"><strong>Save your API key to keep editing.</strong> It is shown exactly once.</p>' +
+      '<div class="anon-cred-row"><code id="anon-key">' + data.api_key + '</code>' +
+        '<button type="button" id="anon-copy">copy</button></div>' +
+      '<p class="anon-hint">Signed in as <code>@' + data.username + '</code>. Add an email in /settings to claim this account permanently.</p>' +
+      '<div class="anon-actions">' +
+        '<button type="button" id="anon-go" class="btn-primary">Open wiki</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(overlay);
+  document.getElementById('anon-copy').addEventListener('click', function() {
+    navigator.clipboard.writeText(data.api_key).then(function() {
+      var b = document.getElementById('anon-copy'); b.textContent = 'copied!'; setTimeout(function(){ b.textContent = 'copy'; }, 1500);
+    });
+  });
+  document.getElementById('anon-go').addEventListener('click', function() {
+    window.location.href = data.wiki_url;
+  });
+}
+
+function doHeroUpload(fileList, slug) {
+  var fd = new FormData();
+  fd.append('slug', slug);
+  fd.append('title', slug.replace(/-/g, ' '));
+  fd.append('description', '');
+  for (var i = 0; i < fileList.length; i++) fd.append('files', fileList[i]);
+
+  var endpoint = IS_AUTHED_FOR_UPLOAD ? '/new' : '/new-anonymous';
+
+  if (endpoint === '/new-anonymous') {
+    fetch(endpoint, { method: 'POST', body: fd })
+      .then(function(r) {
+        return r.json().then(function(data) { return { ok: r.ok, status: r.status, data: data }; });
+      })
+      .then(function(res) {
+        if (!res.ok) {
+          resetHeroZone();
+          heroStatus.textContent = 'Upload failed: ' + (res.data && res.data.message ? res.data.message : 'status ' + res.status);
+          return;
+        }
+        showAnonSuccess(res.data);
+      })
+      .catch(function(err) { resetHeroZone(); heroStatus.textContent = 'Upload failed: ' + err.message; });
+    return;
+  }
+
+  fetch(endpoint, { method: 'POST', body: fd, redirect: 'follow' })
+    .then(function(r) {
+      if (r.ok && r.redirected && !r.url.includes('/auth/login')) {
+        window.location.href = r.url;
+        return;
+      }
+      if (r.redirected && r.url.includes('/auth/login')) {
+        resetHeroZone();
+        heroStatus.textContent = 'Session expired — sign in to continue.';
+        window.location.href = '/auth/login?next=/';
+        return;
+      }
+      return r.text().then(function(body) {
+        resetHeroZone();
+        var msg = 'Upload failed (status ' + r.status + ')';
+        var m = body.match(/<p>([^<]{1,240})<\/p>/);
+        if (m) msg += ' — ' + m[1];
+        heroStatus.textContent = msg;
+      });
+    })
+    .catch(function(err) { resetHeroZone(); heroStatus.textContent = 'Upload failed: ' + err.message; });
+}
 
 if (heroZone) {
   ['dragenter', 'dragover'].forEach(e => {
@@ -895,70 +1025,8 @@ if (heroZone) {
 
     const names = Array.from(files).map(f => f.name);
     const slug = names[0].replace(/\.zip$|\.md$/i, '').replace(/[^a-z0-9-_]/gi, '-').toLowerCase();
-    heroStatus.textContent = '';
-    const spinner = document.createElement('span');
-    spinner.className = 'wh-spinner';
-    heroStatus.appendChild(spinner);
-    heroStatus.appendChild(document.createTextNode(names.join(', ') + ' — creating wiki...'));
-    heroZone.style.pointerEvents = 'none';
-    heroZone.style.opacity = '0.7';
-
-    const fd = new FormData();
-    fd.append('slug', slug);
-    fd.append('title', slug.replace(/-/g, ' '));
-    fd.append('description', '');
-    for (const f of files) fd.append('files', f);
-
-    function resetHeroZone() { heroZone.style.pointerEvents = ''; heroZone.style.opacity = ''; }
-
-    function stashFilesAndRedirect(files, slug) {
-      var req = indexedDB.open('wikihub_uploads', 1);
-      req.onupgradeneeded = function(e) { e.target.result.createObjectStore('pending'); };
-      req.onsuccess = function(e) {
-        var db = e.target.result;
-        var tx = db.transaction('pending', 'readwrite');
-        var store = tx.objectStore('pending');
-        var fileData = [];
-        var done = 0;
-        Array.from(files).forEach(function(f) {
-          var reader = new FileReader();
-          reader.onload = function() {
-            fileData.push({ name: f.name, type: f.type, data: reader.result });
-            done++;
-            if (done === files.length) {
-              store.put({ files: fileData, slug: slug, title: slug.replace(/-/g, ' ') }, 'upload');
-              tx.oncomplete = function() {
-                window.location.href = '/auth/login?next=/new';
-              };
-            }
-          };
-          reader.readAsArrayBuffer(f);
-        });
-      };
-      req.onerror = function() { window.location.href = '/auth/login?next=/new'; };
-    }
-
-    function doUpload(fileList, slug) {
-      var fd = new FormData();
-      fd.append('slug', slug);
-      fd.append('title', slug.replace(/-/g, ' '));
-      fd.append('description', '');
-      for (var i = 0; i < fileList.length; i++) fd.append('files', fileList[i]);
-
-      fetch('/new', { method: 'POST', body: fd, redirect: 'follow' })
-        .then(function(r) {
-          if (r.redirected && !r.url.includes('/auth/login')) {
-            window.location.href = r.url;
-          } else {
-            resetHeroZone();
-            heroStatus.textContent = 'Sign in to create your wiki — your files will be waiting.';
-            stashFilesAndRedirect(fileList, slug);
-          }
-        })
-        .catch(function(err) { resetHeroZone(); heroStatus.textContent = 'Upload failed: ' + err.message; });
-    }
-
-    doUpload(files, slug);
+    startHeroUpload(names);
+    doHeroUpload(files, slug);
   });
 
   heroZone.addEventListener('click', () => heroFileInput.click());
@@ -967,15 +1035,8 @@ if (heroZone) {
     const files = heroFileInput.files;
     const names = Array.from(files).map(f => f.name);
     const slug = names[0].replace(/\.zip$|\.md$/i, '').replace(/[^a-z0-9-_]/gi, '-').toLowerCase();
-    heroStatus.textContent = '';
-    const sp = document.createElement('span');
-    sp.className = 'wh-spinner';
-    heroStatus.appendChild(sp);
-    heroStatus.appendChild(document.createTextNode(names.join(', ') + ' — creating wiki...'));
-    heroZone.style.pointerEvents = 'none';
-    heroZone.style.opacity = '0.7';
-
-    doUpload(files, slug);
+    startHeroUpload(names);
+    doHeroUpload(files, slug);
   });
 }
 
