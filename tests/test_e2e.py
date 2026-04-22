@@ -677,6 +677,44 @@ def test_anonymous_public_edit(client, api_key):
     assert "Edited anonymously" in r.get_json()["content"]
 
 
+def test_anonymous_posting_and_claim(client):
+    """user A posts an anonymous+claimable page; user B claims it. (wikihub-7b2r)"""
+    ra = client.post("/api/v1/accounts", json={"username": "anonwriter"})
+    ka = ra.get_json()["api_key"]
+    ha = {"Authorization": f"Bearer {ka}"}
+    client.post("/api/v1/wikis", json={"slug": "rumor-mill", "title": "Rumors"}, headers=ha)
+    r = client.post("/api/v1/wikis/anonwriter/rumor-mill/pages", json={
+        "path": "wiki/rumor.md",
+        "content": "# Rumor\n\nSomething juicy.",
+        "visibility": "public",
+        "anonymous": True,
+        "claimable": True,
+    }, headers=ha)
+    assert r.status_code == 201, r.get_data(as_text=True)
+    body = r.get_json()
+    assert body["anonymous"] is True
+    assert body["claimable"] is True
+    assert body["author"] is None
+
+    r = client.get("/api/v1/wikis/anonwriter/rumor-mill/pages/wiki/rumor.md", headers=ha)
+    assert r.status_code == 200
+    assert r.get_json()["author"] is None
+    assert r.get_json()["anonymous"] is True
+
+    rb = client.post("/api/v1/accounts", json={"username": "claimer"})
+    kb = rb.get_json()["api_key"]
+    hb = {"Authorization": f"Bearer {kb}"}
+    r = client.post("/api/v1/wikis/anonwriter/rumor-mill/pages/wiki/rumor.md/claim", headers=hb)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    body = r.get_json()
+    assert body["anonymous"] is False
+    assert body["claimable"] is False
+    assert body["author"] == "claimer"
+
+    r = client.post("/api/v1/wikis/anonwriter/rumor-mill/pages/wiki/rumor.md/claim", headers=hb)
+    assert r.status_code == 409
+
+
 def test_acl_permissions(client, api_key):
     """private pages are not readable without auth"""
     h = {"Authorization": f"Bearer {api_key}"}
@@ -1582,6 +1620,7 @@ def run_all():
             ("magic link from password", lambda: test_magic_link_from_password(client)),
             ("ACL permissions", lambda: test_acl_permissions(client, key)),
             ("anonymous public edit", lambda: test_anonymous_public_edit(client, key)),
+            ("anonymous posting + claim (wikihub-7b2r)", lambda: test_anonymous_posting_and_claim(client)),
             ("people directory + profiles", lambda: test_people_directory_and_profiles(client, key)),
             ("new folder UI", lambda: test_new_folder_ui(client)),
             ("sidebar indentation (wikihub-58c regression guard)", lambda: test_sidebar_indentation(client, key)),

@@ -72,7 +72,11 @@ class Page(db.Model):
     frontmatter_json = db.Column(db.JSON)
     excerpt = db.Column(db.String(200))  # ~200 chars for search results
     content_hash = db.Column(db.String(64))
-    author = db.Column(db.String(256), nullable=True)  # nullable for anonymous writes
+    author = db.Column(db.String(256), nullable=True)  # original author (preserved for audit even when anonymous)
+    # anonymous posting (wikihub-7b2r) — hides author in API/UI when anonymous=True,
+    # claimable (only meaningful when anonymous) lets any authed user claim first-come-first-served.
+    anonymous = db.Column(db.Boolean, default=False, nullable=False)
+    claimable = db.Column(db.Boolean, default=False, nullable=False)
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = db.Column(db.DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
 

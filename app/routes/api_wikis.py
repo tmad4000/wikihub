@@ -397,6 +397,9 @@ def create_page(owner, slug):
     path = data.get("path", "").strip()
     content = data.get("content", "")
     visibility = data.get("visibility")
+    anonymous = bool(data.get("anonymous", False))
+    # when anonymous, claimable defaults to True per wikihub-7b2r spec
+    claimable = bool(data.get("claimable", True)) if anonymous else False
 
     if not path:
         return {"error": "bad_request", "message": "path is required"}, 400
@@ -430,12 +433,17 @@ def create_page(owner, slug):
         path=path,
         visibility=visibility,
         author=_current_username(),
+        anonymous=anonymous,
+        claimable=claimable,
     )
     update_page_metadata(page, content, frontmatter)
     db.session.add(page)
     db.session.flush()
     refresh_wikilinks_for_page(page, content)
-    author_name, author_email = _current_author()
+    if anonymous:
+        author_name, author_email = "Anonymous", "anonymous@wikihub.md"
+    else:
+        author_name, author_email = _current_author()
     sync_page_to_repo(owner_user.username, wiki.slug, path, content, message=f"Create {path}", author_name=author_name, author_email=author_email)
     append_event_to_repo(owner_user.username, wiki.slug, "page.create", path=path, visibility=page.visibility, actor=_current_username())
     update_mirror_page(owner_user.username, wiki.slug, path, acl_rules)
@@ -446,6 +454,9 @@ def create_page(owner, slug):
         "path": page.path,
         "title": page.title,
         "visibility": page.visibility,
+        "anonymous": page.anonymous,
+        "claimable": page.claimable,
+        "author": None if page.anonymous else page.author,
         "url": f"/@{owner_user.username}/{wiki.slug}/{url_path_from_page_path(path, strip_md=True)}",
     }), 201
 
@@ -526,6 +537,9 @@ def read_page(owner, slug, page_path):
         "excerpt": page.excerpt,
         "frontmatter": page.frontmatter_json,
         "content_hash": page.content_hash,
+        "anonymous": page.anonymous,
+        "claimable": page.claimable,
+        "author": None if page.anonymous else page.author,
         "updated_at": page.updated_at.isoformat(),
     })
     if etag:
@@ -867,6 +881,45 @@ def bulk_delete(owner, slug):
         db.session.commit()
 
     return jsonify({"deleted": deleted})
+
+
+@api_bp.route("/wikis/<owner>/<slug>/pages/<path:page_path>/claim", methods=["POST"])
+@api_auth_required
+@rate_limit_writes()
+def claim_page(owner, slug, page_path):
+    """Claim authorship of an anonymous+claimable page. (wikihub-7b2r)
+    Any authenticated user can claim — first-come-first-served."""
+    owner_user, wiki, err = _get_wiki_or_404(owner, slug)
+    if err:
+        return err
+
+    page_path = _normalize_page_path_param(page_path)
+    page = Page.query.filter_by(wiki_id=wiki.id, path=page_path).first()
+    if not page and not page_path.endswith(".md"):
+        page = Page.query.filter_by(wiki_id=wiki.id, path=page_path + ".md").first()
+    if not page:
+        return {"error": "not_found", "message": "Page not found"}, 404
+
+    if not page.anonymous:
+        return {"error": "not_claimable", "message": "Page is not anonymous"}, 409
+    if not page.claimable:
+        return {"error": "not_claimable", "message": "Page is anonymous but not claimable"}, 409
+
+    claimer = request.current_user
+    page.author = claimer.username
+    page.anonymous = False
+    page.claimable = False
+    db.session.commit()
+
+    return jsonify({
+        "id": page.id,
+        "path": page.path,
+        "title": page.title,
+        "visibility": page.visibility,
+        "anonymous": False,
+        "claimable": False,
+        "author": claimer.username,
+    })
 
 
 @api_bp.route("/wikis/<owner>/<slug>/pages/<path:page_path>/share", methods=["POST"])
