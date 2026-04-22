@@ -10,7 +10,7 @@
   body { font-family: var(--font-body); background: var(--bg-base); color: var(--text-primary); min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px; }
   .card { background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-md); padding: 32px 28px; width: 100%; max-width: 400px; }
   .logo { font-family: var(--font-mono); font-size: 1.125rem; text-align: center; margin-bottom: 24px; }
-  .logo .bracket { color: var(--text-tertiary); }
+  .logo .bracket { color: var(--text-tertiary); } .logo:hover .bracket { color: var(--accent); } .logo { display: block; transition: opacity 0.15s; } .logo:hover { opacity: 0.8; }
   h1 { font-size: 1.25rem; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 24px; text-align: center; }
   .flash { background: rgba(var(--rgb-private), 0.1); border: 1px solid rgba(var(--rgb-private), 0.3); color: var(--color-error); padding: 8px 12px; border-radius: var(--radius-sm); font-size: 0.8125rem; margin-bottom: 16px; }
   label { display: block; font-size: 0.8125rem; color: var(--text-secondary); margin-bottom: 6px; font-weight: 500; }
@@ -32,7 +32,7 @@
 </head>
 <body>
 <div class="card">
-  <div class="logo"><span class="bracket">[[</span>wikihub<span class="bracket">]]</span></div>
+  <a href="/" class="logo" style="text-decoration:none;color:inherit;"><span class="bracket">[[</span>wikihub<span class="bracket">]]</span></a>
   <h1>Create account</h1>
 
   {% with messages = get_flashed_messages() %}
@@ -49,11 +49,12 @@
   <form method="POST">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     {% if prefill_token %}<input type="hidden" name="it" value="{{ prefill_token }}">{% endif %}
-    <label for="username">Username</label>
+    <label for="email">Email{% if not prefill_email %} (recommended){% endif %}</label>
+    <input type="email" id="email" name="email" autocomplete="username email" value="{{ prefill_email or '' }}"{% if prefill_email %} readonly{% endif %}>
+    {% if prefill_email %}<p class="hint">You were invited at this address — it's pre-filled so your invite applies on signup.</p>
+    {% else %}<p class="hint">For password recovery and wiki invites</p>{% endif %}
+    <label for="username">Username <span style="font-weight:400;color:var(--text-tertiary);">· your URL: wikihub.md/@<span id="username-preview">…</span></span></label>
     <input type="text" id="username" name="username" autocomplete="username" required pattern="[a-z0-9_-]+" title="lowercase letters, numbers, hyphens, underscores">
-    <label for="email">Email{% if not prefill_email %} (optional){% endif %}</label>
-    <input type="email" id="email" name="email" autocomplete="email" value="{{ prefill_email or '' }}"{% if prefill_email %} readonly{% endif %}>
-    {% if prefill_email %}<p class="hint">You were invited at this address — it's pre-filled so your invite applies on signup.</p>{% endif %}
     <label for="password">Password</label>
     <input type="password" id="password" name="password" autocomplete="new-password" required minlength="8">
     <p class="hint">At least 8 characters</p>
@@ -62,5 +63,34 @@
 
   <div class="footer">Already have an account? <a href="{{ url_for('auth.login') }}">Sign in</a></div>
 </div>
+<script>
+(function() {
+  var emailEl = document.getElementById('email');
+  var usernameEl = document.getElementById('username');
+  var previewEl = document.getElementById('username-preview');
+  var userEdited = false;
+  if (!emailEl || !usernameEl) return;
+  usernameEl.addEventListener('input', function() { userEdited = true; });
+  function derive(email) {
+    var local = (email.split('@')[0] || '').toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 40);
+    return local.length >= 2 ? local : '';
+  }
+  emailEl.addEventListener('input', function() {
+    if (userEdited) return;
+    var suggestion = derive(this.value);
+    if (suggestion) {
+      usernameEl.value = suggestion;
+      if (previewEl) previewEl.textContent = suggestion;
+    }
+  });
+  usernameEl.addEventListener('input', function() {
+    if (previewEl) previewEl.textContent = this.value || '…';
+  });
+  if (emailEl.value && !usernameEl.value) {
+    var s = derive(emailEl.value);
+    if (s) { usernameEl.value = s; if (previewEl) previewEl.textContent = s; }
+  }
+})();
+</script>
 </body>
 </html>
