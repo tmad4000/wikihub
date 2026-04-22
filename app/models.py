@@ -14,7 +14,10 @@ class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(64), unique=True, nullable=False, index=True)
     display_name = db.Column(db.String(128))
-    email = db.Column(db.String(256), unique=True, nullable=True)
+    # Uniqueness enforced only for verified emails (partial index below), so
+    # two users may claim the same unverified email — first to verify wins.
+    email = db.Column(db.String(256), nullable=True)
+    email_verified_at = db.Column(db.DateTime(timezone=True), nullable=True)
     password_hash = db.Column(db.String(256), nullable=True)  # null for oauth-only users
     google_id = db.Column(db.String(256), unique=True, nullable=True)
     llm_api_key_encrypted = db.Column(db.Text, nullable=True)  # encrypted Anthropic API key for Curator
@@ -23,6 +26,15 @@ class User(UserMixin, db.Model):
     wikis = db.relationship("Wiki", backref="owner", lazy="dynamic")
     api_keys = db.relationship("ApiKey", backref="user", lazy="dynamic")
     stars = db.relationship("Star", backref="user", lazy="dynamic")
+
+    __table_args__ = (
+        db.Index(
+            "ux_users_email_verified",
+            "email",
+            unique=True,
+            postgresql_where=db.text("email_verified_at IS NOT NULL"),
+        ),
+    )
 
 
 class Wiki(db.Model):

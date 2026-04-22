@@ -33,6 +33,26 @@ tests are minimal and intentional — each one verifies a real user flow end-to-
 
 don't add unit tests for individual functions. if something breaks, add an e2e test that covers the broken flow. tests should run in <10 seconds.
 
+## schema changes
+
+No Alembic. Fresh databases are built with `db.create_all()` at startup. For
+existing databases (prod, dev, test) that need DDL changes — new columns,
+dropped constraints, new indexes — drop a one-off SQL file in `migrations/`:
+
+```
+migrations/YYYY-MM-DD_short_description.sql
+```
+
+Make the SQL idempotent (`IF NOT EXISTS`, `DROP CONSTRAINT IF EXISTS`) so it
+can be re-run safely. Apply with:
+
+```bash
+ssh ubuntu@54.145.123.7 "sudo -u postgres psql -d wikihub -f -" < migrations/FILE.sql
+```
+
+The header comment of each migration file should document its why + the exact
+apply command. Keep migrations in chronological order.
+
 ## architecture
 
 - `cli/` — `wikihub-cli` Python CLI package (pip-installable; wraps `/api/v1`)
