@@ -10,8 +10,15 @@ from authlib.integrations.flask_client import OAuth
 from datetime import timedelta
 
 from app import db
-from app.models import User, ApiKey, MagicLoginToken, PendingInvite, EmailVerificationToken, utcnow
-from app.auth_utils import hash_password, check_password, hash_api_key, hash_one_time_token, generate_email_verification_token
+from app.models import User, ApiKey, MagicLoginToken, PendingInvite, EmailVerificationToken, PasswordResetToken, utcnow
+from app.auth_utils import (
+    hash_password,
+    check_password,
+    hash_api_key,
+    hash_one_time_token,
+    generate_email_verification_token,
+    generate_password_reset_token,
+)
 from app.routes import auth_bp
 from app.subdomains import validate_username
 from app.wiki_ops import ensure_personal_wiki, materialize_pending_invites_for
@@ -20,6 +27,7 @@ from app import email_service
 
 
 _EMAIL_VERIFY_TTL_HOURS = 24
+_PASSWORD_RESET_TTL_MINUTES = 30
 
 
 def send_verification_if_needed(user):
@@ -60,6 +68,12 @@ _LOGIN_WINDOW_SECONDS = 300
 _LOGIN_MAX_PER_IP = 20
 _login_attempts = defaultdict(deque)
 
+_FORGOT_PASSWORD_WINDOW_SECONDS = 3600
+_FORGOT_PASSWORD_MAX_PER_EMAIL = 5
+_FORGOT_PASSWORD_MAX_PER_IP = 20
+_forgot_password_email_attempts = defaultdict(deque)
+_forgot_password_ip_attempts = defaultdict(deque)
+
 _USERNAME_RE = re.compile(r'^[a-z0-9_-]+$')
 
 
@@ -98,6 +112,48 @@ def _check_login_rate_limit():
         return render_template("auth/login.html"), 429
     attempts.append(now)
     return None
+
+
+def _render_forgot_password_success(email=""):
+    return render_template(
+        "auth/forgot_password.html",
+        email=email,
+        success_message="If that email is on an account, we sent a password reset link. It expires in 30 minutes.",
+    )
+
+
+def _check_forgot_password_rate_limit(email):
+    ip = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
+    now = time()
+
+    ip_attempts = _forgot_password_ip_attempts[ip]
+    while ip_attempts and now - ip_attempts[0] > _FORGOT_PASSWORD_WINDOW_SECONDS:
+        ip_attempts.popleft()
+    if len(ip_attempts) >= _FORGOT_PASSWORD_MAX_PER_IP:
+        flash("Too many password reset attempts from this IP. Try again later.")
+        return render_template("auth/forgot_password.html", email=email), 429
+
+    email_attempts = _forgot_password_email_attempts[email]
+    while email_attempts and now - email_attempts[0] > _FORGOT_PASSWORD_WINDOW_SECONDS:
+        email_attempts.popleft()
+    if len(email_attempts) >= _FORGOT_PASSWORD_MAX_PER_EMAIL:
+        flash("Too many password reset attempts for that email. Try again later.")
+        return render_template("auth/forgot_password.html", email=email), 429
+
+    ip_attempts.append(now)
+    email_attempts.append(now)
+    return None
+
+
+def _get_valid_password_reset(raw_token):
+    token_hash = hash_one_time_token(raw_token)
+    row = PasswordResetToken.query.filter_by(token_hash=token_hash).first()
+    if not row or row.used_at is not None or row.expires_at <= utcnow():
+        return None, None
+    user = db.session.get(User, row.user_id)
+    if not user:
+        return None, None
+    return row, user
 
 
 def init_oauth(app):
@@ -299,6 +355,75 @@ def signup():
         prefill_email=prefill_email,
         prefill_token=prefill_token,
     )
+
+
+@auth_bp.route("/forgot", methods=["GET", "POST"])
+@auth_bp.route("/forgot-password", methods=["GET", "POST"])
+def forgot_password():
+    if request.method == "GET":
+        return render_template("auth/forgot_password.html")
+
+    email = request.form.get("email", "").strip().lower()
+    if not email:
+        flash("Email required")
+        return render_template("auth/forgot_password.html"), 400
+
+    rate_limited = _check_forgot_password_rate_limit(email)
+    if rate_limited:
+        return rate_limited
+
+    user = User.query.filter(User.email == email).order_by(User.id.asc()).first()
+    if user:
+        raw_token, token_hash = generate_password_reset_token()
+        token = PasswordResetToken(
+            user_id=user.id,
+            token_hash=token_hash,
+            expires_at=utcnow() + timedelta(minutes=_PASSWORD_RESET_TTL_MINUTES),
+        )
+        db.session.add(token)
+        db.session.commit()
+
+        server_url = resolve_server_url(current_app, request)
+        reset_url = f"{server_url}/auth/reset/{raw_token}"
+        email_service.send_password_reset(
+            to=email,
+            reset_url=reset_url,
+            username=user.username,
+        )
+
+    return _render_forgot_password_success(email)
+
+
+@auth_bp.route("/reset/<token>", methods=["GET", "POST"])
+def reset_password(token):
+    row, user = _get_valid_password_reset(token)
+    if not row or not user:
+        return render_template(
+            "auth/reset_password.html",
+            reset_error="This password reset link expired or was already used.",
+        ), 400
+
+    if request.method == "GET":
+        return render_template("auth/reset_password.html", username=user.username)
+
+    password = request.form.get("password", "")
+    confirm_password = request.form.get("confirm_password", "")
+    if len(password) < 8:
+        flash("Password must be at least 8 characters")
+        return render_template("auth/reset_password.html", username=user.username), 400
+    if password != confirm_password:
+        flash("Passwords do not match")
+        return render_template("auth/reset_password.html", username=user.username), 400
+
+    user.password_hash = hash_password(password)
+    user.email_verified_at = utcnow()
+    row.used_at = utcnow()
+    materialize_pending_invites_for(user)
+    db.session.commit()
+
+    login_user(user)
+    flash("Password reset. You're signed in.")
+    return redirect(url_for("wiki.user_profile", username=user.username))
 
 
 @auth_bp.route("/resend-verification", methods=["POST"])

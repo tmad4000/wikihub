@@ -56,6 +56,9 @@
     <input type="text" id="username" name="username" autocomplete="username">
     <label for="password">Password</label>
     <input type="password" id="password" name="password" autocomplete="current-password">
+    <div style="text-align:right;margin-top:-8px;margin-bottom:16px;">
+      <a href="{{ url_for('auth.forgot_password') }}" style="font-size:0.8125rem;color:var(--accent);text-decoration:none;">Forgot password?</a>
+    </div>
     <button type="submit" class="btn btn-primary">Sign in</button>
   </form>
 

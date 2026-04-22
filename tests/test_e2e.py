@@ -10,6 +10,7 @@ import os
 import shutil
 import sys
 import zipfile
+from datetime import timedelta
 from urllib.parse import urlparse
 from sqlalchemy import text
 
@@ -50,6 +51,8 @@ def reset_database():
         "pages",
         "pending_invites",
         "wikis",
+        "password_reset_tokens",
+        "email_verification_tokens",
         "magic_login_tokens",
         "api_keys",
         "username_redirects",
@@ -586,6 +589,134 @@ def test_email_verification_flow(client):
     r4 = browser.get(verify_path, follow_redirects=False)
     assert r4.status_code == 302
     assert "/auth/login" in r4.headers["Location"]
+
+    os.environ.pop("EMAIL_MODE", None)
+
+
+def test_password_reset_lifecycle(client):
+    """wikihub-ks5t.5: forgot-password + reset flow with single-use, expiry,
+    non-enumeration, and verified-on-reset semantics."""
+    import os
+    import re
+    from app import email_service
+    from app.auth_utils import hash_one_time_token
+    from app.models import PasswordResetToken, PendingInvite, User
+
+    os.environ["EMAIL_MODE"] = "mock"
+    email_service.mock_clear()
+
+    # Seed a pending invite so reset-path verification materializes it.
+    owner = client.post("/api/v1/accounts", json={"username": "resetowner"})
+    assert owner.status_code == 201
+    owner_key = owner.get_json()["api_key"]
+    ho = {"Authorization": f"Bearer {owner_key}"}
+    r = client.post("/api/v1/wikis", json={"slug": "reset-share", "title": "Reset Share"}, headers=ho)
+    assert r.status_code == 201
+    r = client.post("/api/v1/wikis/resetowner/reset-share/pages", json={
+        "path": "secret.md", "content": "# secret", "visibility": "private",
+    }, headers=ho)
+    assert r.status_code == 201
+    r = client.post("/api/v1/wikis/resetowner/reset-share/share", json={
+        "pattern": "*", "email": "resetme@example.com", "role": "read",
+    }, headers=ho)
+    assert r.status_code == 200
+    assert PendingInvite.query.filter_by(email="resetme@example.com").count() == 1
+
+    # Create an account with an unverified email and password.
+    r = client.post("/api/v1/accounts", json={
+        "username": "resetme",
+        "email": "resetme@example.com",
+        "password": "oldpass12345",
+    })
+    assert r.status_code == 201
+    reset_key = r.get_json()["api_key"]
+    hr = {"Authorization": f"Bearer {reset_key}"}
+    user = User.query.filter_by(username="resetme").first()
+    assert user is not None
+    assert user.email_verified_at is None
+
+    r = client.get("/api/v1/wikis/resetowner/reset-share/pages/secret.md", headers=hr)
+    assert r.status_code in (403, 404), "pending invite must not apply before reset-driven verification"
+
+    # Happy path: forgot-password sends a reset email, token row is hashed in DB,
+    # reset verifies the email, applies pending invites, and the new password works.
+    r = client.post("/auth/forgot-password", data={"email": "resetme@example.com"})
+    assert r.status_code == 200
+    assert b"If that email is on an account" in r.data
+
+    messages = [m for m in email_service.mock_outbox() if m["subject"] == "Reset your WikiHub password"]
+    assert messages, "expected a password reset email"
+    match = re.search(r"/auth/reset/(pr_[A-Za-z0-9_-]+)", messages[-1]["text"])
+    assert match, f"reset URL not found in email body: {messages[-1]['text'][:200]}"
+    raw_token = match.group(1)
+
+    token_row = PasswordResetToken.query.filter_by(token_hash=hash_one_time_token(raw_token)).first()
+    assert token_row is not None, "reset token must be hashed at rest in DB"
+
+    r = client.get(f"/auth/reset/{raw_token}")
+    assert r.status_code == 200
+    assert b"Reset password for @resetme" in r.data
+
+    browser = client.application.test_client()
+    r = browser.post(
+        f"/auth/reset/{raw_token}",
+        data={"password": "newpass12345", "confirm_password": "newpass12345"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 302
+    assert r.headers["Location"].endswith("/@resetme")
+
+    user = User.query.filter_by(username="resetme").first()
+    assert user.email_verified_at is not None, "password reset should mark the email verified"
+    token_row = db.session.get(PasswordResetToken, token_row.id)
+    assert token_row.used_at is not None, "reset token should become single-use after success"
+    assert PendingInvite.query.filter_by(email="resetme@example.com").count() == 0, \
+        "pending invite should materialize when reset verifies the email"
+
+    r = client.get("/api/v1/wikis/resetowner/reset-share/pages/secret.md", headers=hr)
+    assert r.status_code == 200, "pending invite should unlock after reset"
+
+    r = client.post("/api/v1/auth/token", json={"username": "resetme", "password": "newpass12345"})
+    assert r.status_code == 200
+    r = client.post("/api/v1/auth/token", json={"username": "resetme", "password": "oldpass12345"})
+    assert r.status_code == 401
+
+    # Used token: the same link should now be rejected.
+    r = client.get(f"/auth/reset/{raw_token}")
+    assert r.status_code == 400
+    assert b"expired or was already used" in r.data
+
+    # Expired token: mint a fresh token, expire it manually, verify GET and POST fail gracefully.
+    r = client.post("/auth/forgot-password", data={"email": "resetme@example.com"})
+    assert r.status_code == 200
+    messages = [m for m in email_service.mock_outbox() if m["subject"] == "Reset your WikiHub password"]
+    match = re.search(r"/auth/reset/(pr_[A-Za-z0-9_-]+)", messages[-1]["text"])
+    expired_raw = match.group(1)
+    expired_row = PasswordResetToken.query.filter_by(token_hash=hash_one_time_token(expired_raw)).first()
+    expired_row.expires_at = utcnow() - timedelta(minutes=1)
+    db.session.commit()
+
+    r = client.get(f"/auth/reset/{expired_raw}")
+    assert r.status_code == 400
+    assert b"expired or was already used" in r.data
+    r = client.post(
+        f"/auth/reset/{expired_raw}",
+        data={"password": "anotherpass123", "confirm_password": "anotherpass123"},
+    )
+    assert r.status_code == 400
+    assert b"expired or was already used" in r.data
+
+    # Wrong token: random string should get the same helpful failure.
+    r = client.get("/auth/reset/pr_not-a-real-token")
+    assert r.status_code == 400
+    assert b"expired or was already used" in r.data
+
+    # Non-enumerating: nonexistent email still gets the same success response.
+    outbox_before = len(email_service.mock_outbox())
+    r = client.post("/auth/forgot-password", data={"email": "nobody@example.com"})
+    assert r.status_code == 200
+    assert b"If that email is on an account" in r.data
+    assert len(email_service.mock_outbox()) == outbox_before, "nonexistent email should not send anything"
 
     os.environ.pop("EMAIL_MODE", None)
 
@@ -1875,6 +2006,7 @@ def run_all():
             ("magic link login", lambda: test_magic_link_login(client)),
             ("logout (wikihub-uq9)", lambda: test_logout(client)),
             ("email verification flow (wikihub-ks5t.3)", lambda: test_email_verification_flow(client)),
+            ("password reset flow (wikihub-ks5t.5)", lambda: test_password_reset_lifecycle(client)),
             ("Google auto-link security (wikihub-ks5t.4)", lambda: test_google_auto_link_security(app)),
             ("login redirects back (?next + Referer fallback)", lambda: test_login_redirect_back(client)),
             ("URL login (GET ?api_key / ?password)", lambda: test_url_login(client)),

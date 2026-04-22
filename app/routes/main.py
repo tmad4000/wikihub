@@ -97,29 +97,6 @@ def settings():
     )
 
 
-@main_bp.route("/delete-account", methods=["POST"])
-@login_required
-def delete_account():
-    """Soft-delete the signed-in user (wikihub-ks5t.7).
-
-    Body: JSON {"confirm": "<username>"}. The user must type their own
-    username to confirm — cheap guard against an accidental form submit.
-    On success, sets users.deleted_at and logs the user out. Login is
-    blocked for deleted users; data is retained for a 30-day grace period
-    before a hard-delete cron purges it (separate ticket).
-    """
-    user = current_user
-    data = request.get_json(silent=True) or {}
-    typed = (data.get("confirm") or "").strip().lower()
-    if typed != user.username:
-        return {"error": "bad_request", "message": "Type your username to confirm."}, 400
-
-    user.deleted_at = utcnow()
-    db.session.commit()
-    logout_user()
-    return jsonify({"ok": True, "grace_period_days": 30})
-
-
 @main_bp.route("/claim-email", methods=["POST"])
 @login_required
 def claim_email_web():

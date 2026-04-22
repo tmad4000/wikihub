@@ -146,6 +146,30 @@ def send_email_verification(
     return send(to, subject, html, text)
 
 
+def send_password_reset(
+    *,
+    to: str,
+    reset_url: str,
+    username: str,
+) -> bool:
+    subject = "Reset your WikiHub password"
+    text = (
+        f"Hi @{username},\n\n"
+        f"Click this link to reset your WikiHub password:\n{reset_url}\n\n"
+        f"This link expires in 30 minutes. If you didn't request a password reset, "
+        f"you can ignore this email.\n\n"
+        f"— WikiHub"
+    )
+    html = f"""\
+<p>Hi <strong>@{_escape(username)}</strong>,</p>
+<p>Click the link to reset your WikiHub password:</p>
+<p><a href="{reset_url}">{reset_url}</a></p>
+<p style="color:#887d6e;font-size:0.875rem;">This link expires in 30 minutes. If you didn't request a password reset, you can ignore this email.</p>
+<p style="color:#887d6e;font-size:0.875rem;margin-top:2rem;">— WikiHub</p>
+"""
+    return send(to, subject, html, text)
+
+
 def send_share_invite_existing_user(
     *,
     to: str,

@@ -47,6 +47,11 @@ def generate_email_verification_token():
     return raw, hash_one_time_token(raw)
 
 
+def generate_password_reset_token():
+    raw = "pr_" + secrets.token_urlsafe(32)
+    return raw, hash_one_time_token(raw)
+
+
 def hash_api_key(raw_key):
     return hashlib.sha256(raw_key.encode()).hexdigest()
 
