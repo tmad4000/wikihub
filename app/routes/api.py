@@ -1,23 +1,34 @@
+import json
 import re
 import os
 import secrets
 import shutil
+import time
 from datetime import timedelta
+from collections import defaultdict
+from urllib.parse import unquote
 
 from flask import current_app, request, jsonify
+from sqlalchemy import inspect
 
 from app import db
 from app.models import User, ApiKey, MagicLoginToken, UsernameRedirect, utcnow, Wiki
 from app.auth_utils import (
-    generate_api_key, generate_magic_login_token, hash_password, check_password, api_auth_required, get_current_user_from_request,
+    generate_api_key, generate_magic_login_token, hash_password, check_password,
+    api_auth_required, api_auth_optional, get_current_user_from_request, rate_limit_writes,
 )
 from app.credentials_hint import build_client_config, resolve_server_url
 from app.git_backend import _repo_path
 from app.routes import api_bp
 from app.subdomains import validate_username, validate_wiki_subdomain
+from app import email_service
+from app.url_utils import page_path_from_url_path
+from app.git_sync import list_files_in_repo
 from app.wiki_ops import ensure_personal_wiki, materialize_pending_invites_for
 
 _USERNAME_RE = re.compile(r'^[a-z0-9_-]+$')
+_ACCESS_REQUEST_RE = re.compile(r"^/@(?P<owner>[a-z0-9_-]+)/(?P<slug>[a-z0-9_-]+)(?:/(?P<target>.*))?$")
+_access_request_timestamps = defaultdict(list)
 
 
 @api_bp.route("/accounts", methods=["POST"])
@@ -133,6 +144,84 @@ def _sanitize_redirect_path(raw_path, fallback="/"):
     return target
 
 
+def _append_access_request_audit(*, user_id, wiki_id, requested_path, requester_email, note):
+    if not inspect(db.engine).has_table("audit_log"):
+        return
+    db.session.execute(
+        db.text(
+            """
+            INSERT INTO audit_log (user_id, action, target_type, target_id, detail_json, created_at)
+            VALUES (:user_id, :action, :target_type, :target_id, CAST(:detail_json AS json), NOW())
+            """
+        ),
+        {
+            "user_id": user_id,
+            "action": "access.request",
+            "target_type": "wiki",
+            "target_id": wiki_id,
+            "detail_json": json.dumps({
+                "requested_path": requested_path,
+                "requester_email": requester_email,
+                "note": note,
+            }),
+        },
+    )
+
+
+def _resolve_access_request_target(requested_path):
+    safe_path = _sanitize_redirect_path(requested_path, fallback="")
+    match = _ACCESS_REQUEST_RE.match(safe_path)
+    if not match:
+        return None
+
+    owner_name = match.group("owner")
+    slug = match.group("slug")
+    target = unquote(match.group("target") or "")
+    owner = User.query.filter_by(username=owner_name).first()
+    if not owner:
+        return None
+    wiki = Wiki.query.filter_by(owner_id=owner.id, slug=slug).first()
+    if not wiki:
+        return None
+
+    repo_files = None
+    target_exists = False
+
+    if not target:
+        target_exists = True
+    else:
+        repo_files = set(list_files_in_repo(owner.username, wiki.slug, public=False))
+        if safe_path.endswith("/"):
+            folder = target.strip("/")
+            folder_index = f"{folder}/index.md"
+            target_exists = folder_index in repo_files or any(path.startswith(folder + "/") for path in repo_files)
+        else:
+            literal = target
+            literal_md = target if target.endswith(".md") else target + ".md"
+            normalized = page_path_from_url_path(target)
+            normalized_md = normalized if normalized.endswith(".md") else normalized + ".md"
+            candidates = {literal, literal_md, normalized, normalized_md}
+            target_exists = any(candidate in repo_files for candidate in candidates)
+
+    return {
+        "owner": owner,
+        "wiki": wiki,
+        "requested_path": safe_path,
+        "target_exists": target_exists,
+    }
+
+
+def _access_request_allowed(ip, requested_path, window_seconds=300):
+    key = (ip or "unknown", requested_path)
+    now = time.monotonic()
+    hits = [t for t in _access_request_timestamps[key] if now - t < window_seconds]
+    _access_request_timestamps[key] = hits
+    if hits:
+        return False
+    hits.append(now)
+    return True
+
+
 @api_bp.route("/auth/magic-link", methods=["POST"])
 def create_magic_link():
     """mint a short-lived, single-use browser sign-in URL.
@@ -196,6 +285,72 @@ def create_magic_link():
         "expires_at": expires_at.isoformat(),
         "next": redirect_path,
     }), 201
+
+
+@api_bp.route("/access-requests", methods=["POST"])
+@api_auth_optional
+@rate_limit_writes(max_per_minute=5, max_per_ip_per_minute=10)
+def create_access_request():
+    data = request.get_json(silent=True) or {}
+    requested_path = _sanitize_redirect_path(data.get("path"), fallback="")
+    requester_email = (data.get("email") or "").strip().lower()
+    note = (data.get("note") or "").strip()
+    user = getattr(request, "current_user", None)
+    ip = request.remote_addr or "unknown"
+
+    neutral = {
+        "ok": True,
+        "message": "If access can be requested for this link, the owner has been notified.",
+    }
+
+    if not requested_path:
+        return jsonify(neutral), 202
+
+    target = _resolve_access_request_target(requested_path)
+    if not target:
+        return jsonify(neutral), 202
+
+    if not _access_request_allowed(ip, requested_path):
+        return jsonify(neutral), 202
+
+    owner = target["owner"]
+    wiki = target["wiki"]
+    if not target["target_exists"]:
+        return jsonify(neutral), 202
+
+    effective_email = requester_email or (user.email.strip().lower() if user and user.email else "")
+    requester_label = (
+        f"@{user.username}" if user
+        else effective_email
+        or "Someone"
+    )
+
+    try:
+        _append_access_request_audit(
+            user_id=user.id if user else None,
+            wiki_id=wiki.id,
+            requested_path=requested_path,
+            requester_email=effective_email or None,
+            note=note or None,
+        )
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+    if owner.email:
+        base_url = resolve_server_url(current_app, request)
+        email_service.send_access_request(
+            to=owner.email,
+            requester_label=requester_label,
+            requester_email=effective_email,
+            requested_url=requested_path,
+            owner_username=owner.username,
+            wiki_title=wiki.title or wiki.slug,
+            note=note,
+            server_url=base_url,
+        )
+
+    return jsonify(neutral), 202
 
 
 @api_bp.route("/accounts/me", methods=["GET"])

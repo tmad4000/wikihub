@@ -62,9 +62,13 @@ def explore():
             editorial.append(wiki)
     # All wikis with at least one public page, excluding editorial
     editorial_ids = {wiki.id for wiki in editorial}
-    all_wikis = (
-        Wiki.query.join(Page)
+    public_wiki_ids = (
+        db.session.query(Page.wiki_id)
         .filter(Page.visibility.in_(["public", "public-edit"]))
+        .distinct()
+    )
+    all_wikis = (
+        Wiki.query.filter(Wiki.id.in_(public_wiki_ids))
         .order_by(Wiki.updated_at.desc())
         .all()
     )
@@ -72,7 +76,12 @@ def explore():
 
     people = _people_directory(limit=6)
 
-    return render_template("explore.html", editorial=editorial, wikis=all_wikis, people=people)
+    return render_template(
+        "explore.html",
+        editorial=editorial,
+        recent_wikis=all_wikis,
+        people=people,
+    )
 
 
 @main_bp.route("/people")

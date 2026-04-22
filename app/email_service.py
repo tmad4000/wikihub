@@ -233,3 +233,37 @@ def send_share_invite_pending(
 <p style="color:#887d6e;font-size:0.875rem;margin-top:2rem;">— WikiHub</p>
 """
     return send(to, subject, html, text)
+
+
+def send_access_request(
+    *,
+    to: str,
+    requester_label: str,
+    requester_email: str = "",
+    requested_url: str,
+    owner_username: str,
+    wiki_title: str,
+    note: str = "",
+    server_url: str = "https://wikihub.md",
+) -> bool:
+    subject = f"Access request for {wiki_title} on WikiHub"
+    text = (
+        f"{requester_label} requested access to content on your WikiHub wiki \"{wiki_title}\".\n\n"
+        f"Requested link: {requested_url}\n"
+        f"Owner: @{owner_username}\n"
+    )
+    if requester_email:
+        text += f"Contact email: {requester_email}\n"
+    if note:
+        text += f"Note:\n{note}\n\n"
+    text += f"Review it on WikiHub: {server_url}{requested_url}\n\n— WikiHub"
+    html = f"""\
+<p><strong>{_escape(requester_label)}</strong> requested access to content on your WikiHub wiki <strong>{_escape(wiki_title)}</strong>.</p>
+<p>Requested link: <a href="{server_url}{requested_url}">{_escape(requested_url)}</a><br>Owner: <code>@{_escape(owner_username)}</code></p>
+"""
+    if requester_email:
+        html += f"<p>Contact email: <a href=\"mailto:{_escape(requester_email)}\">{_escape(requester_email)}</a></p>"
+    if note:
+        html += f"<p>Note:</p><blockquote>{_escape(note)}</blockquote>"
+    html += '<p style="color:#887d6e;font-size:0.875rem;margin-top:2rem;">— WikiHub</p>\n'
+    return send(to, subject, html, text)

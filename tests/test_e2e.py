@@ -1422,9 +1422,12 @@ def test_people_directory_and_profiles(client, api_key):
 
     r = client.get("/explore")
     assert r.status_code == 200
+    assert b"Recently Updated Wikis" in r.data
+    assert b"updated " in r.data
     assert b"All people" in r.data
     assert b"@agent1" in r.data
     assert b"@person2" in r.data
+    assert r.data.index(b"Garden") < r.data.index(b"Atlas")
 
     r = client.get("/people")
     assert r.status_code == 200
@@ -2130,6 +2133,82 @@ def test_share_sends_email(client, api_key):
     os.environ.pop("EMAIL_MODE", None)
 
 
+def test_permission_error_offers_request_access(client, api_key):
+    h = {"Authorization": f"Bearer {api_key}"}
+
+    r = client.post("/api/v1/wikis", json={"slug": "private-cta", "title": "Private CTA"}, headers=h)
+    assert r.status_code == 201
+
+    r = client.post("/api/v1/wikis/agent1/private-cta/pages", json={
+        "path": "team/secret.md",
+        "content": "# Secret\n\nPrivate body.",
+        "visibility": "private",
+    }, headers=h)
+    assert r.status_code == 201
+
+    r = client.get("/@agent1/private-cta/team/secret")
+    assert r.status_code == 404
+    assert b"This page is private or doesn't exist" in r.data
+    assert b"Request access" in r.data
+    assert b"/api/v1/access-requests" in r.data
+
+
+def test_access_request_constant_response_and_notify_existing_target(client):
+    import os
+    from app.routes.api import _access_request_timestamps
+
+    os.environ["EMAIL_MODE"] = "mock"
+    from app import email_service
+    email_service.mock_clear()
+    _write_timestamps.clear()
+    _access_request_timestamps.clear()
+
+    r = client.post("/api/v1/accounts", json={"username": "ownerreq", "email": "ownerreq@example.com"})
+    assert r.status_code == 201
+    key = r.get_json()["api_key"]
+    h = {"Authorization": f"Bearer {key}"}
+
+    r = client.post("/api/v1/wikis", json={"slug": "access-req", "title": "Access Request Wiki"}, headers=h)
+    assert r.status_code == 201
+
+    r = client.post("/api/v1/wikis/ownerreq/access-req/pages", json={
+        "path": "private/page.md",
+        "content": "# Hidden\n\nNope.",
+        "visibility": "private",
+    }, headers=h)
+    assert r.status_code == 201
+
+    r = client.post("/api/v1/access-requests", json={
+        "path": "/@ownerreq/access-req/private/page",
+        "email": "asker@example.com",
+        "note": "Need this for collaboration.",
+    })
+    assert r.status_code == 202
+    data = r.get_json()
+    assert data["ok"] is True
+    assert "owner has been notified" in data["message"]
+
+    shareish = [m for m in email_service.mock_outbox() if "Access request" in m["subject"]]
+    assert len(shareish) == 1, shareish
+    assert shareish[0]["to"] == "ownerreq@example.com"
+    assert "/@ownerreq/access-req/private/page" in shareish[0]["text"]
+    assert "asker@example.com" in shareish[0]["text"]
+
+    before = len(email_service.mock_outbox())
+    r = client.post("/api/v1/access-requests", json={
+        "path": "/@ownerreq/access-req/does/not/exist",
+        "email": "asker@example.com",
+        "note": "Need this too.",
+    })
+    assert r.status_code == 202
+    data = r.get_json()
+    assert data["ok"] is True
+    assert "owner has been notified" in data["message"]
+    assert len(email_service.mock_outbox()) == before, email_service.mock_outbox()
+
+    os.environ.pop("EMAIL_MODE", None)
+
+
 def test_subdomain_routing(client):
     """users get profile subdomains; wikis can claim custom subdomains.
     requests with a matching Host header route to the canonical path."""
@@ -2517,6 +2596,8 @@ def run_all():
             ("bulk sharing (wikihub-iga9)", lambda: test_bulk_sharing(client, key)),
             ("pending invite lifecycle (wikihub-skp7)", lambda: test_pending_invite_lifecycle(client, key)),
             ("share sends email (wikihub-exj1 mock)", lambda: test_share_sends_email(client, key)),
+            ("private surface offers request access", lambda: test_permission_error_offers_request_access(client, key)),
+            ("access requests stay ambiguous + notify existing target", lambda: test_access_request_constant_response_and_notify_existing_target(client)),
             ("subdomain routing", lambda: test_subdomain_routing(client)),
             ("CLI end-to-end", lambda: test_cli(client)),
         ]

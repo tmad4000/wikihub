@@ -45,6 +45,7 @@
 }
 .wiki-card-meta { display: flex; gap: 12px; font-size: 0.75rem; color: var(--text-muted); font-family: var(--font-mono); }
 .wiki-card-meta .star { color: var(--accent); }
+.wiki-card-meta .updated { color: var(--text-tertiary); }
 
 .person-card {
   display: block; background: var(--gradient-person-card);
@@ -74,7 +75,7 @@
 {% block body %}
 <div class="explore-page">
   <h1>Explore</h1>
-  <p class="subtitle">Discover wikis and the people who publish them.</p>
+  <p class="subtitle">Discover public wikis, sorted by what has been updated most recently, and the people who publish them.</p>
 
   {% if editorial %}
   <div class="section-label">Editorial Picks</div>
@@ -103,9 +104,14 @@
   </div>
   {% endif %}
 
-  <div class="section-label">Wikis</div>
+  <div class="section-header">
+    <div>
+      <div class="section-label" style="margin-bottom:4px;">Recently Updated Wikis</div>
+      <div style="color: var(--text-tertiary); font-size: 0.875rem;">Newest public wiki activity first.</div>
+    </div>
+  </div>
   <div class="wiki-grid">
-    {% for wiki in wikis %}
+    {% for wiki in recent_wikis %}
     <a href="/@{{ wiki.owner.username }}{% if wiki.slug != wiki.owner.username %}/{{ wiki.slug }}{% endif %}" class="wiki-card">
       <div class="wiki-card-owner">@{{ wiki.owner.username }}</div>
       <div class="wiki-card-title">{{ wiki.title or wiki.slug }}</div>
@@ -115,6 +121,7 @@
       <div class="wiki-card-meta">
         <span class="star">&#9733; {{ wiki.star_count }}</span>
         <span>{{ wiki.fork_count }} forks</span>
+        <span class="updated">updated {{ wiki.updated_at.strftime("%b %-d") }}</span>
       </div>
     </a>
     {% else %}
