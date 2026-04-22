@@ -24,6 +24,7 @@ os.environ["SESSION_COOKIE_SECURE"] = "0"
 
 from app import create_app, db
 from app.auth_utils import _write_timestamps
+from app.models import utcnow
 
 
 def setup():
@@ -450,6 +451,93 @@ def test_logout(client):
     r = browser.get("/settings", follow_redirects=False)
     assert r.status_code == 302
     assert "/auth/login" in r.headers["Location"], f"expected login redirect after logout, got {r.headers.get('Location')}"
+
+
+def test_google_auto_link_security(app):
+    """wikihub-ks5t.4: Google OAuth must NOT auto-link to a candidate whose
+    email is unverified, otherwise an attacker can claim someone else's email
+    as unverified and harvest their future Google sign-in."""
+    from app.models import User
+    from app.routes.auth import _resolve_or_create_google_user
+    from app.auth_utils import hash_password
+
+    with app.app_context():
+        # Attack setup: Alice claims victim@example.com as her email, unverified.
+        alice = User(
+            username="alice-attacker",
+            email="victim@example.com",
+            password_hash=hash_password("alice-secret-pw"),
+            email_verified_at=None,
+        )
+        db.session.add(alice)
+        db.session.commit()
+        alice_id = alice.id
+
+        # Victim signs in with Google; Google asserts email_verified=true.
+        # Expected: a NEW account is created for Victim; Alice's google_id is
+        # NOT set; Alice's account is unaffected.
+        victim_user = _resolve_or_create_google_user(
+            google_id="google-sub-victim",
+            email="victim@example.com",
+            email_verified=True,
+            name="Victim Real",
+        )
+        db.session.commit()
+
+        assert victim_user.id != alice_id, "must not auto-link into Alice's account"
+        assert victim_user.google_id == "google-sub-victim"
+        assert victim_user.email == "victim@example.com"
+        assert victim_user.email_verified_at is not None, "new Google account should be verified"
+
+        # Alice's account must remain password-only, no google_id linked.
+        alice_after = db.session.get(User, alice_id)
+        assert alice_after.google_id is None
+        assert alice_after.email == "victim@example.com"
+        assert alice_after.email_verified_at is None
+
+        # --- Positive case: candidate has VERIFIED email AND Google says verified → auto-link ---
+        bob = User(
+            username="bob-legit",
+            email="bob@example.com",
+            password_hash=hash_password("bob-password"),
+            email_verified_at=utcnow(),
+        )
+        db.session.add(bob)
+        db.session.commit()
+        bob_id = bob.id
+
+        linked = _resolve_or_create_google_user(
+            google_id="google-sub-bob",
+            email="bob@example.com",
+            email_verified=True,
+            name="Bob Legit",
+        )
+        db.session.commit()
+        assert linked.id == bob_id, "verified candidate + verified Google → auto-link expected"
+        assert linked.google_id == "google-sub-bob"
+
+        # --- Negative case: Google reports email_verified=false → no auto-link even if candidate verified ---
+        carol = User(
+            username="carol-verified",
+            email="carol@example.com",
+            password_hash=hash_password("carol-password"),
+            email_verified_at=utcnow(),
+        )
+        db.session.add(carol)
+        db.session.commit()
+        carol_id = carol.id
+
+        new_user = _resolve_or_create_google_user(
+            google_id="google-sub-carol-untrusted",
+            email="carol@example.com",
+            email_verified=False,
+            name="Carol",
+        )
+        db.session.commit()
+        assert new_user.id != carol_id, "Google email_verified=false must not trigger auto-link"
+
+        carol_after = db.session.get(User, carol_id)
+        assert carol_after.google_id is None
 
 
 def test_email_verification_flow(client):
@@ -1728,6 +1816,7 @@ def run_all():
             ("magic link login", lambda: test_magic_link_login(client)),
             ("logout (wikihub-uq9)", lambda: test_logout(client)),
             ("email verification flow (wikihub-ks5t.3)", lambda: test_email_verification_flow(client)),
+            ("Google auto-link security (wikihub-ks5t.4)", lambda: test_google_auto_link_security(app)),
             ("login redirects back (?next + Referer fallback)", lambda: test_login_redirect_back(client)),
             ("URL login (GET ?api_key / ?password)", lambda: test_url_login(client)),
             ("URL login — log redaction", lambda: test_url_login_log_redaction()),

@@ -393,18 +393,41 @@ def google_callback():
     userinfo = token.get("userinfo", {})
     google_id = userinfo.get("sub")
     email = userinfo.get("email")
+    email_verified = bool(userinfo.get("email_verified"))
     name = userinfo.get("name", "")
 
     if not google_id:
         flash("Could not get Google user info")
         return redirect(url_for("auth.login"))
 
+    user = _resolve_or_create_google_user(
+        google_id=google_id,
+        email=email,
+        email_verified=email_verified,
+        name=name,
+    )
+
+    login_user(user)
+    return redirect(url_for("main.index"))
+
+
+def _resolve_or_create_google_user(*, google_id, email, email_verified, name):
+    """Look up-or-create a User for a Google sign-in.
+
+    Security (wikihub-ks5t.4): auto-linking by email is allowed ONLY when both
+    sides vouch for the email — Google reports `email_verified=true` in the
+    id_token AND the local candidate's `email_verified_at IS NOT NULL`. Without
+    both, we create a fresh account. This blocks a takeover where an attacker
+    claims someone else's email as unverified on a password account to harvest
+    that person's later Google sign-in.
+    """
     user = User.query.filter_by(google_id=google_id).first()
-    if not user and email:
-        user = User.query.filter_by(email=email).first()
-        if user:
-            user.google_id = google_id
+    if not user and email and email_verified:
+        candidate = User.query.filter_by(email=email).first()
+        if candidate and candidate.email_verified_at is not None:
+            candidate.google_id = google_id
             db.session.commit()
+            user = candidate
 
     if not user:
         base_username = (email.split("@")[0] if email else name.lower().replace(" ", ""))[:32]
@@ -424,7 +447,7 @@ def google_callback():
         user = User(
             username=username,
             email=email,
-            email_verified_at=utcnow() if email else None,
+            email_verified_at=utcnow() if email and email_verified else None,
             display_name=name,
             google_id=google_id,
         )
@@ -433,17 +456,16 @@ def google_callback():
         ensure_personal_wiki(user)
         db.session.commit()
 
-        # Google verified the email — apply any pending invites now
-        applied = materialize_pending_invites_for(user)
-        if applied:
-            db.session.commit()
-    elif email and not user.email_verified_at:
-        # existing user just linked Google — treat as verification event
+        if email and email_verified:
+            applied = materialize_pending_invites_for(user)
+            if applied:
+                db.session.commit()
+    elif email and email_verified and not user.email_verified_at:
+        # existing user just linked Google AND Google asserts the email is
+        # verified — treat as a verification event.
         user.email_verified_at = utcnow()
         db.session.commit()
         applied = materialize_pending_invites_for(user)
         if applied:
             db.session.commit()
-
-    login_user(user)
-    return redirect(url_for("main.index"))
+    return user
