@@ -37,6 +37,9 @@ logging.getLogger("werkzeug").addFilter(_RedactQueryParams())
 def create_app(config_class="config.Config"):
     app = Flask(__name__)
     app.config.from_object(config_class)
+    # keep em dashes, arrows, ellipses, etc. as literal UTF-8 in JSON responses
+    # instead of \uXXXX escapes (flask defaults to ensure_ascii=True). wikihub-u6by
+    app.json.ensure_ascii = False
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
     from app.subdomain_middleware import SubdomainMiddleware

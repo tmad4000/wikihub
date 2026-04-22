@@ -88,6 +88,27 @@ def _require_auth_401():
     )
 
 
+def _push_not_owner_403(owner, slug, viewer=None):
+    """403 with a human-readable body when a non-owner tries to push.
+
+    Plain text so `git push` can surface it via remote: lines. Points the
+    user at the web editor and the fork path — collaborator git push access
+    is tracked as wikihub-g7jz (design) and wikihub-7zif (this UX)."""
+    base = request.url_root.rstrip("/")
+    who = f" You're signed in as @{viewer.username}." if viewer else ""
+    body = (
+        f"Push rejected — only @{owner} can push to @{owner}/{slug}.git.{who}\n"
+        f"\n"
+        f"You can:\n"
+        f"  - edit via the web editor: {base}/@{owner}/{slug}\n"
+        f"  - fork the wiki and push to your own copy: {base}/@{owner}/{slug}/fork\n"
+        f"\n"
+        f"Collaborator git push access is being designed "
+        f"(see wikihub-g7jz). For now, git push is owner-only.\n"
+    )
+    return Response(body, status=403, content_type="text/plain; charset=utf-8")
+
+
 def _git_command_path(cmd):
     """find full path to a git sub-command binary."""
     result = subprocess.run(["git", "--exec-path"], capture_output=True, text=True)
@@ -188,8 +209,10 @@ def info_refs(username, slug):
 
     # receive-pack (push) requires owner auth
     if service == "git-receive-pack":
-        if not is_owner:
+        if not user:
             return _require_auth_401()
+        if not is_owner:
+            return _push_not_owner_403(username, slug, viewer=user)
 
     # dispatch: owner -> authoritative, others -> public mirror
     if is_owner:
@@ -254,8 +277,10 @@ def receive_pack(username, slug):
         abort(404)
     username = resolved_owner.username
     user = _check_basic_auth()
-    if not user or user.username != username:
+    if not user:
         return _require_auth_401()
+    if user.username != username:
+        return _push_not_owner_403(username, slug, viewer=user)
 
     repo = _repo_path(username, slug)
     if not os.path.isdir(repo):
