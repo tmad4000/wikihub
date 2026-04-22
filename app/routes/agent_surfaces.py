@@ -430,7 +430,7 @@ def wikihub_bootstrap():
             "name": "wikihub-cli",
             "install": "pipx install wikihub-cli",
             "install_url": base + "/install.sh",
-            "repo": "https://github.com/harqian/wikihub/tree/main/cli",
+            "repo": "https://github.com/tmad4000/wikihub/tree/main/cli",
         },
     })
 

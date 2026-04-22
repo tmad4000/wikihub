@@ -19,7 +19,7 @@ wikihub = "wikihub_cli.__main__:main"
 
 [project.urls]
 Homepage = "https://wikihub.md"
-Repository = "https://github.com/harqian/wikihub"
+Repository = "https://github.com/tmad4000/wikihub"
 
 [tool.setuptools.packages.find]
 where = ["."]
