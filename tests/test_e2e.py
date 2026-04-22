@@ -424,6 +424,34 @@ def test_magic_link_login(client):
     assert "/auth/login" in r.headers["Location"]
 
 
+def test_logout(client):
+    """/auth/logout clears the session; login-required pages then redirect to /auth/login.
+
+    Covers wikihub-uq9 by locking in the HTTP contract — the route + UI links
+    were already implemented; this test prevents silent regressions."""
+    r = client.post("/api/v1/accounts", json={"username": "logoutuser"})
+    assert r.status_code == 201
+    api_key = r.get_json()["api_key"]
+
+    h = {"Authorization": f"Bearer {api_key}"}
+    r = client.post("/api/v1/auth/magic-link", json={"next": "/settings"}, headers=h)
+    magic_path = urlparse(r.get_json()["login_url"]).path
+    browser = client.application.test_client()
+    r = browser.get(magic_path, follow_redirects=False)
+    assert r.status_code == 302
+
+    r = browser.get("/settings")
+    assert r.status_code == 200, f"expected signed-in /settings=200, got {r.status_code}"
+
+    r = browser.get("/auth/logout", follow_redirects=False)
+    assert r.status_code == 302, f"expected logout 302, got {r.status_code}"
+    assert "/auth/login" not in r.headers.get("Location", "")
+
+    r = browser.get("/settings", follow_redirects=False)
+    assert r.status_code == 302
+    assert "/auth/login" in r.headers["Location"], f"expected login redirect after logout, got {r.headers.get('Location')}"
+
+
 def test_login_redirect_back(client):
     """Login form should redirect back to the page the user came from.
 
@@ -1547,6 +1575,7 @@ def run_all():
             ("token + settings", lambda: test_token_and_settings(client)),
             ("client_config hint", lambda: test_client_config_hint(client)),
             ("magic link login", lambda: test_magic_link_login(client)),
+            ("logout (wikihub-uq9)", lambda: test_logout(client)),
             ("login redirects back (?next + Referer fallback)", lambda: test_login_redirect_back(client)),
             ("URL login (GET ?api_key / ?password)", lambda: test_url_login(client)),
             ("URL login — log redaction", lambda: test_url_login_log_redaction()),
