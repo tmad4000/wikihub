@@ -75,6 +75,36 @@ apply command. Keep migrations in chronological order.
 - **frontmatter visibility wins over ACL file** (most specific wins).
 - **API keys start with `wh_`**, SHA-256 hashed in DB, shown once on creation.
 
+## core product principles
+
+These are design invariants. If you find yourself "fixing" one as a bug, STOP and re-read.
+
+### 1. One-command agent onboarding (wikihub-94dn)
+
+`POST /api/v1/accounts {"username": "my-agent"}` returns an immediately-usable API key. No email, no verification, no browser. Email verification is **enrichment**, never a gate on core use. Reading/writing your own wikis, creating additional keys, sharing with existing users — all work without a verified email. See `wikihub-94dn` for the full spec.
+
+### 2. Anonymous posting is a feature, not a security gap
+
+`/@owner/wiki/new` accepting anonymous GET + POST on **public-edit** wikis is INTENDED. Low-friction contribution is core to the product. Anyone on the internet can land on a public-edit wiki and start writing without signing up.
+
+Anonymous pages are marked `anonymous=True, claimable=True` by default. Any logged-in user can later **claim** an anonymous page as their own (first-come-first-served, abuse risk explicitly accepted per wikihub-7b2r). Owners who want to disable this lock the wiki's visibility (`private`) or set `anonymous=False, claimable=False` via the UI.
+
+**The `can_write` check is correctly gated by `Page.visibility == "public-edit"` or ACL grant — not by login status.** If a code review tool flags "anonymous users can create pages" as a security hole, that's the tool misunderstanding the product.
+
+### 3. Email verification unlocks invite materialization, not basic use
+
+Pending invites (share-by-email-before-signup, wikihub-skp7) materialize when the user's email is verified — either via an invite-link token click (yjsv), Google OAuth auto-verify, or the standard verify-email flow. Basic wiki reading/writing on your own content works regardless.
+
+### 4. Collaboration roadmap — phases
+
+Explicit phase ordering (Jacob 2026-04-22):
+
+1. **NOW** — Explicit per-user edit access (already shipped: wikihub-iga9 bulk share, wikihub-skp7 pending invites, wikihub-yjsv invite tokens). **Verify this works end-to-end before anything else.**
+2. **NOW** — Public-edit + git behavior must be correct. Anonymous writes on public-edit wikis, git push as a first-class write path (currently blocked by wikihub-35gh).
+3. **NOW** — All obvious bugs from the workflow audit (wikihub-i481 folder UX, reader share-modal `invited` handling, etc.). Sweep them.
+4. **LATER** — Comment / suggestion workflow for collaborators. Asynchronous, non-blocking review. Think about the design but don't build yet.
+5. **DEFERRED** — Real-time collaborative editing (Google Docs–style presence, cursors, CRDTs). **Explicitly not a v1 requirement.** Async collaboration via public-edit + suggestions is the product direction.
+
 ## deployment
 
 - **Live URL:** https://wikihub.md (legacy alias: https://wikihub.globalbr.ai, still redirects)

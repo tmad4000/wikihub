@@ -18,6 +18,7 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 
 import bcrypt
 from flask import Blueprint, request, Response, abort, current_app
@@ -174,6 +175,20 @@ def _install_hook(repo_path, username, slug):
         hook_dst = os.path.join(hooks_dir, hook_name)
         if os.path.isfile(hook_src):
             shutil.copy2(hook_src, hook_dst)
+            # The hook imports app.acl → app.__init__ → flask. `/usr/bin/env
+            # python3` picks up the system Python with no Flask, so the push
+            # fails with ModuleNotFoundError (wikihub-35gh). Rewrite the
+            # shebang to this interpreter's absolute path so the hook runs
+            # inside the app's venv.
+            try:
+                with open(hook_dst, "r") as _hf:
+                    _content = _hf.read()
+                if _content.startswith("#!/usr/bin/env python3"):
+                    _rest = _content.split("\n", 1)[1] if "\n" in _content else ""
+                    with open(hook_dst, "w") as _hf:
+                        _hf.write(f"#!{sys.executable}\n{_rest}")
+            except OSError:
+                pass
             st = os.stat(hook_dst)
             os.chmod(hook_dst, st.st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 
