@@ -1543,6 +1543,44 @@ def test_reader_sidebar_collapse_controls(client, api_key):
     )
 
 
+def test_folder_async_sidebar_passes_current_context(client, api_key):
+    """Folder views should pass explicit current-path context into sidebar.json."""
+    import app.routes.wiki as wiki_routes
+
+    h = {"Authorization": f"Bearer {api_key}"}
+    r = client.post("/api/v1/wikis", json={"slug": "folder-sidebar", "title": "Folder Sidebar"}, headers=h)
+    assert r.status_code == 201
+    for name in ("notes/a.md", "notes/b.md"):
+        r = client.post(
+            "/api/v1/wikis/agent1/folder-sidebar/pages",
+            json={
+                "path": name,
+                "content": f"---\\ntitle: {name}\\nvisibility: public\\n---\\n\\n# {name}",
+                "visibility": "public",
+            },
+            headers=h,
+        )
+        assert r.status_code == 201
+
+    original_threshold = wiki_routes.SIDEBAR_ASYNC_THRESHOLD
+    wiki_routes.SIDEBAR_ASYNC_THRESHOLD = 1
+    try:
+        r = client.get("/@agent1/folder-sidebar/notes/")
+        assert r.status_code == 200, f"folder fetch failed: {r.status_code}"
+        html = r.data.decode()
+    finally:
+        wiki_routes.SIDEBAR_ASYNC_THRESHOLD = original_threshold
+
+    assert 'data-url="/@agent1/folder-sidebar/sidebar.json?current=notes"' in html, (
+        "wikihub-oud7 REGRESSION: folder.html async sidebar must pass the current "
+        "folder path to sidebar.json so the active branch can be restored."
+    )
+    assert "wikihub-sidebar-folders:" in html and "agent1/folder-sidebar" in html, (
+        "wikihub-oud7 REGRESSION: folder.html should namespace sidebar folder "
+        "state by owner/wiki rather than sharing one global storage key."
+    )
+
+
 def test_wikipedia_urls(client, api_key):
     """Wikipedia-style URLs: underscores instead of %20, redirect %20 to underscore"""
     h = {"Authorization": f"Bearer {api_key}"}

@@ -62,12 +62,12 @@
 {% macro render_sidebar(items, level=0) %}
   {% for item in items %}
     {% if item.kind == 'folder' %}
-    <div class="sidebar-folder {{ 'open' if item.active else '' }}" data-folder-path="{{ item.path }}" data-name="{{ item.name }}" data-kind="folder" data-updated="{{ item.updated_at or '' }}">
+    <div class="sidebar-folder {{ 'open' if item.active else '' }}" data-folder-path="{{ item.path }}" data-name="{{ item.name }}" data-kind="folder" data-updated="{{ item.updated_at or '' }}" data-level="{{ level }}">
       <div class="sidebar-folder-row">
         <button type="button" class="sidebar-folder-toggle">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
         </button>
-        <a href="{{ item.url }}" class="sidebar-item {{ 'active' if item.active else '' }}">
+        <a href="{{ item.url }}" class="sidebar-item {{ 'active' if item.active else '' }}" style="padding-left: {{ 12 + (level * 16) }}px;">
           <span class="sidebar-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h5l2 2h11v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg></span>
           <span>{{ item.name }}</span>
         </a>
@@ -77,7 +77,7 @@
       </div>
     </div>
     {% else %}
-    <a href="{{ item.url }}" class="sidebar-item {{ 'active' if item.active else '' }}" data-name="{{ item.name }}" data-kind="page" data-updated="{{ item.updated_at or '' }}" data-path="{{ item.path }}">
+    <a href="{{ item.url }}" class="sidebar-item {{ 'active' if item.active else '' }}" data-name="{{ item.name }}" data-kind="page" data-updated="{{ item.updated_at or '' }}" data-path="{{ item.path }}" data-level="{{ level }}" style="padding-left: {{ 28 + (level * 16) }}px;">
       <span class="sidebar-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>
       <span>{{ item.name }}</span>
       {% if item.visibility is defined and item.visibility == 'private' %}
@@ -109,7 +109,7 @@
       {% if sidebar_items %}
       {{ render_sidebar(sidebar_items or []) }}
       {% else %}
-      <div id="async-sidebar" data-url="/@{{ owner.username }}/{{ wiki.slug }}/sidebar.json">
+      <div id="async-sidebar" data-url="/@{{ owner.username }}/{{ wiki.slug }}/sidebar.json?current={{ (folder_path or 'index.md') | urlencode }}" data-current="{{ folder_path or 'index.md' }}">
         <div style="padding:8px 12px;color:var(--text-muted);font-size:0.8125rem;">Loading...</div>
       </div>
       {% endif %}
@@ -267,7 +267,9 @@ function toggleSidebar() {
   document.getElementById('sidebar-overlay').classList.toggle('open');
 }
 
-const folderStorageKey = 'wikihub-sidebar-folders';
+const sidebarStorageScope = '{{ owner.username }}/{{ wiki.slug }}';
+const folderStorageKey = 'wikihub-sidebar-folders:' + sidebarStorageScope;
+const currentSidebarPath = {{ (folder_path or 'index.md') | tojson }};
 
 function loadFolders() {
   try { return JSON.parse(localStorage.getItem(folderStorageKey) || '{}'); } catch (e) { return {}; }
@@ -292,18 +294,13 @@ document.addEventListener('click', function(e) {
 
 (function initFolders() {
   const state = loadFolders();
-  let changed = false;
   document.querySelectorAll('.sidebar-folder').forEach(folder => {
     const path = folder.dataset.folderPath;
-    if (state[path] === false) {
-      folder.classList.remove('open');
-    } else if (state[path] === true || folder.classList.contains('open')) {
-      folder.classList.add('open');
-      // Persist auto-expanded active folders so they stay open after navigation.
-      if (state[path] !== true) { state[path] = true; changed = true; }
-    }
+    const shouldOpenCurrent = currentSidebarPath && (currentSidebarPath === path || currentSidebarPath.startsWith(path + '/'));
+    if (Object.prototype.hasOwnProperty.call(state, path)) folder.classList.toggle('open', state[path] === true);
+    else if (folder.classList.contains('open') || shouldOpenCurrent) folder.classList.add('open');
+    else folder.classList.remove('open');
   });
-  if (changed) localStorage.setItem(folderStorageKey, JSON.stringify(state));
 })();
 requestAnimationFrame(() => {
   const active = document.querySelector('.sidebar-item.active');
@@ -380,6 +377,7 @@ document.querySelectorAll('.sidebar-sort-btn').forEach(function(btn) {
   const el = document.getElementById('async-sidebar');
   if (!el) return;
   const url = el.dataset.url;
+  const currentPath = el.dataset.current || '';
 
   function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
@@ -387,12 +385,12 @@ document.querySelectorAll('.sidebar-sort-btn').forEach(function(btn) {
     if (item.kind === 'folder') {
       const isActive = item.active ? ' open' : '';
       const upd = item.updated_at ? esc(item.updated_at) : '';
-      let html = `<div class="sidebar-folder${isActive}" data-folder-path="${esc(item.path)}" data-name="${esc(item.name)}" data-kind="folder" data-updated="${upd}">`;
+      let html = `<div class="sidebar-folder${isActive}" data-folder-path="${esc(item.path)}" data-name="${esc(item.name)}" data-kind="folder" data-updated="${upd}" data-level="${level}">`;
       html += `<div class="sidebar-folder-row">`;
       html += `<button type="button" class="sidebar-folder-toggle">`;
       html += `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>`;
       html += `</button>`;
-      html += `<a href="${esc(item.url)}" class="sidebar-item${item.active ? ' active' : ''}">`;
+      html += `<a href="${esc(item.url)}" class="sidebar-item${item.active ? ' active' : ''}" style="padding-left:${12 + (level * 16)}px;">`;
       html += `<span class="sidebar-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h5l2 2h11v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg></span>`;
       html += `<span>${esc(item.name)}</span></a></div>`;
       html += `<div class="sidebar-children">${(item.children || []).map(c => renderItem(c, level + 1)).join('')}</div>`;
@@ -400,7 +398,7 @@ document.querySelectorAll('.sidebar-sort-btn').forEach(function(btn) {
       return html;
     } else {
       const upd = item.updated_at ? esc(item.updated_at) : '';
-      return `<a href="${esc(item.url)}" class="sidebar-item" data-name="${esc(item.name)}" data-kind="page" data-updated="${upd}" data-path="${esc(item.path)}"><span class="sidebar-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span><span>${esc(item.name)}</span></a>`;
+      return `<a href="${esc(item.url)}" class="sidebar-item${item.active || item.path === currentPath ? ' active' : ''}" data-name="${esc(item.name)}" data-kind="page" data-updated="${upd}" data-path="${esc(item.path)}" data-level="${level}" style="padding-left:${28 + (level * 16)}px;"><span class="sidebar-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span><span>${esc(item.name)}</span></a>`;
     }
   }
 
@@ -411,8 +409,10 @@ document.querySelectorAll('.sidebar-sort-btn').forEach(function(btn) {
       const state = loadFolders();
       document.querySelectorAll('.sidebar-folder').forEach(folder => {
         const path = folder.dataset.folderPath;
-        if (state[path] === false) folder.classList.remove('open');
-        else if (state[path] === true || folder.classList.contains('open')) folder.classList.add('open');
+        const shouldOpenCurrent = currentPath && (currentPath === path || currentPath.startsWith(path + '/'));
+        if (Object.prototype.hasOwnProperty.call(state, path)) folder.classList.toggle('open', state[path] === true);
+        else if (folder.classList.contains('open') || shouldOpenCurrent) folder.classList.add('open');
+        else folder.classList.remove('open');
       });
       // Apply saved sort after async render
       var saved = localStorage.getItem(sortStorageKey) || 'alpha';
