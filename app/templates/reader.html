@@ -21,6 +21,27 @@
   display: none;
 }
 @media (min-width: 768px) { .sidebar { display: block; } }
+.sidebar-header {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; padding: 0 12px 4px;
+}
+.sidebar-header .sidebar-heading { padding: 6px 0; margin-bottom: 0; min-width: 0; flex: 1; }
+.sidebar-collapse-btn, .panel-collapse-btn, .desktop-panel-toggle {
+  display: none; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border: 1px solid var(--border-default);
+  border-radius: 999px; background: var(--bg-surface); color: var(--text-muted);
+  cursor: pointer; padding: 0; flex-shrink: 0;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+.sidebar-collapse-btn:hover, .panel-collapse-btn:hover, .desktop-panel-toggle:hover {
+  color: var(--text-primary); border-color: var(--border-emphasis); background: var(--accent-subtle);
+}
+.sidebar-collapse-btn svg, .panel-collapse-btn svg, .desktop-panel-toggle svg {
+  width: 14px; height: 14px;
+}
+@media (min-width: 768px) {
+  .sidebar-collapse-btn { display: inline-flex; }
+}
 
 .sidebar-section { padding: 0 8px; margin-bottom: 16px; }
 .sidebar-heading {
@@ -84,6 +105,17 @@
 }
 .right-panel-inner, .resize-handle { pointer-events: auto; }
 @media (min-width: 1100px) { .right-panel { display: block; } }
+.right-panel-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; padding: 0 12px 12px 16px;
+}
+.right-panel-kicker {
+  font-size: 0.6875rem; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--text-muted);
+}
+@media (min-width: 1100px) {
+  .panel-collapse-btn { display: inline-flex; }
+}
 .resize-handle {
   position: absolute; left: 0; top: 0; bottom: 0; width: 5px;
   cursor: col-resize; z-index: 10;
@@ -109,6 +141,28 @@
 
 .inline-toc, .inline-backlinks { display: block; }
 @media (min-width: 1100px) { .inline-toc, .inline-backlinks { display: none; } }
+
+@media (min-width: 768px) {
+  .reader-layout.left-collapsed .sidebar {
+    width: 0; padding: 0; border-right: none; overflow: hidden;
+  }
+  .reader-layout.left-collapsed .sidebar > * {
+    opacity: 0; pointer-events: none;
+  }
+  .left-sidebar-reopen { display: none; }
+  .reader-layout.left-collapsed .left-sidebar-reopen { display: inline-flex; }
+}
+
+@media (min-width: 1100px) {
+  .reader-layout.right-collapsed .right-panel {
+    width: 0; padding: 0; overflow: hidden; border-left: none;
+  }
+  .reader-layout.right-collapsed .right-panel > * {
+    opacity: 0; pointer-events: none;
+  }
+  .right-panel-reopen { display: none; }
+  .reader-layout.right-collapsed .right-panel-reopen { display: inline-flex; }
+}
 
 .breadcrumb {
   font-size: 0.8125rem; color: var(--text-muted); margin-bottom: 12px;
@@ -564,11 +618,16 @@
 <div class="reader-layout">
   <aside class="sidebar thin-scroll" id="sidebar">
     <div class="sidebar-section">
-      {% if wiki.slug == owner.username %}
-      <a href="/@{{ owner.username }}" class="sidebar-heading" style="text-decoration:none;display:block;">{{ owner.display_name or owner.username }}</a>
-      {% else %}
-      <a href="/@{{ owner.username }}/{{ wiki.slug }}" class="sidebar-heading" style="text-decoration:none;display:block;">{{ wiki.title or wiki.slug }}</a>
-      {% endif %}
+      <div class="sidebar-header">
+        {% if wiki.slug == owner.username %}
+        <a href="/@{{ owner.username }}" class="sidebar-heading" style="text-decoration:none;display:block;">{{ owner.display_name or owner.username }}</a>
+        {% else %}
+        <a href="/@{{ owner.username }}/{{ wiki.slug }}" class="sidebar-heading" style="text-decoration:none;display:block;">{{ wiki.title or wiki.slug }}</a>
+        {% endif %}
+        <button type="button" class="sidebar-collapse-btn" id="left-sidebar-collapse" onclick="setDesktopPanelCollapsed('left', true)" aria-label="Hide navigation" title="Hide navigation">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+        </button>
+      </div>
       <div class="sidebar-sort" style="padding:0 12px 4px;display:flex;gap:2px;">
         <button class="sidebar-sort-btn active" data-sort="alpha" title="A → Z">A↓</button>
         <button class="sidebar-sort-btn" data-sort="alpha-desc" title="Z → A">Z↓</button>
@@ -632,6 +691,9 @@
       <button class="hamburger" onclick="toggleSidebar()" aria-label="Open sidebar">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </button>
+      <button type="button" class="desktop-panel-toggle left-sidebar-reopen" id="left-sidebar-reopen" onclick="setDesktopPanelCollapsed('left', false)" aria-label="Show navigation" title="Show navigation">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+      </button>
       <a href="/@{{ owner.username }}">@{{ owner.username }}</a>
       {% if wiki.slug != owner.username %}
         / <a href="/@{{ owner.username }}/{{ wiki.slug }}">{{ wiki.title or wiki.slug }}</a>
@@ -680,6 +742,12 @@
       {% endif %}
 
       <div class="actions-spacer"></div>
+
+      {% if (toc and toc|length >= 3) or backlinks or (link_graph and link_graph.nodes|length > 1) or (page_grants is defined and page_grants) %}
+      <button type="button" class="desktop-panel-toggle right-panel-reopen" id="right-panel-reopen" onclick="setDesktopPanelCollapsed('right', false)" aria-label="Show context sidebar" title="Show context sidebar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+      </button>
+      {% endif %}
 
       <a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ page.path | page_url }}/history" class="action-btn-mini" title="Page history">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
@@ -857,6 +925,12 @@
   <aside class="right-panel" id="right-panel">
     <div class="resize-handle" id="resize-handle"></div>
     <div class="right-panel-inner thin-scroll">
+      <div class="right-panel-head">
+        <div class="right-panel-kicker">Context</div>
+        <button type="button" class="panel-collapse-btn" id="right-panel-collapse" onclick="setDesktopPanelCollapsed('right', true)" aria-label="Hide context sidebar" title="Hide context sidebar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+        </button>
+      </div>
       {% if toc and toc|length >= 3 %}
       <nav class="toc-block">
         <div class="toc-title">Contents</div>
@@ -939,10 +1013,59 @@
 {% block scripts %}
 <script>
 const folderStorageKey = 'wikihub-sidebar-folders';
+const leftSidebarCollapsedKey = 'wikihub-left-sidebar-collapsed';
+const rightPanelCollapsedKey = 'wikihub-right-panel-collapsed';
+const readerLayout = document.querySelector('.reader-layout');
 
 function toggleSidebar() {
   document.getElementById('sidebar').classList.toggle('open');
   document.getElementById('sidebar-overlay').classList.toggle('open');
+}
+
+function syncDesktopPanelControls() {
+  if (!readerLayout) return;
+  const leftCollapsed = readerLayout.classList.contains('left-collapsed');
+  const rightCollapsed = readerLayout.classList.contains('right-collapsed');
+  const leftCollapse = document.getElementById('left-sidebar-collapse');
+  const leftReopen = document.getElementById('left-sidebar-reopen');
+  const rightCollapse = document.getElementById('right-panel-collapse');
+  const rightReopen = document.getElementById('right-panel-reopen');
+  if (leftCollapse) leftCollapse.setAttribute('aria-expanded', String(!leftCollapsed));
+  if (leftReopen) leftReopen.setAttribute('aria-hidden', String(!leftCollapsed));
+  if (rightCollapse) rightCollapse.setAttribute('aria-expanded', String(!rightCollapsed));
+  if (rightReopen) rightReopen.setAttribute('aria-hidden', String(!rightCollapsed));
+}
+
+function setDesktopPanelCollapsed(panel, collapsed) {
+  if (!readerLayout) return;
+  if (panel === 'left') {
+    if (!window.matchMedia('(min-width: 768px)').matches) return;
+    readerLayout.classList.toggle('left-collapsed', collapsed);
+    localStorage.setItem(leftSidebarCollapsedKey, collapsed ? '1' : '0');
+    if (!collapsed) {
+      requestAnimationFrame(() => {
+        const active = document.querySelector('.sidebar-item.active');
+        if (active) active.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+      });
+    }
+  } else if (panel === 'right') {
+    if (!window.matchMedia('(min-width: 1100px)').matches) return;
+    readerLayout.classList.toggle('right-collapsed', collapsed);
+    localStorage.setItem(rightPanelCollapsedKey, collapsed ? '1' : '0');
+    if (!collapsed && window._resizeGraph) {
+      requestAnimationFrame(() => window._resizeGraph());
+    }
+  }
+  syncDesktopPanelControls();
+}
+
+function hydrateDesktopPanels() {
+  if (!readerLayout) return;
+  const leftCollapsed = localStorage.getItem(leftSidebarCollapsedKey) === '1';
+  const rightCollapsed = localStorage.getItem(rightPanelCollapsedKey) === '1';
+  readerLayout.classList.toggle('left-collapsed', window.matchMedia('(min-width: 768px)').matches && leftCollapsed);
+  readerLayout.classList.toggle('right-collapsed', window.matchMedia('(min-width: 1100px)').matches && rightCollapsed);
+  syncDesktopPanelControls();
 }
 
 function loadFolders() {
@@ -1244,6 +1367,8 @@ document.addEventListener('click', function(event) {
   }
 });
 
+hydrateDesktopPanels();
+window.addEventListener('resize', hydrateDesktopPanels);
 applyFolderState();
 
 // async sidebar for large wikis — data from our own API, safe to render

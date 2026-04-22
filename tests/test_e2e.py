@@ -1307,6 +1307,63 @@ def test_sidebar_indentation(client, api_key):
     )
 
 
+def test_reader_sidebar_collapse_controls(client, api_key):
+    """Desktop reader renders explicit collapse/reopen controls for both sidebars."""
+    h = {"Authorization": f"Bearer {api_key}"}
+
+    r = client.post("/api/v1/wikis", json={"slug": "sidebar-controls", "title": "Sidebar Controls"}, headers=h)
+    assert r.status_code == 201
+
+    r = client.post(
+        "/api/v1/wikis/agent1/sidebar-controls/pages",
+        json={
+            "path": "notes/overview.md",
+            "content": (
+                "---\n"
+                "title: Overview\n"
+                "visibility: public\n"
+                "---\n\n"
+                "# Overview\n\n"
+                "## First section\nBody.\n\n"
+                "## Second section\nMore.\n\n"
+                "## Third section\nDone."
+            ),
+            "visibility": "public",
+        },
+        headers=h,
+    )
+    assert r.status_code == 201, f"page create failed: {r.status_code} {r.data[:200]}"
+
+    r = client.get("/@agent1/sidebar-controls/notes/overview")
+    assert r.status_code == 200, f"reader fetch failed: {r.status_code}"
+    html = r.data.decode()
+
+    assert 'id="left-sidebar-collapse"' in html, (
+        "wikihub-adhu REGRESSION: desktop left sidebar collapse button missing "
+        "from app/templates/reader.html."
+    )
+    assert 'id="left-sidebar-reopen"' in html, (
+        "wikihub-adhu REGRESSION: desktop left sidebar reopen button missing "
+        "from the reader chrome."
+    )
+    assert 'id="right-panel-collapse"' in html, (
+        "wikihub-adhu REGRESSION: right sidebar collapse button missing on "
+        "pages that render the context panel."
+    )
+    assert 'id="right-panel-reopen"' in html, (
+        "wikihub-adhu REGRESSION: right sidebar reopen button missing from "
+        "the reader actions area."
+    )
+    assert "wikihub-left-sidebar-collapsed" in html, (
+        "wikihub-adhu REGRESSION: left sidebar collapse state key missing "
+        "from reader JavaScript."
+    )
+    assert "wikihub-right-panel-collapsed" in html, (
+        "wikihub-adhu REGRESSION: right sidebar collapse state key missing "
+        "from reader JavaScript."
+    )
+
+
 def test_wikipedia_urls(client, api_key):
     """Wikipedia-style URLs: underscores instead of %20, redirect %20 to underscore"""
     h = {"Authorization": f"Bearer {api_key}"}
