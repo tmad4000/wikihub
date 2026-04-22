@@ -843,8 +843,10 @@ def wiki_page(username, slug, page_path):
         is_owner = _is_owner(wiki)
         acl_rules = load_acl_rules(owner.username, wiki.slug)
         user_name = current_user.username if current_user.is_authenticated else None
-        # check ACL: use the file's directory ACL (binary files don't have Page rows)
-        file_vis = resolve_visibility(page_path, acl_rules)
+        # Non-markdown files can still have a Page row with explicit visibility
+        # (set via the API). Page-row visibility wins over the file-path ACL.
+        page = Page.query.filter_by(wiki_id=wiki.id, path=page_path).first()
+        file_vis = page.visibility if page else resolve_visibility(page_path, acl_rules)
         if not is_owner and not can_read(page_path, acl_rules, user_name, file_vis):
             abort(404)
         use_public = _use_public_repo(wiki, acl_rules)
