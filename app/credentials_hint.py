@@ -11,7 +11,7 @@ mode:   0600
 format:
     {
       "default": {
-        "server":   "https://wikihub.globalbr.ai",
+        "server":   "https://wikihub.md",
         "username": "jacob",
         "api_key":  "wh_..."
       }
