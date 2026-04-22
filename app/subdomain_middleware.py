@@ -29,6 +29,14 @@ _GLOBAL_PREFIXES = (
     "/static/",
     "/search",
     "/explore",
+    "/people",
+    "/shared",
+    "/roadmap",
+    "/claim-email",
+    "/delete-account",
+    "/new",
+    "/mcp",
+    "/install.sh",
     "/.well-known/",
     "/llms.txt",
     "/llms-full.txt",
@@ -38,6 +46,7 @@ _GLOBAL_PREFIXES = (
     "/favicon.ico",
     "/robots.txt",
     "/sitemap.xml",
+    "/upload",
 )
 
 
