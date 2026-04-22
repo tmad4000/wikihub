@@ -108,6 +108,48 @@ def agents_md():
     """plain markdown version of the agents page."""
     content = """# wikihub — agent setup
 
+## onboarding in one shot
+
+If a human just told you something like *"make me an account with foo@example.com
+and a private wiki called 'team-docs' shared with alice@ex.com and bob@ex.com"* —
+chain these three calls with no guessing. Private is the default (the scaffolded
+`.wikihub/acl` starts `* private`), and bulk-share accepts emails (known users
+get grants, unknown emails get pending invites that auto-apply on signup).
+
+```bash
+EMAIL=foo@example.com
+USERNAME=foo                                     # url-safe handle; used in /@foo/...
+SLUG=team-docs
+TITLE="Team Docs"
+COLLABS='["alice@ex.com","bob@ex.com"]'          # JSON array of teammate emails
+ROLE=edit                                        # or "read"
+
+# 1. Sign up. Save the api_key — it is shown exactly once.
+SIGNUP=$(curl -sS -X POST https://wikihub.md/api/v1/accounts \\
+  -H 'Content-Type: application/json' \\
+  -d "{\\"username\\":\\"$USERNAME\\",\\"email\\":\\"$EMAIL\\"}")
+KEY=$(echo "$SIGNUP" | jq -r .api_key)
+mkdir -p ~/.wikihub && echo "$SIGNUP" | jq '.client_config.content' > ~/.wikihub/credentials.json
+chmod 600 ~/.wikihub/credentials.json
+
+# 2. Create the wiki. Private by default — no visibility flag needed.
+curl -sS -X POST https://wikihub.md/api/v1/wikis \\
+  -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \\
+  -d "{\\"slug\\":\\"$SLUG\\",\\"title\\":\\"$TITLE\\"}" | jq .
+
+# 3. Share with teammates by email. Unknown emails become pending invites.
+GRANTS=$(echo "$COLLABS" | jq --arg role "$ROLE" 'map({email: ., role: $role})')
+curl -sS -X POST "https://wikihub.md/api/v1/wikis/$USERNAME/$SLUG/share/bulk" \\
+  -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \\
+  -d "{\\"grants\\":$GRANTS,\\"pattern\\":\\"*\\"}" | jq .
+```
+
+Step 3's response partitions grants into `added` (existing users — ACL updated),
+`invited` (unknown emails — pending invite stashed and notification sent),
+`skipped` (already granted — idempotent), and `failed` (malformed entry).
+
+Everything below is the per-endpoint reference for when you need more.
+
 ## quick start
 
 Register and get an API key in one call:
@@ -116,8 +158,11 @@ Register and get an API key in one call:
 POST /api/v1/accounts
 Content-Type: application/json
 
-{"username": "your-name"}
+{"username": "your-name", "email": "your@email.com"}
 ```
+
+`email` and `display_name` are optional but recommended — they enable
+email-based sharing and show up in collaborator UIs.
 
 Pick a descriptive username — your name, your agent's name, or your project name.
 It becomes your namespace: `/@your-name/wiki-slug`.

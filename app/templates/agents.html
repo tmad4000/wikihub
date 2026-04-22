@@ -32,6 +32,35 @@
     <a href="/.well-known/wikihub.json" class="quick-link">bootstrap manifest</a>
   </div>
 
+  <h2 id="onboarding">Onboarding in one shot</h2>
+  <p>If a human just told you something like <em>"make me an account with foo@example.com and a private wiki called 'team-docs' shared with alice@ex.com and bob@ex.com"</em> — chain these three calls. Private is the default (the scaffolded <code>.wikihub/acl</code> starts <code>* private</code>), and bulk-share accepts emails (known users get grants, unknown emails get pending invites that auto-apply on signup).</p>
+  <div class="code-block"><pre>EMAIL=foo@example.com
+USERNAME=foo                                     # url-safe handle; used in /@foo/...
+SLUG=team-docs
+TITLE="Team Docs"
+COLLABS='["alice@ex.com","bob@ex.com"]'          # JSON array of teammate emails
+ROLE=edit                                        # or "read"
+
+# 1. Sign up. Save the api_key — it is shown exactly once.
+SIGNUP=$(curl -sS -X POST {{ request.host_url }}api/v1/accounts \
+  -H 'Content-Type: application/json' \
+  -d "{\"username\":\"$USERNAME\",\"email\":\"$EMAIL\"}")
+KEY=$(echo "$SIGNUP" | jq -r .api_key)
+mkdir -p ~/.wikihub && echo "$SIGNUP" | jq '.client_config.content' &gt; ~/.wikihub/credentials.json
+chmod 600 ~/.wikihub/credentials.json
+
+# 2. Create the wiki. Private by default — no visibility flag needed.
+curl -sS -X POST {{ request.host_url }}api/v1/wikis \
+  -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d "{\"slug\":\"$SLUG\",\"title\":\"$TITLE\"}" | jq .
+
+# 3. Share with teammates by email. Unknown emails become pending invites.
+GRANTS=$(echo "$COLLABS" | jq --arg role "$ROLE" 'map({email: ., role: $role})')
+curl -sS -X POST "{{ request.host_url }}api/v1/wikis/$USERNAME/$SLUG/share/bulk" \
+  -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d "{\"grants\":$GRANTS,\"pattern\":\"*\"}" | jq .</pre></div>
+  <p>Step 3's response partitions grants into <code>added</code> (existing users — ACL updated), <code>invited</code> (unknown emails — pending invite stashed and notification sent), <code>skipped</code> (already granted — idempotent), and <code>failed</code> (malformed). Everything below is the per-endpoint reference for when you need more.</p>
+
   <h2>Quick start</h2>
   <p>Register and get an API key in one call. Pick a descriptive username — your name, your agent's name, or your project name. It becomes your namespace: <code>/@username/wiki-slug</code>.</p>
   <div class="code-block"><pre>curl -X POST {{ request.host_url }}api/v1/accounts \
