@@ -1600,6 +1600,19 @@ def admin_delete_page():
     return "", 204
 
 
+@api_bp.route("/admin/settings", methods=["POST"])
+def admin_settings_update():
+    """wikihub-2jn.2: toggle server-wide admin settings. Currently supports
+    ``curator_enabled`` (bool). Session (``User.is_admin``) or ADMIN_TOKEN."""
+    from app.admin_utils import is_admin_request, set_setting, curator_enabled as _curator_enabled
+    if not is_admin_request(request):
+        return {"error": "forbidden", "message": "Admin access required"}, 403
+    data = request.get_json(silent=True) or {}
+    if "curator_enabled" in data:
+        set_setting("curator_enabled", "true" if bool(data["curator_enabled"]) else "false")
+    return jsonify({"curator_enabled": _curator_enabled()})
+
+
 @api_bp.route("/admin/regenerate-mirror", methods=["POST"])
 def admin_regenerate_mirror():
     auth = request.headers.get("Authorization", "")

@@ -361,6 +361,13 @@ def _sse_event(data):
 @agent_chat_bp.route("/agent/chat", methods=["POST"])
 def agent_chat():
     """SSE streaming chat endpoint for the Curator agent."""
+    # wikihub-2jn.2: feature-flag gate. Returns 503 when disabled so the UI
+    # can render an explanatory message without guessing what went wrong.
+    from app.admin_utils import curator_enabled
+    if not curator_enabled():
+        return {"error": "curator_disabled",
+                "message": "Curator agent is disabled on this server."}, 503
+
     # Auth: accept Bearer token or Flask-Login session
     user = get_current_user_from_request()
     if not user:

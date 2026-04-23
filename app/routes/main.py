@@ -313,3 +313,22 @@ def _people_directory(limit=None):
     if limit is not None:
         return cards[:limit]
     return cards
+
+
+# --- admin surface (wikihub-3w46) -------------------------------------------
+
+@main_bp.route("/admin")
+def admin_index():
+    """Admin index page linking server-wide admin surfaces.
+
+    Session-gated on ``current_user.is_admin``; falls back to ``ADMIN_TOKEN``
+    for scripts (see ``admin_utils.is_admin_request``)."""
+    from app.admin_utils import is_admin_request, curator_enabled
+    if not is_admin_request(request):
+        if not current_user.is_authenticated:
+            return redirect(url_for("auth.login", next=request.full_path))
+        return render_template("error.html", code=403, title="Admin only",
+                               message="You need admin privileges to view this page."), 403
+    return render_template("admin_index.html", curator_enabled_value=curator_enabled())
+
+

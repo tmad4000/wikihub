@@ -56,6 +56,7 @@ def reset_database():
         "magic_login_tokens",
         "api_keys",
         "username_redirects",
+        "admin_settings",
         "audit_log",
         "sessions",
         "users",
@@ -2540,6 +2541,147 @@ def test_cli(client):
         shutil.rmtree(tmp_home, ignore_errors=True)
 
 
+def _login_as_new_user(client, username):
+    """Helper: create account + magic-link log the test client in as ``username``.
+    Returns the api_key for any Bearer-authed follow-ups."""
+    r = client.post("/api/v1/accounts", json={"username": username})
+    assert r.status_code == 201, r.data
+    api_key = r.get_json()["api_key"]
+    r = client.post(
+        "/api/v1/auth/magic-link",
+        json={"next": "/settings"},
+        headers={"Authorization": f"Bearer {api_key}"},
+    )
+    magic_path = urlparse(r.get_json()["login_url"]).path
+    r = client.get(magic_path, follow_redirects=False)
+    assert r.status_code == 302
+    return api_key
+
+
+def test_curator_anonymous_toggle_hidden(client):
+    """wikihub-mzoh regression: anonymous reader must NOT see the .curator-toggle
+    (it used to render for everyone and then 401 on click). Also covers
+    wikihub-2jn.2 default-off behaviour: with CURATOR_ENABLED unset the panel
+    is hidden for authed users too."""
+    # Fresh test client — no session.
+    app = client.application
+    anon = app.test_client()
+
+    # Create a wiki with a public page via API so there's a reader URL.
+    r = client.post("/api/v1/accounts", json={"username": "curatoranon"})
+    api_key = r.get_json()["api_key"]
+    h = {"Authorization": f"Bearer {api_key}"}
+    client.post("/api/v1/wikis", json={"slug": "pub", "title": "Pub"}, headers=h)
+    client.post(
+        "/api/v1/wikis/curatoranon/pub/pages",
+        json={"path": "wiki/hi.md",
+              "content": "---\ntitle: Hi\nvisibility: public\n---\n\n# Hi\n",
+              "visibility": "public"},
+        headers=h,
+    )
+
+    r = anon.get("/@curatoranon/pub/wiki/hi")
+    assert r.status_code == 200
+    # wikihub-mzoh: toggle must be absent for anonymous viewers.
+    assert b'class="curator-toggle"' not in r.data, \
+        "anon users should not see the Curator toggle (wikihub-mzoh)"
+
+    # wikihub-2jn.2: flag defaults to off, so even the owner doesn't see it.
+    r = client.get("/@curatoranon/pub/wiki/hi")
+    assert r.status_code == 200
+    assert b'class="curator-toggle"' not in r.data, \
+        "curator panel should be hidden when CURATOR_ENABLED is off (wikihub-2jn.2)"
+
+
+def test_curator_enable_flag_and_chat_503(client):
+    """wikihub-2jn.2: toggling curator_enabled flips panel rendering and the
+    /api/v1/agent/chat endpoint between 503 (off) and 4xx-but-reachable (on)."""
+    from app.admin_utils import set_setting
+    # create admin user + session
+    _login_as_new_user(client, "curatorflagadmin")
+    with client.application.app_context():
+        from app.models import User
+        u = User.query.filter_by(username="curatorflagadmin").first()
+        u.is_admin = True
+        db.session.commit()
+
+    # Set up a wiki + public page to read.
+    r = client.post("/api/v1/accounts", json={"username": "curatorflagowner"})
+    owner_key = r.get_json()["api_key"]
+    oh = {"Authorization": f"Bearer {owner_key}"}
+    client.post("/api/v1/wikis", json={"slug": "wf", "title": "WF"}, headers=oh)
+    client.post(
+        "/api/v1/wikis/curatorflagowner/wf/pages",
+        json={"path": "wiki/i.md",
+              "content": "---\ntitle: I\nvisibility: public\n---\n# I\n",
+              "visibility": "public"},
+        headers=oh,
+    )
+
+    # Ensure flag off (default), confirm 503 from chat and no panel.
+    set_setting("curator_enabled", "false")
+    r = client.post(
+        "/api/v1/agent/chat",
+        json={"message": "hi", "context": {}},
+    )
+    assert r.status_code == 503, f"expected 503 when disabled, got {r.status_code}"
+
+    r = client.get("/@curatorflagowner/wf/wiki/i")
+    assert r.status_code == 200
+    assert b'class="curator-toggle"' not in r.data
+
+    # Toggle via admin API (session-authed as is_admin=True).
+    r = client.post("/api/v1/admin/settings", json={"curator_enabled": True})
+    assert r.status_code == 200, r.data
+    assert r.get_json()["curator_enabled"] is True
+
+    # Panel now renders for the authed reader.
+    r = client.get("/@curatorflagowner/wf/wiki/i")
+    assert r.status_code == 200
+    assert b'class="curator-toggle"' in r.data
+
+    # Chat endpoint no longer returns 503 (it may still require other inputs /
+    # live LLM creds — but not the feature-disabled 503).
+    r = client.post(
+        "/api/v1/agent/chat",
+        json={"message": "hi", "context": {}},
+    )
+    assert r.status_code != 503, "endpoint should not be feature-gated when enabled"
+
+    # Reset so later tests see the default again.
+    set_setting("curator_enabled", "false")
+
+
+def test_admin_index_requires_is_admin(client):
+    """wikihub-3w46: /admin is 403 for non-admins, 200 for is_admin=True users.
+    ADMIN_TOKEN query-param fallback also still works."""
+    # Use dedicated clients so prior tests' sessions don't leak in.
+    non_admin = client.application.test_client()
+    _login_as_new_user(non_admin, "notanadmin")
+    r = non_admin.get("/admin")
+    assert r.status_code == 403, f"non-admin got {r.status_code} for /admin"
+
+    # Promote that user to admin, expect 200 on the same client.
+    from app.models import User
+    u = User.query.filter_by(username="notanadmin").first()
+    u.is_admin = True
+    db.session.commit()
+    r = non_admin.get("/admin")
+    assert r.status_code == 200, f"admin got {r.status_code} for /admin"
+    assert b"curator" in r.data.lower()
+
+    # Settings should now show the Admin link.
+    r = non_admin.get("/settings")
+    assert r.status_code == 200
+    assert b"/admin" in r.data
+
+    # ADMIN_TOKEN fallback: a fresh (unauthenticated) client should be able to
+    # hit /admin using ?token= because scripts/ops rely on that path.
+    fresh = client.application.test_client()
+    r = fresh.get("/admin?token=test-admin-token")
+    assert r.status_code == 200
+
+
 def run_all():
     app = setup()
 
@@ -2600,6 +2742,9 @@ def run_all():
             ("access requests stay ambiguous + notify existing target", lambda: test_access_request_constant_response_and_notify_existing_target(client)),
             ("subdomain routing", lambda: test_subdomain_routing(client)),
             ("CLI end-to-end", lambda: test_cli(client)),
+            ("curator toggle hidden for anon (wikihub-mzoh)", lambda: test_curator_anonymous_toggle_hidden(client)),
+            ("curator enable flag + chat 503 (wikihub-2jn.2)", lambda: test_curator_enable_flag_and_chat_503(client)),
+            ("/admin requires is_admin (wikihub-3w46)", lambda: test_admin_index_requires_is_admin(client)),
         ]
 
         passed = 1  # account creation already passed

@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}Admin — wikihub{% endblock %}
+
+{% block extra_css %}
+.admin-shell { max-width: 820px; margin: 0 auto; padding: 48px 16px 80px; }
+.admin-shell h1 { font-size: 2rem; letter-spacing: -0.04em; margin-bottom: 6px; }
+.admin-shell .lead { color: var(--text-tertiary); margin-bottom: 32px; font-size: 0.9375rem; }
+.admin-card {
+  background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  padding: 20px 22px;
+  margin-bottom: 14px;
+}
+.admin-card h2 { font-size: 1rem; letter-spacing: -0.02em; margin-bottom: 4px; }
+.admin-card p { color: var(--text-tertiary); font-size: 0.8125rem; margin-bottom: 10px; }
+.admin-link { display: inline-flex; align-items: center; gap: 8px; color: var(--accent); font-family: var(--font-mono); font-size: 0.8125rem; text-decoration: none; }
+.admin-link:hover { text-decoration: underline; }
+.admin-toggle-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.admin-toggle-label { font-family: var(--font-mono); font-size: 0.8125rem; color: var(--text-secondary); }
+.admin-toggle-state { font-family: var(--font-mono); font-size: 0.8125rem; padding: 2px 8px; border-radius: var(--radius-sm); border: 1px solid var(--border-default); }
+.admin-toggle-state.on { color: var(--color-public); border-color: rgba(122, 158, 107, 0.35); }
+.admin-toggle-state.off { color: var(--text-muted); }
+.admin-btn { padding: 6px 14px; border: 1px solid var(--border-emphasis); background: transparent; border-radius: var(--radius-sm); color: var(--text-secondary); font-family: var(--font-body); font-size: 0.8125rem; cursor: pointer; }
+.admin-btn:hover { color: var(--text-primary); border-color: var(--border-strong); }
+.admin-note { color: var(--text-muted); font-size: 0.75rem; margin-top: 8px; }
+.admin-endpoint { font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-muted); }
+{% endblock %}
+
+{% block body %}
+<div class="admin-shell">
+  <h1>Admin</h1>
+  <p class="lead">Server-wide controls. Session-gated on <code>users.is_admin</code>; scripts may still use <code>?token=ADMIN_TOKEN</code>.</p>
+
+  <section class="admin-card">
+    <h2>Curator agent</h2>
+    <p>Toggle the Curator chat feature across the server. When disabled, the reader panel is not rendered and <code>/api/v1/agent/chat</code> returns 503.</p>
+    <div class="admin-toggle-row">
+      <span class="admin-toggle-label">curator_enabled</span>
+      <span id="curator-state" class="admin-toggle-state {% if curator_enabled_value %}on{% else %}off{% endif %}">
+        {% if curator_enabled_value %}ON{% else %}OFF{% endif %}
+      </span>
+      <button id="curator-toggle-btn" class="admin-btn" type="button">
+        {% if curator_enabled_value %}Disable{% else %}Enable{% endif %}
+      </button>
+    </div>
+    <div id="curator-msg" class="admin-note" aria-live="polite"></div>
+  </section>
+
+  <section class="admin-card">
+    <h2>Claude subscription auth</h2>
+    <p>Server-wide Claude login used by the Curator agent when no per-user key is set.</p>
+    <a class="admin-link" href="/api/v1/admin/claude-auth">Open claude-auth console &rarr;</a>
+    <div class="admin-endpoint">/api/v1/admin/claude-auth</div>
+  </section>
+
+  <section class="admin-card">
+    <h2>Repo plumbing</h2>
+    <p>POST-only endpoints used by the post-receive hook and ops scripts.</p>
+    <ul style="list-style: none; padding: 0; margin: 0;">
+      <li class="admin-endpoint" style="padding: 4px 0;">POST /api/v1/admin/sync-page</li>
+      <li class="admin-endpoint" style="padding: 4px 0;">POST /api/v1/admin/delete-page</li>
+      <li class="admin-endpoint" style="padding: 4px 0;">POST /api/v1/admin/regenerate-mirror</li>
+    </ul>
+    <div class="admin-note">These take a JSON body and still accept <code>Authorization: Bearer &lt;ADMIN_TOKEN&gt;</code> as well as an admin session.</div>
+  </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  const btn = document.getElementById('curator-toggle-btn');
+  const state = document.getElementById('curator-state');
+  const msg = document.getElementById('curator-msg');
+  if (!btn) return;
+  btn.addEventListener('click', async () => {
+    const currentlyOn = state.classList.contains('on');
+    msg.textContent = 'Saving...';
+    try {
+      const resp = await fetch('/api/v1/admin/settings', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({curator_enabled: !currentlyOn}),
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        msg.textContent = data.message || 'Failed to update setting.';
+        return;
+      }
+      const data = await resp.json();
+      const on = !!data.curator_enabled;
+      state.classList.toggle('on', on);
+      state.classList.toggle('off', !on);
+      state.textContent = on ? 'ON' : 'OFF';
+      btn.textContent = on ? 'Disable' : 'Enable';
+      msg.textContent = 'Saved.';
+    } catch (e) {
+      msg.textContent = 'Network error: ' + e.message;
+    }
+  });
+})();
+</script>
+{% endblock %}

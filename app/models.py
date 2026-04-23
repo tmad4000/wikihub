@@ -21,6 +21,9 @@ class User(UserMixin, db.Model):
     password_hash = db.Column(db.String(256), nullable=True)  # null for oauth-only users
     google_id = db.Column(db.String(256), unique=True, nullable=True)
     llm_api_key_encrypted = db.Column(db.Text, nullable=True)  # encrypted Anthropic API key for Curator
+    # wikihub-3w46: flag for admin surface access (/admin index + toggles).
+    # Admin endpoints still accept ADMIN_TOKEN as a fallback for scripts.
+    is_admin = db.Column(db.Boolean, default=False, nullable=False)
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
 
     wikis = db.relationship("Wiki", backref="owner", lazy="dynamic")
@@ -227,6 +230,18 @@ class UsernameRedirect(db.Model):
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
 
     user = db.relationship("User")
+
+
+class AdminSetting(db.Model):
+    """wikihub-2jn.2: simple key/value store for server-wide admin toggles
+    (e.g. ``curator_enabled``). Settings override env vars when present.
+    Values are stored as text; callers parse as needed (e.g. ``"true"``/``"false"``)."""
+    __tablename__ = "admin_settings"
+
+    id = db.Column(db.Integer, primary_key=True)
+    key = db.Column(db.String(128), unique=True, nullable=False, index=True)
+    value = db.Column(db.Text, nullable=True)
+    updated_at = db.Column(db.DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
 
 
 class WikiSlugRedirect(db.Model):

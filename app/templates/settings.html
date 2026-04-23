@@ -433,6 +433,12 @@
               <strong>Read the agent setup guide</strong>
               <span>API registration, MCP entry points, and one-click browser sign-in flow.</span>
             </a>
+            {% if current_user.is_admin %}
+            <a href="/admin" class="settings-link-card">
+              <strong>Admin console</strong>
+              <span>Server-wide toggles: Curator enable/disable, Claude auth, repo plumbing.</span>
+            </a>
+            {% endif %}
             <div class="settings-link-card" style="cursor: default;">
               <strong>Magic sign-in links</strong>
               <span>An authenticated agent can mint a single-use browser login URL with <code>POST /api/v1/auth/magic-link</code>. The link can land on any safe internal path, not just Settings.</span>

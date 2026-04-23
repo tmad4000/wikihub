@@ -94,7 +94,23 @@ def create_app(config_class="config.Config"):
         db.session.execute(db.text(
             "ALTER TABLE wikis ADD COLUMN IF NOT EXISTS subdomain VARCHAR(63) UNIQUE"
         ))
+        # wikihub-3w46: is_admin flag on users — matches migration
+        # 2026-04-23_admin_flag_and_settings.sql; keeps fresh-DB and older
+        # deployments in sync without requiring the SQL file to be applied.
+        db.session.execute(db.text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT FALSE"
+        ))
         db.session.commit()
+
+    # Jinja sees ``curator_enabled`` on every page so templates can gate UI
+    # without every view having to thread the flag through. (wikihub-2jn.2)
+    @app.context_processor
+    def _inject_feature_flags():
+        from app.admin_utils import curator_enabled
+        try:
+            return {"curator_enabled": curator_enabled()}
+        except Exception:
+            return {"curator_enabled": False}
         from app.wiki_ops import ensure_official_wiki
         ensure_official_wiki()
         db.session.commit()
