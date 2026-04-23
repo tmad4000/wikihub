@@ -56,6 +56,8 @@ apply command. Keep migrations in chronological order.
 ## architecture
 
 - `cli/` — `wikihub-cli` Python CLI package (pip-installable; wraps `/api/v1`)
+- `mcp-server/` — standalone TypeScript MCP server (19 tools, stdio + Streamable HTTP transports). Deployed at `https://mcp.wikihub.md/mcp`. Source of truth for the Claude Connector. Ported from `noos/mcp-server/`. See `mcp-server/README.md`.
+- `skills/` — checked-in Claude Code skills. `skills/wikihub-build/SKILL.md` is the port of Farza Majeed's `/wiki` skill to WikiHub (hosted storage instead of local files). Users install with `curl … > ~/.claude/skills/wikihub-build/SKILL.md`.
 - `app/` — Flask app (factory pattern in `__init__.py`)
 - `app/models.py` — SQLAlchemy models (users, wikis, pages, stars, forks, api_keys, wikilinks, audit_log)
 - `app/acl.py` — CODEOWNERS-pattern ACL parser for `.wikihub/acl`

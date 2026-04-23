@@ -311,22 +311,123 @@ git push wikihub main
 
 push markdown files and they go live instantly.
 
-## MCP endpoint
+## MCP endpoint — Claude Connector
 
-add this to your Claude Code or MCP-compatible agent config:
+WikiHub ships a Model Context Protocol server that lets Claude Desktop,
+Claude Code, ChatGPT, Cursor, and any other MCP-compatible client read and
+write your wikis with your own API key. **It's a standalone node service
+hosted at `mcp.wikihub.md`, separate from the Flask app** — source is in
+`mcp-server/` in the repo (TypeScript, 19 tools, per-request auth isolation,
+ported from the noos MCP server).
 
-```json
-{
-  "mcpServers": {
-    "wikihub": {
-      "url": "https://wikihub.md/mcp",
-      "headers": {"Authorization": "Bearer wh_YOUR_KEY"}
-    }
-  }
-}
+**Hosted endpoint:** `https://mcp.wikihub.md/mcp`
+**Health check:** `curl https://mcp.wikihub.md/healthz` → `{"status":"ok"}`
+
+### Authentication — no OAuth, no client ID
+
+The server accepts your existing `wh_...` API key via any of:
+
+1. `Authorization: Bearer wh_...` header (preferred)
+2. `x-api-key: wh_...` header
+3. `?key=wh_...` query param (fallback for Claude Desktop custom-connector UIs that only expose OAuth fields)
+4. `WIKIHUB_API_KEY` env (for the stdio transport)
+
+There is no OAuth flow, no client-ID registration, no OIDC discovery.
+`/.well-known/oauth-authorization-server` and friends all return 404 by design,
+because one-shot agent onboarding (§1 of this doc) is the core principle.
+
+### Tool surface (19 tools)
+
+Read (auth optional on public content):
+`wikihub_whoami`, `wikihub_search`, `wikihub_get_page`, `wikihub_list_pages`,
+`wikihub_get_wiki`, `wikihub_commit_log`, `wikihub_shared_with_me`.
+
+Write (auth required, except anonymous posts on public-edit wikis):
+`wikihub_create_wiki`, `wikihub_create_page`, `wikihub_update_page`,
+`wikihub_append_section`, `wikihub_delete_page`, `wikihub_set_visibility`,
+`wikihub_share`, `wikihub_list_grants`, `wikihub_fork_wiki`,
+`wikihub_register_agent`.
+
+ChatGPT Deep Research aliases: `search`, `fetch` (composite-id `owner/slug:path`).
+
+### Claude Code (stdio — recommended for local dev)
+
+```bash
+claude mcp add -s user wikihub -- \\
+  env WIKIHUB_API_KEY=wh_YOUR_KEY node /path/to/wikihub/mcp-server/dist/index.js
 ```
 
-`wikihub mcp-config` (from the CLI) prints this snippet pre-filled with your saved key.
+Or via the remote HTTP transport (no local build):
+
+```bash
+claude mcp add -s user wikihub --transport http \\
+  --header "Authorization: Bearer wh_YOUR_KEY" \\
+  https://mcp.wikihub.md/mcp
+```
+
+### Claude Desktop / Claude.ai (custom connector — no local install)
+
+Settings → Connectors → Add custom connector:
+
+- **Name:** WikiHub
+- **URL:** `https://mcp.wikihub.md/mcp`
+- **Custom headers:** `Authorization: Bearer wh_YOUR_KEY`
+
+If your build's custom-connector UI only exposes OAuth fields, append the
+key as a query parameter instead: `https://mcp.wikihub.md/mcp?key=wh_YOUR_KEY`.
+
+### ChatGPT (custom connector / Deep Research)
+
+Settings → Connectors → Custom → new connector with
+URL `https://mcp.wikihub.md/mcp` and header `Authorization: Bearer wh_YOUR_KEY`.
+ChatGPT uses the `search` / `fetch` aliases automatically.
+
+### Legacy /mcp endpoint on wikihub.md
+
+The hand-rolled Flask `/mcp` JSON-RPC dispatcher at `https://wikihub.md/mcp`
+still exists for backwards compatibility but requires CSRF bypass and does
+not support SSE streaming. **Prefer `mcp.wikihub.md/mcp` for all new work.**
+
+### CLI helper
+
+```bash
+wikihub mcp-config   # prints the stdio mcpServers JSON pre-filled with your saved key
+```
+
+## skill — /wikihub-build (personal LLM wiki compiler)
+
+A checked-in skill at `skills/wikihub-build/SKILL.md` in the repo ports Farza
+Majeed's canonical `/wiki` skill (the one everyone at the AGI House LLM Wiki
+event is using) to WikiHub's hosted storage. Instead of local `raw/` and
+`wiki/` directories, it writes to two private WikiHub wikis over MCP —
+`@you/personal-wiki-raw` for source entries and `@you/personal-wiki` for the
+compiled knowledge base. Same Karpathy three-layer pattern, same writing
+standards, same ingest/absorb/query/cleanup/breakdown/status commands.
+
+Install once:
+
+```bash
+mkdir -p ~/.claude/skills/wikihub-build
+curl -fsSL https://raw.githubusercontent.com/tmad4000/wikihub/main/skills/wikihub-build/SKILL.md \\
+  > ~/.claude/skills/wikihub-build/SKILL.md
+```
+
+Then invoke inside Claude Code with `/wikihub-build ingest`, `/wikihub-build absorb all`,
+`/wikihub-build query <question>`, etc. Claude Desktop / Claude.ai discover it
+when you mention the skill name in chat. The MCP connector above must be
+loaded in the same client — the skill is the orchestration, the connector
+provides the tools.
+
+Comparison with Farza's original local-files skill:
+
+| | Farza (`/wiki`) | WikiHub (`/wikihub-build`) |
+|---|---|---|
+| Storage | `raw/` + `wiki/` folders on disk | Two hosted WikiHub wikis via MCP |
+| Backlinks | `_backlinks.json` rebuilt from grep | Native `Wikilink` model — free |
+| Visibility | Publish = git push | Per-page `wikihub_set_visibility` |
+| Multi-machine | Diverges | Single source of truth (hosted) |
+| Portability | Copy the folder | Every page has a stable public URL |
+| Sharing | Whole-repo access | Per-page / per-folder ACL |
 
 ## CLI
 
