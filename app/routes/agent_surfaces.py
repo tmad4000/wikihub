@@ -378,9 +378,35 @@ key as a query parameter instead: `https://mcp.wikihub.md/mcp?key=wh_YOUR_KEY`.
 
 ### ChatGPT (custom connector / Deep Research)
 
-Settings → Connectors → Custom → new connector with
-URL `https://mcp.wikihub.md/mcp` and header `Authorization: Bearer wh_YOUR_KEY`.
-ChatGPT uses the `search` / `fetch` aliases automatically.
+Available on Pro, Plus, Business, Enterprise, and Education plans. Three
+toggles — one required, two strongly recommended.
+
+**1. Enable developer mode (required for custom MCP):**
+Settings → Apps & Connectors → Advanced → **Developer mode** → On.
+Confirm the warning. Without this, ChatGPT will not accept unverified MCP
+servers.
+
+**2. Add the connector:**
+Settings → Apps & Connectors → **Add new connector**
+- **Name:** WikiHub
+- **MCP Server URL:** `https://mcp.wikihub.md/mcp`
+- **Authentication:** custom header, `Authorization: Bearer wh_YOUR_KEY`
+- Check "I trust this application" → **Create**
+
+**3. Enable connector search (recommended):**
+Settings → Personalization → Advanced → **Connector search** → On.
+Lets ChatGPT auto-query WikiHub without an explicit `@WikiHub` each turn.
+You can still force it with `@WikiHub` or the Tools menu.
+
+**4. Enable reference chat history (recommended):**
+Settings → Personalization → **Reference chat history** → On.
+Carries context across sessions — compounds well with a WikiHub wiki used
+as durable memory. Note: this shares a toggle with "Reference saved
+memories" — turning one off turns both off.
+
+To use in a chat: open the composer's Developer-mode picker (or Tools
+menu), select **WikiHub**, and ask. Deep Research uses the `search` /
+`fetch` tool pair automatically.
 
 ### Legacy /mcp endpoint on wikihub.md
 

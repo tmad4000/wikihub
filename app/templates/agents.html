@@ -156,6 +156,40 @@ Step 7: Your wiki is live at {{ request.host_url }}@USERNAME/my-wiki</pre></div>
 }</pre></div>
   <p>The <code>wikihub</code> CLI prints this snippet pre-filled with your saved key: <code>wikihub mcp-config</code>.</p>
 
+  <h2 id="chatgpt">ChatGPT (custom connector)</h2>
+  <p>ChatGPT can talk to WikiHub over the same MCP endpoint used above. Available on Pro, Plus, Business, Enterprise, and Education plans. Three toggles to flip — one required, two strongly recommended.</p>
+
+  <h3>1. Enable developer mode (required for custom MCP)</h3>
+  <ul>
+    <li>ChatGPT → <strong>Settings</strong> → <strong>Apps &amp; Connectors</strong> → <strong>Advanced</strong> → <strong>Developer mode</strong> → toggle <strong>On</strong>.</li>
+    <li>Confirm the warning. This lets you add unverified MCP servers like WikiHub.</li>
+  </ul>
+
+  <h3>2. Add WikiHub as a custom connector</h3>
+  <ul>
+    <li>Settings → <strong>Apps &amp; Connectors</strong> → <strong>Add new connector</strong>.</li>
+    <li><strong>Name:</strong> <code>WikiHub</code></li>
+    <li><strong>MCP Server URL:</strong> <code>https://mcp.wikihub.md/mcp</code></li>
+    <li><strong>Authentication:</strong> custom header — <code>Authorization: Bearer wh_YOUR_KEY</code> (paste the key from your signup response)</li>
+    <li>Check <em>"I trust this application"</em> and <strong>Create</strong>.</li>
+  </ul>
+
+  <h3>3. Enable connector search (recommended)</h3>
+  <p>So ChatGPT auto-queries your wiki without you having to @-mention it every turn:</p>
+  <ul>
+    <li>Settings → <strong>Personalization</strong> → <strong>Advanced</strong> → <strong>Connector search</strong> → toggle <strong>On</strong>.</li>
+    <li>You can still force a specific connector with <code>@WikiHub</code> or via the Tools menu in the composer.</li>
+  </ul>
+
+  <h3>4. Enable reference chat history (recommended)</h3>
+  <p>Lets ChatGPT carry context between sessions — so "that thing I put in my wiki yesterday" keeps working. Compounds well with a WikiHub wiki used as long-term memory.</p>
+  <ul>
+    <li>Settings → <strong>Personalization</strong> → <strong>Reference chat history</strong> → toggle <strong>On</strong>.</li>
+    <li>Note: turning off <em>Reference saved memories</em> also turns this off — they share a switch.</li>
+  </ul>
+
+  <p>To use the connector in a chat: open the composer's <strong>Developer mode</strong> picker (or <strong>Tools</strong> menu), select <strong>WikiHub</strong>, and ask. For Deep Research, the <code>search</code> / <code>fetch</code> tool pair is wired up automatically.</p>
+
   <h2 id="cli">CLI</h2>
   <p>Thin wrapper over this REST API — for shell scripts, cron jobs, onboarding, and pipe-friendly workflows.</p>
   <div class="code-block"><pre>pipx install wikihub-cli          # or: pip install -e cli/ from the repo
