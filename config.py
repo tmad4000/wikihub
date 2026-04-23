@@ -16,6 +16,9 @@ class Config:
     SERVER_NAME = os.environ.get("SERVER_NAME")  # e.g. wikihub.md
     BASE_URL = os.environ.get("BASE_URL", "http://localhost:5000")
     ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
+    # wikihub-u9rc: PostHog analytics. Empty key = snippet skipped (dev default).
+    POSTHOG_KEY = os.environ.get("POSTHOG_KEY", "")
+    POSTHOG_HOST = os.environ.get("POSTHOG_HOST", "https://us.i.posthog.com")
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB max request size
     MAX_PAGE_SIZE = 2 * 1024 * 1024  # 2MB per page
     MAX_UPLOAD_FILES = 5000  # max files in a single upload/zip
