@@ -33,6 +33,19 @@ tests are minimal and intentional — each one verifies a real user flow end-to-
 
 don't add unit tests for individual functions. if something breaks, add an e2e test that covers the broken flow. tests should run in <10 seconds.
 
+## regression-test rule (wikihub-qzje)
+
+**Every bug fix MUST include a regression test that would have failed before the fix.** No exceptions.
+
+- If you close a `bd type=bug`, the commit that closes it MUST touch `tests/`.
+- If the bug lives in a programmatically-untestable layer (browser JS behavior, real OAuth round-trip, real DNS), the fix must EITHER add the testing infrastructure OR file a dependency ticket blocking the bug closure on adding that infra.
+- Before saying "done", ask yourself: *"if someone reintroduced the exact bug, would my test catch it?"* If no, the test is insufficient.
+- When you ship a bug fix without a test, label the bug `needs-regression-test`. Monthly sweep clears the backlog.
+
+**Why this exists:** without it, agents (me included) keep shipping fixes without tests, and the same bugs re-emerge. Recent examples: `wikihub-35gh` (git-push hook) had no test; `/people` subdomain 404 had no test; the reader share modal has no JS-level test (hence a false-positive audit flag).
+
+The goal (per `wikihub-qzje`): an agent running `python3 tests/test_e2e.py` can be confident that if it passes, no user-facing flow is broken — so Jacob never has to click-test before the agent says "done."
+
 ## schema changes
 
 No Alembic. Fresh databases are built with `db.create_all()` at startup. For
