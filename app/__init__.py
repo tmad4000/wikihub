@@ -37,11 +37,15 @@ def create_app(config_class="config.Config"):
     from app.routes.agent_chat import agent_chat_bp
     app.register_blueprint(agent_chat_bp, url_prefix="/api/v1")
 
+    from app.routes.api_root import api_root_bp
+    app.register_blueprint(api_root_bp)
+
     from app.git_backend import git_bp
     app.register_blueprint(git_bp)
 
     csrf.exempt(api_bp)
     csrf.exempt(agent_chat_bp)
+    csrf.exempt(api_root_bp)
     csrf.exempt(git_bp)
 
     from app.routes.auth import init_oauth

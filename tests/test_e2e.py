@@ -652,6 +652,31 @@ def test_folder_level_sharing(client, api_key):
     assert r.status_code in (403, 404)
 
 
+def test_api_root_discovery(client):
+    """GET /api returns a discovery document pointing at v1."""
+    r = client.get("/api")
+    assert r.status_code == 200, f"/api returned {r.status_code}"
+    assert "application/json" in r.content_type
+    assert "public" in r.headers.get("Cache-Control", "")
+    assert "max-age=300" in r.headers.get("Cache-Control", "")
+    data = r.get_json()
+    assert data["name"] == "wikihub"
+    assert data["current_version"] == "v1"
+    assert data["versions"]["v1"]["base"] == "/api/v1"
+    assert data["versions"]["v1"]["capabilities"] == "/api/v1/me/capabilities"
+    assert data["feedback"] == "/api/v1/feedback"
+    assert data["request_id_header"] == "X-Request-ID"
+    assert data["deprecated_versions"] == []
+
+    # /api/ (trailing slash) also works
+    r = client.get("/api/")
+    assert r.status_code == 200
+
+    # HEAD should respond too
+    r = client.head("/api")
+    assert r.status_code == 200
+
+
 def run_all():
     app = setup()
 
@@ -688,6 +713,7 @@ def run_all():
             ("sharing lifecycle", lambda: test_sharing_lifecycle(client, key)),
             ("wiki-level sharing", lambda: test_wiki_level_sharing(client, key)),
             ("folder-level sharing", lambda: test_folder_level_sharing(client, key)),
+            ("api root discovery", lambda: test_api_root_discovery(client)),
         ]
 
         passed = 1  # account creation already passed
