@@ -628,7 +628,10 @@ def wiki_index(username, slug):
         page = type("Page", (), {"path": page_path, "title": wiki.title, "visibility": "private", "updated_at": wiki.updated_at})()
 
     rendered_html = render_page(content, owner.username, wiki.slug, current_page_path=page_path)
-    management_items = _folder_listing(owner.username, wiki.slug, wiki, "", public=False) if _is_owner(wiki) else None
+    is_owner = _is_owner(wiki)
+    management_items = _folder_listing(owner.username, wiki.slug, wiki, "", public=False) if is_owner else None
+    user_name = current_user.username if current_user.is_authenticated else None
+    user_can_edit = is_owner or can_write(page_path, acl_rules, user_name, page.visibility if page else None)
     return render_template(
         "reader.html",
         owner=owner,
@@ -645,6 +648,7 @@ def wiki_index(username, slug):
         json_ld_author=owner.display_name or owner.username,
         management_items=management_items,
         sibling_wikis=siblings,
+        user_can_edit=user_can_edit,
     )
 
 
