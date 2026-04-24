@@ -44,7 +44,7 @@ ssh -i ~/.ssh/wikihub-dev-key ubuntu@54.145.123.7 \
 
 ```bash
 # check it's not 502
-curl -s -o /dev/null -w "%{http_code}" https://wikihub.globalbr.ai/
+curl -s -o /dev/null -w "%{http_code}" https://wikihub.md/
 
 # if 502, check logs immediately
 ssh -i ~/.ssh/wikihub-dev-key ubuntu@54.145.123.7 \
@@ -60,8 +60,8 @@ common 502 causes:
 
 after confirming the site is up (200), test the specific things you changed:
 - if you changed a route, hit it with curl
-- if you changed UI, open it in agent-browser against `https://wikihub.globalbr.ai`
-- if you changed search, `curl https://wikihub.globalbr.ai/api/v1/search?q=test`
+- if you changed UI, open it in agent-browser against `https://wikihub.md`
+- if you changed search, `curl https://wikihub.md/api/v1/search?q=test`
 
 ## server details
 

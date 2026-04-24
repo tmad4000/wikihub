@@ -18,7 +18,7 @@
 .person-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
 .person-avatar {
   width: 46px; height: 46px; border-radius: 50%;
-  background: linear-gradient(135deg, rgba(212, 160, 74, 0.18), rgba(34, 31, 27, 1));
+  background: var(--gradient-person-avatar);
   border: 1px solid var(--border-accent);
   display: flex; align-items: center; justify-content: center;
   font-family: var(--font-mono); color: var(--accent); font-size: 1rem; flex-shrink: 0;
@@ -54,9 +54,11 @@
           <div class="person-handle">@{{ person.user.username }}</div>
         </div>
       </div>
+      {% if person.profile_excerpt %}
       <div class="person-summary">
-        {{ person.profile_excerpt or "This person has not published a profile yet. Their person page still acts as the canonical entry point for their public work." }}
+        {{ person.profile_excerpt }}
       </div>
+      {% endif %}
       <div class="person-meta">
         <span>{{ person.project_count }} public {{ 'wiki' if person.project_count == 1 else 'wikis' }}</span>
         <span>{{ person.total_stars }} stars</span>

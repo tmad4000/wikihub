@@ -1,4 +1,7 @@
+import logging
 import os
+import re
+
 import click
 
 from flask import Flask
@@ -12,11 +15,36 @@ db = SQLAlchemy()
 login_manager = LoginManager()
 csrf = CSRFProtect()
 
+# Redact credentials passed via GET query string (/auth/login?api_key=...)
+# from werkzeug's access log. gunicorn/nginx need their own redaction in prod.
+_SECRET_IN_URL = re.compile(r'(api_key|password)=[^&"\'\s]+')
+
+
+class _RedactQueryParams(logging.Filter):
+    def filter(self, record):
+        if isinstance(record.msg, str):
+            record.msg = _SECRET_IN_URL.sub(r'\1=REDACTED', record.msg)
+        if record.args:
+            record.args = tuple(
+                _SECRET_IN_URL.sub(r'\1=REDACTED', a) if isinstance(a, str) else a
+                for a in record.args
+            )
+        return True
+
+
+logging.getLogger("werkzeug").addFilter(_RedactQueryParams())
+
 
 def create_app(config_class="config.Config"):
     app = Flask(__name__)
     app.config.from_object(config_class)
+    # keep em dashes, arrows, ellipses, etc. as literal UTF-8 in JSON responses
+    # instead of \uXXXX escapes (flask defaults to ensure_ascii=True). wikihub-u6by
+    app.json.ensure_ascii = False
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+
+    from app.subdomain_middleware import SubdomainMiddleware
+    app.wsgi_app = SubdomainMiddleware(app.wsgi_app, app)
 
     db.init_app(app)
     login_manager.init_app(app)
@@ -71,6 +99,9 @@ def create_app(config_class="config.Config"):
     from app.routes.auth import init_oauth
     init_oauth(app)
 
+    from app.canonical_redirect import maybe_redirect
+    app.before_request(maybe_redirect)
+
     from app.url_utils import url_path_from_page_path
 
     @app.template_filter("page_url")
@@ -90,6 +121,11 @@ def create_app(config_class="config.Config"):
         db.session.execute(db.text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
         db.session.commit()
         db.create_all()
+        # idempotent in-place migrations (SQLAlchemy create_all does not alter existing tables)
+        db.session.execute(db.text(
+            "ALTER TABLE wikis ADD COLUMN IF NOT EXISTS subdomain VARCHAR(63) UNIQUE"
+        ))
+        db.session.commit()
         from app.wiki_ops import ensure_official_wiki
         ensure_official_wiki()
         db.session.commit()

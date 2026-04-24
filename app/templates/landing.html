@@ -3,47 +3,24 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>wikihub — GitHub for LLM wikis</title>
+  <title>wikihub — GitHub for LLM wikis · agents see /AGENTS.md</title>
   <meta name="csrf-token" content="{{ csrf_token() }}">
+  <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+  <!-- agent discovery: point AI agents at plain-markdown + LLM index. wikihub-5764 -->
+  <link rel="alternate" type="text/markdown" href="/AGENTS.md" title="Agent setup (markdown)">
+  <link rel="alternate" type="text/plain" href="/llms.txt" title="LLM index">
+  <meta property="og:title" content="wikihub — GitHub for LLM wikis">
+  <meta property="og:description" content="The home for markdown knowledge bases. Bring your files or let your agent build it.">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="wikihub">
+  <meta name="description" content="The home for markdown knowledge bases. Bring your files or let your agent build it.">
+  {% include '_theme.html' %}
+  {% include '_analytics.html' %}
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg-base: #0f0e0c;
-      --bg-surface: #191714;
-      --bg-elevated: #221f1b;
-      --bg-overlay: #2a2622;
-      --text-primary: #e8e0d4;
-      --text-secondary: #b8ad9e;
-      --text-tertiary: #887d6e;
-      --text-muted: #5a5248;
-      --accent: #d4a04a;
-      --accent-hover: #e0b35a;
-      --accent-muted: rgba(212, 160, 74, 0.12);
-      --accent-subtle: rgba(212, 160, 74, 0.06);
-      --color-public: #7a9e6b;
-      --color-private: #c45c3c;
-      --color-unlisted: #b8ad9e;
-      --color-edit: #d4a04a;
-      --color-wikilink: #d4a04a;
-      --color-wikilink-broken: #c45c3c;
-      --color-external: #7a9bb5;
-      --color-success: #7a9e6b;
-      --color-warning: #d4a04a;
-      --color-error: #c45c3c;
-      --border-default: rgba(200, 180, 150, 0.08);
-      --border-emphasis: rgba(200, 180, 150, 0.15);
-      --border-strong: rgba(200, 180, 150, 0.25);
-      --border-accent: rgba(212, 160, 74, 0.4);
-      --control-bg: rgba(0, 0, 0, 0.2);
-      --control-bg-hover: rgba(200, 180, 150, 0.08);
-      --control-border: rgba(200, 180, 150, 0.12);
-      --font-body: 'Inter', -apple-system, sans-serif;
-      --font-mono: 'IBM Plex Mono', 'Menlo', monospace;
-      --radius-sm: 4px;
-      --radius-md: 6px;
-      --radius-lg: 10px;
       --max-width: 1120px;
     }
 
@@ -96,6 +73,7 @@
     .nav-link:hover { color: var(--text-primary); text-decoration: none; }
     .nav-agents { color: var(--accent); font-weight: 500; font-family: var(--font-mono); font-size: 0.8125rem; }
     .nav-agents:hover { color: var(--accent-hover); }
+    @media (max-width: 640px) { .nav-hide-mobile { display: none; } }
     .nav-account { position: relative; display: flex; align-items: center; }
     .nav-account-trigger {
       display: inline-flex; align-items: center; gap: 6px; min-height: 36px;
@@ -119,7 +97,7 @@
     .nav-account-menu {
       position: absolute; top: calc(100% + 8px); right: 0; width: 220px; padding: 8px;
       border-radius: var(--radius-md); border: 1px solid var(--border-emphasis);
-      background: rgba(25, 23, 20, 0.98); backdrop-filter: blur(12px); box-shadow: none;
+      background: var(--menu-bg); backdrop-filter: blur(12px); box-shadow: none;
       opacity: 0; transform: translateY(-4px); pointer-events: none;
       transition: opacity 0.14s ease, transform 0.14s ease;
     }
@@ -134,11 +112,11 @@
       padding: 10px 12px; border-radius: var(--radius-sm); color: var(--text-secondary); font-size: 0.8125rem; text-decoration: none;
     }
     .nav-account-item:hover { background: var(--accent-subtle); color: var(--text-primary); text-decoration: none; }
-    .nav-account-item.logout { color: #d88c75; }
+    .nav-account-item.logout { color: var(--color-error-soft); }
     .nav-account-item .menu-hint { font-family: var(--font-mono); font-size: 0.6875rem; color: var(--text-muted); }
     .search-trigger {
       display: none; -webkit-appearance: none; appearance: none;
-      background: #1a1816 !important; border: 1px solid var(--control-border);
+      background: var(--search-trigger-bg) !important; border: 1px solid var(--control-border);
       border-radius: var(--radius-sm); color: var(--text-muted); cursor: pointer;
       font-size: 0.75rem; font-family: var(--font-body); min-height: 32px;
       align-items: center; gap: 6px; padding: 6px 12px;
@@ -162,7 +140,7 @@
     }
     .btn-ghost { background: transparent; color: var(--text-secondary); }
     .btn-ghost:hover { color: var(--text-primary); background: var(--control-bg-hover); }
-    .btn-primary { background: var(--accent); color: #0f0e0c; font-weight: 600; }
+    .btn-primary { background: var(--accent); color: var(--text-on-accent); font-weight: 600; }
     .btn-primary:hover { background: var(--accent-hover); }
     .btn-secondary { background: transparent; color: var(--text-secondary); border: 1px solid var(--border-emphasis); }
     .btn-secondary:hover { border-color: var(--border-strong); color: var(--text-primary); }
@@ -683,92 +661,58 @@
 
     /* ── footer ──────────────────────────── */
 
-    .footer {
-      border-top: 1px solid var(--border-default);
-      padding: 36px 20px;
-    }
+    /* footer styles removed — using shared _footer.html partial */
+    /* theme-toggle styles live in _theme.html */
 
-    .footer-inner {
-      max-width: var(--max-width);
-      margin: 0 auto;
-      display: flex;
-      flex-direction: column;
-      gap: 24px;
+    /* ── anonymous-upload success modal ──── */
+    #anon-success-overlay {
+      position: fixed; inset: 0; z-index: 300;
+      background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);
+      display: flex; align-items: center; justify-content: center;
+      padding: 20px;
     }
-
-    @media (min-width: 768px) {
-      .footer-inner {
-        flex-direction: row;
-        justify-content: space-between;
-        align-items: flex-start;
-      }
-    }
-
-    .footer-logo {
-      font-family: var(--font-mono);
-      font-size: 0.9375rem;
-      font-weight: 500;
-      margin-bottom: 4px;
-    }
-
-    .footer-logo .bracket {
-      color: var(--text-muted);
-    }
-
-    .footer-logo .name {
-      color: var(--text-secondary);
-    }
-
-    .footer-tagline {
-      font-size: 0.8125rem;
-      color: var(--text-tertiary);
-    }
-
-    .footer-links {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 32px;
-    }
-
-    .footer-col h4 {
-      font-size: 0.75rem;
-      font-weight: 600;
-      color: var(--text-secondary);
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      margin-bottom: 10px;
-    }
-
-    .footer-col ul {
-      list-style: none;
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-
-    .footer-col a {
-      font-size: 0.8125rem;
-      color: var(--text-tertiary);
-      text-decoration: none;
-    }
-
-    .footer-col a:hover {
-      color: var(--text-primary);
-    }
-
-    .footer-bottom {
-      max-width: var(--max-width);
-      margin: 0 auto;
-      padding: 16px 20px 0;
-      border-top: 1px solid var(--border-default);
-      margin-top: 12px;
-      font-size: 0.75rem;
-      color: var(--text-muted);
+    .anon-success-modal {
+      background: var(--bg-elevated); border: 1px solid var(--border-emphasis);
+      border-radius: var(--radius-lg); padding: 28px 24px; max-width: 520px; width: 100%;
       text-align: center;
     }
+    .anon-success-modal h3 { font-size: 1.25rem; font-weight: 700; color: var(--text-primary); margin-bottom: 6px; letter-spacing: -0.01em; }
+    .anon-success-modal .anon-wiki-url { font-family: var(--font-mono); font-size: 0.875rem; margin-bottom: 18px; }
+    .anon-success-modal .anon-wiki-url a { color: var(--accent); word-break: break-all; }
+    .anon-success-modal .anon-warn { font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 10px; }
+    .anon-success-modal .anon-warn strong { color: var(--accent); }
+    .anon-success-modal .anon-cred-row {
+      display: flex; gap: 8px; align-items: stretch;
+      background: var(--bg-base); border: 1px solid var(--border-default);
+      border-radius: var(--radius-md); padding: 10px 12px; margin-bottom: 14px;
+    }
+    .anon-success-modal .anon-cred-row code {
+      flex: 1; text-align: left; font-family: var(--font-mono); font-size: 0.75rem;
+      color: var(--text-primary); overflow-x: auto; white-space: nowrap; user-select: all;
+    }
+    .anon-success-modal .anon-cred-row button {
+      background: var(--accent); color: var(--text-on-accent); border: none;
+      border-radius: var(--radius-sm); padding: 4px 12px; font-family: var(--font-mono);
+      font-size: 0.75rem; font-weight: 600; cursor: pointer; min-height: 32px;
+    }
+    .anon-success-modal .anon-hint { font-size: 0.75rem; color: var(--text-tertiary); margin-bottom: 20px; line-height: 1.55; }
+    .anon-success-modal .anon-hint code { font-family: var(--font-mono); color: var(--text-secondary); }
+    .anon-success-modal .anon-actions .btn-primary {
+      background: var(--accent); color: var(--text-on-accent); border: none;
+      border-radius: var(--radius-md); padding: 12px 28px; font-weight: 600;
+      font-size: 0.9375rem; cursor: pointer; min-height: 44px;
+    }
+    .anon-success-modal .anon-actions .btn-primary:hover { background: var(--accent-hover); }
   </style>
 </head>
 <body>
+
+  <!-- agent discovery: visible body signal — WebFetch-style extractors often
+       drop <head>, so we put the pointer in the first extractable block.
+       wikihub-5hon -->
+  <div class="agent-banner" role="note" aria-label="For AI agents" style="text-align:center;padding:6px 16px;font-family:var(--font-mono);font-size:0.75rem;color:var(--text-muted);background:var(--bg-surface);border-bottom:1px solid var(--border-default);">
+    🤖 <strong>Agents</strong>: read <a href="/AGENTS.md" style="color:var(--accent);">/AGENTS.md</a> for one-shot setup.
+  </div>
 
   <!-- nav -->
   {% include '_nav.html' %}
@@ -797,7 +741,7 @@
         <div class="hero-panel-desc">Paste this into your agent</div>
         <div class="agent-code">
           <button class="copy-btn" onclick="navigator.clipboard.writeText(this.parentElement.querySelector('pre').textContent).then(()=>{this.textContent='copied!';setTimeout(()=>this.textContent='copy',1500)})">copy</button>
-          <pre>Go to wikihub.md/agents for setup instructions, then create a wiki called "research" with a note about what wikis are good for.</pre>
+          <pre>Go to wikihub.md/AGENTS.md for setup instructions, then create a wiki called "research" with a note about what wikis are good for.</pre>
         </div>
       </div>
     </div>
@@ -837,7 +781,7 @@
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
         </div>
         <h3>Agent API</h3>
-        <p>Native MCP server, REST endpoints, and content negotiation. Your AI agent can read, search, and edit pages programmatically.</p>
+        <p>Native MCP server, REST endpoints, CLI (<code>wikihub</code>), and content negotiation. Your AI agent can read, search, and edit pages programmatically.</p>
       </div>
       <div class="feature-card">
         <div class="feature-icon blue">
@@ -858,85 +802,111 @@
 
   <div class="divider"><hr></div>
 
+  <!-- git push -->
+  <section class="section">
+    <p class="section-label">Git native</p>
+    <h2 class="section-heading">Push from the command line</h2>
+    <p class="section-desc">Every wiki is a git repo. Use your API key as the password. Push markdown files and they go live instantly.</p>
+    <div style="max-width:560px;margin:0 auto;background:var(--bg-surface);border:1px solid var(--border-default);border-radius:var(--radius-md);padding:20px 24px;font-family:var(--font-mono);font-size:0.8125rem;line-height:1.8;color:var(--text-secondary);overflow-x:auto;">
+      <div style="color:var(--text-muted);margin-bottom:4px;"># clone a wiki</div>
+      <div>git clone <span style="color:var(--accent);">https://username:wh_KEY@{{ request.host }}/@username/wikiname.git</span></div>
+      <div style="height:8px;"></div>
+      <div style="color:var(--text-muted);"># or add as a remote and push</div>
+      <div>git remote add wikihub <span style="color:var(--accent);">https://username:wh_KEY@{{ request.host }}/@username/wikiname.git</span></div>
+      <div>git push wikihub main</div>
+    </div>
+  </section>
+
+  <div class="divider"><hr></div>
+
+  <!-- agent quickstart -->
+  <section class="section">
+    <p class="section-label">Agent API</p>
+    <h2 class="section-heading">Set up your agent in 30 seconds</h2>
+    <p class="section-desc">One API call to register. Your agent gets an account, an API key, and full read/write access.</p>
+    <div style="max-width:560px;margin:0 auto;">
+      <div style="background:var(--bg-surface);border:1px solid var(--border-default);border-radius:var(--radius-md);padding:20px 24px;font-family:var(--font-mono);font-size:0.8125rem;line-height:1.8;color:var(--text-secondary);overflow-x:auto;margin-bottom:16px;">
+        <div style="color:var(--text-muted);margin-bottom:4px;"># create an account (pick a descriptive username)</div>
+        <div>curl -X POST {{ request.host_url }}api/v1/accounts \</div>
+        <div>&nbsp;&nbsp;-H <span style="color:var(--accent);">'Content-Type: application/json'</span> \</div>
+        <div>&nbsp;&nbsp;-d <span style="color:var(--accent);">'{"username":"my-agent"}'</span></div>
+      </div>
+      <div style="background:rgba(212,160,74,0.08);border:1px solid rgba(212,160,74,0.25);border-radius:var(--radius-md);padding:12px 16px;font-size:0.8125rem;color:var(--text-secondary);margin-bottom:16px;">
+        <strong style="color:var(--accent);">⚠️ Save your API key immediately</strong> — it's shown exactly once in the response and cannot be retrieved later. Your <strong>username</strong> is also in the response.
+      </div>
+      <div style="background:var(--bg-elevated);border:1px solid var(--border-default);border-radius:var(--radius-md);padding:12px 16px;font-size:0.8125rem;color:var(--text-secondary);margin-bottom:16px;">
+        <strong style="color:var(--text-primary);">Agent convention:</strong> Save to <code style="font-family:var(--font-mono);">~/.wikihub/credentials.json</code> (mode <code>0600</code>) — the response's <code>client_config</code> has the exact JSON to write. Agents on the same machine can read the key with <code>jq -r .default.api_key ~/.wikihub/credentials.json</code>. <a href="/agents#credentials" style="color:var(--accent);">More &rarr;</a>
+      </div>
+      <div style="background:var(--bg-surface);border:1px solid var(--border-default);border-radius:var(--radius-md);padding:20px 24px;font-family:var(--font-mono);font-size:0.8125rem;line-height:1.8;color:var(--text-secondary);overflow-x:auto;">
+        <div style="color:var(--text-muted);margin-bottom:4px;"># MCP config (Claude Code, Cursor, etc.)</div>
+        <div>{</div>
+        <div>&nbsp;&nbsp;<span style="color:var(--accent);">"mcpServers"</span>: {</div>
+        <div>&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:var(--accent);">"wikihub"</span>: {</div>
+        <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:var(--accent);">"url"</span>: "{{ request.host_url }}mcp",</div>
+        <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:var(--accent);">"headers"</span>: {"Authorization": "Bearer wh_YOUR_KEY"}</div>
+        <div>&nbsp;&nbsp;&nbsp;&nbsp;}</div>
+        <div>&nbsp;&nbsp;}</div>
+        <div>}</div>
+      </div>
+      <p style="text-align:center;margin-top:16px;"><a href="/agents" style="color:var(--accent);font-size:0.875rem;">Full API docs &rarr;</a></p>
+    </div>
+  </section>
+
+  <div class="divider"><hr></div>
+
+  <!-- CLI -->
+  <section class="section">
+    <p class="section-label">CLI</p>
+    <h2 class="section-heading">Shell-friendly in 30 seconds</h2>
+    <p class="section-desc">Pipe markdown, cron-publish, bootstrap wikis from shell scripts. Thin wrapper over the REST API.</p>
+    <div style="max-width:560px;margin:0 auto;background:var(--bg-surface);border:1px solid var(--border-default);border-radius:var(--radius-md);padding:20px 24px;font-family:var(--font-mono);font-size:0.8125rem;line-height:1.8;color:var(--text-secondary);overflow-x:auto;">
+      <div style="color:var(--text-muted);margin-bottom:4px;"># install (one-liner)</div>
+      <div>curl -fsSL <span style="color:var(--accent);">{{ request.host_url }}install.sh</span> | sh</div>
+      <div style="height:8px;"></div>
+      <div style="color:var(--text-muted);"># or via pipx directly</div>
+      <div>pipx install <span style="color:var(--accent);">wikihub-cli</span></div>
+      <div style="height:8px;"></div>
+      <div style="color:var(--text-muted);"># sign up, create a wiki, write a page</div>
+      <div>wikihub signup --username <span style="color:var(--accent);">you</span></div>
+      <div>wikihub new <span style="color:var(--accent);">notes</span> --title <span style="color:var(--accent);">"Notes"</span></div>
+      <div>echo <span style="color:var(--accent);">"# hello"</span> | wikihub write <span style="color:var(--accent);">you/notes/hello.md</span></div>
+      <div>wikihub read <span style="color:var(--accent);">you/notes/hello.md</span></div>
+    </div>
+    <p style="text-align:center;margin-top:16px;"><a href="/agents#cli" style="color:var(--accent);font-size:0.875rem;">Full CLI reference &rarr;</a></p>
+  </section>
+
+  <div class="divider"><hr></div>
+
   <!-- example wikis -->
   <section class="section">
     <p class="section-label">Explore</p>
     <h2 class="section-heading">Public wikis on wikihub</h2>
     <p class="section-desc">Knowledge bases published by the community. Fork any of them to start your own.</p>
     <div class="wiki-grid">
-
+      {% for wiki in featured_wikis %}
       <div class="wiki-card">
         <div class="wiki-card-header">
-          <div class="wiki-card-avatar">AK</div>
-          <span class="wiki-card-owner">@karpathy</span>
+          <div class="wiki-card-avatar">{{ wiki.owner.username[0]|upper }}{{ wiki.owner.username[1]|upper if wiki.owner.username|length > 1 else '' }}</div>
+          <span class="wiki-card-owner">@{{ wiki.owner.username }}</span>
           <span class="wiki-card-visibility">
             <svg viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="8" r="3"/></svg>
             public
           </span>
         </div>
-        <h4 class="wiki-card-title"><a href="/explore">deep-learning-notes</a></h4>
-        <p class="wiki-card-desc">Personal notes on transformers, tokenization, and training recipes. Updated weekly with paper summaries and implementation insights.</p>
+        <h4 class="wiki-card-title"><a href="/@{{ wiki.owner.username }}/{{ wiki.slug }}">{{ wiki.title or wiki.slug }}</a></h4>
+        <p class="wiki-card-desc">{{ wiki.description or '' }}</p>
         <div class="wiki-card-meta">
           <span>
             <svg viewBox="0 0 16 16" fill="var(--accent)"><path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.75.75 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z"/></svg>
-            342
+            {{ wiki.star_count }}
           </span>
           <span>
             <svg viewBox="0 0 16 16" fill="var(--text-tertiary)"><path d="M5 5.372v.878c0 .414.336.75.75.75h4.5a.75.75 0 0 0 .75-.75v-.878a2.25 2.25 0 1 1 1.5 0v.878a2.25 2.25 0 0 1-2.25 2.25h-1.5v2.128a2.251 2.251 0 1 1-1.5 0V8.5h-1.5A2.25 2.25 0 0 1 3.5 6.25v-.878a2.25 2.25 0 1 1 1.5 0Z"/></svg>
-            28 forks
+            {{ wiki.fork_count }} forks
           </span>
-          <span class="wiki-card-lang">Markdown</span>
         </div>
       </div>
-
-      <div class="wiki-card">
-        <div class="wiki-card-header">
-          <div class="wiki-card-avatar">SR</div>
-          <span class="wiki-card-owner">@sarah</span>
-          <span class="wiki-card-visibility">
-            <svg viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="8" r="3"/></svg>
-            public
-          </span>
-        </div>
-        <h4 class="wiki-card-title"><a href="/explore">systems-design-wiki</a></h4>
-        <p class="wiki-card-desc">Distributed systems patterns, CAP theorem deep dives, and real-world architecture case studies from FAANG interviews.</p>
-        <div class="wiki-card-meta">
-          <span>
-            <svg viewBox="0 0 16 16" fill="var(--accent)"><path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.75.75 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z"/></svg>
-            187
-          </span>
-          <span>
-            <svg viewBox="0 0 16 16" fill="var(--text-tertiary)"><path d="M5 5.372v.878c0 .414.336.75.75.75h4.5a.75.75 0 0 0 .75-.75v-.878a2.25 2.25 0 1 1 1.5 0v.878a2.25 2.25 0 0 1-2.25 2.25h-1.5v2.128a2.251 2.251 0 1 1-1.5 0V8.5h-1.5A2.25 2.25 0 0 1 3.5 6.25v-.878a2.25 2.25 0 1 1 1.5 0Z"/></svg>
-            14 forks
-          </span>
-          <span class="wiki-card-lang">Markdown</span>
-        </div>
-      </div>
-
-      <div class="wiki-card">
-        <div class="wiki-card-header">
-          <div class="wiki-card-avatar">MZ</div>
-          <span class="wiki-card-owner">@marcus</span>
-          <span class="wiki-card-visibility">
-            <svg viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="8" r="3"/></svg>
-            public
-          </span>
-        </div>
-        <h4 class="wiki-card-title"><a href="/explore">effective-altruism-research</a></h4>
-        <p class="wiki-card-desc">Curated research summaries on AI safety, biosecurity, and global priorities. Collaborative wiki with suggested-edit workflow.</p>
-        <div class="wiki-card-meta">
-          <span>
-            <svg viewBox="0 0 16 16" fill="var(--accent)"><path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.75.75 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z"/></svg>
-            95
-          </span>
-          <span>
-            <svg viewBox="0 0 16 16" fill="var(--text-tertiary)"><path d="M5 5.372v.878c0 .414.336.75.75.75h4.5a.75.75 0 0 0 .75-.75v-.878a2.25 2.25 0 1 1 1.5 0v.878a2.25 2.25 0 0 1-2.25 2.25h-1.5v2.128a2.251 2.251 0 1 1-1.5 0V8.5h-1.5A2.25 2.25 0 0 1 3.5 6.25v-.878a2.25 2.25 0 1 1 1.5 0Z"/></svg>
-            7 forks
-          </span>
-          <span class="wiki-card-lang">Markdown</span>
-        </div>
-      </div>
-
+      {% endfor %}
     </div>
   </section>
 
@@ -945,41 +915,11 @@
     <div class="cta-banner-inner">
       <h2>Start publishing in seconds</h2>
       <p>Create your first wiki for free. No credit card, no build pipeline, no waiting.</p>
-      <a href="/auth/signup" class="btn btn-primary">Get started</a>
+      <a href="/auth/login" class="btn btn-primary">Get started</a>
     </div>
   </section>
 
-  <!-- footer -->
-  <footer class="footer">
-    <div class="footer-inner">
-      <div>
-        <div class="footer-logo"><span class="bracket">[[</span><span class="name">wikihub</span><span class="bracket">]]</span></div>
-        <p class="footer-tagline">GitHub for LLM wikis</p>
-      </div>
-      <div class="footer-links">
-        <div class="footer-col">
-          <h4>Product</h4>
-          <ul>
-            <li><a href="/explore">Explore</a></li>
-            <li><a href="/roadmap">Roadmap</a></li>
-            <li><a href="/auth/signup">Get started</a></li>
-          </ul>
-        </div>
-        <div class="footer-col">
-          <h4>Developers</h4>
-          <ul>
-            <li><a href="/agents">API docs</a></li>
-            <li><a href="/llms.txt">llms.txt</a></li>
-            <li><a href="/.well-known/mcp/server-card.json">MCP server</a></li>
-            <li><a href="/AGENTS.md">AGENTS.md</a></li>
-          </ul>
-        </div>
-      </div>
-    </div>
-    <div class="footer-bottom">
-      &copy; 2026 wikihub. All rights reserved.
-    </div>
-  </footer>
+  {% include '_footer.html' %}
 
 <script>
 (function(){var m=document.querySelector('meta[name="csrf-token"]');if(!m)return;var F=window.fetch;window.fetch=function(u,o){o=o||{};var mt=(o.method||'GET').toUpperCase();if(mt!=='GET'&&mt!=='HEAD'){var s=typeof u==='string'?u:u.url||'';if(!s.startsWith('/api/')){o.headers=o.headers||{};if(!o.headers['X-CSRFToken'])o.headers['X-CSRFToken']=m.content}}return F.call(this,u,o)}})();
@@ -990,6 +930,95 @@ document.addEventListener('drop', (e) => { e.preventDefault(); });
 const heroZone = document.getElementById('hero-drop-zone');
 const heroFileInput = document.getElementById('hero-file-input');
 const heroStatus = document.getElementById('hero-drop-status');
+const IS_AUTHED_FOR_UPLOAD = {{ 'true' if current_user and current_user.is_authenticated else 'false' }};
+
+function resetHeroZone() { if (heroZone) { heroZone.style.pointerEvents = ''; heroZone.style.opacity = ''; } }
+
+function startHeroUpload(names) {
+  heroStatus.textContent = '';
+  const spinner = document.createElement('span');
+  spinner.className = 'wh-spinner';
+  heroStatus.appendChild(spinner);
+  heroStatus.appendChild(document.createTextNode(names.join(', ') + ' — creating wiki...'));
+  heroZone.style.pointerEvents = 'none';
+  heroZone.style.opacity = '0.7';
+}
+
+function showAnonSuccess(data) {
+  resetHeroZone();
+  var overlay = document.createElement('div');
+  overlay.id = 'anon-success-overlay';
+  overlay.innerHTML =
+    '<div class="anon-success-modal">' +
+      '<h3>Your wiki is live</h3>' +
+      '<p class="anon-wiki-url"><a href="' + data.wiki_url + '">' + data.wiki_url + '</a></p>' +
+      '<p class="anon-warn"><strong>Save your API key to keep editing.</strong> It is shown exactly once.</p>' +
+      '<div class="anon-cred-row"><code id="anon-key">' + data.api_key + '</code>' +
+        '<button type="button" id="anon-copy">copy</button></div>' +
+      '<p class="anon-hint">Signed in as <code>@' + data.username + '</code>. Add an email in /settings to claim this account permanently.</p>' +
+      '<div class="anon-actions">' +
+        '<button type="button" id="anon-go" class="btn-primary">Open wiki</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(overlay);
+  document.getElementById('anon-copy').addEventListener('click', function() {
+    navigator.clipboard.writeText(data.api_key).then(function() {
+      var b = document.getElementById('anon-copy'); b.textContent = 'copied!'; setTimeout(function(){ b.textContent = 'copy'; }, 1500);
+    });
+  });
+  document.getElementById('anon-go').addEventListener('click', function() {
+    window.location.href = data.wiki_url;
+  });
+}
+
+function doHeroUpload(fileList, slug) {
+  var fd = new FormData();
+  fd.append('slug', slug);
+  fd.append('title', slug.replace(/-/g, ' '));
+  fd.append('description', '');
+  for (var i = 0; i < fileList.length; i++) fd.append('files', fileList[i]);
+
+  var endpoint = IS_AUTHED_FOR_UPLOAD ? '/new' : '/new-anonymous';
+
+  if (endpoint === '/new-anonymous') {
+    fetch(endpoint, { method: 'POST', body: fd })
+      .then(function(r) {
+        return r.json().then(function(data) { return { ok: r.ok, status: r.status, data: data }; });
+      })
+      .then(function(res) {
+        if (!res.ok) {
+          resetHeroZone();
+          heroStatus.textContent = 'Upload failed: ' + (res.data && res.data.message ? res.data.message : 'status ' + res.status);
+          return;
+        }
+        showAnonSuccess(res.data);
+      })
+      .catch(function(err) { resetHeroZone(); heroStatus.textContent = 'Upload failed: ' + err.message; });
+    return;
+  }
+
+  fetch(endpoint, { method: 'POST', body: fd, redirect: 'follow' })
+    .then(function(r) {
+      if (r.ok && r.redirected && !r.url.includes('/auth/login')) {
+        window.location.href = r.url;
+        return;
+      }
+      if (r.redirected && r.url.includes('/auth/login')) {
+        resetHeroZone();
+        heroStatus.textContent = 'Session expired — sign in to continue.';
+        window.location.href = '/auth/login?next=/';
+        return;
+      }
+      return r.text().then(function(body) {
+        resetHeroZone();
+        var msg = 'Upload failed (status ' + r.status + ')';
+        var m = body.match(/<p>([^<]{1,240})<\/p>/);
+        if (m) msg += ' — ' + m[1];
+        heroStatus.textContent = msg;
+      });
+    })
+    .catch(function(err) { resetHeroZone(); heroStatus.textContent = 'Upload failed: ' + err.message; });
+}
 
 if (heroZone) {
   ['dragenter', 'dragover'].forEach(e => {
@@ -1007,70 +1036,8 @@ if (heroZone) {
 
     const names = Array.from(files).map(f => f.name);
     const slug = names[0].replace(/\.zip$|\.md$/i, '').replace(/[^a-z0-9-_]/gi, '-').toLowerCase();
-    heroStatus.textContent = '';
-    const spinner = document.createElement('span');
-    spinner.className = 'wh-spinner';
-    heroStatus.appendChild(spinner);
-    heroStatus.appendChild(document.createTextNode(names.join(', ') + ' — creating wiki...'));
-    heroZone.style.pointerEvents = 'none';
-    heroZone.style.opacity = '0.7';
-
-    const fd = new FormData();
-    fd.append('slug', slug);
-    fd.append('title', slug.replace(/-/g, ' '));
-    fd.append('description', '');
-    for (const f of files) fd.append('files', f);
-
-    function resetHeroZone() { heroZone.style.pointerEvents = ''; heroZone.style.opacity = ''; }
-
-    function stashFilesAndRedirect(files, slug) {
-      var req = indexedDB.open('wikihub_uploads', 1);
-      req.onupgradeneeded = function(e) { e.target.result.createObjectStore('pending'); };
-      req.onsuccess = function(e) {
-        var db = e.target.result;
-        var tx = db.transaction('pending', 'readwrite');
-        var store = tx.objectStore('pending');
-        var fileData = [];
-        var done = 0;
-        Array.from(files).forEach(function(f) {
-          var reader = new FileReader();
-          reader.onload = function() {
-            fileData.push({ name: f.name, type: f.type, data: reader.result });
-            done++;
-            if (done === files.length) {
-              store.put({ files: fileData, slug: slug, title: slug.replace(/-/g, ' ') }, 'upload');
-              tx.oncomplete = function() {
-                window.location.href = '/auth/login?next=/new';
-              };
-            }
-          };
-          reader.readAsArrayBuffer(f);
-        });
-      };
-      req.onerror = function() { window.location.href = '/auth/login?next=/new'; };
-    }
-
-    function doUpload(fileList, slug) {
-      var fd = new FormData();
-      fd.append('slug', slug);
-      fd.append('title', slug.replace(/-/g, ' '));
-      fd.append('description', '');
-      for (var i = 0; i < fileList.length; i++) fd.append('files', fileList[i]);
-
-      fetch('/new', { method: 'POST', body: fd, redirect: 'follow' })
-        .then(function(r) {
-          if (r.redirected && !r.url.includes('/auth/login')) {
-            window.location.href = r.url;
-          } else {
-            resetHeroZone();
-            heroStatus.textContent = 'Sign in to create your wiki — your files will be waiting.';
-            stashFilesAndRedirect(fileList, slug);
-          }
-        })
-        .catch(function(err) { resetHeroZone(); heroStatus.textContent = 'Upload failed: ' + err.message; });
-    }
-
-    doUpload(files, slug);
+    startHeroUpload(names);
+    doHeroUpload(files, slug);
   });
 
   heroZone.addEventListener('click', () => heroFileInput.click());
@@ -1079,15 +1046,8 @@ if (heroZone) {
     const files = heroFileInput.files;
     const names = Array.from(files).map(f => f.name);
     const slug = names[0].replace(/\.zip$|\.md$/i, '').replace(/[^a-z0-9-_]/gi, '-').toLowerCase();
-    heroStatus.textContent = '';
-    const sp = document.createElement('span');
-    sp.className = 'wh-spinner';
-    heroStatus.appendChild(sp);
-    heroStatus.appendChild(document.createTextNode(names.join(', ') + ' — creating wiki...'));
-    heroZone.style.pointerEvents = 'none';
-    heroZone.style.opacity = '0.7';
-
-    doUpload(files, slug);
+    startHeroUpload(names);
+    doHeroUpload(files, slug);
   });
 }
 
@@ -1148,5 +1108,35 @@ document.querySelectorAll('[data-account-menu]').forEach(menu => {
 </div>
 <script src="{{ url_for('static', filename='js/search.js') }}"></script>
 {% endif %}
+<script>
+// theme toggle: cycle Auto → Light → Dark, persist in localStorage
+(function(){
+  var order = ['auto', 'light', 'dark'];
+  var labels = {auto: 'Theme: Auto (follow system)', light: 'Theme: Light', dark: 'Theme: Dark'};
+  function current() {
+    var t = document.documentElement.getAttribute('data-theme');
+    return (t === 'light' || t === 'dark') ? t : 'auto';
+  }
+  function apply(mode) {
+    if (mode === 'auto') document.documentElement.removeAttribute('data-theme');
+    else document.documentElement.setAttribute('data-theme', mode);
+    try {
+      if (mode === 'auto') localStorage.removeItem('wikihubTheme');
+      else localStorage.setItem('wikihubTheme', mode);
+    } catch(e) {}
+    document.querySelectorAll('[data-theme-toggle]').forEach(function(b) {
+      b.setAttribute('aria-label', labels[mode]); b.setAttribute('title', labels[mode]);
+    });
+  }
+  document.querySelectorAll('[data-theme-toggle]').forEach(function(btn) {
+    btn.setAttribute('aria-label', labels[current()]);
+    btn.setAttribute('title', labels[current()]);
+    btn.addEventListener('click', function() {
+      var next = order[(order.indexOf(current()) + 1) % order.length];
+      apply(next);
+    });
+  });
+})();
+</script>
 </body>
 </html>

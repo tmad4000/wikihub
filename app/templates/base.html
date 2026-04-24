@@ -4,43 +4,29 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{% block title %}wikihub{% endblock %}</title>
+<link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+<link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+<link rel="apple-touch-icon" href="{{ url_for('static', filename='favicon.svg') }}">
+<!-- agent discovery: point AI agents at plain-markdown + LLM index. wikihub-5764 -->
+<link rel="alternate" type="text/markdown" href="/AGENTS.md" title="Agent setup (markdown)">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="LLM index">
+<meta property="og:title" content="{% block og_title %}{{ self.title() }}{% endblock %}">
+<meta property="og:description" content="{% block og_desc %}GitHub for LLM wikis. Publish markdown knowledge bases in seconds.{% endblock %}">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="wikihub">
+<meta name="description" content="{% block meta_desc %}GitHub for LLM wikis. Publish markdown knowledge bases in seconds.{% endblock %}">
+{% include '_theme.html' %}
+{% include '_analytics.html' %}
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github-dark-dimmed.min.css">
+<!-- highlight.js: two themes, media-gated for auto mode; JS flips media= for explicit override -->
+<link id="hljs-theme-dark" rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github-dark-dimmed.min.css" media="(prefers-color-scheme: dark)">
+<link id="hljs-theme-light" rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)">
 <style>
-:root {
-  --bg-base: #0f0e0c;
-  --bg-surface: #191714;
-  --bg-elevated: #221f1b;
-  --bg-overlay: #2a2622;
-  --text-primary: #e8e0d4;
-  --text-secondary: #b8ad9e;
-  --text-tertiary: #887d6e;
-  --text-muted: #5a5248;
-  --accent: #d4a04a;
-  --accent-hover: #e0b35a;
-  --accent-muted: rgba(212, 160, 74, 0.12);
-  --accent-subtle: rgba(212, 160, 74, 0.06);
-  --color-public: #7a9e6b;
-  --color-private: #c45c3c;
-  --color-unlisted: #b8ad9e;
-  --color-wikilink: #d4a04a;
-  --color-wikilink-broken: #c45c3c;
-  --color-external: #7a9bb5;
-  --border-default: rgba(200, 180, 150, 0.08);
-  --border-emphasis: rgba(200, 180, 150, 0.15);
-  --border-strong: rgba(200, 180, 150, 0.25);
-  --border-accent: rgba(212, 160, 74, 0.4);
-  --control-bg: rgba(0, 0, 0, 0.2);
-  --control-border: rgba(200, 180, 150, 0.12);
-  --font-body: 'Inter', -apple-system, sans-serif;
-  --font-mono: 'IBM Plex Mono', 'Menlo', monospace;
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 10px;
-}
+/* Theme tokens live in _theme.html (included above). This <style> block
+   holds base-layout rules only. Colors must come from tokens. */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 body {
   font-family: var(--font-body);
@@ -71,6 +57,7 @@ a:hover { text-decoration: underline; }
 .nav-link:hover { color: var(--text-primary); text-decoration: none; }
 .nav-agents { color: var(--accent); font-weight: 500; font-family: var(--font-mono); font-size: 0.8125rem; }
 .nav-agents:hover { color: var(--accent-hover); }
+@media (max-width: 640px) { .nav-hide-mobile { display: none; } }
 .nav-account {
   position: relative;
   display: flex;
@@ -177,7 +164,7 @@ a:hover { text-decoration: underline; }
   text-decoration: none;
 }
 .nav-account-item.logout {
-  color: #d88c75;
+  color: var(--color-error-soft);
 }
 .nav-account-item .menu-hint {
   font-family: var(--font-mono);
@@ -189,7 +176,7 @@ a:hover { text-decoration: underline; }
 .search-trigger {
   display: none; align-items: center; gap: 6px; padding: 6px 12px;
   -webkit-appearance: none; appearance: none;
-  background: #1a1816 !important; border: 1px solid var(--control-border);
+  background: var(--search-trigger-bg) !important; border: 1px solid var(--control-border);
   border-radius: var(--radius-sm); color: var(--text-muted); cursor: pointer;
   font-size: 0.75rem; font-family: var(--font-body); min-height: 32px;
 }
@@ -197,7 +184,7 @@ a:hover { text-decoration: underline; }
 .search-trigger:hover { border-color: var(--border-emphasis); color: var(--text-secondary); }
 .search-trigger kbd { font-family: var(--font-mono); font-size: 0.625rem; background: var(--bg-elevated); padding: 1px 4px; border-radius: 3px; border: 1px solid var(--border-default); }
 
-.search-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 200; }
+.search-overlay { display: none; position: fixed; inset: 0; background: var(--scrim); z-index: 200; }
 .search-overlay.open { display: block; }
 .search-modal {
   display: none; position: fixed; top: 15vh; left: 50%; transform: translateX(-50%);
@@ -216,6 +203,28 @@ a:hover { text-decoration: underline; }
   border-bottom: 1px solid var(--border-default);
 }
 .search-input::placeholder { color: var(--text-muted); }
+.search-scope {
+  display: none; align-items: center; gap: 6px; padding: 4px 12px;
+  font-size: 0.75rem; color: var(--text-tertiary);
+  border-bottom: 1px solid var(--border-default);
+}
+.search-scope.active { display: flex; }
+.search-scope-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; border-radius: 99px;
+  border: 1px solid var(--border-accent, var(--accent)); color: var(--accent);
+  font-family: var(--font-mono); font-size: 0.6875rem;
+}
+.search-scope-pill button {
+  background: none; border: none; color: var(--text-muted);
+  cursor: pointer; padding: 0; font-size: 0.75rem; line-height: 1;
+}
+.search-scope-pill button:hover { color: var(--text-primary); }
+.search-scope-global {
+  font-family: var(--font-mono); font-size: 0.6875rem;
+  color: var(--text-muted); cursor: pointer;
+}
+.search-scope-global:hover { color: var(--text-secondary); }
 #search-results { max-height: 400px; overflow-y: auto; }
 .search-result {
   display: block; padding: 12px 20px; text-decoration: none;
@@ -232,8 +241,38 @@ a:hover { text-decoration: underline; }
 
 @keyframes wh-spin { to { transform: rotate(360deg); } }
 .wh-spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border-emphasis); border-top-color: var(--accent); border-radius: 50%; animation: wh-spin 0.6s linear infinite; vertical-align: middle; margin-right: 6px; }
-.btn-primary .wh-spinner, .btn-save .wh-spinner { border-color: rgba(15, 14, 12, 0.25); border-top-color: #0f0e0c; }
+.btn-primary .wh-spinner, .btn-save .wh-spinner { border-color: color-mix(in srgb, var(--text-on-accent) 25%, transparent); border-top-color: var(--text-on-accent); }
 .btn-loading { pointer-events: none; opacity: 0.7; }
+
+.hover-preview {
+  position: fixed; z-index: 300; pointer-events: auto;
+  width: 320px; max-height: 400px; overflow-y: auto; overflow-x: hidden;
+  background: var(--bg-elevated); border: 1px solid var(--border-emphasis);
+  border-radius: var(--radius-md); padding: 16px 18px;
+  box-shadow: var(--hover-preview-shadow);
+  font-size: 0.8125rem; line-height: 1.6; color: var(--text-secondary);
+}
+.hover-preview-title {
+  font-size: 0.9375rem; font-weight: 600; color: var(--text-primary);
+  margin-bottom: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.hover-preview-excerpt { display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; }
+.hover-preview-more { display: block; margin-top: 8px; font-size: 0.75rem; color: var(--accent); text-decoration: none; }
+.hover-preview-loading { color: var(--text-muted); font-style: italic; }
+.hover-preview.stub { border-style: dashed; border-color: var(--border-default); }
+.hover-preview-stub-label {
+  font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--text-muted); margin-bottom: 4px;
+}
+.hover-preview-stub-body { color: var(--text-muted); font-size: 0.8125rem; margin-bottom: 10px; }
+.hover-preview-stub-create { display: inline-block; font-size: 0.75rem; color: var(--accent); text-decoration: none; }
+.hover-preview-stub-create:hover { text-decoration: underline; }
+.hover-preview-related { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border-default); }
+.hover-preview-related-label { font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 4px; }
+.hover-preview-link { display: block; font-size: 0.75rem; color: var(--accent); text-decoration: none; padding: 2px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hover-preview-link:hover { text-decoration: underline; }
+
+/* .theme-toggle styles live in _theme.html */
 
 {% block extra_css %}{% endblock %}
 </style>
@@ -243,9 +282,34 @@ a:hover { text-decoration: underline; }
 <body>
 {% include '_nav.html' %}
 
+{% if current_user and current_user.is_authenticated and current_user.email and not current_user.email_verified_at %}
+<div class="email-verify-banner" role="status" aria-label="Email verification needed">
+  <span><strong>Unverified email.</strong> We sent a verification link to <code>{{ current_user.email }}</code>.</span>
+  <form method="post" action="{{ url_for('auth.resend_verification') }}" style="display:inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button type="submit" class="email-verify-resend">Resend</button>
+  </form>
+</div>
+<style>
+.email-verify-banner {
+  display: flex; gap: 0.75rem; align-items: center; justify-content: center;
+  padding: 0.5rem 1rem; font-size: 0.8125rem;
+  background: var(--bg-warn, #fff6e0); color: var(--text-warn, #6b4b00);
+  border-bottom: 1px solid var(--border-warn, #e0c97a);
+}
+.email-verify-banner code { font-family: var(--font-mono); font-size: 0.8125rem; }
+.email-verify-resend {
+  background: transparent; border: 1px solid currentColor; color: inherit;
+  padding: 0.15rem 0.5rem; font: inherit; cursor: pointer; border-radius: 3px;
+}
+.email-verify-resend:hover { background: rgba(0,0,0,0.05); }
+</style>
+{% endif %}
+
 <div class="search-overlay" id="search-overlay"></div>
 <div class="search-modal" id="search-modal"{% if current_user and current_user.is_authenticated %} data-username="{{ current_user.username }}"{% endif %}>
   <input type="text" class="search-input" id="search-input" placeholder="Search wikis..." autocomplete="off">
+  <div class="search-scope" id="search-scope"></div>
   <div id="search-results"></div>
 </div>
 
@@ -257,18 +321,81 @@ a:hover { text-decoration: underline; }
 <script>
 (function(){var m=document.querySelector('meta[name="csrf-token"]');if(!m)return;var F=window.fetch;window.fetch=function(u,o){o=o||{};var mt=(o.method||'GET').toUpperCase();if(mt!=='GET'&&mt!=='HEAD'){var s=typeof u==='string'?u:u.url||'';if(!s.startsWith('/api/')){o.headers=o.headers||{};if(o.headers instanceof Headers){if(!o.headers.has('X-CSRFToken'))o.headers.set('X-CSRFToken',m.content)}else{if(!o.headers['X-CSRFToken'])o.headers['X-CSRFToken']=m.content}}}return F.call(this,u,o)}})();
 document.addEventListener('DOMContentLoaded', () => {
+  var katexMacros = {"\\Sum": "\\sum"};
   try {
     renderMathInElement(document.body, {
       delimiters: [
         {left: '$$', right: '$$', display: true},
         {left: '$', right: '$', display: false},
       ],
+      macros: katexMacros,
       throwOnError: false,
+    });
+  } catch(e) {}
+  try {
+    document.querySelectorAll('.math.amsmath').forEach(function(el) {
+      katex.render(el.textContent.trim(), el, {displayMode: true, throwOnError: false, macros: katexMacros});
     });
   } catch(e) {}
   try {
     document.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
   } catch(e) {}
+
+  // ── Theme toggle: cycles Auto → Light → Dark. Persists in localStorage.
+  //    Keeps the highlight.js stylesheets aligned with the effective theme.
+  (function(){
+    const order = ['auto', 'light', 'dark'];
+    const labels = {auto: 'Theme: Auto (follow system)', light: 'Theme: Light', dark: 'Theme: Dark'};
+    const hljsDark = document.getElementById('hljs-theme-dark');
+    const hljsLight = document.getElementById('hljs-theme-light');
+    const darkMq = window.matchMedia('(prefers-color-scheme: dark)');
+
+    function current() {
+      var t = document.documentElement.getAttribute('data-theme');
+      return (t === 'light' || t === 'dark') ? t : 'auto';
+    }
+    function effective() {
+      var c = current();
+      if (c !== 'auto') return c;
+      return darkMq.matches ? 'dark' : 'light';
+    }
+    function syncHljs() {
+      if (!hljsDark || !hljsLight) return;
+      var c = current();
+      if (c === 'auto') {
+        hljsDark.media = '(prefers-color-scheme: dark)';
+        hljsLight.media = '(prefers-color-scheme: light)';
+      } else if (c === 'dark') {
+        hljsDark.media = 'all'; hljsLight.media = 'not all';
+      } else {
+        hljsDark.media = 'not all'; hljsLight.media = 'all';
+      }
+    }
+    function apply(mode) {
+      if (mode === 'auto') document.documentElement.removeAttribute('data-theme');
+      else document.documentElement.setAttribute('data-theme', mode);
+      try {
+        if (mode === 'auto') localStorage.removeItem('wikihubTheme');
+        else localStorage.setItem('wikihubTheme', mode);
+      } catch(e) {}
+      syncHljs();
+      document.querySelectorAll('[data-theme-toggle]').forEach(function(b) {
+        b.setAttribute('aria-label', labels[mode]);
+        b.setAttribute('title', labels[mode]);
+      });
+    }
+    syncHljs();
+    darkMq.addEventListener && darkMq.addEventListener('change', syncHljs);
+
+    document.querySelectorAll('[data-theme-toggle]').forEach(function(btn) {
+      btn.setAttribute('aria-label', labels[current()]);
+      btn.setAttribute('title', labels[current()]);
+      btn.addEventListener('click', function() {
+        var next = order[(order.indexOf(current()) + 1) % order.length];
+        apply(next);
+      });
+    });
+  })();
 
   const accountMenus = document.querySelectorAll('[data-account-menu]');
   accountMenus.forEach((menu) => {
@@ -301,16 +428,333 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 });
 </script>
-<footer style="text-align:center;padding:24px 16px 16px;font-size:0.6875rem;color:var(--text-muted);font-family:var(--font-mono);">
-  <a href="/explore" style="color:var(--text-muted);text-decoration:none;">explore</a>
-  &middot;
-  <a href="/people" style="color:var(--text-muted);text-decoration:none;">people</a>
-  &middot;
-  <a href="/agents" style="color:var(--text-muted);text-decoration:none;">agents</a>
-  &middot;
-  <a href="/api/v1/admin/claude-auth" style="color:var(--text-muted);text-decoration:none;">admin</a>
-</footer>
+{% include '_footer.html' %}
 <script src="{{ url_for('static', filename='js/search.js') }}"></script>
+<script>
+// hover preview cards — LessWrong-style stacking
+(function() {
+  var stack = []; // array of {el: card element, depth: number}
+  var hideTimer = null;
+  var cache = {};
+
+  function parseWikiUrl(href) {
+    try {
+      var url = new URL(href, window.location.origin);
+      var m = url.pathname.match(/^\/@([^/]+)\/([^/]+)\/(.+)/);
+      if (!m) return null;
+      return { owner: m[1], slug: m[2], path: m[3] };
+    } catch (e) { return null; }
+  }
+
+  function extractWikilinks(content) {
+    if (!content) return [];
+    var re = /\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/g;
+    var links = [], seen = {}, m;
+    while ((m = re.exec(content)) !== null) {
+      var name = m[1].trim();
+      if (!seen[name]) { seen[name] = true; links.push(name); }
+      if (links.length >= 5) break;
+    }
+    return links;
+  }
+
+  function closeFromDepth(depth) {
+    while (stack.length > depth) {
+      var entry = stack.pop();
+      entry.el.remove();
+    }
+    // safety net — if we're clearing to root, sweep any .hover-preview DOM
+    // nodes that somehow aren't tracked in `stack` (stale fetch responses,
+    // race conditions). without this, orphans linger and block future clicks.
+    if (depth === 0) {
+      document.querySelectorAll('.hover-preview').forEach(function(el) { el.remove(); });
+    }
+  }
+
+  function closeAll() {
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(function() {
+      closeFromDepth(0);
+    }, 200);
+  }
+
+  function cancelClose() {
+    clearTimeout(hideTimer);
+  }
+
+  function positionCard(c, rect, depth) {
+    var preferBelow = (depth % 2 === 0);
+    var left = rect.left;
+    if (left + 320 > window.innerWidth) left = window.innerWidth - 330;
+    if (left < 10) left = 10;
+
+    var top;
+    if (preferBelow) {
+      top = rect.bottom + 6;
+      if (top + 400 > window.innerHeight) top = rect.top - c.offsetHeight - 6;
+    } else {
+      top = rect.top - c.offsetHeight - 6;
+      if (top < 10) top = rect.bottom + 6;
+    }
+    c.style.top = top + 'px';
+    c.style.left = left + 'px';
+  }
+
+  function buildCard(data, depth) {
+    var c = document.createElement('div');
+    c.className = 'hover-preview';
+    c.style.zIndex = 300 + depth;
+    c.dataset.depth = depth;
+
+    var pageUrl = '/@' + (data._owner || '') + '/' + (data._slug || '') + '/' + (data.path || '');
+
+    var titleEl = document.createElement('div');
+    titleEl.className = 'hover-preview-title';
+    titleEl.textContent = data.title || data.path;
+    c.appendChild(titleEl);
+
+    if (data.excerpt) {
+      var excerptEl = document.createElement('div');
+      excerptEl.className = 'hover-preview-excerpt';
+      var ex = data.excerpt.replace(/\s+$/, '');
+      // always end the preview on "…" so users know there's more to read;
+      // -webkit-line-clamp may cut mid-word without rendering its own glyph
+      if (!/[…\u2026]$|\.\.\.$/.test(ex)) ex += '…';
+      excerptEl.textContent = ex;
+      c.appendChild(excerptEl);
+    }
+
+    var moreEl = document.createElement('a');
+    moreEl.className = 'hover-preview-more';
+    moreEl.textContent = '(read more)';
+    moreEl.href = pageUrl;
+    c.appendChild(moreEl);
+
+    var links = extractWikilinks(data.content);
+    if (links.length > 0 && data._owner && data._slug) {
+      var relatedEl = document.createElement('div');
+      relatedEl.className = 'hover-preview-related';
+      var labelEl = document.createElement('div');
+      labelEl.className = 'hover-preview-related-label';
+      labelEl.textContent = 'Related to';
+      relatedEl.appendChild(labelEl);
+
+      // build lookup of resolved wikilink URLs from the page
+      var resolvedLinks = {};
+      document.querySelectorAll('.wikilink[data-target]').forEach(function(a) {
+        resolvedLinks[a.dataset.target.toLowerCase()] = a.href;
+      });
+
+      links.forEach(function(name) {
+        var linkEl = document.createElement('a');
+        linkEl.className = 'hover-preview-link';
+        linkEl.textContent = name;
+        // use resolved URL from page if available, otherwise construct best guess
+        var resolved = resolvedLinks[name.toLowerCase()];
+        if (resolved) {
+          linkEl.href = resolved;
+        } else {
+          var linkSlug = name.replace(/\s+/g, '_');
+          linkEl.href = '/@' + data._owner + '/' + data._slug + '/' + encodeURIComponent(linkSlug);
+        }
+
+        linkEl.addEventListener('mouseenter', function() {
+          cancelClose();
+          var rect = linkEl.getBoundingClientRect();
+          var parsed = parseWikiUrl(linkEl.href);
+          if (!parsed) return;
+          // close any cards deeper than this one, then open a new one
+          closeFromDepth(depth + 1);
+          openPreview(parsed, rect, depth + 1);
+        });
+        relatedEl.appendChild(linkEl);
+      });
+      c.appendChild(relatedEl);
+    }
+
+    // keep stack alive while mouse is on any card
+    c.addEventListener('mouseenter', function() { cancelClose(); });
+    c.addEventListener('mouseleave', onCardLeave(depth));
+
+    return c;
+  }
+
+  // wikihub-spwp: when leaving a card, decide based on where the cursor goes.
+  //   - into a deeper (or equal-depth) card in the stack  → keep stack alive
+  //   - into a SHALLOWER card in the stack                → close cards deeper
+  //     than it (so leaving secondary back onto primary dismisses secondary)
+  //   - anywhere else                                      → arm full close
+  function onCardLeave(myDepth) {
+    return function(e) {
+      if (e.relatedTarget && e.relatedTarget.closest) {
+        var nextCard = e.relatedTarget.closest('.hover-preview');
+        if (nextCard) {
+          var nextEntry = stack.find(function(s) { return s.el === nextCard; });
+          if (nextEntry) {
+            if (nextEntry.depth >= myDepth) return;
+            cancelClose();
+            closeFromDepth(nextEntry.depth + 1);
+            return;
+          }
+        }
+      }
+      closeAll();
+    };
+  }
+
+  function openPreview(parsed, rect, depth) {
+    var key = parsed.owner + '/' + parsed.slug + '/' + parsed.path;
+    cancelClose();
+
+    if (cache[key]) {
+      var c = buildCard(cache[key], depth);
+      document.body.appendChild(c);
+      positionCard(c, rect, depth);
+      stack.push({ el: c, depth: depth });
+      return;
+    }
+
+    // loading card
+    var c = document.createElement('div');
+    c.className = 'hover-preview';
+    c.style.zIndex = 300 + depth;
+    var loading = document.createElement('div');
+    loading.className = 'hover-preview-loading';
+    loading.textContent = 'Loading\u2026';
+    c.appendChild(loading);
+    c.addEventListener('mouseenter', function() { cancelClose(); });
+    c.addEventListener('mouseleave', onCardLeave(depth));
+    document.body.appendChild(c);
+    positionCard(c, rect, depth);
+    stack.push({ el: c, depth: depth });
+
+    var apiPath = '/api/v1/wikis/' + parsed.owner + '/' + parsed.slug + '/pages/' + parsed.path;
+    if (!apiPath.endsWith('.md')) apiPath += '.md';
+
+    function removeLoadingFromStack() {
+      var idx = stack.findIndex(function(s) { return s.el === c; });
+      if (idx >= 0) stack.splice(idx, 1);
+    }
+
+    fetch(apiPath)
+      .then(function(r) {
+        return r.json().then(function(j) { return { status: r.status, ok: r.ok, data: j }; })
+                       .catch(function() { return { status: r.status, ok: r.ok, data: null }; });
+      })
+      .then(function(res) {
+        // if loading card was already popped (user moved on before fetch resolved),
+        // drop the response on the floor — otherwise we leak an orphan card
+        var idx = stack.findIndex(function(s) { return s.el === c; });
+        if (idx < 0) { c.remove(); return; }
+        if (!res.ok || !res.data) {
+          // wikihub-spwp: 404 → show stub card instead of silently vanishing.
+          // covers "Related to" links whose targets don't exist in the wiki.
+          var fakeLink = document.createElement('a');
+          fakeLink.setAttribute('href', '/@' + parsed.owner + '/' + parsed.slug + '/' + parsed.path);
+          fakeLink.dataset.target = parsed.path.replace(/\.md$/, '');
+          fakeLink.textContent = parsed.path;
+          c.remove();
+          stack.splice(idx, 1);
+          openStubPreview(fakeLink, rect, depth);
+          return;
+        }
+        var data = res.data;
+        data._owner = parsed.owner;
+        data._slug = parsed.slug;
+        cache[key] = data;
+        var newC = buildCard(data, depth);
+        document.body.appendChild(newC);
+        positionCard(newC, rect, depth);
+        c.remove();
+        stack[idx] = { el: newC, depth: depth };
+      })
+      .catch(function() { removeLoadingFromStack(); c.remove(); });
+  }
+
+  // wikihub-spwp: stub cards for wikilinks pointing at pages that do not exist.
+  // .wikilink-broken is set by app/renderer.py:321 for unresolved [[links]].
+  // Show a dedicated card (no fetch) so the preview doesn't silently vanish.
+  function openStubPreview(linkEl, rect, depth) {
+    var c = document.createElement('div');
+    c.className = 'hover-preview stub';
+    c.style.zIndex = 300 + depth;
+    c.dataset.depth = depth;
+
+    var label = document.createElement('div');
+    label.className = 'hover-preview-stub-label';
+    label.textContent = 'Stub';
+    c.appendChild(label);
+
+    var titleEl = document.createElement('div');
+    titleEl.className = 'hover-preview-title';
+    titleEl.textContent = linkEl.dataset.target || linkEl.textContent.trim();
+    c.appendChild(titleEl);
+
+    var body = document.createElement('div');
+    body.className = 'hover-preview-stub-body';
+    body.textContent = 'Page not created yet.';
+    c.appendChild(body);
+
+    var create = document.createElement('a');
+    create.className = 'hover-preview-stub-create';
+    create.textContent = 'Create this page →';
+    create.href = linkEl.getAttribute('href');
+    c.appendChild(create);
+
+    c.addEventListener('mouseenter', function() { cancelClose(); });
+    c.addEventListener('mouseleave', onCardLeave(depth));
+    document.body.appendChild(c);
+    positionCard(c, rect, depth);
+    stack.push({ el: c, depth: depth });
+  }
+
+  // page-level hover detection — immediate, no delay
+  var lastHoverEl = null;
+  document.addEventListener('mouseover', function(e) {
+    var el = e.target.closest('.wikilink, .article a[href^="/@"]');
+    if (!el || el === lastHoverEl) return;
+    if (el.closest('.hover-preview')) return;
+    lastHoverEl = el;
+    var href = el.getAttribute('href');
+    if (!href || href.startsWith('#')) return;
+
+    cancelClose();
+    closeFromDepth(0);
+
+    if (el.classList.contains('wikilink-broken')) {
+      openStubPreview(el, el.getBoundingClientRect(), 0);
+      return;
+    }
+
+    var parsed = parseWikiUrl(href);
+    if (!parsed) return;
+    openPreview(parsed, el.getBoundingClientRect(), 0);
+  });
+
+  document.addEventListener('mouseout', function(e) {
+    var el = e.target.closest('.wikilink, .article a[href^="/@"]');
+    if (!el) return;
+    if (el.closest('.hover-preview')) return;
+    var related = e.relatedTarget;
+    if (related && related.closest && related.closest('.hover-preview')) return;
+    lastHoverEl = null;
+    closeAll();
+  });
+
+  // click anywhere outside cards closes entire stack (and any orphans)
+  document.addEventListener('click', function(e) {
+    if (e.target.closest('.hover-preview')) return;
+    cancelClose();
+    closeFromDepth(0);
+    lastHoverEl = null;
+  });
+})();
+</script>
+<script>
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/static/sw.js', { scope: '/' });
+}
+</script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

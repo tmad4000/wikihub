@@ -2,7 +2,7 @@ from app import db
 from app.models import Page, Wiki
 
 
-DISCOVERABLE_VISIBILITIES = ("public", "public-edit")
+DISCOVERABLE_VISIBILITIES = ("public", "public-view", "public-edit")
 
 
 def _is_self_viewer(viewer, owner):

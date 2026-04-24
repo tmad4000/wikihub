@@ -46,13 +46,18 @@ def llms_txt():
         "> GitHub for LLM wikis — a hosting platform for markdown knowledge bases.",
         "",
         "## Documentation",
-        "- [Agent setup](/agents): API registration, endpoints, MCP config",
+        "- [Agent setup (markdown)](/AGENTS.md): one-shot onboarding recipe, API, MCP, CLI — prefer this over the HTML version",
+        "- [Agent setup (HTML)](/agents): same content, human-rendered",
         "- [API docs](/agents#api-reference): REST API reference",
         "",
         "## API",
         "- Base: /api/v1",
-        "- Auth: Bearer token (POST /api/v1/accounts to register)",
-        "- MCP: /mcp",
+        "- Auth: Bearer token (POST /api/v1/accounts to register — save the key, it's shown only once)",
+        "- Credentials convention: ~/.wikihub/credentials.json (mode 0600) — signup response includes a client_config hint",
+        "- Magic sign-in: POST /api/v1/auth/magic-link with Bearer OR {username,password} — returns a one-time browser login URL",
+        "- Git: clone/push with https://username:wh_KEY@host/@user/wiki.git",
+        "- MCP: /mcp (add to your agent's mcpServers config)",
+        "- CLI: `pipx install wikihub-cli` then `wikihub signup`, `wikihub write`, `wikihub read`, `wikihub search` (see /AGENTS.md)",
         "",
         "## Optional",
     ]
@@ -104,6 +109,48 @@ def agents_md():
     """plain markdown version of the agents page."""
     content = """# wikihub — agent setup
 
+## onboarding in one shot
+
+If a human just told you something like *"make me an account with foo@example.com
+and a private wiki called 'team-docs' shared with alice@ex.com and bob@ex.com"* —
+chain these three calls with no guessing. Private is the default (the scaffolded
+`.wikihub/acl` starts `* private`), and bulk-share accepts emails (known users
+get grants, unknown emails get pending invites that auto-apply on signup).
+
+```bash
+EMAIL=foo@example.com
+USERNAME=foo                                     # url-safe handle; used in /@foo/...
+SLUG=team-docs
+TITLE="Team Docs"
+COLLABS='["alice@ex.com","bob@ex.com"]'          # JSON array of teammate emails
+ROLE=edit                                        # or "read"
+
+# 1. Sign up. Save the api_key — it is shown exactly once.
+SIGNUP=$(curl -sS -X POST https://wikihub.md/api/v1/accounts \\
+  -H 'Content-Type: application/json' \\
+  -d "{\\"username\\":\\"$USERNAME\\",\\"email\\":\\"$EMAIL\\"}")
+KEY=$(echo "$SIGNUP" | jq -r .api_key)
+mkdir -p ~/.wikihub && echo "$SIGNUP" | jq '.client_config.content' > ~/.wikihub/credentials.json
+chmod 600 ~/.wikihub/credentials.json
+
+# 2. Create the wiki. Private by default — no visibility flag needed.
+curl -sS -X POST https://wikihub.md/api/v1/wikis \\
+  -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \\
+  -d "{\\"slug\\":\\"$SLUG\\",\\"title\\":\\"$TITLE\\"}" | jq .
+
+# 3. Share with teammates by email. Unknown emails become pending invites.
+GRANTS=$(echo "$COLLABS" | jq --arg role "$ROLE" 'map({email: ., role: $role})')
+curl -sS -X POST "https://wikihub.md/api/v1/wikis/$USERNAME/$SLUG/share/bulk" \\
+  -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \\
+  -d "{\\"grants\\":$GRANTS,\\"pattern\\":\\"*\\"}" | jq .
+```
+
+Step 3's response partitions grants into `added` (existing users — ACL updated),
+`invited` (unknown emails — pending invite stashed and notification sent),
+`skipped` (already granted — idempotent), and `failed` (malformed entry).
+
+Everything below is the per-endpoint reference for when you need more.
+
 ## quick start
 
 Register and get an API key in one call:
@@ -112,14 +159,85 @@ Register and get an API key in one call:
 POST /api/v1/accounts
 Content-Type: application/json
 
-{"username": "your-name"}
+{"username": "your-name", "email": "your@email.com"}
 ```
 
-Response: `{"user_id": 1, "username": "your-name", "api_key": "wh_..."}`
+`email` and `display_name` are optional but recommended — they enable
+email-based sharing and show up in collaborator UIs.
 
-Save the API key — it's shown only once. Use as `Authorization: Bearer wh_...`.
+Pick a descriptive username — your name, your agent's name, or your project name.
+It becomes your namespace: `/@your-name/wiki-slug`.
+
+Response:
+
+```json
+{
+  "user_id": 1,
+  "username": "your-name",
+  "api_key": "wh_abc123...",
+  "client_config": {
+    "path": "~/.wikihub/credentials.json",
+    "mode": "0600",
+    "profile": "default",
+    "content": {
+      "default": {
+        "server": "https://wikihub.md",
+        "username": "your-name",
+        "api_key": "wh_abc123..."
+      }
+    },
+    "save_instruction": "...",
+    "read_snippets": { "shell": "jq -r .default.api_key ~/.wikihub/credentials.json", "python": "...", "curl": "..." },
+    "env_alternative": {"WIKIHUB_API_KEY": "wh_..."}
+  }
+}
+```
+
+**⚠️ SAVE YOUR API KEY NOW.** It is shown exactly once in this response and cannot
+be retrieved later. Your username is also in the response — you'll need it for all wiki URLs.
+
+Use the key as `Authorization: Bearer wh_...` on all subsequent requests.
+
+## save credentials (agent convention)
+
+Agents on the same machine share API keys via a well-known file:
+
+**`~/.wikihub/credentials.json`** (mode `0600`)
+
+```json
+{
+  "default": {
+    "server": "https://wikihub.md",
+    "username": "your-name",
+    "api_key": "wh_..."
+  }
+}
+```
+
+The signup/token response includes a `client_config` object with the exact content
+to save. After signup, write `client_config.content` to `client_config.path`
+(create the `~/.wikihub/` directory if needed; chmod `0600`). If the file already
+exists, merge into it — keep other profiles intact.
+
+Future agents on this machine can read the key without any wikihub tooling:
+
+```bash
+jq -r .default.api_key ~/.wikihub/credentials.json
+```
+
+```python
+import json, os
+api_key = json.load(open(os.path.expanduser("~/.wikihub/credentials.json")))["default"]["api_key"]
+```
+
+Env-var alternative (same names used by the `client_config.env_alternative` field):
+`WIKIHUB_SERVER`, `WIKIHUB_USERNAME`, `WIKIHUB_API_KEY`.
 
 ## one-click browser sign-in
+
+The human stays at the keyboard; the agent mints a short-lived, single-use URL.
+
+**From an API key:**
 
 ```
 POST /api/v1/auth/magic-link
@@ -129,9 +247,19 @@ Content-Type: application/json
 {"next": "/settings"}
 ```
 
+**From username + password** (no API key needed):
+
+```
+POST /api/v1/auth/magic-link
+Content-Type: application/json
+
+{"username": "your-name", "password": "...", "next": "/settings"}
+```
+
 Response: `{"login_url": "https://wikihub.md/auth/magic/wl_...", "expires_at": "..."}`
 
-The link is short-lived and single-use. Open it in a browser to establish a normal web session.
+The link is short-lived (15 min default) and single-use. Open it in a browser to
+establish a normal web session. The raw API key never ends up in the URL.
 
 ## create a wiki
 
@@ -168,18 +296,185 @@ Content-Type: application/json
 {"path": "wiki/hello.md", "content": "# Hello\\n\\nContent.", "visibility": "public"}
 ```
 
-## MCP endpoint
+## git clone & push
 
-```json
-{
-  "mcpServers": {
-    "wikihub": {
-      "url": "https://wikihub.md/mcp",
-      "headers": {"Authorization": "Bearer wh_YOUR_KEY"}
-    }
-  }
-}
+every wiki is a real git repo. use your API key as the password:
+
 ```
+# clone
+git clone https://your-name:wh_YOUR_KEY@wikihub.md/@your-name/my-wiki.git
+
+# or add as a remote to an existing repo
+git remote add wikihub https://your-name:wh_YOUR_KEY@wikihub.md/@your-name/my-wiki.git
+git push wikihub main
+```
+
+push markdown files and they go live instantly.
+
+## MCP endpoint — Claude Connector
+
+WikiHub ships a Model Context Protocol server that lets Claude Desktop,
+Claude Code, ChatGPT, Cursor, and any other MCP-compatible client read and
+write your wikis with your own API key. **It's a standalone node service
+hosted at `mcp.wikihub.md`, separate from the Flask app** — source is in
+`mcp-server/` in the repo (TypeScript, 19 tools, per-request auth isolation,
+ported from the noos MCP server).
+
+**Hosted endpoint:** `https://mcp.wikihub.md/mcp`
+**Health check:** `curl https://mcp.wikihub.md/healthz` → `{"status":"ok"}`
+
+### Authentication — no OAuth, no client ID
+
+The server accepts your existing `wh_...` API key via any of:
+
+1. `Authorization: Bearer wh_...` header (preferred)
+2. `x-api-key: wh_...` header
+3. `?key=wh_...` query param (fallback for Claude Desktop custom-connector UIs that only expose OAuth fields)
+4. `WIKIHUB_API_KEY` env (for the stdio transport)
+
+There is no OAuth flow, no client-ID registration, no OIDC discovery.
+`/.well-known/oauth-authorization-server` and friends all return 404 by design,
+because one-shot agent onboarding (§1 of this doc) is the core principle.
+
+### Tool surface (19 tools)
+
+Read (auth optional on public content):
+`wikihub_whoami`, `wikihub_search`, `wikihub_get_page`, `wikihub_list_pages`,
+`wikihub_get_wiki`, `wikihub_commit_log`, `wikihub_shared_with_me`.
+
+Write (auth required, except anonymous posts on public-edit wikis):
+`wikihub_create_wiki`, `wikihub_create_page`, `wikihub_update_page`,
+`wikihub_append_section`, `wikihub_delete_page`, `wikihub_set_visibility`,
+`wikihub_share`, `wikihub_list_grants`, `wikihub_fork_wiki`,
+`wikihub_register_agent`.
+
+ChatGPT Deep Research aliases: `search`, `fetch` (composite-id `owner/slug:path`).
+
+### Claude Code (stdio — recommended for local dev)
+
+```bash
+claude mcp add -s user wikihub -- \\
+  env WIKIHUB_API_KEY=wh_YOUR_KEY node /path/to/wikihub/mcp-server/dist/index.js
+```
+
+Or via the remote HTTP transport (no local build):
+
+```bash
+claude mcp add -s user wikihub --transport http \\
+  --header "Authorization: Bearer wh_YOUR_KEY" \\
+  https://mcp.wikihub.md/mcp
+```
+
+### Claude Desktop / Claude.ai (custom connector — no local install)
+
+Settings → Connectors → Add custom connector:
+
+- **Name:** WikiHub
+- **URL:** `https://mcp.wikihub.md/mcp`
+- **Custom headers:** `Authorization: Bearer wh_YOUR_KEY`
+
+If your build's custom-connector UI only exposes OAuth fields, append the
+key as a query parameter instead: `https://mcp.wikihub.md/mcp?key=wh_YOUR_KEY`.
+
+### ChatGPT (custom connector / Deep Research)
+
+Available on Pro, Plus, Business, Enterprise, and Education plans. Three
+toggles — one required, two strongly recommended.
+
+**1. Enable developer mode (required for custom MCP):**
+Settings → Apps & Connectors → Advanced → **Developer mode** → On.
+Confirm the warning. Without this, ChatGPT will not accept unverified MCP
+servers.
+
+**2. Add the connector:**
+Settings → Apps & Connectors → **Add new connector**
+- **Name:** WikiHub
+- **MCP Server URL:** `https://mcp.wikihub.md/mcp`
+- **Authentication:** custom header, `Authorization: Bearer wh_YOUR_KEY`
+- Check "I trust this application" → **Create**
+
+**3. Enable connector search (recommended):**
+Settings → Personalization → Advanced → **Connector search** → On.
+Lets ChatGPT auto-query WikiHub without an explicit `@WikiHub` each turn.
+You can still force it with `@WikiHub` or the Tools menu.
+
+**4. Enable reference chat history (recommended):**
+Settings → Personalization → **Reference chat history** → On.
+Carries context across sessions — compounds well with a WikiHub wiki used
+as durable memory. Note: this shares a toggle with "Reference saved
+memories" — turning one off turns both off.
+
+To use in a chat: open the composer's Developer-mode picker (or Tools
+menu), select **WikiHub**, and ask. Deep Research uses the `search` /
+`fetch` tool pair automatically.
+
+### Legacy /mcp endpoint on wikihub.md
+
+The hand-rolled Flask `/mcp` JSON-RPC dispatcher at `https://wikihub.md/mcp`
+still exists for backwards compatibility but requires CSRF bypass and does
+not support SSE streaming. **Prefer `mcp.wikihub.md/mcp` for all new work.**
+
+### CLI helper
+
+```bash
+wikihub mcp-config   # prints the stdio mcpServers JSON pre-filled with your saved key
+```
+
+## skill — /wikihub-build (personal LLM wiki compiler)
+
+A checked-in skill at `skills/wikihub-build/SKILL.md` in the repo ports Farza
+Majeed's canonical `/wiki` skill (the one everyone at the AGI House LLM Wiki
+event is using) to WikiHub's hosted storage. Instead of local `raw/` and
+`wiki/` directories, it writes to two private WikiHub wikis over MCP —
+`@you/personal-wiki-raw` for source entries and `@you/personal-wiki` for the
+compiled knowledge base. Same Karpathy three-layer pattern, same writing
+standards, same ingest/absorb/query/cleanup/breakdown/status commands.
+
+Install once:
+
+```bash
+mkdir -p ~/.claude/skills/wikihub-build
+curl -fsSL https://raw.githubusercontent.com/tmad4000/wikihub/main/skills/wikihub-build/SKILL.md \\
+  > ~/.claude/skills/wikihub-build/SKILL.md
+```
+
+Then invoke inside Claude Code with `/wikihub-build ingest`, `/wikihub-build absorb all`,
+`/wikihub-build query <question>`, etc. Claude Desktop / Claude.ai discover it
+when you mention the skill name in chat. The MCP connector above must be
+loaded in the same client — the skill is the orchestration, the connector
+provides the tools.
+
+Comparison with Farza's original local-files skill:
+
+| | Farza (`/wiki`) | WikiHub (`/wikihub-build`) |
+|---|---|---|
+| Storage | `raw/` + `wiki/` folders on disk | Two hosted WikiHub wikis via MCP |
+| Backlinks | `_backlinks.json` rebuilt from grep | Native `Wikilink` model — free |
+| Visibility | Publish = git push | Per-page `wikihub_set_visibility` |
+| Multi-machine | Diverges | Single source of truth (hosted) |
+| Portability | Copy the folder | Every page has a stable public URL |
+| Sharing | Whole-repo access | Per-page / per-folder ACL |
+
+## CLI
+
+Thin wrapper over this REST API. Install once, then compose with shell pipelines.
+
+```bash
+curl -fsSL https://wikihub.md/install.sh | sh   # one-line installer (pipx)
+# or: pipx install wikihub-cli
+# or: pip install -e cli/ from the repo
+
+wikihub signup --username you     # saves key to ~/.wikihub/credentials.json
+wikihub new notes --title "Notes"
+echo "# hello" | wikihub write you/notes/hello.md
+wikihub read you/notes/hello.md
+wikihub search "hello" --wiki you/notes
+wikihub mcp-config                # prints mcpServers JSON pre-filled
+```
+
+Subcommands: `signup | login | logout | whoami | new | ls | read | write | publish | rm | search | mcp-config | version`.
+
+Auth order: `--api-key` flag → `WIKIHUB_*` env vars → `~/.wikihub/credentials.json` (`--profile` selects).
 
 ## content negotiation
 
@@ -231,6 +526,23 @@ def mcp_discovery():
     })
 
 
+@main_bp.route("/install.sh")
+def install_sh():
+    """One-line CLI installer. Usage: curl -fsSL {host}/install.sh | sh"""
+    import os
+    script_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "scripts",
+        "install.sh",
+    )
+    try:
+        with open(script_path, "r") as f:
+            body = f.read()
+    except FileNotFoundError:
+        return Response("# install.sh missing on server\nexit 1\n", status=503, content_type="text/plain; charset=utf-8")
+    return Response(body, content_type="text/x-shellscript; charset=utf-8")
+
+
 @main_bp.route("/.well-known/wikihub.json")
 def wikihub_bootstrap():
     """site bootstrap manifest."""
@@ -241,6 +553,12 @@ def wikihub_bootstrap():
         "signup_url": base + "/api/v1/accounts",
         "docs_url": base + "/agents",
         "llms_txt": base + "/llms.txt",
+        "cli": {
+            "name": "wikihub-cli",
+            "install": "pipx install wikihub-cli",
+            "install_url": base + "/install.sh",
+            "repo": "https://github.com/tmad4000/wikihub/tree/main/cli",
+        },
     })
 
 

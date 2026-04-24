@@ -9,7 +9,7 @@ from app.acl import parse_acl, resolve_visibility
 from app.content_utils import extract_wikilinks, parse_markdown_document
 from app.git_backend import _repo_path, init_wiki_repo
 from app.git_sync import list_files_in_repo, read_file_from_repo, regenerate_public_mirror, scaffold_wiki, sync_page_to_repo
-from app.models import Page, Wikilink, Wiki, Star, Fork, User
+from app.models import Page, Wikilink, Wiki, Star, Fork, User, PendingInvite
 
 
 def _sanitize_for_json(obj):
@@ -151,6 +151,68 @@ def replace_acl_file(username, slug, content, message="Update ACL"):
     sync_page_to_repo(username, slug, ".wikihub/acl", content, message=message)
 
 
+def materialize_pending_invites_for(user):
+    """turn any PendingInvite rows for this user's email into real ACL grants.
+    only runs when the user has a verified email — callers should set
+    email_verified_at before invoking. returns a list of applied grants
+    (for audit / notification callers).
+    """
+    if not user or not user.email or not user.email_verified_at:
+        return []
+
+    invites = (
+        PendingInvite.query
+        .filter_by(email=user.email.strip().lower())
+        .all()
+    )
+    if not invites:
+        return []
+
+    applied = []
+    # group invites by wiki so we open each ACL file once
+    by_wiki = {}
+    for inv in invites:
+        by_wiki.setdefault(inv.wiki_id, []).append(inv)
+
+    for wiki_id, rows in by_wiki.items():
+        wiki = db.session.get(Wiki, wiki_id)
+        if not wiki:
+            for r in rows:
+                db.session.delete(r)
+            continue
+        owner = db.session.get(User, wiki.owner_id)
+        if not owner:
+            continue
+
+        acl_text = read_file_from_repo(owner.username, wiki.slug, ".wikihub/acl", public=False) or "* private\n"
+        existing_lines = set(acl_text.splitlines())
+        new_lines = []
+        for r in rows:
+            line = f"{r.pattern} @{user.username}:{r.role}"
+            if line not in existing_lines:
+                existing_lines.add(line)
+                new_lines.append(line)
+            applied.append({
+                "wiki": f"{owner.username}/{wiki.slug}",
+                "wiki_id": wiki.id,
+                "pattern": r.pattern,
+                "role": r.role,
+            })
+            db.session.delete(r)
+
+        if new_lines:
+            acl_text = acl_text.rstrip() + "\n" + "\n".join(new_lines) + "\n"
+            sync_page_to_repo(
+                owner.username, wiki.slug, ".wikihub/acl", acl_text,
+                message=f"Materialize pending invite(s) for @{user.username}",
+            )
+            acl_rules = load_acl_rules(owner.username, wiki.slug)
+            index_repo_pages(owner.username, wiki.slug, wiki, reset=True)
+            regenerate_public_mirror(owner.username, wiki.slug, acl_rules)
+
+    return applied
+
+
 def delete_wiki_repos(username, slug):
     for public in (False, True):
         repo = _repo_path(username, slug, public=public)
@@ -172,14 +234,25 @@ def index_repo_pages(username, slug, wiki, reset=False):
     seen_paths = set()
 
     for path in list_files_in_repo(username, slug):
-        if not path.endswith(".md"):
+        # Skip git/wikihub plumbing
+        if path.endswith(".gitkeep") or path.startswith(".wikihub/"):
             continue
 
-        content = read_file_from_repo(username, slug, path)
-        if content is None:
-            continue
+        is_md = path.endswith(".md")
 
-        frontmatter, _ = parse_markdown_document(content)
+        if is_md:
+            content = read_file_from_repo(username, slug, path)
+            if content is None:
+                continue
+            frontmatter, _ = parse_markdown_document(content)
+        else:
+            # Non-markdown files (transcripts, datasets, images, etc.) get Page rows
+            # so they appear in sidebar/listings/search. No frontmatter parsing — just
+            # path + ACL-derived visibility. The actual file bytes are served by the
+            # binary handler in app/routes/wiki.py.
+            content = ""
+            frontmatter = {}
+
         visibility = resolve_visibility(path, acl_rules, frontmatter.get("visibility"))
         page = existing_pages.get(path)
         if page is None:

@@ -18,6 +18,7 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 
 import bcrypt
 from flask import Blueprint, request, Response, abort, current_app
@@ -88,6 +89,27 @@ def _require_auth_401():
     )
 
 
+def _push_not_owner_403(owner, slug, viewer=None):
+    """403 with a human-readable body when a non-owner tries to push.
+
+    Plain text so `git push` can surface it via remote: lines. Points the
+    user at the web editor and the fork path — collaborator git push access
+    is tracked as wikihub-g7jz (design) and wikihub-7zif (this UX)."""
+    base = request.url_root.rstrip("/")
+    who = f" You're signed in as @{viewer.username}." if viewer else ""
+    body = (
+        f"Push rejected — only @{owner} can push to @{owner}/{slug}.git.{who}\n"
+        f"\n"
+        f"You can:\n"
+        f"  - edit via the web editor: {base}/@{owner}/{slug}\n"
+        f"  - fork the wiki and push to your own copy: {base}/@{owner}/{slug}/fork\n"
+        f"\n"
+        f"Collaborator git push access is being designed "
+        f"(see wikihub-g7jz). For now, git push is owner-only.\n"
+    )
+    return Response(body, status=403, content_type="text/plain; charset=utf-8")
+
+
 def _git_command_path(cmd):
     """find full path to a git sub-command binary."""
     result = subprocess.run(["git", "--exec-path"], capture_output=True, text=True)
@@ -153,6 +175,20 @@ def _install_hook(repo_path, username, slug):
         hook_dst = os.path.join(hooks_dir, hook_name)
         if os.path.isfile(hook_src):
             shutil.copy2(hook_src, hook_dst)
+            # The hook imports app.acl → app.__init__ → flask. `/usr/bin/env
+            # python3` picks up the system Python with no Flask, so the push
+            # fails with ModuleNotFoundError (wikihub-35gh). Rewrite the
+            # shebang to this interpreter's absolute path so the hook runs
+            # inside the app's venv.
+            try:
+                with open(hook_dst, "r") as _hf:
+                    _content = _hf.read()
+                if _content.startswith("#!/usr/bin/env python3"):
+                    _rest = _content.split("\n", 1)[1] if "\n" in _content else ""
+                    with open(hook_dst, "w") as _hf:
+                        _hf.write(f"#!{sys.executable}\n{_rest}")
+            except OSError:
+                pass
             st = os.stat(hook_dst)
             os.chmod(hook_dst, st.st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 
@@ -188,8 +224,10 @@ def info_refs(username, slug):
 
     # receive-pack (push) requires owner auth
     if service == "git-receive-pack":
-        if not is_owner:
+        if not user:
             return _require_auth_401()
+        if not is_owner:
+            return _push_not_owner_403(username, slug, viewer=user)
 
     # dispatch: owner -> authoritative, others -> public mirror
     if is_owner:
@@ -254,8 +292,10 @@ def receive_pack(username, slug):
         abort(404)
     username = resolved_owner.username
     user = _check_basic_auth()
-    if not user or user.username != username:
+    if not user:
         return _require_auth_401()
+    if user.username != username:
+        return _push_not_owner_403(username, slug, viewer=user)
 
     repo = _repo_path(username, slug)
     if not os.path.isdir(repo):

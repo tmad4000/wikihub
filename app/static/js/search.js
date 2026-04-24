@@ -4,12 +4,85 @@
   const overlay = document.getElementById('search-overlay');
   const input = document.getElementById('search-input');
   const results = document.getElementById('search-results');
+  const scopeContainer = document.getElementById('search-scope');
   if (!modal) return;
 
   let debounceTimer;
   let activeIndex = 0;
   let items = [];
   let searchId = 0; // track request freshness
+
+  // --- scope detection ---
+  let currentScope = null; // { type: 'wiki'|'author', owner, slug? }
+  let originalScope = null; // remember initial scope for re-scoping
+
+  function detectScope() {
+    const path = window.location.pathname;
+    // wiki page: /@owner/slug/...
+    const wikiMatch = path.match(/^\/@([\w-]+)\/([\w-]+)/);
+    if (wikiMatch) {
+      return { type: 'wiki', owner: wikiMatch[1], slug: wikiMatch[2] };
+    }
+    // profile page: /@owner (but not /@owner/slug)
+    const profileMatch = path.match(/^\/@([\w-]+)\/?$/);
+    if (profileMatch) {
+      return { type: 'author', owner: profileMatch[1] };
+    }
+    return null;
+  }
+
+  function renderScope() {
+    scopeContainer.textContent = '';
+    if (currentScope) {
+      scopeContainer.classList.add('active');
+      const pill = document.createElement('span');
+      pill.className = 'search-scope-pill';
+      if (currentScope.type === 'wiki') {
+        pill.textContent = 'in @' + currentScope.owner + '/' + currentScope.slug + ' ';
+      } else {
+        pill.textContent = 'by @' + currentScope.owner + ' ';
+      }
+      const dismiss = document.createElement('button');
+      dismiss.textContent = '×';
+      dismiss.title = 'Search all wikis';
+      dismiss.addEventListener('click', (e) => {
+        e.preventDefault();
+        clearScope();
+        input.focus();
+      });
+      pill.appendChild(dismiss);
+      scopeContainer.appendChild(pill);
+      input.placeholder = 'Search…';
+    } else if (originalScope) {
+      // show "All wikis" with option to re-scope
+      scopeContainer.classList.add('active');
+      const label = document.createElement('span');
+      label.className = 'search-scope-global';
+      if (originalScope.type === 'wiki') {
+        label.textContent = 'All wikis — click to scope to @' + originalScope.owner + '/' + originalScope.slug;
+      } else {
+        label.textContent = 'All wikis — click to scope to @' + originalScope.owner;
+      }
+      label.addEventListener('click', (e) => {
+        e.preventDefault();
+        currentScope = { ...originalScope };
+        renderScope();
+        doSearch();
+        input.focus();
+      });
+      scopeContainer.appendChild(label);
+      input.placeholder = 'Search all wikis…';
+    } else {
+      scopeContainer.classList.remove('active');
+      input.placeholder = 'Search wikis…';
+    }
+  }
+
+  function clearScope() {
+    currentScope = null;
+    renderScope();
+    doSearch();
+  }
 
   function open() {
     modal.classList.add('open');
@@ -18,6 +91,10 @@
     results.textContent = '';
     items = [];
     activeIndex = 0;
+    // detect scope from current URL
+    originalScope = detectScope();
+    currentScope = originalScope ? { ...originalScope } : null;
+    renderScope();
     setTimeout(() => input.focus(), 50);
   }
 
@@ -68,6 +145,10 @@
       } else {
         activateItem();
       }
+    } else if (e.key === 'Backspace' && input.value === '' && currentScope) {
+      // Backspace on empty input clears scope
+      e.preventDefault();
+      clearScope();
     }
   });
 
@@ -90,7 +171,16 @@
 
     const thisSearch = ++searchId;
 
-    fetch('/api/v1/search?q=' + encodeURIComponent(q) + '&limit=8')
+    let url = '/api/v1/search?q=' + encodeURIComponent(q) + '&limit=8';
+    if (currentScope) {
+      if (currentScope.type === 'wiki') {
+        url += '&scope=wiki&wiki=' + encodeURIComponent(currentScope.owner + '/' + currentScope.slug);
+      } else if (currentScope.type === 'author') {
+        url += '&scope=author&author=' + encodeURIComponent(currentScope.owner);
+      }
+    }
+
+    fetch(url)
       .then(r => r.json())
       .then(data => {
         // ignore stale responses from earlier searches

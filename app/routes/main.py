@@ -1,11 +1,11 @@
-from flask import current_app, jsonify, render_template, request
+from flask import current_app, flash, jsonify, redirect, render_template, request, url_for
 from flask_login import login_required, logout_user, current_user
 
 from app import db
 from app.acl import grants_for_user, list_all_grants, parse_acl
 from app.discovery import discoverable_page_for_wiki, visible_wikis_for_owner
 from app.git_sync import read_file_from_repo
-from app.models import Wiki, Page, ApiKey, User, Star, Fork, MagicLoginToken, UsernameRedirect
+from app.models import Wiki, Page, ApiKey, User, Star, Fork, MagicLoginToken, UsernameRedirect, utcnow
 from app.routes import main_bp
 import os
 import shutil
@@ -14,7 +14,30 @@ from app.wiki_ops import delete_wiki_repos
 
 @main_bp.route("/")
 def index():
-    return render_template("landing.html")
+    from app.models import Wiki, Page
+    from app.discovery import discoverable_wiki_ids
+
+    # agent content negotiation: if the client asks for markdown, serve AGENTS.md
+    # directly instead of the human landing page. wikihub-55jv
+    accept = request.headers.get("Accept", "")
+    if "text/markdown" in accept and "text/html" not in accept:
+        from app.routes.agent_surfaces import agents_md
+        return agents_md()
+
+    visible_ids = discoverable_wiki_ids()
+    featured = (
+        Wiki.query.filter(Wiki.id.in_(visible_ids))
+        .order_by(Wiki.star_count.desc(), Wiki.updated_at.desc())
+        .limit(3)
+        .all()
+    ) if visible_ids else []
+    resp = current_app.make_response(render_template("landing.html", featured_wikis=featured))
+    # agent discovery: HTTP Link header pointing at /AGENTS.md. wikihub-5764
+    resp.headers["Link"] = (
+        '</AGENTS.md>; rel="alternate"; type="text/markdown"; title="Agent setup", '
+        '</llms.txt>; rel="alternate"; type="text/plain"; title="LLM index"'
+    )
+    return resp
 
 
 @main_bp.route("/roadmap")
@@ -39,9 +62,13 @@ def explore():
             editorial.append(wiki)
     # All wikis with at least one public page, excluding editorial
     editorial_ids = {wiki.id for wiki in editorial}
-    all_wikis = (
-        Wiki.query.join(Page)
+    public_wiki_ids = (
+        db.session.query(Page.wiki_id)
         .filter(Page.visibility.in_(["public", "public-edit"]))
+        .distinct()
+    )
+    all_wikis = (
+        Wiki.query.filter(Wiki.id.in_(public_wiki_ids))
         .order_by(Wiki.updated_at.desc())
         .all()
     )
@@ -49,7 +76,12 @@ def explore():
 
     people = _people_directory(limit=6)
 
-    return render_template("explore.html", editorial=editorial, wikis=all_wikis, people=people)
+    return render_template(
+        "explore.html",
+        editorial=editorial,
+        recent_wikis=all_wikis,
+        people=people,
+    )
 
 
 @main_bp.route("/people")
@@ -84,8 +116,18 @@ def claim_email_web():
     existing = User.query.filter_by(email=email).first()
     if existing and existing.id != current_user.id:
         return {"error": "conflict", "message": "Email already claimed"}, 409
+    current_email = (current_user.email or "").strip().lower()
+    email_changed = current_email != email
+
     current_user.email = email
+    if email_changed:
+        current_user.email_verified_at = None
     db.session.commit()
+
+    if email_changed:
+        from app.routes.auth import send_verification_if_needed
+
+        send_verification_if_needed(current_user)
     if request.is_json:
         return jsonify({"email": current_user.email})
     return jsonify({"email": current_user.email})
@@ -145,7 +187,8 @@ def shared():
 
 @main_bp.route("/delete-account", methods=["POST"])
 @login_required
-def delete_account():
+def delete_account_api():
+    """legacy JSON-body delete — /settings/delete-account is the primary path."""
     data = request.get_json(silent=True) or {}
     if data.get("confirm") != current_user.username:
         return {"error": "bad_request", "message": "Type your username to confirm"}, 400

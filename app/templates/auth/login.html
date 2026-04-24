@@ -4,38 +4,20 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Sign in — wikihub</title>
+{% include '_theme.html' %}
 <style>
-  :root {
-    --bg-base: #0f0e0c;
-    --bg-surface: #191714;
-    --text-primary: #e8e0d4;
-    --text-secondary: #b8ad9e;
-    --text-tertiary: #887d6e;
-    --accent: #d4a04a;
-    --accent-hover: #e0b35a;
-    --border-default: rgba(200, 180, 150, 0.08);
-    --border-emphasis: rgba(200, 180, 150, 0.15);
-    --border-accent: rgba(212, 160, 74, 0.4);
-    --control-bg: rgba(0, 0, 0, 0.2);
-    --control-border: rgba(200, 180, 150, 0.12);
-    --color-error: #c45c3c;
-    --font-body: 'Inter', -apple-system, sans-serif;
-    --font-mono: 'IBM Plex Mono', monospace;
-    --radius-sm: 4px;
-    --radius-md: 6px;
-  }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: var(--font-body); background: var(--bg-base); color: var(--text-primary); min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px; }
   .card { background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-md); padding: 32px 28px; width: 100%; max-width: 400px; }
   .logo { font-family: var(--font-mono); font-size: 1.125rem; text-align: center; margin-bottom: 24px; }
-  .logo .bracket { color: var(--text-tertiary); }
+  .logo .bracket { color: var(--text-tertiary); } .logo:hover .bracket { color: var(--accent); } .logo { display: block; transition: opacity 0.15s; } .logo:hover { opacity: 0.8; }
   h1 { font-size: 1.25rem; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 24px; text-align: center; }
-  .flash { background: rgba(196, 92, 60, 0.1); border: 1px solid rgba(196, 92, 60, 0.3); color: var(--color-error); padding: 8px 12px; border-radius: var(--radius-sm); font-size: 0.8125rem; margin-bottom: 16px; }
+  .flash { background: rgba(var(--rgb-private), 0.1); border: 1px solid rgba(var(--rgb-private), 0.3); color: var(--color-error); padding: 8px 12px; border-radius: var(--radius-sm); font-size: 0.8125rem; margin-bottom: 16px; }
   label { display: block; font-size: 0.8125rem; color: var(--text-secondary); margin-bottom: 6px; font-weight: 500; }
   input[type="text"], input[type="email"], input[type="password"] { width: 100%; background: var(--control-bg); border: 1px solid var(--control-border); border-radius: var(--radius-sm); color: var(--text-primary); font-family: var(--font-body); font-size: 0.9375rem; padding: 10px 12px; margin-bottom: 16px; outline: none; }
   input:focus { border-color: var(--border-accent); }
   .btn { display: block; width: 100%; padding: 12px; border: none; border-radius: var(--radius-sm); font-family: var(--font-body); font-size: 0.9375rem; font-weight: 600; cursor: pointer; text-align: center; text-decoration: none; min-height: 44px; }
-  .btn-primary { background: var(--accent); color: #0f0e0c; margin-bottom: 12px; }
+  .btn-primary { background: var(--accent); color: var(--text-on-accent); margin-bottom: 12px; }
   .btn-primary:hover { background: var(--accent-hover); }
   .btn-google { background: transparent; border: 1px solid var(--border-emphasis); color: var(--text-secondary); margin-bottom: 16px; }
   .btn-google:hover { border-color: var(--border-accent); color: var(--text-primary); }
@@ -49,7 +31,7 @@
 </head>
 <body>
 <div class="card">
-  <div class="logo"><span class="bracket">[[</span>wikihub<span class="bracket">]]</span></div>
+  <a href="/" class="logo" style="text-decoration:none;color:inherit;"><span class="bracket">[[</span>wikihub<span class="bracket">]]</span></a>
   <h1>Sign in</h1>
 
   {% with messages = get_flashed_messages() %}
@@ -60,7 +42,12 @@
   {% endif %}
   {% endwith %}
 
-  <a href="{{ url_for('auth.google_login') }}" class="btn btn-google">Sign in with Google</a>
+  {% if prefill_email %}
+  <p style="font-size:0.875rem;color:var(--text-muted);background:var(--accent-subtle);padding:0.6rem 0.75rem;border-radius:var(--radius-sm);margin-bottom:1rem;">
+    You were invited at <strong>{{ prefill_email }}</strong>. Sign in below and your invite will apply automatically.
+  </p>
+  {% endif %}
+  <a href="{{ url_for('auth.google_login', next=request.args.get('next') or None, email=prefill_email or None, it=request.args.get('it') or None) }}" class="btn btn-google">Sign in with Google</a>
   <div class="divider">or</div>
 
   <form method="POST">
@@ -69,6 +56,9 @@
     <input type="text" id="username" name="username" autocomplete="username">
     <label for="password">Password</label>
     <input type="password" id="password" name="password" autocomplete="current-password">
+    <div style="text-align:right;margin-top:-8px;margin-bottom:16px;">
+      <a href="{{ url_for('auth.forgot_password') }}" style="font-size:0.8125rem;color:var(--accent);text-decoration:none;">Forgot password?</a>
+    </div>
     <button type="submit" class="btn btn-primary">Sign in</button>
   </form>
 

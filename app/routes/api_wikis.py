@@ -4,6 +4,7 @@ wiki + page REST API endpoints.
 
 import json
 import os
+import secrets
 import subprocess
 
 from flask import Response, current_app, jsonify, request
@@ -11,7 +12,7 @@ from flask import Response, current_app, jsonify, request
 from app.url_utils import url_path_from_page_path
 
 from app import db
-from app.models import User, Wiki, Page, Star, Fork, Wikilink, WikiSlugRedirect, utcnow
+from app.models import User, Wiki, Page, Star, Fork, Wikilink, WikiSlugRedirect, PendingInvite, utcnow
 from app.auth_utils import api_auth_optional, api_auth_required, rate_limit_writes
 from app.git_backend import init_wiki_repo
 from app.git_sync import (
@@ -25,6 +26,8 @@ from app.git_sync import (
     update_mirror_page,
 )
 from app.acl import can_read, can_write, list_all_grants, remove_grant, resolve_grants, resolve_visibility
+from app.email_service import send_share_invite_existing_user, send_share_invite_pending
+from app.credentials_hint import resolve_server_url
 from app.content_utils import (
     page_reference_aliases,
     parse_markdown_document,
@@ -245,6 +248,7 @@ def get_wiki(owner, slug):
         "slug": wiki.slug,
         "title": wiki.title,
         "description": wiki.description,
+        "subdomain": wiki.subdomain,
         "star_count": wiki.star_count,
         "fork_count": wiki.fork_count,
         "page_count": wiki.pages.count(),
@@ -268,9 +272,26 @@ def update_wiki(owner, slug):
         wiki.title = data["title"]
     if "description" in data:
         wiki.description = data["description"]
+    if "subdomain" in data:
+        from app.subdomains import validate_wiki_subdomain
+        raw = data["subdomain"]
+        if raw in (None, ""):
+            wiki.subdomain = None
+        else:
+            new_sub = str(raw).strip().lower()
+            if new_sub != (wiki.subdomain or ""):
+                err = validate_wiki_subdomain(new_sub, exclude_wiki_id=wiki.id)
+                if err:
+                    return {"error": "bad_request", "message": err}, 400
+                wiki.subdomain = new_sub
     db.session.commit()
 
-    return jsonify({"id": wiki.id, "title": wiki.title, "description": wiki.description})
+    return jsonify({
+        "id": wiki.id,
+        "title": wiki.title,
+        "description": wiki.description,
+        "subdomain": wiki.subdomain,
+    })
 
 
 @api_bp.route("/wikis/<owner>/<slug>", methods=["DELETE"])
@@ -470,6 +491,9 @@ def create_page(owner, slug):
     path = data.get("path", "").strip()
     content = data.get("content", "")
     visibility = data.get("visibility")
+    anonymous = bool(data.get("anonymous", False))
+    # when anonymous, claimable defaults to True per wikihub-7b2r spec
+    claimable = bool(data.get("claimable", True)) if anonymous else False
 
     if not path:
         return {"error": "bad_request", "message": "path is required"}, 400
@@ -503,12 +527,17 @@ def create_page(owner, slug):
         path=path,
         visibility=visibility,
         author=_current_username(),
+        anonymous=anonymous,
+        claimable=claimable,
     )
     update_page_metadata(page, content, frontmatter)
     db.session.add(page)
     db.session.flush()
     refresh_wikilinks_for_page(page, content)
-    author_name, author_email = _current_author()
+    if anonymous:
+        author_name, author_email = "Anonymous", "anonymous@wikihub.md"
+    else:
+        author_name, author_email = _current_author()
     sync_page_to_repo(owner_user.username, wiki.slug, path, content, message=f"Create {path}", author_name=author_name, author_email=author_email)
     append_event_to_repo(owner_user.username, wiki.slug, "page.create", path=path, visibility=page.visibility, actor=_current_username())
     update_mirror_page(owner_user.username, wiki.slug, path, acl_rules)
@@ -519,6 +548,9 @@ def create_page(owner, slug):
         "path": page.path,
         "title": page.title,
         "visibility": page.visibility,
+        "anonymous": page.anonymous,
+        "claimable": page.claimable,
+        "author": None if page.anonymous else page.author,
         "url": f"/@{owner_user.username}/{wiki.slug}/{url_path_from_page_path(path, strip_md=True)}",
     }), 201
 
@@ -599,6 +631,9 @@ def read_page(owner, slug, page_path):
         "excerpt": page.excerpt,
         "frontmatter": page.frontmatter_json,
         "content_hash": page.content_hash,
+        "anonymous": page.anonymous,
+        "claimable": page.claimable,
+        "author": None if page.anonymous else page.author,
         "updated_at": page.updated_at.isoformat(),
     })
     if etag:
@@ -942,6 +977,45 @@ def bulk_delete(owner, slug):
     return jsonify({"deleted": deleted})
 
 
+@api_bp.route("/wikis/<owner>/<slug>/pages/<path:page_path>/claim", methods=["POST"])
+@api_auth_required
+@rate_limit_writes()
+def claim_page(owner, slug, page_path):
+    """Claim authorship of an anonymous+claimable page. (wikihub-7b2r)
+    Any authenticated user can claim — first-come-first-served."""
+    owner_user, wiki, err = _get_wiki_or_404(owner, slug)
+    if err:
+        return err
+
+    page_path = _normalize_page_path_param(page_path)
+    page = Page.query.filter_by(wiki_id=wiki.id, path=page_path).first()
+    if not page and not page_path.endswith(".md"):
+        page = Page.query.filter_by(wiki_id=wiki.id, path=page_path + ".md").first()
+    if not page:
+        return {"error": "not_found", "message": "Page not found"}, 404
+
+    if not page.anonymous:
+        return {"error": "not_claimable", "message": "Page is not anonymous"}, 409
+    if not page.claimable:
+        return {"error": "not_claimable", "message": "Page is anonymous but not claimable"}, 409
+
+    claimer = request.current_user
+    page.author = claimer.username
+    page.anonymous = False
+    page.claimable = False
+    db.session.commit()
+
+    return jsonify({
+        "id": page.id,
+        "path": page.path,
+        "title": page.title,
+        "visibility": page.visibility,
+        "anonymous": False,
+        "claimable": False,
+        "author": claimer.username,
+    })
+
+
 @api_bp.route("/wikis/<owner>/<slug>/pages/<path:page_path>/share", methods=["POST"])
 @api_auth_required
 def share_page(owner, slug, page_path):
@@ -996,22 +1070,37 @@ def share_wiki(owner, slug):
     username = (data.get("username") or "").strip().lower()
     email = (data.get("email") or "").strip().lower()
     role = (data.get("role") or "").strip().lower()
-    if not username and email:
-        target = User.query.filter_by(email=email).first()
-        if not target:
-            return {"error": "not_found", "message": f"No user found with email '{email}'"}, 404
-        username = target.username
-    if not pattern or not username or role not in {"read", "edit"}:
-        return {"error": "bad_request", "message": "pattern, username (or email), and role (read|edit) are required"}, 400
+    if not pattern or role not in {"read", "edit"}:
+        return {"error": "bad_request", "message": "pattern and role (read|edit) are required"}, 400
+    if not username and not email:
+        return {"error": "bad_request", "message": "username or email is required"}, 400
 
-    # verify target user exists
+    # resolve email → username if an account already exists
+    if not username and email:
+        existing = User.query.filter_by(email=email).first()
+        if existing:
+            username = existing.username
+
+    ctx = _email_share_context(owner_user, wiki, request.current_user)
+
+    # no resolvable username yet — stash as a pending invite by email
+    if not username:
+        row, _ = _upsert_pending_invite(
+            wiki_id=wiki.id, pattern=pattern, email=email, role=role,
+            invited_by_id=request.current_user.id,
+        )
+        db.session.commit()
+        _notify_pending_email(email=email, role=role, ctx=ctx, token=row.token)
+        return jsonify({"pattern": pattern, "invited": email, "role": role})
+
     target = User.query.filter_by(username=username).first()
     if not target:
         return {"error": "not_found", "message": f"User '{username}' not found"}, 404
 
     acl_text = read_file_from_repo(owner_user.username, wiki.slug, ".wikihub/acl", public=False) or "* private\n"
     acl_line = f"{pattern} @{username}:{role}"
-    if acl_line not in acl_text.splitlines():
+    newly_granted = acl_line not in acl_text.splitlines()
+    if newly_granted:
         acl_text = acl_text.rstrip() + f"\n{acl_line}\n"
         sync_page_to_repo(owner_user.username, wiki.slug, ".wikihub/acl", acl_text,
                           message=f"Share {pattern} with @{username}:{role}")
@@ -1021,8 +1110,183 @@ def share_wiki(owner, slug):
         index_repo_pages(owner_user.username, wiki.slug, wiki, reset=True)
         regenerate_public_mirror(owner_user.username, wiki.slug, load_acl_rules(owner_user.username, wiki.slug))
         db.session.commit()
+    if newly_granted and target.id != request.current_user.id:
+        _notify_existing_user(target_username=username, role=role, ctx=ctx)
 
     return jsonify({"pattern": pattern, "grant": f"@{username}:{role}"})
+
+
+def _email_share_context(owner_user, wiki, inviter_user):
+    """Gather the shared fields every share-invite email needs."""
+    return {
+        "inviter_name": inviter_user.display_name or inviter_user.username,
+        "wiki_owner": owner_user.username,
+        "wiki_slug": wiki.slug,
+        "wiki_title": wiki.title or wiki.slug,
+        "server_url": resolve_server_url(current_app, request),
+    }
+
+
+def _notify_existing_user(*, target_username, role, ctx):
+    """Fire a share-invite email to an already-registered user; safe no-op if no email."""
+    target = User.query.filter_by(username=target_username).first()
+    if not target or not target.email:
+        return
+    send_share_invite_existing_user(to=target.email, role=role, **ctx)
+
+
+def _notify_pending_email(*, email, role, ctx, token=None):
+    send_share_invite_pending(to=email, role=role, token=token, **ctx)
+
+
+def _upsert_pending_invite(*, wiki_id, pattern, email, role, invited_by_id):
+    """Insert or update a PendingInvite row. Returns (row, created_bool).
+    Newly-created rows get a random token; existing rows keep theirs so
+    re-invites don't invalidate previously-sent emails."""
+    existing = PendingInvite.query.filter_by(
+        wiki_id=wiki_id, pattern=pattern, email=email
+    ).first()
+    if existing:
+        if existing.role != role:
+            existing.role = role
+            existing.invited_by_id = invited_by_id
+        if not existing.token:
+            existing.token = secrets.token_urlsafe(32)
+        return existing, False
+    row = PendingInvite(
+        wiki_id=wiki_id, pattern=pattern, email=email, role=role,
+        token=secrets.token_urlsafe(32),
+        invited_by_id=invited_by_id,
+    )
+    db.session.add(row)
+    return row, True
+
+
+@api_bp.route("/wikis/<owner>/<slug>/share/bulk", methods=["POST"])
+@api_auth_required
+def bulk_share_wiki(owner, slug):
+    """grant access to multiple users in one call.
+    body: {
+      "grants": [{"username"|"email": "...", "role": "read|edit", "pattern"?: "*"}, ...],
+      "role"?: "read|edit",    # default for entries without their own
+      "pattern"?: "*"          # default for entries without their own
+    }
+    returns: {"added": [...], "skipped": [...], "failed": [...]}
+    - added:   grant(s) appended to the ACL
+    - skipped: grant already present (idempotent)
+    - failed:  could not resolve (unknown user/email, bad role/pattern, etc.)
+    """
+    owner_user, wiki, err = _get_wiki_or_404(owner, slug)
+    if err:
+        return err
+    if request.current_user.id != wiki.owner_id:
+        return {"error": "forbidden", "message": "Only the owner can manage sharing"}, 403
+
+    data = request.get_json(silent=True) or {}
+    grants_in = data.get("grants") or []
+    if not isinstance(grants_in, list) or not grants_in:
+        return {"error": "bad_request", "message": "grants array required"}, 400
+
+    default_role = (data.get("role") or "").strip().lower()
+    default_pattern = (data.get("pattern") or "*").strip() or "*"
+
+    acl_text = read_file_from_repo(owner_user.username, wiki.slug, ".wikihub/acl", public=False) or "* private\n"
+    existing_lines = set(acl_text.splitlines())
+
+    added, skipped, failed, invited = [], [], [], []
+    new_lines = []
+    invite_writes = False
+
+    for item in grants_in:
+        if not isinstance(item, dict):
+            failed.append({"input": str(item), "error": "entry must be an object"})
+            continue
+        raw_input = item.get("username") or item.get("email") or ""
+        username = (item.get("username") or "").strip().lower()
+        email = (item.get("email") or "").strip().lower()
+        role = (item.get("role") or default_role or "").strip().lower()
+        pattern = (item.get("pattern") or default_pattern).strip() or default_pattern
+
+        if role not in {"read", "edit"}:
+            failed.append({"input": raw_input or username or email, "error": "role must be 'read' or 'edit'"})
+            continue
+        if not pattern:
+            failed.append({"input": raw_input or username or email, "error": "pattern required"})
+            continue
+
+        if not username and email:
+            existing = User.query.filter_by(email=email).first()
+            if existing:
+                username = existing.username
+
+        # no user yet — stash as pending invite (keyed on email)
+        if not username:
+            if not email:
+                failed.append({"input": raw_input, "error": "username or email required"})
+                continue
+            _upsert_pending_invite(
+                wiki_id=wiki.id, pattern=pattern, email=email, role=role,
+                invited_by_id=request.current_user.id,
+            )
+            invite_writes = True
+            invited.append({"pattern": pattern, "email": email, "role": role})
+            continue
+
+        target = User.query.filter_by(username=username).first()
+        if not target:
+            failed.append({"input": username, "error": f"user '{username}' not found"})
+            continue
+
+        acl_line = f"{pattern} @{username}:{role}"
+        if acl_line in existing_lines:
+            skipped.append({"pattern": pattern, "username": username, "role": role})
+            continue
+        existing_lines.add(acl_line)
+        new_lines.append(acl_line)
+        added.append({"pattern": pattern, "username": username, "role": role})
+
+    if new_lines:
+        acl_text = acl_text.rstrip() + "\n" + "\n".join(new_lines) + "\n"
+        sync_page_to_repo(
+            owner_user.username, wiki.slug, ".wikihub/acl", acl_text,
+            message=f"Share with {len(new_lines)} user(s)",
+        )
+        for g in added:
+            append_event_to_repo(
+                owner_user.username, wiki.slug, "page.share",
+                pattern=g["pattern"], grant=f"@{g['username']}:{g['role']}",
+                actor=request.current_user.username,
+            )
+        index_repo_pages(owner_user.username, wiki.slug, wiki, reset=True)
+        regenerate_public_mirror(owner_user.username, wiki.slug, load_acl_rules(owner_user.username, wiki.slug))
+    if new_lines or invite_writes:
+        db.session.commit()
+
+    # fire notifications after commit so we never send email on rolled-back state
+    ctx = _email_share_context(owner_user, wiki, request.current_user)
+    notified_users = set()
+    notified_emails = set()
+    for g in added:
+        if g["username"] == request.current_user.username:
+            continue
+        if g["username"] in notified_users:
+            continue
+        notified_users.add(g["username"])
+        _notify_existing_user(target_username=g["username"], role=g["role"], ctx=ctx)
+    for inv in invited:
+        if inv["email"] in notified_emails:
+            continue
+        notified_emails.add(inv["email"])
+        # look up the token we just stashed on the row to embed in the email URL
+        row = PendingInvite.query.filter_by(
+            wiki_id=wiki.id, pattern=inv["pattern"], email=inv["email"]
+        ).first()
+        _notify_pending_email(
+            email=inv["email"], role=inv["role"], ctx=ctx,
+            token=row.token if row else None,
+        )
+
+    return jsonify({"added": added, "invited": invited, "skipped": skipped, "failed": failed})
 
 
 @api_bp.route("/wikis/<owner>/<slug>/share", methods=["DELETE"])
@@ -1038,8 +1302,9 @@ def unshare(owner, slug, page_path=None):
 
     data = request.get_json(silent=True) or {}
     username = (data.get("username") or "").strip().lower()
-    if not username:
-        return {"error": "bad_request", "message": "username is required"}, 400
+    email = (data.get("email") or "").strip().lower()
+    if not username and not email:
+        return {"error": "bad_request", "message": "username or email is required"}, 400
 
     if page_path is not None:
         pattern = _normalize_page_path_param(page_path)
@@ -1048,22 +1313,36 @@ def unshare(owner, slug, page_path=None):
         if not pattern:
             return {"error": "bad_request", "message": "pattern is required"}, 400
 
-    acl_text = read_file_from_repo(owner_user.username, wiki.slug, ".wikihub/acl", public=False)
-    if not acl_text:
-        return {"error": "not_found", "message": "No ACL file"}, 404
+    revoked = False
 
-    new_acl = remove_grant(acl_text, pattern, username)
-    if new_acl != acl_text:
-        sync_page_to_repo(owner_user.username, wiki.slug, ".wikihub/acl", new_acl,
-                          message=f"Unshare {pattern} from @{username}")
-        append_event_to_repo(owner_user.username, wiki.slug, "page.unshare",
-                             pattern=pattern, target_user=username,
-                             actor=request.current_user.username)
-        index_repo_pages(owner_user.username, wiki.slug, wiki, reset=True)
-        regenerate_public_mirror(owner_user.username, wiki.slug, load_acl_rules(owner_user.username, wiki.slug))
+    # revoke a pending invite if addressed by email
+    if email:
+        q = PendingInvite.query.filter_by(wiki_id=wiki.id, pattern=pattern, email=email)
+        hits = q.all()
+        if hits:
+            for row in hits:
+                db.session.delete(row)
+            revoked = True
+
+    # revoke an ACL grant if addressed by username
+    if username:
+        acl_text = read_file_from_repo(owner_user.username, wiki.slug, ".wikihub/acl", public=False)
+        if acl_text:
+            new_acl = remove_grant(acl_text, pattern, username)
+            if new_acl != acl_text:
+                sync_page_to_repo(owner_user.username, wiki.slug, ".wikihub/acl", new_acl,
+                                  message=f"Unshare {pattern} from @{username}")
+                append_event_to_repo(owner_user.username, wiki.slug, "page.unshare",
+                                     pattern=pattern, target_user=username,
+                                     actor=request.current_user.username)
+                index_repo_pages(owner_user.username, wiki.slug, wiki, reset=True)
+                regenerate_public_mirror(owner_user.username, wiki.slug, load_acl_rules(owner_user.username, wiki.slug))
+                revoked = True
+
+    if revoked:
         db.session.commit()
 
-    return jsonify({"pattern": pattern, "username": username, "revoked": new_acl != acl_text})
+    return jsonify({"pattern": pattern, "username": username, "email": email, "revoked": revoked})
 
 
 @api_bp.route("/wikis/<owner>/<slug>/grants", methods=["GET"])
@@ -1085,7 +1364,15 @@ def list_grants(owner, slug, page_path=None):
         return jsonify({"path": page_path, "grants": [{"username": u, "role": r} for u, r in grants]})
 
     all_grants = list_all_grants(acl_rules)
-    return jsonify({"grants": [{"pattern": p, "username": u, "role": r} for p, u, r in all_grants]})
+    pending = PendingInvite.query.filter_by(wiki_id=wiki.id).all()
+    return jsonify({
+        "grants": [{"pattern": p, "username": u, "role": r} for p, u, r in all_grants],
+        "pending": [
+            {"pattern": row.pattern, "email": row.email, "role": row.role,
+             "invited_at": row.created_at.isoformat()}
+            for row in pending
+        ],
+    })
 
 
 @api_bp.route("/shared-with-me", methods=["GET"])
@@ -1156,6 +1443,7 @@ def search_pages():
     offset = int(request.args.get("offset", 0))
 
     query = Page.query.join(Wiki).join(User, Wiki.owner_id == User.id)
+    public_search_visibilities = ("public", "public-view", "public-edit")
 
     # scope to specific wiki
     if scope == "wiki" and wiki_param:
@@ -1163,18 +1451,15 @@ def search_pages():
         if len(parts) == 2:
             query = query.filter(User.username == parts[0], Wiki.slug == parts[1])
 
+    # scope to author (all wikis by a user)
+    author_param = request.args.get("author")
+    if scope == "author" and author_param:
+        query = query.filter(User.username == author_param)
+
     # only show pages the user can see
     user = getattr(request, "current_user", None)
-    if user:
-        query = query.filter(
-            db.or_(
-                Wiki.owner_id == user.id,
-                Page.visibility.in_(["public", "public-edit"]),
-                db.and_(Wiki.owner_id == user.id, Page.visibility.in_(["unlisted", "unlisted-edit"])),
-            )
-        )
-    else:
-        query = query.filter(Page.visibility.in_(["public", "public-edit"]))
+    if not user:
+        query = query.filter(Page.visibility.in_(public_search_visibilities))
 
     # tag filter — search tags as text cast of the JSON field
     if tag:
@@ -1192,13 +1477,32 @@ def search_pages():
     )
     query = query.filter(fuzzy_filter)
 
-    total = query.count()
     # rank: full-text rank + trigram similarity on title for ordering
     ts_rank = db.func.ts_rank(Page.search_vector, ts_query)
     trgm_sim = db.func.similarity(db.func.coalesce(Page.title, Page.path), q)
-    results = query.order_by(
-        (ts_rank + trgm_sim).desc()
-    ).offset(offset).limit(limit).all()
+    ordered_query = query.order_by((ts_rank + trgm_sim).desc())
+
+    if user:
+        acl_rules_by_wiki = {}
+        visible_results = []
+        for page in ordered_query.all():
+            if page.wiki.owner_id == user.id or page.visibility in public_search_visibilities:
+                visible_results.append(page)
+                continue
+
+            acl_rules = acl_rules_by_wiki.get(page.wiki_id)
+            if acl_rules is None:
+                acl_rules = load_acl_rules(page.wiki.owner.username, page.wiki.slug)
+                acl_rules_by_wiki[page.wiki_id] = acl_rules
+
+            if any(username == user.username for username, _role in resolve_grants(page.path, acl_rules)):
+                visible_results.append(page)
+
+        total = len(visible_results)
+        results = visible_results[offset:offset + limit]
+    else:
+        total = query.count()
+        results = ordered_query.offset(offset).limit(limit).all()
 
     return jsonify({
         "results": [{
@@ -1275,6 +1579,63 @@ def wiki_history(owner, slug):
         commits.append(current)
 
     return jsonify({"commits": commits, "total": len(commits)})
+
+
+@api_bp.route("/wikis/<owner>/<slug>/revert", methods=["POST"])
+@api_auth_required
+@rate_limit_writes()
+def revert_page(owner, slug):
+    """revert a file to its content at a given commit SHA."""
+    owner_user, wiki, err = _get_wiki_or_404(owner, slug)
+    if err:
+        return err
+    if request.current_user.id != wiki.owner_id:
+        return {"error": "forbidden", "message": "Only the owner can revert"}, 403
+
+    data = request.get_json(silent=True) or {}
+    sha = data.get("sha", "").strip()
+    path = data.get("path", "").strip()
+    if not sha or not path:
+        return {"error": "invalid", "message": "sha and path are required"}, 400
+
+    from app.git_backend import _repo_path
+
+    repo = _repo_path(owner_user.username, wiki.slug)
+    if not os.path.isdir(repo):
+        return {"error": "not_found", "message": "Repo not found"}, 404
+
+    # read file content at the given SHA
+    result = subprocess.run(
+        ["git", "-C", repo, "cat-file", "blob", f"{sha}:{path}"],
+        capture_output=True, check=False,
+    )
+    if result.returncode != 0:
+        return {"error": "not_found", "message": f"File '{path}' not found at commit {sha[:12]}"}, 404
+
+    content = result.stdout.decode("utf-8", errors="replace")
+
+    # write as new commit
+    sync_page_to_repo(
+        owner_user.username, wiki.slug, path, content,
+        message=f"Revert {path} to {sha[:12]}",
+        author_name=request.current_user.username,
+        author_email=f"{request.current_user.username}@wikihub",
+    )
+
+    # update DB
+    page = Page.query.filter_by(wiki_id=wiki.id, path=path).first()
+    if page:
+        from app.content_utils import parse_markdown_document
+        frontmatter, _ = parse_markdown_document(content)
+        page.visibility = frontmatter.get("visibility") or page.visibility
+        update_page_metadata(page, content, frontmatter)
+        refresh_wikilinks_for_page(page, content)
+
+    acl_rules = load_acl_rules(owner_user.username, wiki.slug)
+    update_mirror_page(owner_user.username, wiki.slug, path, acl_rules)
+    db.session.commit()
+
+    return jsonify({"path": path, "sha": sha, "message": f"Reverted to {sha[:12]}"})
 
 
 # --- admin endpoints (called by post-receive hook) ---

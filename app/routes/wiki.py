@@ -1,6 +1,7 @@
 import os
 import subprocess
 from datetime import timezone
+from urllib.parse import unquote, urlparse
 
 from flask import Response, abort, jsonify, redirect, render_template, request, url_for
 
@@ -23,7 +24,7 @@ def _recently_updated_pages(wiki, limit=8, public_only=False):
     """get the most recently updated pages for a wiki."""
     query = Page.query.filter_by(wiki_id=wiki.id)
     if public_only:
-        query = query.filter(Page.visibility.in_(('public', 'public-edit')))
+        query = query.filter(Page.visibility.in_(('public', 'public-view', 'public-edit')))
     return query.order_by(Page.updated_at.desc()).limit(limit).all()
 
 
@@ -195,13 +196,14 @@ def _normalize_folder_path(raw_path):
     return "/".join(segments)
 
 
-def _visible_files(username, slug, wiki, public=False, acl_filter_user=None):
+def _visible_files(username, slug, wiki, public=False, acl_filter_user=None, pages_by_path=None):
     """List visible files in a wiki repo.
 
     Args:
         public: If True, read from public mirror.
         acl_filter_user: If set, read from authoritative repo but filter
             through can_read for this username (for ACL grantees who aren't owners).
+        pages_by_path: Pre-loaded {path: Page} dict to avoid duplicate DB queries.
     """
     files = list_files_in_repo(username, slug, public=public)
     if not public and not acl_filter_user:
@@ -211,7 +213,8 @@ def _visible_files(username, slug, wiki, public=False, acl_filter_user=None):
     if acl_filter_user:
         # non-owner with ACL grants — read authoritative repo, filter by can_read
         acl_rules = load_acl_rules(username, slug)
-        pages_by_path = {p.path: p for p in Page.query.filter_by(wiki_id=wiki.id).all()}
+        if pages_by_path is None:
+            pages_by_path = {p.path: p for p in Page.query.filter_by(wiki_id=wiki.id).all()}
         return [
             path
             for path in files
@@ -220,10 +223,12 @@ def _visible_files(username, slug, wiki, public=False, acl_filter_user=None):
             and can_read(path, acl_rules, acl_filter_user, (pages_by_path[path].visibility if path in pages_by_path else None))
         ]
 
+    if pages_by_path is None:
+        pages_by_path = {p.path: p for p in Page.query.filter_by(wiki_id=wiki.id).all()}
     discoverable = {
-        page.path
-        for page in Page.query.filter_by(wiki_id=wiki.id).all()
-        if page.visibility in ("public", "public-edit")
+        path
+        for path, page in pages_by_path.items()
+        if page.visibility in ("public", "public-view", "public-edit")
     }
     return [
         path
@@ -245,15 +250,85 @@ def _page_url(username, slug, page_path):
     return f"/@{username}/{slug}/{url_path_from_page_path(page_path, strip_md=True)}"
 
 
+_SIDEBAR_NON_CONTENT_ROOTS = {
+    "commit",
+    "graph",
+    "graph.json",
+    "history",
+    "llms.txt",
+    "preview",
+    "reindex",
+    "settings",
+    "sidebar.json",
+    "tag",
+}
+
+
+def _normalize_sidebar_current_path(current_path):
+    if current_path is None:
+        return None
+
+    path = unquote((current_path or "").strip())
+    if not path or path == "/":
+        return None
+
+    path = path.lstrip("/")
+    if path.endswith("/"):
+        return _normalize_folder_path(path)
+    return path.removesuffix("/")
+
+
+def _sidebar_current_path_from_referrer(username, slug):
+    if not request.referrer:
+        return None
+
+    parsed = urlparse(request.referrer)
+    prefix = f"/@{username}/{slug}"
+    if parsed.path == prefix or parsed.path == prefix + "/":
+        return "index.md"
+    if not parsed.path.startswith(prefix + "/"):
+        return None
+
+    relative = unquote(parsed.path[len(prefix) + 1 :])
+    if not relative:
+        return "index.md"
+    if relative.endswith("/"):
+        return _normalize_folder_path(page_path_from_url_path(relative.rstrip("/")))
+
+    parts = [part for part in relative.split("/") if part]
+    if not parts:
+        return "index.md"
+    if parts[0] in _SIDEBAR_NON_CONTENT_ROOTS:
+        return None
+    if parts[-1] in {"edit", "history"} and len(parts) > 1:
+        parts = parts[:-1]
+
+    page_path = page_path_from_url_path("/".join(parts))
+    if not page_path:
+        return None
+    if "." not in os.path.basename(page_path):
+        page_path = f"{page_path}.md"
+    return page_path
+
+
+def _sidebar_current_path_from_request(username, slug):
+    explicit_current = _normalize_sidebar_current_path(request.args.get("current"))
+    if explicit_current:
+        return explicit_current
+    return _sidebar_current_path_from_referrer(username, slug)
+
+
 def _build_sidebar_tree(username, slug, wiki, public=False, current_path=None, acl_filter_user=None):
+    current_path = _normalize_sidebar_current_path(current_path)
     root = {"children": {}}
     pages_by_path = {p.path: p for p in Page.query.filter_by(wiki_id=wiki.id).all()}
 
-    for path in sorted(_visible_files(username, slug, wiki, public=public, acl_filter_user=acl_filter_user)):
+    for path in sorted(_visible_files(username, slug, wiki, public=public, acl_filter_user=acl_filter_user, pages_by_path=pages_by_path)):
         parts = path.split("/")
         cursor = root["children"]
         for depth, part in enumerate(parts[:-1]):
             folder_path = "/".join(parts[: depth + 1])
+            folder_is_current = current_path == folder_path
             node = cursor.setdefault(
                 ("folder", folder_path),
                 {
@@ -261,7 +336,9 @@ def _build_sidebar_tree(username, slug, wiki, public=False, current_path=None, a
                     "name": part,
                     "path": folder_path,
                     "url": _folder_url(username, slug, folder_path),
-                    "active": current_path == folder_path,
+                    "active": folder_is_current,
+                    "current": folder_is_current,
+                    "ancestor_of_current": False,
                     "children": {},
                 },
             )
@@ -272,13 +349,18 @@ def _build_sidebar_tree(username, slug, wiki, public=False, current_path=None, a
             continue
 
         page = pages_by_path.get(path)
+        updated = page.updated_at.isoformat() if page and page.updated_at else None
+        page_is_current = current_path == path
         cursor[("page", path)] = {
             "kind": "page",
             "name": filename.replace(".md", ""),
             "path": path,
             "url": _page_url(username, slug, path),
-            "active": current_path == path,
+            "active": page_is_current,
+            "current": page_is_current,
+            "ancestor_of_current": False,
             "visibility": page.visibility if page else "private",
+            "updated_at": updated,
             "children": {},
         }
 
@@ -287,8 +369,13 @@ def _build_sidebar_tree(username, slug, wiki, public=False, current_path=None, a
         for item in items:
             if item["kind"] == "folder":
                 item["children"] = normalize(item["children"])
-                item["active"] = item["active"] or any(child["active"] for child in item["children"])
-        return sorted(items, key=lambda item: (item["kind"] != "folder", item["name"].lower()))
+                item["ancestor_of_current"] = any(child["active"] for child in item["children"])
+                item["active"] = item["current"] or item["ancestor_of_current"]
+                child_dates = [c["updated_at"] for c in item["children"] if c.get("updated_at")]
+                item["updated_at"] = max(child_dates) if child_dates else None
+            else:
+                item.setdefault("updated_at", None)
+        return sorted(items, key=lambda item: (item["kind"] != "folder", item["name"].lower(), item["path"]))
 
     return normalize(root["children"])
 
@@ -532,7 +619,7 @@ def wiki_llms_txt(username, slug):
     ]
 
     pages = Page.query.filter_by(wiki_id=wiki.id).filter(
-        Page.visibility.in_(["public", "public-edit"])
+        Page.visibility.in_(["public", "public-view", "public-edit"])
     ).order_by(Page.path).all()
 
     for p in pages:
@@ -586,9 +673,26 @@ def _sidebar_for_wiki(username, slug, wiki, public=False, current_path=None, acl
 def sidebar_json(username, slug):
     """lightweight JSON manifest for client-side sidebar rendering."""
     owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
-    use_public = not _is_owner(wiki)
-    tree = _build_sidebar_tree(owner.username, wiki.slug, wiki, public=use_public)
+    acl_rules = load_acl_rules(owner.username, wiki.slug)
+    use_public, acl_filter_user = _repo_access(wiki, acl_rules)
+    tree = _build_sidebar_tree(
+        owner.username,
+        wiki.slug,
+        wiki,
+        public=use_public,
+        current_path=_sidebar_current_path_from_request(owner.username, wiki.slug),
+        acl_filter_user=acl_filter_user,
+    )
     return jsonify(tree)
+
+
+@wiki_bp.route("/@<username>/<slug>/settings", strict_slashes=False)
+def wiki_settings(username, slug):
+    """wiki settings page — subdomain, visibility, danger zone."""
+    owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
+    if not _is_owner(wiki):
+        abort(403)
+    return render_template("wiki_settings.html", owner=owner, wiki=wiki)
 
 
 @wiki_bp.route("/@<username>/<slug>", strict_slashes=False)
@@ -640,7 +744,7 @@ def wiki_index(username, slug):
         rendered_html=rendered_html,
         toc=extract_toc(rendered_html),
         backlinks=_get_backlinks(page),
-        link_graph=_get_full_graph(wiki),
+        link_graph=_get_link_graph(page, wiki),
         full_graph_url=f"/@{owner.username}/{wiki.slug}/graph",
         recently_updated=recently_updated,
         sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, public=use_public, current_path=page_path, acl_filter_user=acl_filter_user),
@@ -804,31 +908,56 @@ def wiki_page(username, slug, page_path):
 
     siblings = _sibling_wikis(owner, wiki)
 
-    # serve non-markdown files (images, PDFs, etc.) as raw binary
+    # Non-markdown files: inline preview for known-safe formats, download for everything else.
+    # Markdown is the only first-class format (chrome, sidebar, search, graph). Other extensions
+    # are second-class: viewable/downloadable but not part of the wiki graph.
     _MARKDOWN_EXTS = {".md", ".markdown", ".mdown", ".mkd"}
+    _INLINE_EXTS = {
+        # text — served as text/plain (or specific text mime); browsers render inline
+        ".txt", ".log", ".csv", ".tsv", ".json", ".xml", ".yaml", ".yml", ".toml",
+        # images — browsers render inline
+        ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico",
+        # PDF — browsers render in built-in viewer
+        ".pdf",
+        # audio/video — browsers play in built-in player
+        ".mp3", ".mp4", ".wav", ".ogg", ".webm",
+        # fonts
+        ".woff", ".woff2", ".ttf", ".eot",
+        # archives — browsers download these naturally via correct mime
+        ".zip", ".tar", ".gz",
+    }
     ext = os.path.splitext(page_path)[1].lower()
     if ext and ext not in _MARKDOWN_EXTS and not request.path.endswith("/"):
         import mimetypes
         is_owner = _is_owner(wiki)
         acl_rules = load_acl_rules(owner.username, wiki.slug)
         user_name = current_user.username if current_user.is_authenticated else None
-        # check ACL: use the file's directory ACL (binary files don't have Page rows)
-        file_vis = resolve_visibility(page_path, acl_rules)
+        # Non-markdown files can still have a Page row with explicit visibility
+        # (set via the API). Page-row visibility wins over the file-path ACL.
+        page = Page.query.filter_by(wiki_id=wiki.id, path=page_path).first()
+        file_vis = page.visibility if page else resolve_visibility(page_path, acl_rules)
         if not is_owner and not can_read(page_path, acl_rules, user_name, file_vis):
             abort(404)
         use_public = _use_public_repo(wiki, acl_rules)
         data = read_file_bytes_from_repo(owner.username, wiki.slug, page_path, public=use_public)
-        if data is None and not use_public:
-            pass  # already tried authoritative repo
-        elif data is None:
+        if data is None and use_public:
             data = read_file_bytes_from_repo(owner.username, wiki.slug, page_path, public=False)
         if data is None:
-            abort(404)
-        content_type = mimetypes.guess_type(page_path)[0] or "application/octet-stream"
-        headers = {"Cache-Control": "public, max-age=3600"}
-        if content_type == "application/pdf":
-            headers["Content-Disposition"] = f'inline; filename="{os.path.basename(page_path)}"'
-        return Response(data, content_type=content_type, headers=headers)
+            # File not in repo with this extension — fall through to markdown path
+            # (which will try .md suffix and 404 if nothing matches).
+            pass
+        else:
+            headers = {"Cache-Control": "public, max-age=3600"}
+            if ext in _INLINE_EXTS:
+                content_type = mimetypes.guess_type(page_path)[0] or "application/octet-stream"
+                if content_type == "application/pdf":
+                    headers["Content-Disposition"] = f'inline; filename="{os.path.basename(page_path)}"'
+            else:
+                # Unknown extension: force octet-stream + attachment.
+                # Prevents XSS via uploaded .html, .swf, etc. while still letting users download anything.
+                content_type = "application/octet-stream"
+                headers["Content-Disposition"] = f'attachment; filename="{os.path.basename(page_path)}"'
+            return Response(data, content_type=content_type, headers=headers)
 
     if request.path.endswith("/"):
         acl_rules = load_acl_rules(owner.username, wiki.slug)
@@ -1022,6 +1151,8 @@ def edit_page(username, slug, page_path):
         visibility=visibility,
         is_owner=is_owner,
         page_grants=page_grants,
+        existing_page=bool(page),
+        initial_content_hash=(page.content_hash if page else None),
     )
 
 
@@ -1029,14 +1160,17 @@ def edit_page(username, slug, page_path):
 def new_page(username, slug):
     owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
     is_owner = _is_owner(wiki)
+    acl_rules = load_acl_rules(owner.username, wiki.slug)
+    username_for_acl = current_user.username if current_user.is_authenticated else None
 
     if request.method == "POST":
         page_path = request.form.get("path", "").strip()
         if not page_path.endswith(".md"):
             page_path += ".md"
+        if not is_owner and not can_write(page_path, acl_rules, username_for_acl):
+            return render_template("permission_error.html", owner=owner, wiki=wiki), 403
         content = request.form.get("content", "")
 
-        acl_rules = load_acl_rules(owner.username, wiki.slug)
         visibility = request.form.get("visibility", resolve_visibility(page_path, acl_rules))
         if is_owner:
             content = set_visibility_in_content(content, visibility)
@@ -1058,10 +1192,19 @@ def new_page(username, slug):
         db.session.commit()
         return redirect(_page_url(owner.username, wiki.slug, page_path))
 
-    acl_rules = load_acl_rules(owner.username, wiki.slug)
     requested_path = request.args.get("path", "").strip()
     if requested_path:
-        page_path = requested_path if requested_path.endswith(".md") else requested_path + ".md"
+        # If path ends with / it's a folder prefix — generate a new page name inside it
+        if requested_path.endswith("/"):
+            prefix = requested_path
+            base = f"{prefix}new-page"
+            page_path = f"{base}.md"
+            n = 2
+            while Page.query.filter_by(wiki_id=wiki.id, path=page_path).first():
+                page_path = f"{base}-{n}.md"
+                n += 1
+        else:
+            page_path = requested_path if requested_path.endswith(".md") else requested_path + ".md"
     else:
         base = "new-page"
         page_path = f"{base}.md"
@@ -1069,6 +1212,8 @@ def new_page(username, slug):
         while Page.query.filter_by(wiki_id=wiki.id, path=page_path).first():
             page_path = f"{base}-{n}.md"
             n += 1
+    if not is_owner and not can_write(page_path, acl_rules, username_for_acl):
+        return render_template("permission_error.html", owner=owner, wiki=wiki), 403
     default_vis = resolve_visibility(page_path, acl_rules)
     return render_template(
         "editor.html",
@@ -1078,6 +1223,8 @@ def new_page(username, slug):
         content="",
         visibility=default_vis,
         is_owner=_is_owner(wiki),
+        existing_page=False,
+        initial_content_hash=None,
     )
 
 
@@ -1091,7 +1238,11 @@ def new_folder(username, slug):
     parent_path = page_path_from_url_path(request.values.get("parent", "").strip().strip("/"))
 
     if request.method == "POST":
-        folder_path = _normalize_folder_path(request.form.get("folder_path"))
+        folder_name = request.form.get("folder_name", "").strip().strip("/")
+        if folder_name and parent_path:
+            folder_path = _normalize_folder_path(f"{parent_path}/{folder_name}")
+        else:
+            folder_path = _normalize_folder_path(folder_name)
         if not folder_path:
             return render_template(
                 "new_folder.html",

@@ -4,7 +4,8 @@ server-side markdown rendering for wikihub.
 pipeline: markdown-it-py with plugins for:
   - wikilinks [[Page]] and [[path/to/page]]
   - footnotes [^1]
-  - KaTeX math ($inline$ and $$display$$)
+  - KaTeX math ($...$, $$...$$, \\(...\\), \\[...\\], \\begin{equation})
+  - \\qty command expansion (physics package compat)
   - code highlighting (via highlight.js on client)
   - external links in new tab
   - obsidian image embeds ![[image.png]] and ![[image.png|300]]
@@ -16,6 +17,7 @@ import re
 from markdown_it import MarkdownIt
 from mdit_py_plugins.footnote import footnote_plugin
 from mdit_py_plugins.dollarmath import dollarmath_plugin
+from mdit_py_plugins.amsmath import amsmath_plugin
 from mdit_py_plugins.anchors import anchors_plugin
 
 from app.content_utils import parse_markdown_document
@@ -204,6 +206,69 @@ def _highlight_fence_plugin(md):
     md.renderer.rules["fence"] = fence_renderer
 
 
+def _expand_qty(text):
+    """expand \\qty(...), \\qty[...], \\qty{...} to \\left...\\right."""
+    i = 0
+    result = []
+    while i < len(text):
+        if text[i:i+4] == '\\qty' and (i + 4 >= len(text) or not text[i+4].isalpha()):
+            j = i + 4
+            while j < len(text) and text[j] == ' ':
+                j += 1
+            if j < len(text) and text[j] in '([{':
+                opener = text[j]
+                closer = {'(': ')', '[': ']', '{': '}'}[opener]
+                left = {'(': '\\left(', '[': '\\left[', '{': '\\left\\{'}[opener]
+                right = {')': '\\right)', ']': '\\right]', '}': '\\right\\}'}[closer]
+                depth = 1
+                k = j + 1
+                while k < len(text) and depth > 0:
+                    if text[k] == '\\':
+                        k += 2
+                        continue
+                    if text[k] == opener:
+                        depth += 1
+                    elif text[k] == closer:
+                        depth -= 1
+                    k += 1
+                if depth == 0:
+                    result.append(left)
+                    result.append(_expand_qty(text[j+1:k-1]))
+                    result.append(right)
+                    i = k
+                    continue
+        result.append(text[i])
+        i += 1
+    return ''.join(result)
+
+
+def _preprocess_latex_math(text):
+    """normalize LaTeX math delimiters for markdown-it-py.
+
+    markdown-it escapes \\( to (, destroying the math delimiter.
+    this converts \\(...\\) → $...$ and \\[...\\] → $$...$$ before parsing,
+    and expands \\qty commands to \\left/\\right pairs.
+    """
+    # protect code blocks from processing
+    protected = []
+    def protect(m):
+        protected.append(m.group(0))
+        return f'\x00PROT{len(protected)-1}\x00'
+    text = re.sub(r'```[\s\S]*?```|`[^`]+`', protect, text)
+
+    # \\( ... \\) → $ ... $  (inline math)
+    text = re.sub(r'\\\((.+?)\\\)', r'$\1$', text)
+    # \\[ ... \\] → $$ ... $$  (display math)
+    text = re.sub(r'\\\[(.+?)\\\]', r'$$\1$$', text, flags=re.DOTALL)
+    # expand \qty commands
+    text = _expand_qty(text)
+
+    # restore protected regions
+    for i, p in enumerate(protected):
+        text = text.replace(f'\x00PROT{i}\x00', p)
+    return text
+
+
 def create_renderer():
     """create a configured markdown-it renderer."""
     md = MarkdownIt("commonmark", {"html": False, "typographer": True})
@@ -211,6 +276,7 @@ def create_renderer():
 
     footnote_plugin(md)
     dollarmath_plugin(md, double_inline=True)
+    amsmath_plugin(md)
     anchors_plugin(md, permalink=False, max_level=4, slug_func=_heading_slug)
     _wikilink_plugin(md)
     _obsidian_embed_plugin(md)
@@ -244,6 +310,7 @@ def render_markdown(content, resolve_wikilinks=None):
     to resolve [[wikilinks]] to actual URLs and mark unresolved ones.
     """
     content = _strip_frontmatter(content)
+    content = _preprocess_latex_math(content)
     md = get_renderer()
     html = md.render(content)
 

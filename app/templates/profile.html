@@ -13,6 +13,15 @@
   font-size: 0.6875rem; font-weight: 600; text-transform: uppercase;
   letter-spacing: 0.06em; color: var(--text-muted); padding: 6px 12px; margin-bottom: 2px;
 }
+.sidebar-sort { display: flex; gap: 2px; }
+.sidebar-sort-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 20px; border: none; background: transparent;
+  color: var(--text-muted); cursor: pointer; padding: 0; border-radius: var(--radius-sm);
+  font-size: 0.625rem; font-family: var(--font-mono); opacity: 0.5;
+}
+.sidebar-sort-btn:hover { opacity: 1; background: var(--control-bg-hover); }
+.sidebar-sort-btn.active { opacity: 1; color: var(--accent); }
 .sidebar-folder-row { display: flex; align-items: center; gap: 0; }
 .sidebar-folder-toggle {
   display: inline-flex; align-items: center; justify-content: center;
@@ -32,6 +41,27 @@
 .sidebar-item:hover { color: var(--text-primary); background: var(--accent-subtle); text-decoration: none; }
 .sidebar-item.active { color: var(--text-primary); background: var(--accent-subtle); border-left-color: var(--accent); }
 .sidebar-folder-row .sidebar-item { flex: 1; min-width: 0; }
+.sidebar-wiki { margin-bottom: 1px; }
+.sidebar-wiki-row { display: flex; align-items: center; gap: 0; }
+.sidebar-wiki-toggle {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; border: none; background: transparent;
+  color: var(--text-muted); cursor: pointer; padding: 0; flex-shrink: 0;
+  border-radius: var(--radius-sm); transition: transform 0.1s ease;
+}
+.sidebar-wiki-toggle:hover { background: var(--control-bg-hover); color: var(--text-secondary); }
+.sidebar-wiki.open > .sidebar-wiki-row .sidebar-wiki-toggle svg { transform: rotate(90deg); }
+.sidebar-wiki-row .sidebar-item { flex: 1; min-width: 0; padding-left: 4px; }
+.sidebar-wiki-children {
+  display: none; padding: 2px 0 4px 0; margin-left: 12px;
+  border-left: 1px solid var(--border-default);
+  background: rgba(255,255,255,0.012);
+}
+.sidebar-wiki.open > .sidebar-wiki-children { display: block; }
+.sidebar-wiki-msg {
+  padding: 4px 12px 4px 24px; font-size: 0.75rem;
+  color: var(--text-muted); font-style: italic;
+}
 .profile-main { flex: 1; min-width: 0; padding: 32px 16px 64px; }
 @media (min-width: 640px) { .profile-main { padding: 48px 24px 72px; } }
 .profile-header {
@@ -103,6 +133,8 @@
 .profile-wiki .article .external-link::after { content: ' ↗'; font-size: 0.7em; opacity: 0.7; }
 .profile-wiki .article .external-link { color: var(--color-external); }
 .profile-wiki .article strong { color: var(--text-primary); }
+.profile-wiki .article .katex-display { margin: 24px 0; overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
+.profile-wiki .article .math.amsmath { margin: 24px 0; overflow-x: auto; overflow-y: hidden; text-align: center; }
 .private-band-warning {
   margin-bottom: 20px; padding: 12px 14px;
   border: 1px solid rgba(212, 160, 74, 0.2);
@@ -158,9 +190,9 @@
 {% macro render_sidebar(items, level=0) %}
   {% for item in items %}
     {% if item.kind == 'folder' %}
-    <div class="sidebar-folder {{ 'open' if item.active else '' }}" data-folder-path="{{ item.path }}">
+    <div class="sidebar-folder {{ 'open' if item.active else '' }}" data-folder-path="{{ item.path }}" data-name="{{ item.name }}" data-kind="folder" data-updated="{{ item.updated_at or '' }}">
       <div class="sidebar-folder-row">
-        <button type="button" class="sidebar-folder-toggle" onclick="toggleFolder('{{ item.path }}')">
+        <button type="button" class="sidebar-folder-toggle">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
         </button>
         <a href="{{ item.url }}" class="sidebar-item {{ 'active' if item.active else '' }}" style="padding-left: {{ 12 + (level * 16) }}px;">
@@ -172,7 +204,7 @@
       </div>
     </div>
     {% else %}
-    <a href="{{ item.url }}" class="sidebar-item {{ 'active' if item.active else '' }}" style="padding-left: {{ 28 + (level * 16) }}px;">
+    <a href="{{ item.url }}" class="sidebar-item {{ 'active' if item.active else '' }}" data-name="{{ item.name }}" data-kind="page" data-updated="{{ item.updated_at or '' }}" data-path="{{ item.path }}" style="padding-left: {{ 28 + (level * 16) }}px;">
       <span>{{ item.name }}</span>
     </a>
     {% endif %}
@@ -184,7 +216,16 @@
     {% if personal_wiki and sidebar_items %}
     <div class="sidebar-section">
       <a href="/@{{ owner.username }}" class="sidebar-heading" style="text-decoration:none;display:block;">{{ owner.display_name or owner.username }}</a>
+      <div class="sidebar-sort" style="padding:0 12px 4px;">
+        <button class="sidebar-sort-btn active" data-sort="alpha" title="A → Z">A↓</button>
+        <button class="sidebar-sort-btn" data-sort="alpha-desc" title="Z → A">Z↓</button>
+        <button class="sidebar-sort-btn" data-sort="recent" title="Recently updated">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        </button>
+      </div>
+      <div id="sidebar-tree">
       {{ render_sidebar(sidebar_items) }}
+      </div>
       {% if is_owner %}
       <a href="/@{{ owner.username }}/{{ personal_wiki.slug }}/new" class="sidebar-item" style="color:var(--accent);margin-top:8px;">New page</a>
       {% endif %}
@@ -194,12 +235,20 @@
     <div class="sidebar-section" style="margin-top: 16px; border-top: 1px solid var(--border-default); padding-top: 12px;">
       <div class="sidebar-heading">Wikis</div>
       {% for wiki in wikis %}
-      <a href="/@{{ owner.username }}/{{ wiki.slug }}" class="sidebar-item" style="padding-left: 12px;">
-        <span class="sidebar-icon" style="display:inline-flex;margin-right:6px;color:var(--text-muted);">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
-        </span>
-        {{ wiki.title or wiki.slug }}
-      </a>
+      <div class="sidebar-wiki" data-wiki-slug="{{ wiki.slug }}" data-wiki-owner="{{ owner.username }}">
+        <div class="sidebar-wiki-row">
+          <button type="button" class="sidebar-wiki-toggle" aria-label="Expand pages" title="Expand pages">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
+          </button>
+          <a href="/@{{ owner.username }}/{{ wiki.slug }}" class="sidebar-item">
+            <span class="sidebar-icon" style="display:inline-flex;margin-right:6px;color:var(--text-muted);">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+            </span>
+            {{ wiki.title or wiki.slug }}
+          </a>
+        </div>
+        <div class="sidebar-wiki-children" data-loaded="0"></div>
+      </div>
       {% endfor %}
     </div>
     {% endif %}
@@ -249,14 +298,36 @@
     </div>
     {% endif %}
 
+    {% if personal_wiki and (sidebar_items or is_owner) %}
+    <div class="wiki-list">
+      <div class="section-header">
+        <h2 style="margin-bottom:0;">Pages</h2>
+        {% if is_owner %}
+        <div class="action-row">
+          <a href="/@{{ owner.username }}/{{ personal_wiki.slug }}/new" class="action-btn primary">New page</a>
+        </div>
+        {% endif %}
+      </div>
+      {% if sidebar_items %}
+      {% for item in sidebar_items %}
+      <a href="{{ item.url }}" class="wiki-card" style="padding:12px 16px;">
+        <div class="wiki-card-title" style="margin-bottom:0;">{{ item.name }}</div>
+      </a>
+      {% endfor %}
+      {% else %}
+      <div class="profile-empty">(none yet)</div>
+      {% endif %}
+    </div>
+    {% endif %}
+
     {% if wikis or is_owner %}
     <div class="wiki-list">
       <div class="section-header">
         <h2 style="margin-bottom:0;">Wikis</h2>
         {% if is_owner %}
         <div class="action-row">
-          <a href="/new" class="action-btn primary">New wiki</a>
-          <button class="action-btn secondary" onclick="reindexAll(this)">Reindex all</button>
+          <a href="/new" class="action-btn secondary">New wiki</a>
+          <button style="background:none;border:none;padding:6px 8px;font-size:0.75rem;color:var(--text-muted);cursor:pointer;" onmouseover="this.style.color='var(--text-secondary)'" onmouseout="this.style.color='var(--text-muted)'" onclick="reindexAll(this)">Reindex all</button>
         </div>
         {% endif %}
       </div>
@@ -307,12 +378,210 @@ function toggleFolder(path) {
   localStorage.setItem(folderStorageKey, JSON.stringify(state));
 }
 
-const state = loadFolders();
-document.querySelectorAll('.sidebar-folder').forEach(folder => {
-  const path = folder.dataset.folderPath;
-  if (state[path] === false) folder.classList.remove('open');
-  else if (state[path] === true || folder.classList.contains('open')) folder.classList.add('open');
+// Event delegation for folder toggles
+document.addEventListener('click', function(e) {
+  var btn = e.target.closest('.sidebar-folder-toggle');
+  if (!btn) return;
+  var folder = btn.closest('.sidebar-folder');
+  if (folder) toggleFolder(folder.dataset.folderPath);
 });
+
+(function initFolders() {
+  const state = loadFolders();
+  let changed = false;
+  document.querySelectorAll('.sidebar-folder').forEach(folder => {
+    const path = folder.dataset.folderPath;
+    if (state[path] === false) {
+      folder.classList.remove('open');
+    } else if (state[path] === true || folder.classList.contains('open')) {
+      folder.classList.add('open');
+      // Persist auto-expanded active folders so they stay open after navigation.
+      if (state[path] !== true) { state[path] = true; changed = true; }
+    }
+  });
+  if (changed) localStorage.setItem(folderStorageKey, JSON.stringify(state));
+})();
+
+// --- Sidebar sort ---
+const sortStorageKey = 'wikihub-sidebar-sort';
+
+function sortSidebarChildren(container, mode) {
+  var items = [];
+  Array.from(container.children).forEach(function(el) {
+    if (el.classList.contains('sidebar-folder') || (el.tagName === 'A' && el.classList.contains('sidebar-item'))) {
+      items.push(el);
+    }
+  });
+  if (items.length < 2) return;
+
+  items.sort(function(a, b) {
+    var aKind = a.dataset.kind || (a.classList.contains('sidebar-folder') ? 'folder' : 'page');
+    var bKind = b.dataset.kind || (b.classList.contains('sidebar-folder') ? 'folder' : 'page');
+    var aName = (a.dataset.name || '').toLowerCase();
+    var bName = (b.dataset.name || '').toLowerCase();
+    var aUpdated = a.dataset.updated || '';
+    var bUpdated = b.dataset.updated || '';
+    var aPath = a.dataset.path || a.dataset.folderPath || '';
+    var bPath = b.dataset.path || b.dataset.folderPath || '';
+    if (aKind !== bKind) return aKind === 'folder' ? -1 : 1;
+    if (mode === 'alpha') {
+      return aName < bName ? -1 : aName > bName ? 1 : (aPath < bPath ? -1 : aPath > bPath ? 1 : 0);
+    } else if (mode === 'alpha-desc') {
+      return aName > bName ? -1 : aName < bName ? 1 : (aPath > bPath ? -1 : aPath < bPath ? 1 : 0);
+    } else if (mode === 'recent') {
+      if (!aUpdated && !bUpdated) return aName < bName ? -1 : aName > bName ? 1 : 0;
+      if (!aUpdated) return 1;
+      if (!bUpdated) return -1;
+      return aUpdated > bUpdated ? -1 : aUpdated < bUpdated ? 1 : 0;
+    }
+    return 0;
+  });
+  items.forEach(function(el) { container.appendChild(el); });
+  container.querySelectorAll(':scope > .sidebar-folder > .sidebar-children').forEach(function(sub) {
+    sortSidebarChildren(sub, mode);
+  });
+}
+
+function applySidebarSort(mode) {
+  localStorage.setItem(sortStorageKey, mode);
+  document.querySelectorAll('.sidebar-sort-btn').forEach(function(btn) {
+    btn.classList.toggle('active', btn.dataset.sort === mode);
+  });
+  var tree = document.getElementById('sidebar-tree');
+  if (tree) sortSidebarChildren(tree, mode);
+}
+
+document.querySelectorAll('.sidebar-sort-btn').forEach(function(btn) {
+  btn.addEventListener('click', function() { applySidebarSort(btn.dataset.sort); });
+});
+
+(function() {
+  var saved = localStorage.getItem(sortStorageKey) || 'alpha';
+  if (saved !== 'alpha') applySidebarSort(saved);
+  document.querySelectorAll('.sidebar-sort-btn').forEach(function(btn) {
+    btn.classList.toggle('active', btn.dataset.sort === saved);
+  });
+})();
+
+// --- Inline wiki expansion (Wikis section) ---
+const wikiExpandedKey = 'wikihub-wiki-expanded';
+
+function loadWikiExpanded() {
+  try { return JSON.parse(localStorage.getItem(wikiExpandedKey) || '{}'); } catch (e) { return {}; }
+}
+
+function saveWikiExpanded(state) {
+  localStorage.setItem(wikiExpandedKey, JSON.stringify(state));
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, function(c) {
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+  });
+}
+
+function chevronSvg() {
+  return '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>';
+}
+
+// Namespace folder paths by wiki slug so localStorage state doesn't collide across trees
+function renderWikiNode(node, level, slug) {
+  const nsPath = slug + '|' + (node.path || '');
+  if (node.kind === 'folder') {
+    const div = document.createElement('div');
+    div.className = 'sidebar-folder';
+    div.dataset.folderPath = nsPath;
+    div.dataset.name = node.name;
+    div.dataset.kind = 'folder';
+    div.dataset.updated = node.updated_at || '';
+    const row = document.createElement('div');
+    row.className = 'sidebar-folder-row';
+    row.innerHTML = '<button type="button" class="sidebar-folder-toggle">' + chevronSvg() + '</button>' +
+      '<a href="' + node.url + '" class="sidebar-item" style="padding-left: ' + (12 + level * 16) + 'px;"><span>' + escapeHtml(node.name) + '</span></a>';
+    div.appendChild(row);
+    const children = document.createElement('div');
+    children.className = 'sidebar-children';
+    (node.children || []).forEach(function(c) { children.appendChild(renderWikiNode(c, level + 1, slug)); });
+    div.appendChild(children);
+    return div;
+  } else {
+    const a = document.createElement('a');
+    a.href = node.url;
+    a.className = 'sidebar-item';
+    a.style.paddingLeft = (12 + level * 16) + 'px';
+    a.dataset.name = node.name;
+    a.dataset.kind = 'page';
+    a.dataset.updated = node.updated_at || '';
+    a.dataset.path = node.path;
+    const span = document.createElement('span');
+    span.textContent = node.name;
+    a.appendChild(span);
+    return a;
+  }
+}
+
+async function expandWiki(wikiEl) {
+  const slug = wikiEl.dataset.wikiSlug;
+  const owner = wikiEl.dataset.wikiOwner;
+  const childrenEl = wikiEl.querySelector('.sidebar-wiki-children');
+  wikiEl.classList.add('open');
+  if (childrenEl.dataset.loaded !== '1') {
+    childrenEl.innerHTML = '<div class="sidebar-wiki-msg">Loading…</div>';
+    try {
+      const resp = await fetch('/@' + encodeURIComponent(owner) + '/' + encodeURIComponent(slug) + '/sidebar.json');
+      if (!resp.ok) throw new Error('fetch failed: ' + resp.status);
+      const tree = await resp.json();
+      childrenEl.innerHTML = '';
+      if (!Array.isArray(tree) || tree.length === 0) {
+        childrenEl.innerHTML = '<div class="sidebar-wiki-msg">(no pages)</div>';
+      } else {
+        tree.forEach(function(node) { childrenEl.appendChild(renderWikiNode(node, 0, slug)); });
+        const folderState = loadFolders();
+        childrenEl.querySelectorAll('.sidebar-folder').forEach(function(f) {
+          if (folderState[f.dataset.folderPath] === true) f.classList.add('open');
+        });
+      }
+      childrenEl.dataset.loaded = '1';
+    } catch (e) {
+      childrenEl.innerHTML = '<div class="sidebar-wiki-msg">Failed to load pages</div>';
+    }
+  }
+}
+
+function collapseWiki(wikiEl) {
+  wikiEl.classList.remove('open');
+}
+
+function persistWikiExpanded(slug, open) {
+  const state = loadWikiExpanded();
+  if (open) state[slug] = true;
+  else delete state[slug];
+  saveWikiExpanded(state);
+}
+
+document.addEventListener('click', function(e) {
+  const btn = e.target.closest('.sidebar-wiki-toggle');
+  if (!btn) return;
+  e.preventDefault();
+  const wikiEl = btn.closest('.sidebar-wiki');
+  if (!wikiEl) return;
+  if (wikiEl.classList.contains('open')) {
+    collapseWiki(wikiEl);
+    persistWikiExpanded(wikiEl.dataset.wikiSlug, false);
+  } else {
+    expandWiki(wikiEl);
+    persistWikiExpanded(wikiEl.dataset.wikiSlug, true);
+  }
+});
+
+(function initWikiExpanded() {
+  const state = loadWikiExpanded();
+  Object.keys(state).forEach(function(slug) {
+    if (state[slug] !== true) return;
+    const el = document.querySelector('.sidebar-wiki[data-wiki-slug="' + CSS.escape(slug) + '"]');
+    if (el) expandWiki(el);
+  });
+})();
 
 {% if current_user.is_authenticated and current_user.id == owner.id %}
 async function deleteWiki(slug, title) {

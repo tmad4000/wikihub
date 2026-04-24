@@ -73,9 +73,9 @@
 {% macro render_sidebar(items, level=0) %}
   {% for item in items %}
     {% if item.kind == 'folder' %}
-    <div class="sidebar-folder {{ 'open' if item.active else '' }}" data-folder-path="{{ item.path }}">
+    <div class="sidebar-folder {{ 'open' if item.active else '' }}" data-folder-path="{{ item.path }}" data-name="{{ item.name }}" data-kind="folder" data-updated="{{ item.updated_at or '' }}">
       <div class="sidebar-folder-row">
-        <button type="button" class="sidebar-folder-toggle" onclick="toggleFolder('{{ item.path }}')">
+        <button type="button" class="sidebar-folder-toggle">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
         </button>
         <a href="{{ item.url }}" class="sidebar-item {{ 'active' if item.active else '' }}" style="padding-left: {{ 12 + (level * 16) }}px;">
@@ -90,7 +90,7 @@
       </div>
     </div>
     {% else %}
-    <a href="{{ item.url }}" class="sidebar-item {{ 'active' if item.active else '' }}" style="padding-left: {{ 28 + (level * 16) }}px;">
+    <a href="{{ item.url }}" class="sidebar-item {{ 'active' if item.active else '' }}" data-name="{{ item.name }}" data-kind="page" data-updated="{{ item.updated_at or '' }}" data-path="{{ item.path }}" style="padding-left: {{ 28 + (level * 16) }}px;">
       <span class="sidebar-icon">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
       </span>
@@ -115,14 +115,19 @@
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </button>
       <a href="/@{{ owner.username }}">@{{ owner.username }}</a>&nbsp;/&nbsp;
-      <a href="/@{{ owner.username }}/{{ wiki.slug }}">{{ wiki.slug }}</a>&nbsp;/&nbsp;
+      <a href="/@{{ owner.username }}/{{ wiki.slug }}">{{ wiki.title or wiki.slug }}</a>&nbsp;/&nbsp;
       <a href="/@{{ owner.username }}/{{ wiki.slug }}/history">history</a>&nbsp;/&nbsp;
       {{ sha[:12] }}
     </div>
 
     {% if commit %}
     <div class="commit-header">
-      <div class="commit-message">{{ commit.message }}</div>
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
+        <div class="commit-message">{{ commit.message }}</div>
+        {% if current_user.is_authenticated and current_user.id == wiki.owner_id and commit.files_changed %}
+        <button style="flex-shrink:0;padding:6px 12px;font-size:0.75rem;font-weight:600;border:1px solid var(--border-emphasis);background:transparent;color:var(--text-secondary);border-radius:var(--radius-sm);cursor:pointer;font-family:var(--font-body);" onclick="revertCommit()">Revert to this</button>
+        {% endif %}
+      </div>
       <div class="commit-meta">
         <span>{{ commit.sha[:12] }}</span>
         <span>{{ commit.author }}</span>
@@ -180,6 +185,12 @@ function toggleFolder(path) {
   state[path] = folder.classList.contains('open');
   localStorage.setItem(folderStorageKey, JSON.stringify(state));
 }
+document.addEventListener('click', function(e) {
+  var btn = e.target.closest('.sidebar-folder-toggle');
+  if (!btn) return;
+  var folder = btn.closest('.sidebar-folder');
+  if (folder) toggleFolder(folder.dataset.folderPath);
+});
 document.addEventListener('DOMContentLoaded', () => {
   const state = loadFolders();
   for (const [path, isOpen] of Object.entries(state)) {
@@ -189,5 +200,30 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 });
+
+{% if current_user.is_authenticated and current_user.id == wiki.owner_id and commit and commit.files_changed %}
+function revertCommit() {
+  var files = {{ commit.files_changed | tojson }};
+  var sha = '{{ commit.sha }}';
+  if (!confirm('Revert ' + files.length + ' file(s) to commit ' + sha.substring(0, 12) + '?')) return;
+  var done = 0;
+  var errors = [];
+  files.forEach(function(path) {
+    fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}/revert', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({sha: sha, path: path})
+    })
+    .then(function(r) { return r.json().then(function(d) { if (!r.ok) errors.push(path + ': ' + d.message); done++; checkDone(); }); })
+    .catch(function() { errors.push(path); done++; checkDone(); });
+  });
+  function checkDone() {
+    if (done < files.length) return;
+    if (errors.length) alert('Some files failed:\n' + errors.join('\n'));
+    else alert('Reverted ' + files.length + ' file(s) to ' + sha.substring(0, 12));
+    location.reload();
+  }
+}
+{% endif %}
 </script>
 {% endblock %}

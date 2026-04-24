@@ -14,7 +14,10 @@ class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(64), unique=True, nullable=False, index=True)
     display_name = db.Column(db.String(128))
-    email = db.Column(db.String(256), unique=True, nullable=True)
+    # Uniqueness enforced only for verified emails (partial index below), so
+    # two users may claim the same unverified email — first to verify wins.
+    email = db.Column(db.String(256), nullable=True)
+    email_verified_at = db.Column(db.DateTime(timezone=True), nullable=True)
     password_hash = db.Column(db.String(256), nullable=True)  # null for oauth-only users
     google_id = db.Column(db.String(256), unique=True, nullable=True)
     llm_api_key_encrypted = db.Column(db.Text, nullable=True)  # encrypted Anthropic API key for Curator
@@ -23,6 +26,15 @@ class User(UserMixin, db.Model):
     wikis = db.relationship("Wiki", backref="owner", lazy="dynamic")
     api_keys = db.relationship("ApiKey", backref="user", lazy="dynamic")
     stars = db.relationship("Star", backref="user", lazy="dynamic")
+
+    __table_args__ = (
+        db.Index(
+            "ux_users_email_verified",
+            "email",
+            unique=True,
+            postgresql_where=db.text("email_verified_at IS NOT NULL"),
+        ),
+    )
 
 
 class Wiki(db.Model):
@@ -33,6 +45,7 @@ class Wiki(db.Model):
     slug = db.Column(db.String(128), nullable=False)
     title = db.Column(db.String(256))
     description = db.Column(db.Text)
+    subdomain = db.Column(db.String(63), unique=True, nullable=True)
     forked_from_id = db.Column(db.Integer, db.ForeignKey("wikis.id"), nullable=True)
     star_count = db.Column(db.Integer, default=0, nullable=False)
     fork_count = db.Column(db.Integer, default=0, nullable=False)
@@ -59,7 +72,11 @@ class Page(db.Model):
     frontmatter_json = db.Column(db.JSON)
     excerpt = db.Column(db.String(200))  # ~200 chars for search results
     content_hash = db.Column(db.String(64))
-    author = db.Column(db.String(256), nullable=True)  # nullable for anonymous writes
+    author = db.Column(db.String(256), nullable=True)  # original author (preserved for audit even when anonymous)
+    # anonymous posting (wikihub-7b2r) — hides author in API/UI when anonymous=True,
+    # claimable (only meaningful when anonymous) lets any authed user claim first-come-first-served.
+    anonymous = db.Column(db.Boolean, default=False, nullable=False)
+    claimable = db.Column(db.Boolean, default=False, nullable=False)
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
     updated_at = db.Column(db.DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
 
@@ -116,6 +133,32 @@ class Fork(db.Model):
     )
 
 
+class PendingInvite(db.Model):
+    """a share grant addressed to an email that has no account yet.
+    materialized into an ACL grant when a user signs up and verifies that email."""
+    __tablename__ = "pending_invites"
+
+    id = db.Column(db.Integer, primary_key=True)
+    wiki_id = db.Column(db.Integer, db.ForeignKey("wikis.id", ondelete="CASCADE"), nullable=False)
+    pattern = db.Column(db.String(512), nullable=False)  # e.g. "*" or "research/*"
+    email = db.Column(db.String(256), nullable=False, index=True)
+    role = db.Column(db.String(16), nullable=False)  # "read" | "edit"
+    # Random per-invite token embedded in the invite-email URL as ?it=.
+    # Valid token at signup/login = proof the user received our email = one-click
+    # verify. Nullable so pre-token rows (from before wikihub-yjsv) keep working
+    # via the fallback verify-email flow.
+    token = db.Column(db.String(64), nullable=True, index=True)
+    invited_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
+
+    wiki = db.relationship("Wiki")
+    invited_by = db.relationship("User", foreign_keys=[invited_by_id])
+
+    __table_args__ = (
+        db.UniqueConstraint("wiki_id", "pattern", "email", name="uq_pending_invite"),
+    )
+
+
 class ApiKey(db.Model):
     __tablename__ = "api_keys"
 
@@ -137,6 +180,36 @@ class MagicLoginToken(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
     token_hash = db.Column(db.String(256), nullable=False, unique=True, index=True)
     redirect_path = db.Column(db.String(512), nullable=False, default="/")
+    expires_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    used_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
+
+    user = db.relationship("User")
+
+
+class EmailVerificationToken(db.Model):
+    """one-time token sent to a user's email at signup (or when they add/change
+    email). consuming the token sets users.email_verified_at."""
+    __tablename__ = "email_verification_tokens"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    token_hash = db.Column(db.String(256), nullable=False, unique=True)
+    new_email = db.Column(db.String(256), nullable=False)
+    expires_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    used_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
+
+    user = db.relationship("User")
+
+
+class PasswordResetToken(db.Model):
+    """single-use password-reset token sent to a claimed account email."""
+    __tablename__ = "password_reset_tokens"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    token_hash = db.Column(db.String(256), nullable=False, unique=True)
     expires_at = db.Column(db.DateTime(timezone=True), nullable=False)
     used_at = db.Column(db.DateTime(timezone=True), nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)

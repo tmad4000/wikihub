@@ -5,6 +5,10 @@ class Config:
     SECRET_KEY = os.environ.get("SECRET_KEY", "change-me")
     SQLALCHEMY_DATABASE_URI = os.environ["DATABASE_URL"].replace("postgres://", "postgresql://", 1) if "DATABASE_URL" in os.environ else "postgresql://localhost/wikihub"
     SQLALCHEMY_TRACK_MODIFICATIONS = False
+    # pool_pre_ping tests each connection before use; eliminates the
+    # "SSL SYSCALL error: EOF detected" 500s when Postgres drops idle conns.
+    # Needed because SubdomainMiddleware hits the DB on every request.
+    SQLALCHEMY_ENGINE_OPTIONS = {"pool_pre_ping": True, "pool_recycle": 300}
     TEMPLATES_AUTO_RELOAD = True
     REPOS_DIR = os.environ.get("REPOS_DIR", os.path.join(os.path.dirname(__file__), "repos"))
     GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
@@ -16,6 +20,9 @@ class Config:
     # Default ON so the feature is live as soon as the endpoint is deployed.
     # Set CURATOR_ENABLED=false to hide the panel and return 503 from /api/v1/agent/chat.
     CURATOR_ENABLED = os.environ.get("CURATOR_ENABLED", "true").lower() in ("1", "true", "yes")
+    # wikihub-u9rc: PostHog analytics. Empty key = snippet skipped (dev default).
+    POSTHOG_KEY = os.environ.get("POSTHOG_KEY", "")
+    POSTHOG_HOST = os.environ.get("POSTHOG_HOST", "https://us.i.posthog.com")
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB max request size
     MAX_PAGE_SIZE = 2 * 1024 * 1024  # 2MB per page
     MAX_UPLOAD_FILES = 5000  # max files in a single upload/zip
@@ -25,3 +32,7 @@ class Config:
     SESSION_COOKIE_SECURE = os.environ.get("SESSION_COOKIE_SECURE", "1").lower() in ("1", "true", "yes")
     SESSION_COOKIE_SAMESITE = "Lax"
     SESSION_COOKIE_HTTPONLY = True
+    # Scope session cookie to the whole wikihub.md zone so users stay logged in
+    # when moving between apex and user/wiki subdomains. Leave unset locally
+    # (Flask defaults to current host) unless SESSION_COOKIE_DOMAIN is provided.
+    SESSION_COOKIE_DOMAIN = os.environ.get("SESSION_COOKIE_DOMAIN") or None

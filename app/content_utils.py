@@ -4,7 +4,7 @@ from collections.abc import Iterable
 import frontmatter
 from markdown_it import MarkdownIt
 
-from app.acl import VALID_VISIBILITIES
+from app.acl import VALID_VISIBILITIES, normalize_visibility
 
 
 PRIVATE_OPEN_RE = re.compile(r"<!--\s*private\s*-->", re.IGNORECASE)
