@@ -5,6 +5,7 @@ from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager
 from flask_wtf.csrf import CSRFProtect
+from flask_cors import CORS
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 db = SQLAlchemy()
@@ -21,6 +22,25 @@ def create_app(config_class="config.Config"):
     login_manager.init_app(app)
     login_manager.login_view = "auth.login"
     csrf.init_app(app)
+
+    # CORS for API endpoints (wikihub-gzj). Read endpoints are fully open;
+    # write endpoints require Authorization bearer tokens (not cookies), so
+    # CSRF is not a concern for cross-origin requests.
+    CORS(
+        app,
+        resources={r"/api/*": {"origins": "*"}},
+        methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+        expose_headers=["X-Request-ID", "X-RateLimit-Remaining", "X-RateLimit-Reset"],
+        supports_credentials=False,
+        max_age=600,
+        # Do not intercept exceptions — let Flask's normal error handlers run
+        # (and let the session teardown happen) before adding CORS headers.
+        # intercept_exceptions=True (the default) monkey-patches
+        # handle_exception/handle_user_exception and can interfere with
+        # SQLAlchemy session state when errors occur.
+        intercept_exceptions=False,
+    )
 
     from app.models import User
 

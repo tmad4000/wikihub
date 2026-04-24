@@ -904,6 +904,50 @@ def test_history_api_with_anon_and_deleted_page(client, api_key):
     assert r.status_code == 200
 
 
+def test_api_cors_headers(client, api_key):
+    """CORS headers on API responses (wikihub-gzj).
+
+    - OPTIONS preflight returns the expected Allow-* headers
+    - GET on a public API endpoint returns Access-Control-Allow-Origin
+    """
+    # OPTIONS preflight — ask about all three headers we care about
+    r = client.open(
+        "/api/v1/wikis",
+        method="OPTIONS",
+        headers={
+            "Origin": "https://example.com",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "Authorization,Content-Type,X-Request-ID",
+        },
+    )
+    assert r.status_code in (200, 204), f"preflight returned {r.status_code}"
+    allow_origin = r.headers.get("Access-Control-Allow-Origin")
+    assert allow_origin in ("*", "https://example.com"), \
+        f"preflight Access-Control-Allow-Origin missing/wrong: {allow_origin!r}"
+    allow_methods = (r.headers.get("Access-Control-Allow-Methods") or "").upper()
+    for m in ("GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"):
+        assert m in allow_methods, f"preflight missing method {m}: {allow_methods!r}"
+    allow_headers = (r.headers.get("Access-Control-Allow-Headers") or "").lower()
+    for hname in ("authorization", "content-type", "x-request-id"):
+        assert hname in allow_headers, f"preflight missing header {hname}: {allow_headers!r}"
+
+    # GET on a public API endpoint — /api is public discovery
+    r = client.get("/api", headers={"Origin": "https://example.com"})
+    assert r.status_code == 200
+    assert r.headers.get("Access-Control-Allow-Origin") in ("*", "https://example.com"), \
+        f"GET /api did not return Access-Control-Allow-Origin: {dict(r.headers)!r}"
+
+    # a GET to a list endpoint should also include CORS headers
+    r = client.get("/api/v1/wikis", headers={"Origin": "https://example.com"})
+    assert r.status_code == 200
+    assert r.headers.get("Access-Control-Allow-Origin") in ("*", "https://example.com")
+
+    # exposed headers are advertised via Access-Control-Expose-Headers
+    expose = (r.headers.get("Access-Control-Expose-Headers") or "").lower()
+    for hname in ("x-request-id", "x-ratelimit-remaining", "x-ratelimit-reset"):
+        assert hname in expose, f"expose-headers missing {hname}: {expose!r}"
+
+
 def test_list_wikis_api(client, api_key):
     """GET /api/v1/wikis (wikihub-bh4):
     - anonymous sees only public wikis
@@ -1022,6 +1066,7 @@ def run_all():
             ("frontmatter title renders h1", lambda: test_frontmatter_title_renders_h1(client, key)),
             ("admin claude-auth page requires token", lambda: test_admin_claude_auth_page_requires_token(client)),
             ("history API with anon + deleted page", lambda: test_history_api_with_anon_and_deleted_page(client, key)),
+            ("API CORS headers", lambda: test_api_cors_headers(client, key)),
             ("list wikis API", lambda: test_list_wikis_api(client, key)),
         ]
 
