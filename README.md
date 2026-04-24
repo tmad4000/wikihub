@@ -70,6 +70,19 @@ drafts/**                 unlisted
 
 Frontmatter `visibility:` on individual files overrides the ACL.
 
+## Feedback
+
+Send bug reports, feature requests, or praise to `POST /api/v1/feedback`
+(no auth required):
+
+```
+curl -X POST https://wikihub.globalbr.ai/api/v1/feedback \
+  -H "Content-Type: application/json" \
+  -d '{"kind": "bug", "subject": "...", "body": "..."}'
+```
+
+Full schema and examples: [`docs/api/feedback.md`](docs/api/feedback.md).
+
 ## Stack
 
 Flask, Postgres, bare git, Jinja, markdown-it-py. No JS framework. Server-rendered dark theme.

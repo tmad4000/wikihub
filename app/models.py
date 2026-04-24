@@ -156,6 +156,27 @@ class UsernameRedirect(db.Model):
     user = db.relationship("User")
 
 
+class Feedback(db.Model):
+    """user feedback (bug/feature/comment/praise) submitted via /api/v1/feedback.
+    open/public endpoint — raw IP is never stored; only a daily-salted sha256."""
+    __tablename__ = "feedback"
+
+    id = db.Column(db.String(32), primary_key=True)  # e.g. "fb_abc12345"
+    kind = db.Column(db.String(16), nullable=False, index=True)  # bug|feature|comment|praise
+    subject = db.Column(db.String(200), nullable=False)
+    body = db.Column(db.Text, nullable=False)
+    context_json = db.Column(db.JSON)
+    contact_email = db.Column(db.String(256), nullable=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    ip_hash = db.Column(db.String(64), nullable=True, index=True)  # sha256(ip + daily_salt)
+    status = db.Column(db.String(32), nullable=False, default="received")  # received|triaged|resolved|wontfix
+    resolution_notes = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False, index=True)
+    resolved_at = db.Column(db.DateTime(timezone=True), nullable=True)
+
+    user = db.relationship("User")
+
+
 class WikiSlugRedirect(db.Model):
     __tablename__ = "wiki_slug_redirects"
 

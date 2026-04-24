@@ -50,6 +50,7 @@ def reset_database():
         "magic_login_tokens",
         "api_keys",
         "username_redirects",
+        "feedback",
         "audit_log",
         "sessions",
         "users",
@@ -652,6 +653,54 @@ def test_folder_level_sharing(client, api_key):
     assert r.status_code in (403, 404)
 
 
+def test_feedback_submission(client):
+    """POST /api/v1/feedback accepts valid submissions and rejects bad ones."""
+    # use a fresh client to avoid stale session cookies from prior tests
+    # leaking into the anonymous feedback path
+    anon = client.application.test_client()
+
+    # happy path — anonymous bug report
+    r = anon.post("/api/v1/feedback", json={
+        "kind": "bug",
+        "subject": "Something is broken",
+        "body": "Here is a full description.",
+        "context": {"page_url": "https://example.com/x", "wiki": "@alice/foo"},
+    })
+    assert r.status_code == 201, f"expected 201, got {r.status_code}: {r.data!r}"
+    data = r.get_json()
+    assert data["id"].startswith("fb_")
+    assert data["status"] == "received"
+    assert "received_at" in data
+
+    # bad kind
+    r = anon.post("/api/v1/feedback", json={
+        "kind": "nonsense",
+        "subject": "x",
+        "body": "x",
+    })
+    assert r.status_code == 400
+    err = r.get_json()
+    assert err["error"] == "bad_request"
+    assert err.get("field") == "kind"
+
+    # oversized body
+    r = anon.post("/api/v1/feedback", json={
+        "kind": "comment",
+        "subject": "x",
+        "body": "A" * 10_001,
+    })
+    assert r.status_code == 400
+    err = r.get_json()
+    assert err.get("field") == "body"
+
+    # missing subject
+    r = anon.post("/api/v1/feedback", json={
+        "kind": "praise",
+        "body": "nice!",
+    })
+    assert r.status_code == 400
+
+
 def test_api_root_discovery(client):
     """GET /api returns a discovery document pointing at v1."""
     r = client.get("/api")
@@ -674,6 +723,45 @@ def test_api_root_discovery(client):
 
     # HEAD should respond too
     r = client.head("/api")
+    assert r.status_code == 200
+
+
+def test_frontmatter_title_renders_h1(client, api_key):
+    """pages with only frontmatter title (no # heading) get an <h1> in rendered
+    output — otherwise the page has a browser tab title but no visible heading
+    (wikihub-3jb). Tests the renderer directly so it doesn't depend on
+    pre-existing wiki-state from earlier tests."""
+    from app.renderer import render_page
+    import re as _re
+
+    # frontmatter-only title, no body heading — should get an h1 prepended
+    html = render_page("---\ntitle: Bayes Theorem\nvisibility: public\n---\n\nBody text.")
+    assert _re.search(r'<h1[^>]*>\s*Bayes Theorem\s*</h1>', html), \
+        f"frontmatter title should render as h1 when body has no heading; got: {html!r}"
+
+    # body already has matching h1 — should NOT duplicate
+    html = render_page("---\ntitle: With Heading\n---\n\n# With Heading\n\nBody.")
+    h1_tags = _re.findall(r'<h1[^>]*>\s*With Heading\s*</h1>', html)
+    assert len(h1_tags) == 1, f"expected exactly one h1 for matching title, got {len(h1_tags)}: {html!r}"
+
+    # no frontmatter title, no body heading — no h1 should be added
+    html = render_page("Just body text.")
+    assert "<h1" not in html
+
+    # frontmatter title + only h2 in body — h1 is still prepended
+    html = render_page("---\ntitle: Doc Title\n---\n\n## Only H2\n\nText.")
+    assert _re.search(r'<h1[^>]*>\s*Doc Title\s*</h1>', html)
+
+
+def test_admin_claude_auth_page_requires_token(client):
+    """anonymous GET to /api/v1/admin/claude-auth must not expose admin HTML
+    (wikihub-6q3). Return 404 to avoid leaking that the route exists."""
+    anon = client.application.test_client()
+    r = anon.get("/api/v1/admin/claude-auth")
+    assert r.status_code == 404, f"anonymous admin page should 404, got {r.status_code}"
+
+    # with the right admin token, the page loads
+    r = anon.get("/api/v1/admin/claude-auth?token=test-admin-token")
     assert r.status_code == 200
 
 
@@ -714,6 +802,9 @@ def run_all():
             ("wiki-level sharing", lambda: test_wiki_level_sharing(client, key)),
             ("folder-level sharing", lambda: test_folder_level_sharing(client, key)),
             ("api root discovery", lambda: test_api_root_discovery(client)),
+            ("feedback submission", lambda: test_feedback_submission(client)),
+            ("frontmatter title renders h1", lambda: test_frontmatter_title_renders_h1(client, key)),
+            ("admin claude-auth page requires token", lambda: test_admin_claude_auth_page_requires_token(client)),
         ]
 
         passed = 1  # account creation already passed
