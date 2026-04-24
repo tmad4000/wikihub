@@ -358,9 +358,21 @@ def _sse_event(data):
     return f"data: {json.dumps(data)}\n\n"
 
 
+@agent_chat_bp.route("/agent/status", methods=["GET"])
+def agent_status():
+    """Report whether the Curator is enabled on this server. wikihub-2jn.2"""
+    return jsonify({
+        "enabled": bool(current_app.config.get("CURATOR_ENABLED", False)),
+    })
+
+
 @agent_chat_bp.route("/agent/chat", methods=["POST"])
 def agent_chat():
     """SSE streaming chat endpoint for the Curator agent."""
+    # Feature flag: admin can disable the Curator without redeploying. wikihub-2jn.2
+    if not current_app.config.get("CURATOR_ENABLED", False):
+        return {"error": "disabled", "message": "Curator is disabled on this server"}, 503
+
     # Auth: accept Bearer token or Flask-Login session
     user = get_current_user_from_request()
     if not user:

@@ -77,6 +77,13 @@ def create_app(config_class="config.Config"):
     def page_url_filter(value):
         return url_path_from_page_path(value, strip_md=True)
 
+    @app.context_processor
+    def inject_feature_flags():
+        # Expose feature flags to all templates (e.g. reader.html curator panel). wikihub-2jn.2
+        return {
+            "curator_enabled": bool(app.config.get("CURATOR_ENABLED", False)),
+        }
+
     os.makedirs(app.config["REPOS_DIR"], exist_ok=True)
 
     with app.app_context():

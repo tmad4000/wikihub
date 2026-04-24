@@ -12,6 +12,10 @@ class Config:
     SERVER_NAME = os.environ.get("SERVER_NAME")  # e.g. wikihub.md
     BASE_URL = os.environ.get("BASE_URL", "http://localhost:5000")
     ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
+    # Curator agent (inline AI sidebar on wiki reader pages). wikihub-2jn.2
+    # Default ON so the feature is live as soon as the endpoint is deployed.
+    # Set CURATOR_ENABLED=false to hide the panel and return 503 from /api/v1/agent/chat.
+    CURATOR_ENABLED = os.environ.get("CURATOR_ENABLED", "true").lower() in ("1", "true", "yes")
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB max request size
     MAX_PAGE_SIZE = 2 * 1024 * 1024  # 2MB per page
     MAX_UPLOAD_FILES = 5000  # max files in a single upload/zip
