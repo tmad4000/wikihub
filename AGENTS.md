@@ -137,14 +137,31 @@ The following design is the direction for how any portable agent (OpenClaw, Clau
 
 ### Three-layer model
 
-1. **Always loaded — `soul.md`** (Tier 1, ~500–2000 tokens)
-   The user's curated self-description that goes into every conversation's system prompt. Lives in a wiki named `@user/portable-self/soul.md`. Free-form prose body + optional frontmatter for structured fields (`identity:`, `preferences:`, `focus:`).
+Adopts the OpenClaw convention verbatim (162 community templates drop-in compatible). Cross-validated against Claude Code memory model, Letta core-memory blocks, ChatGPT Custom Instructions/Memory, and the ID-RAG paper (MIT, 2509.25299). See `~/memory/research/agent-context-structures-2026-04-23.md`.
 
-2. **Skills — declarative tools** (Tier 2, metadata-only)
-   YAML-frontmattered markdown files in `@user/portable-self/skills/`. Loaded by metadata (name + when-to-use); body loaded only when the skill is invoked. Mirrors Claude Code's `~/.claude/skills/*/SKILL.md` pattern.
+A user's `@user/portable-self` wiki has this layout:
 
-3. **RAG — on-demand knowledge** (Tier 3, retrieved only)
-   All other wikis the agent's key can see. Agent retrieves via `/api/v1/search` + `/api/v1/wikis/.../pages` only when relevant.
+```
+SOUL.md      # Tier 1 — agent identity (~300-500 tok). Stable across users.
+USER.md      # Tier 1 — who the human is (~500-1500 tok). Preferences, role, focus.
+AGENTS.md    # Tier 1 — operating procedures (~500-1500 tok). NOT named CLAUDE.md.
+TOOLS.md     # Tier 1 — tool reach-for guide (~200-500 tok, optional)
+MEMORY.md    # Tier 1 — auto-written learnings index (≤200 lines cap)
+
+memory/
+  YYYY-MM-DD.md     # Tier 3 — daily logs; today + yesterday auto-read,
+                    #          older retrieved via memory_search
+  topics/<topic>.md # Tier 3 — auto-written topic detail files
+skills/<name>/
+  SKILL.md          # Tier 2 — Anthropic's YAML-frontmatter skill spec.
+                    #          Metadata always loaded; body on trigger.
+  resources/...     # Tier 3 — bundled scripts/refs, read on demand
+wiki/               # Tier 3 — RAG-retrievable pages (the bulk of WikiHub content)
+```
+
+Aggregate Tier 1 budget: **~3-8K tokens.** Per-file cap: 20K characters (mirrors OpenClaw).
+
+**Why USER.md separate from SOUL.md:** OpenClaw and Letta both split these. Agent identity stays stable when the user changes; user facts can be edited without rewriting the soul. Don't merge them.
 
 Spec: **wikihub-3r5q** (portable-self structure).
 
@@ -157,13 +174,25 @@ https://wh_<key>@wikihub.md/
 (basic-auth-style — preferred over query param because it doesn't leak via referrer or browser history)
 
 Given that string, the agent makes ONE call to `GET /api/v1/me/bootstrap` and receives:
-- user info + active scope
-- list of wikis the key can see (with recent pages, index excerpts)
-- the `soul.md` content inlined (Tier 1)
-- the `skills/` directory listing with frontmatter (Tier 2 metadata)
-- discovery links (`/api/v1/openapi.json`, etc.)
 
-After that, the agent works against the regular API. Spec: **wikihub-4rel** (bootstrap-by-URL+key).
+```json
+{
+  "user": { ... },
+  "scope": { ... },
+  "always_loaded": {
+    "soul":   "<full SOUL.md>",
+    "user":   "<full USER.md>",
+    "agents": "<full AGENTS.md>",
+    "tools":  "<full TOOLS.md or null>",
+    "memory": "<MEMORY.md head — first 200 lines>"
+  },
+  "skills":    [ {"name": "...", "description": "...", "path": "..."} ],
+  "wikis":     [ ... per-wiki summaries ... ],
+  "discovery": { ... API entrypoints ... }
+}
+```
+
+The agent stuffs `always_loaded.*` verbatim into its system prompt. Skills go in by metadata only; bodies are fetched via standard page reads when triggered. Wikis are RAG. Spec: **wikihub-4rel** (bootstrap-by-URL+key).
 
 ### Scoped keys (DM mode vs group mode)
 
