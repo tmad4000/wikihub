@@ -1144,7 +1144,7 @@ def wiki_history(owner, slug):
         "-C",
         repo,
         "log",
-        "--format=%H%x1f%an%x1f%aI%x1f%s%x1e",
+        "--format=%H%x1f%an%x1f%aI%x1f%s",
         "--name-only",
         f"--max-count={limit}",
         f"--skip={offset}",
@@ -1155,21 +1155,31 @@ def wiki_history(owner, slug):
     if result.returncode != 0:
         return {"error": "git_error", "message": result.stderr.strip() or "Unable to read history"}, 500
 
+    # parse: each commit is a format line (4 fields joined by \x1f),
+    # followed by zero or more filenames, each on their own line.
+    # blank lines separate commits. filenames never contain \x1f.
     commits = []
-    for chunk in result.stdout.split("\x1e"):
-        chunk = chunk.strip()
-        if not chunk:
+    current = None
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line:
             continue
-        lines = [line for line in chunk.splitlines() if line.strip()]
-        header = lines[0].split("\x1f")
-        files_changed = lines[1:]
-        commits.append({
-            "sha": header[0],
-            "author": header[1],
-            "date": header[2],
-            "message": header[3],
-            "files_changed": files_changed,
-        })
+        parts = line.split("\x1f")
+        if len(parts) == 4:
+            if current:
+                commits.append(current)
+            sha, author, date, message = parts
+            current = {
+                "sha": sha,
+                "author": author or "anonymous",
+                "date": date,
+                "message": message,
+                "files_changed": [],
+            }
+        elif current is not None:
+            current["files_changed"].append(line)
+    if current:
+        commits.append(current)
 
     return jsonify({"commits": commits, "total": len(commits)})
 

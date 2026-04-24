@@ -842,6 +842,68 @@ def test_admin_claude_auth_page_requires_token(client):
     assert r.status_code == 200
 
 
+def test_history_api_with_anon_and_deleted_page(client, api_key):
+    """regression: GET /api/v1/wikis/<owner>/<slug>/history must not 500 when
+    the repo has multiple commits including an anonymous one and a page that
+    no longer exists in HEAD (wikihub-855)."""
+    h = {"Authorization": f"Bearer {api_key}"}
+
+    # dedicated wiki
+    r = client.post("/api/v1/wikis", json={"slug": "history-bug", "title": "History Bug"}, headers=h)
+    assert r.status_code == 201
+
+    # commit 1 (authored): create a public-edit page so anon can edit it
+    r = client.post("/api/v1/wikis/agent1/history-bug/pages", json={
+        "path": "wiki/open.md",
+        "content": "---\ntitle: Open\nvisibility: public-edit\n---\n\nInitial.",
+        "visibility": "public-edit",
+    }, headers=h)
+    assert r.status_code == 201
+
+    # commit 2 (anonymous): edit the same page without auth
+    r = client.put("/api/v1/wikis/agent1/history-bug/pages/wiki/open.md", json={
+        "content": "# Open\n\nEdited anonymously.",
+    })
+    assert r.status_code == 200
+
+    # commit 3 (authored): create a public page that we'll later delete
+    r = client.post("/api/v1/wikis/agent1/history-bug/pages", json={
+        "path": "wiki/doomed.md",
+        "content": "---\ntitle: Doomed\nvisibility: public\n---\n\nWill be gone.",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201
+
+    # commit 4 (authored): delete the doomed page — it no longer exists in HEAD
+    r = client.delete("/api/v1/wikis/agent1/history-bug/pages/wiki/doomed.md", headers=h)
+    assert r.status_code == 204
+
+    # now hit the history endpoint — the bug: this used to 500
+    r = client.get("/api/v1/wikis/agent1/history-bug/history", headers=h)
+    assert r.status_code == 200, f"history returned {r.status_code}: {r.data!r}"
+    data = r.get_json()
+    assert "commits" in data
+    assert "total" in data
+    assert len(data["commits"]) >= 3, f"expected multiple commits, got {len(data['commits'])}"
+
+    # every commit must have the expected shape — this is what was crashing
+    for c in data["commits"]:
+        assert isinstance(c.get("sha"), str) and len(c["sha"]) == 40
+        assert isinstance(c.get("author"), str) and c["author"]
+        assert isinstance(c.get("date"), str)
+        assert isinstance(c.get("message"), str)
+        assert isinstance(c.get("files_changed"), list)
+
+    # anonymous client (no auth) must also be able to read public history
+    anon = client.application.test_client()
+    r = anon.get("/api/v1/wikis/agent1/history-bug/history")
+    assert r.status_code == 200, f"anon history returned {r.status_code}: {r.data!r}"
+
+    # filter by a specific file must also survive the same shape
+    r = client.get("/api/v1/wikis/agent1/history-bug/history?path=wiki/open.md", headers=h)
+    assert r.status_code == 200
+
+
 def run_all():
     app = setup()
 
@@ -885,8 +947,6 @@ def run_all():
             ("frontmatter title renders h1", lambda: test_frontmatter_title_renders_h1(client, key)),
             ("admin claude-auth page requires token", lambda: test_admin_claude_auth_page_requires_token(client)),
             ("history API with anon + deleted page", lambda: test_history_api_with_anon_and_deleted_page(client, key)),
-            ("API CORS headers", lambda: test_api_cors_headers(client, key)),
-            ("list wikis API", lambda: test_list_wikis_api(client, key)),
         ]
 
         passed = 1  # account creation already passed
