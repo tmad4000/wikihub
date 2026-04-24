@@ -130,3 +130,86 @@ obsidian + amber. see `.interface-design/system.md` for tokens. key points:
 - `[[wikihub]]` logo with bracket signature
 - borders only, no shadows
 - link icon for unlisted (not eye)
+
+## roadmap: agent onboarding (planned, not yet implemented)
+
+The following design is the direction for how any portable agent (OpenClaw, Claude Code, custom) will integrate with WikiHub. Not yet built — listed here so any agent reading the repo learns the model.
+
+### Three-layer model
+
+1. **Always loaded — `soul.md`** (Tier 1, ~500–2000 tokens)
+   The user's curated self-description that goes into every conversation's system prompt. Lives in a wiki named `@user/portable-self/soul.md`. Free-form prose body + optional frontmatter for structured fields (`identity:`, `preferences:`, `focus:`).
+
+2. **Skills — declarative tools** (Tier 2, metadata-only)
+   YAML-frontmattered markdown files in `@user/portable-self/skills/`. Loaded by metadata (name + when-to-use); body loaded only when the skill is invoked. Mirrors Claude Code's `~/.claude/skills/*/SKILL.md` pattern.
+
+3. **RAG — on-demand knowledge** (Tier 3, retrieved only)
+   All other wikis the agent's key can see. Agent retrieves via `/api/v1/search` + `/api/v1/wikis/.../pages` only when relevant.
+
+Spec: **wikihub-3r5q** (portable-self structure).
+
+### Bootstrap pattern
+
+A single connection string contains everything an agent needs:
+```
+https://wh_<key>@wikihub.md/
+```
+(basic-auth-style — preferred over query param because it doesn't leak via referrer or browser history)
+
+Given that string, the agent makes ONE call to `GET /api/v1/me/bootstrap` and receives:
+- user info + active scope
+- list of wikis the key can see (with recent pages, index excerpts)
+- the `soul.md` content inlined (Tier 1)
+- the `skills/` directory listing with frontmatter (Tier 2 metadata)
+- discovery links (`/api/v1/openapi.json`, etc.)
+
+After that, the agent works against the regular API. Spec: **wikihub-4rel** (bootstrap-by-URL+key).
+
+### Scoped keys (DM mode vs group mode)
+
+Mental model: **main key = full access; other keys = restricted access to the same account.**
+
+- A scoped child key is minted from a parent key via `POST /api/v1/keys/scoped` with: `label`, `max_visibility` ceiling (e.g. `public-edit` excludes private + unlisted), `wikis_allowlist` / `wikis_denylist`, `read_only`, `expires_at`
+- Revoking the parent cascades to all children
+- Audit-logged on every use; visible in /settings; individually revocable
+- When a scoped key authenticates a browser session, the UI shows a persistent banner indicating restricted access (so a human never confuses it for their main session)
+- Scope dimensions deliberately small: NO path globs, NO grandchildren
+
+Spec: **wikihub-gzlt** (scoped/restricted API keys).
+
+### Why this shape
+
+- Wiki-as-config means the user edits one place (their wiki) to update agent behavior — no separate config file to learn
+- Per-page visibility means the same `portable-self` wiki can be public OR scoped — agents see only what their key permits
+- Framework-independent: any HTTP client can do this; no Claude/OpenAI/OpenClaw-specific bindings required
+- Mirrors `CLAUDE.md` (always loaded) vs Claude skills (metadata + on-demand bodies), so agents that already understand that distinction map onto WikiHub trivially
+
+### When changing this design
+
+Update **all** of: this file, `~/memory/wikihub.md` (Mac Mini), the relevant ticket descriptions (gzlt/4rel/3r5q), and once routes ship: `/AGENTS.md` route, `/llms.txt`, `/agents` HTML, `/.well-known/wikihub.json`, landing page, MCP server tools list, CLI README. (Today only the first two are necessary because the routes don't yet describe this design.)
+
+## Landing the Plane (Session Completion)
+
+**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
+
+**MANDATORY WORKFLOW:**
+
+1. **File issues for remaining work** - Create issues for anything that needs follow-up
+2. **Run quality gates** (if code changed) - Tests, linters, builds
+3. **Update issue status** - Close finished work, update in-progress items
+4. **PUSH TO REMOTE** - This is MANDATORY:
+   ```bash
+   git pull --rebase
+   bd sync
+   git push
+   git status  # MUST show "up to date with origin"
+   ```
+5. **Clean up** - Clear stashes, prune remote branches
+6. **Verify** - All changes committed AND pushed
+7. **Hand off** - Provide context for next session
+
+**CRITICAL RULES:**
+- Work is NOT complete until `git push` succeeds
+- NEVER stop before pushing - that leaves work stranded locally
+- NEVER say "ready to push when you are" - YOU must push
+- If push fails, resolve and retry until it succeeds
