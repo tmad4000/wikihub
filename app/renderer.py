@@ -19,6 +19,7 @@ from mdit_py_plugins.dollarmath import dollarmath_plugin
 from mdit_py_plugins.anchors import anchors_plugin
 
 from app.content_utils import parse_markdown_document
+from markupsafe import escape as _escape
 
 
 def _heading_slug(title):
@@ -263,6 +264,27 @@ def render_markdown(content, resolve_wikilinks=None):
     return html
 
 
+_LEADING_H1_RE = re.compile(r'\s*<h1(?:\s[^>]*)?>', re.IGNORECASE)
+
+
+def _prepend_frontmatter_h1(content, html):
+    """If frontmatter has a title but the rendered HTML does not start with an h1,
+    prepend an <h1> containing the frontmatter title so the rendered page has a
+    visible heading. If the body already opens with an h1 (e.g. markdown `# Foo`),
+    leave it alone to avoid duplicates."""
+    metadata, _ = parse_markdown_document(content)
+    fm_title = metadata.get("title")
+    if not fm_title or not isinstance(fm_title, str):
+        return html
+    fm_title = fm_title.strip()
+    if not fm_title:
+        return html
+    if _LEADING_H1_RE.match(html or ""):
+        return html
+    slug = _heading_slug(fm_title)
+    return f'<h1 id="{_escape(slug)}">{_escape(fm_title)}</h1>\n{html}'
+
+
 def render_page(content, wiki_owner=None, wiki_slug=None, current_page_path=None):
     """render a wiki page with wikilink resolution.
     current_page_path: the page's path in the repo (e.g. 'wiki/courses/cs224n.md')
@@ -335,5 +357,7 @@ def render_page(content, wiki_owner=None, wiki_slug=None, current_page_path=None
             return match.group(0)
 
         html = re.sub(r'(href=")([^"]+)(")', resolve_relative_link, html)
+
+    html = _prepend_frontmatter_h1(content, html)
 
     return html
