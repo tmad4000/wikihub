@@ -348,6 +348,58 @@ def test_anonymous_public_edit(client, api_key):
     assert "Edited anonymously" in r.get_json()["content"]
 
 
+def test_public_edit_shows_edit_button(client, api_key):
+    """anonymous visitors on a public-edit page see the Edit button (wikihub-euw3.1).
+    and on the wiki root index when index.md is public-edit (wikihub-euw3.2)."""
+    h = {"Authorization": f"Bearer {api_key}"}
+
+    # create a public-edit wiki; index.md is auto-scaffolded on create
+    r = client.post("/api/v1/wikis", json={"slug": "open-wiki", "title": "Open Wiki"}, headers=h)
+    assert r.status_code == 201
+
+    # set index.md to public-edit so wiki_index renders reader.html with edit button
+    r = client.put("/api/v1/wikis/agent1/open-wiki/pages/index.md", json={
+        "content": "---\ntitle: Open Wiki\nvisibility: public-edit\n---\n\nRoot page.",
+        "visibility": "public-edit",
+    }, headers=h)
+    assert r.status_code == 200, f"put index.md: {r.status_code} {r.get_data(as_text=True)[:200]}"
+
+    r = client.post("/api/v1/wikis/agent1/open-wiki/pages", json={
+        "path": "wiki/open.md",
+        "content": "---\ntitle: Open\nvisibility: public-edit\n---\n\nOpen edit page.",
+        "visibility": "public-edit",
+    }, headers=h)
+    assert r.status_code == 201
+
+    # create a separate read-only public page for negative check
+    r = client.post("/api/v1/wikis/agent1/open-wiki/pages", json={
+        "path": "wiki/readonly.md",
+        "content": "---\ntitle: ReadOnly\nvisibility: public\n---\n\nRead only page.",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201
+
+    anon = client.application.test_client()
+
+    # wiki_page: public-edit page shows Edit button for anonymous
+    r = anon.get("/@agent1/open-wiki/wiki/open")
+    assert r.status_code == 200
+    body = r.get_data(as_text=True)
+    assert "/@agent1/open-wiki/wiki/open/edit" in body, "Edit link missing on public-edit page for anonymous user"
+
+    # wiki_page: public (read-only) page does NOT show Edit button for anonymous
+    r = anon.get("/@agent1/open-wiki/wiki/readonly")
+    assert r.status_code == 200
+    body = r.get_data(as_text=True)
+    assert "/@agent1/open-wiki/wiki/readonly/edit" not in body, "Edit link should not appear on read-only page for anonymous user"
+
+    # wiki_index: root URL renders reader.html and shows Edit button when index.md is public-edit
+    r = anon.get("/@agent1/open-wiki")
+    assert r.status_code == 200
+    body = r.get_data(as_text=True)
+    assert "/@agent1/open-wiki/index/edit" in body, "Edit link missing on wiki index for anonymous user"
+
+
 def test_acl_permissions(client, api_key):
     """private pages are not readable without auth"""
     h = {"Authorization": f"Bearer {api_key}"}
@@ -653,6 +705,31 @@ def test_folder_level_sharing(client, api_key):
     assert r.status_code in (403, 404)
 
 
+def test_me_capabilities(client, api_key):
+    """GET /api/v1/me/capabilities returns a full capability snapshot."""
+    # auth required
+    r = client.get("/api/v1/me/capabilities")
+    assert r.status_code == 401
+
+    # authenticated happy path
+    h = {"Authorization": f"Bearer {api_key}"}
+    r = client.get("/api/v1/me/capabilities", headers=h)
+    assert r.status_code == 200
+    data = r.get_json()
+    assert data["username"] == "agent1"
+    assert "user_id" in data
+    assert isinstance(data["wikis"], list)
+    # agent1 has at least their personal wiki by now
+    assert any(w["role"] == "owner" for w in data["wikis"])
+    rl = data["rate_limits"]
+    assert "writes_per_minute" in rl
+    assert "feedback_per_minute" in rl
+    assert rl["writes_per_minute"]["limit"] >= 1
+    assert "reset_at" in rl["writes_per_minute"]
+    assert data["features"]["git_push"] is True
+    assert "max_wikis_per_user" in data["quotas"]
+
+
 def test_feedback_submission(client):
     """POST /api/v1/feedback accepts valid submissions and rejects bad ones."""
     # use a fresh client to avoid stale session cookies from prior tests
@@ -795,6 +872,7 @@ def run_all():
             ("magic link login", lambda: test_magic_link_login(client)),
             ("ACL permissions", lambda: test_acl_permissions(client, key)),
             ("anonymous public edit", lambda: test_anonymous_public_edit(client, key)),
+            ("public-edit shows Edit button", lambda: test_public_edit_shows_edit_button(client, key)),
             ("people directory + profiles", lambda: test_people_directory_and_profiles(client, key)),
             ("new folder UI", lambda: test_new_folder_ui(client)),
             ("wikipedia-style URLs", lambda: test_wikipedia_urls(client, key)),
@@ -803,8 +881,12 @@ def run_all():
             ("folder-level sharing", lambda: test_folder_level_sharing(client, key)),
             ("api root discovery", lambda: test_api_root_discovery(client)),
             ("feedback submission", lambda: test_feedback_submission(client)),
+            ("me capabilities", lambda: test_me_capabilities(client, key)),
             ("frontmatter title renders h1", lambda: test_frontmatter_title_renders_h1(client, key)),
             ("admin claude-auth page requires token", lambda: test_admin_claude_auth_page_requires_token(client)),
+            ("history API with anon + deleted page", lambda: test_history_api_with_anon_and_deleted_page(client, key)),
+            ("API CORS headers", lambda: test_api_cors_headers(client, key)),
+            ("list wikis API", lambda: test_list_wikis_api(client, key)),
         ]
 
         passed = 1  # account creation already passed

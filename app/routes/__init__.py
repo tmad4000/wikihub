@@ -5,4 +5,4 @@ auth_bp = Blueprint("auth", __name__, url_prefix="/auth")
 api_bp = Blueprint("api", __name__)
 wiki_bp = Blueprint("wiki", __name__)
 
-from app.routes import main, auth, api, api_wikis, wiki, agent_surfaces, upload, agent_chat, api_feedback  # noqa: E402, F401
+from app.routes import main, auth, api, api_wikis, wiki, agent_surfaces, upload, agent_chat, api_feedback, api_capabilities  # noqa: E402, F401
