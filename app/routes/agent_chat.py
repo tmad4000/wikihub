@@ -1003,8 +1003,15 @@ def _check_admin_token(req):
 
 @agent_chat_bp.route("/admin/claude-auth", methods=["GET"])
 def admin_claude_auth_page():
-    """Admin page for server-wide Claude auth. Token required."""
-    from flask import render_template
+    """Admin page for server-wide Claude auth. Token required.
+
+    Gate the HTML itself behind the admin token so anonymous visitors can't
+    discover that admin functionality exists. Returns 404 on unauth to avoid
+    leaking the existence of this route.
+    """
+    from flask import render_template, abort
+    if not _check_admin_token(request):
+        abort(404)
     return render_template("admin_claude_auth.html")
 
 
