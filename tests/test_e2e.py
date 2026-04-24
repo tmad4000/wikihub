@@ -707,8 +707,14 @@ def test_folder_level_sharing(client, api_key):
 
 def test_me_capabilities(client, api_key):
     """GET /api/v1/me/capabilities returns a full capability snapshot."""
-    # auth required
-    r = client.get("/api/v1/me/capabilities")
+    # auth required — flask_login caches current_user on `g`, which persists
+    # across requests within the wrapping app_context() in this test harness.
+    # Clearing it (and using a fresh client with no session cookie) gives us
+    # a true unauthenticated request.
+    from flask import g
+    g.pop("_login_user", None)
+    anon = client.application.test_client()
+    r = anon.get("/api/v1/me/capabilities")
     assert r.status_code == 401
 
     # authenticated happy path
