@@ -92,6 +92,99 @@ def _load_page_content(owner, slug, page_path, public=False):
 
 # --- wiki endpoints ---
 
+@api_bp.route("/wikis", methods=["GET"])
+@api_auth_optional
+def list_wikis():
+    """list wikis. public/public-edit by default. authed user also sees their own private wikis.
+
+    query params:
+      limit (default 50, max 200)
+      offset (default 0)
+      owner (optional) scope to one user
+      q (optional) substring match on title/description
+    """
+    try:
+        limit = int(request.args.get("limit", 50))
+    except (TypeError, ValueError):
+        limit = 50
+    try:
+        offset = int(request.args.get("offset", 0))
+    except (TypeError, ValueError):
+        offset = 0
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
+
+    owner_param = (request.args.get("owner") or "").strip().lstrip("@").lower()
+    q_param = (request.args.get("q") or "").strip()
+
+    user = getattr(request, "current_user", None)
+
+    # a wiki is "public" if it has at least one public or public-edit page.
+    # same filter as /explore. an authed user additionally sees their own wikis.
+    public_wiki_ids_subq = (
+        db.session.query(Page.wiki_id)
+        .filter(Page.visibility.in_(["public", "public-edit"]))
+        .distinct()
+        .subquery()
+    )
+
+    query = Wiki.query.join(User, Wiki.owner_id == User.id)
+    if user:
+        query = query.filter(
+            db.or_(
+                Wiki.id.in_(db.session.query(public_wiki_ids_subq)),
+                Wiki.owner_id == user.id,
+            )
+        )
+    else:
+        query = query.filter(Wiki.id.in_(db.session.query(public_wiki_ids_subq)))
+
+    if owner_param:
+        query = query.filter(User.username == owner_param)
+
+    if q_param:
+        like = f"%{q_param}%"
+        query = query.filter(
+            db.or_(
+                Wiki.title.ilike(like),
+                Wiki.description.ilike(like),
+            )
+        )
+
+    query = query.order_by(Wiki.updated_at.desc())
+
+    total = query.count()
+    wikis = query.offset(offset).limit(limit).all()
+
+    def _visibility(w):
+        # derive a simple wiki-level visibility label based on its pages.
+        # matches frontmatter vocabulary: public > public-edit > unlisted > private.
+        vs = {p.visibility for p in w.pages.all()}
+        for v in ("public", "public-edit", "unlisted", "unlisted-edit"):
+            if v in vs:
+                return v
+        return "private"
+
+    items = []
+    for w in wikis:
+        items.append({
+            "slug": f"@{w.owner.username}/{w.slug}",
+            "owner": w.owner.username,
+            "name": w.slug,
+            "title": w.title,
+            "description": w.description,
+            "visibility": _visibility(w),
+            "updated_at": w.updated_at.isoformat() if w.updated_at else None,
+        })
+
+    return jsonify({
+        "wikis": items,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    })
+
+
 @api_bp.route("/wikis", methods=["POST"])
 @api_auth_required
 def create_wiki():

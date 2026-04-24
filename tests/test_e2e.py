@@ -904,6 +904,81 @@ def test_history_api_with_anon_and_deleted_page(client, api_key):
     assert r.status_code == 200
 
 
+def test_list_wikis_api(client, api_key):
+    """GET /api/v1/wikis (wikihub-bh4):
+    - anonymous sees only public wikis
+    - authed user also sees their own private wikis
+    - owner filter scopes to one user
+    - pagination works
+    """
+    # set up an alice user with a mix of public and private wikis
+    r = client.post("/api/v1/accounts", json={"username": "alice"})
+    assert r.status_code == 201
+    alice_key = r.get_json()["api_key"]
+    ha = {"Authorization": f"Bearer {alice_key}"}
+
+    r = client.post("/api/v1/wikis", json={"slug": "alice-pub", "title": "Alice Pub"}, headers=ha)
+    assert r.status_code == 201
+    r = client.put("/api/v1/wikis/alice/alice-pub/pages/index.md", json={
+        "content": "---\ntitle: Alice Pub\nvisibility: public\n---\n\nPublic alice.",
+        "visibility": "public",
+    }, headers=ha)
+    assert r.status_code == 200
+
+    r = client.post("/api/v1/wikis", json={"slug": "alice-vault", "title": "Alice Vault"}, headers=ha)
+    assert r.status_code == 201
+    r = client.put("/api/v1/wikis/alice/alice-vault/pages/index.md", json={
+        "content": "---\ntitle: Alice Vault\nvisibility: private\n---\n\nSecret alice.",
+        "visibility": "private",
+    }, headers=ha)
+    assert r.status_code == 200
+
+    # --- anonymous: only public wikis ---
+    anon = client.application.test_client()
+    r = anon.get("/api/v1/wikis")
+    assert r.status_code == 200
+    data = r.get_json()
+    assert "wikis" in data and "total" in data and "limit" in data and "offset" in data
+    owners_slugs = {(w["owner"], w["name"]) for w in data["wikis"]}
+    assert ("alice", "alice-pub") in owners_slugs
+    assert ("alice", "alice-vault") not in owners_slugs, "anonymous must not see private wikis"
+
+    # --- authed alice: also sees her own vault ---
+    r = client.get("/api/v1/wikis", headers=ha)
+    assert r.status_code == 200
+    data = r.get_json()
+    owners_slugs = {(w["owner"], w["name"]) for w in data["wikis"]}
+    assert ("alice", "alice-pub") in owners_slugs
+    assert ("alice", "alice-vault") in owners_slugs, "authed owner should see her private wiki"
+
+    # --- owner filter ---
+    r = anon.get("/api/v1/wikis?owner=alice")
+    assert r.status_code == 200
+    data = r.get_json()
+    assert len(data["wikis"]) >= 1
+    assert all(w["owner"] == "alice" for w in data["wikis"])
+
+    # --- pagination ---
+    r = anon.get("/api/v1/wikis?limit=1&offset=0")
+    assert r.status_code == 200
+    data = r.get_json()
+    assert data["limit"] == 1
+    assert data["offset"] == 0
+    assert len(data["wikis"]) <= 1
+    assert data["total"] >= 1
+
+    # limit clamps to max 200 when exceeded
+    r = anon.get("/api/v1/wikis?limit=9999")
+    assert r.status_code == 200
+    assert r.get_json()["limit"] == 200
+
+    # slug is the @owner/name form
+    r = anon.get("/api/v1/wikis?owner=alice")
+    assert r.status_code == 200
+    for w in r.get_json()["wikis"]:
+        assert w["slug"] == f"@{w['owner']}/{w['name']}"
+
+
 def run_all():
     app = setup()
 
@@ -947,6 +1022,7 @@ def run_all():
             ("frontmatter title renders h1", lambda: test_frontmatter_title_renders_h1(client, key)),
             ("admin claude-auth page requires token", lambda: test_admin_claude_auth_page_requires_token(client)),
             ("history API with anon + deleted page", lambda: test_history_api_with_anon_and_deleted_page(client, key)),
+            ("list wikis API", lambda: test_list_wikis_api(client, key)),
         ]
 
         passed = 1  # account creation already passed
