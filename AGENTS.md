@@ -123,8 +123,9 @@ Explicit phase ordering (Jacob 2026-04-22):
 ## deployment
 
 - **Live URL:** https://wikihub.md (legacy alias: https://wikihub.globalbr.ai, still redirects)
-- **Server:** AWS Lightsail instance `wikihub-dev` (54.145.123.7)
-- **SSH:** `ssh -i ~/.ssh/wikihub-dev-key ubuntu@54.145.123.7`
+- **Server:** GCP Compute Engine, project `wikihub-prod`, instance `wikihub-prod` (e2-medium, us-east1-b, static IP **35.237.163.58**)
+- **SSH:** `gcloud compute ssh --project=wikihub-prod --zone=us-east1-b wikihub-prod`
+- **Migrated 2026-04-25** from AWS Lightsail (`wikihub-dev`, 54.145.123.7). Old box is stopped (cold backup, 7d retention).
 - **Code on server:** `/opt/wikihub-app`
 - **DB:** PostgreSQL `wikihub` database (local to server)
 - **Process:** gunicorn on port 5100, managed by systemd (`wikihub.service`)
@@ -217,9 +218,9 @@ see `docs/deploy.md` for full details. the short version:
 1. `python3 tests/test_e2e.py` — all tests pass
 2. `git status` — **every modified file is committed** (most common deploy failure is a missing file)
 3. `git push origin main`
-4. `ssh -i ~/.ssh/wikihub-dev-key ubuntu@54.145.123.7 "cd /opt/wikihub-app && git pull && sudo systemctl restart wikihub"`
+4. `gcloud compute ssh --project=wikihub-prod --zone=us-east1-b wikihub-prod --command "cd /opt/wikihub-app && git pull && sudo systemctl restart wikihub"`
 5. `curl -s -o /dev/null -w "%{http_code}" https://wikihub.md/` — must be 200, not 502
-6. if 502, check logs: `ssh -i ~/.ssh/wikihub-dev-key ubuntu@54.145.123.7 "sudo journalctl -u wikihub --no-pager -n 30"`
+6. if 502, check logs: `gcloud compute ssh --project=wikihub-prod --zone=us-east1-b wikihub-prod --command "sudo journalctl -u wikihub --no-pager -n 30"`
 7. agent-browser smoke test on production for the specific changes made
 
 ## agent instruction surfaces (keep in sync)
