@@ -45,6 +45,12 @@ def roadmap():
     return render_template("roadmap.html")
 
 
+@main_bp.route("/offline.html")
+def offline_page():
+    """PWA offline fallback. Service worker hands this out when navigation fetch fails."""
+    return render_template("offline.html"), 200
+
+
 @main_bp.route("/explore")
 def explore():
     # Editorial picks: curated wikis that represent the best of wikihub

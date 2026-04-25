@@ -403,6 +403,21 @@
 .page-actions {
   display: flex; align-items: center; gap: 8px; margin-bottom: 20px; flex-wrap: wrap;
 }
+/* On mobile: don't wrap the action toolbar — let it scroll horizontally so the
+   article body is reachable in two thumb taps instead of past a 4-row toolbar. */
+@media (max-width: 640px) {
+  .page-actions {
+    flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .page-actions::-webkit-scrollbar { display: none; }
+  .page-actions > * { flex-shrink: 0; }
+  .actions-spacer { display: none; }
+  /* Article horizontal-scrolls cleanly inside its frame instead of breaking layout */
+  .article pre, .article table { max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .article img, .article video { max-width: 100%; height: auto; }
+}
 .action-btn {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 6px 14px; min-height: 36px;

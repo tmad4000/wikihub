@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}Offline — wikihub{% endblock %}
+{% block extra_css %}
+.offline-wrap {
+  max-width: 520px; margin: 80px auto; padding: 0 24px; text-align: center;
+}
+.offline-wrap h1 {
+  font-size: 1.75rem; font-weight: 700;
+  letter-spacing: -0.02em; margin: 16px 0 8px;
+}
+.offline-wrap p {
+  color: var(--text-secondary); font-size: 0.9375rem; line-height: 1.55;
+}
+.offline-icon {
+  width: 64px; height: 64px; margin: 0 auto 8px;
+  border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  background: rgba(212, 160, 74, 0.08); border: 1px solid rgba(212, 160, 74, 0.2);
+  color: var(--accent);
+}
+.offline-actions {
+  margin-top: 24px; display: flex; gap: 8px; justify-content: center; flex-wrap: wrap;
+}
+.offline-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 9px 16px; border-radius: var(--radius-md);
+  background: var(--accent-subtle); color: var(--text-primary);
+  text-decoration: none; font-size: 0.875rem; font-weight: 500;
+  border: 1px solid var(--border-default);
+}
+.offline-btn:hover { background: var(--accent); color: #18130a; }
+.offline-cached-list {
+  margin: 32px auto 0; max-width: 480px; text-align: left;
+}
+.offline-cached-list h3 {
+  font-size: 0.75rem; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--text-muted);
+  font-family: var(--font-mono); margin-bottom: 8px;
+}
+.offline-cached-list a {
+  display: block; padding: 10px 12px; border-radius: 6px;
+  font-size: 0.875rem; color: var(--text-secondary);
+  text-decoration: none; border: 1px solid var(--border-default);
+  margin-bottom: 6px;
+}
+.offline-cached-list a:hover { color: var(--text-primary); border-color: var(--accent); }
+{% endblock %}
+{% block body %}
+<div class="offline-wrap">
+  <div class="offline-icon">
+    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M1 1l22 22"/>
+      <path d="M16.72 11.06A10.94 10.94 0 0119 12.55"/>
+      <path d="M5 12.55a10.94 10.94 0 015.17-2.39"/>
+      <path d="M10.71 5.05A16 16 0 0122.58 9"/>
+      <path d="M1.42 9a15.91 15.91 0 014.7-2.88"/>
+      <path d="M8.53 16.11a6 6 0 016.95 0"/>
+      <line x1="12" y1="20" x2="12.01" y2="20"/>
+    </svg>
+  </div>
+  <h1>You're offline</h1>
+  <p>
+    Couldn't reach wikihub.md — but pages you've already visited may still load from cache.
+    Tap retry once you're back online, or pick a cached page below.
+  </p>
+  <div class="offline-actions">
+    <a href="javascript:location.reload()" class="offline-btn">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+      Retry
+    </a>
+    <a href="/" class="offline-btn">Home</a>
+    <a href="/explore" class="offline-btn">Explore</a>
+  </div>
+
+  <div class="offline-cached-list" id="offline-cached" hidden>
+    <h3>Recently visited (cached)</h3>
+    <div id="offline-cached-items"></div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+// List a few recently-cached HTML pages so the user has something to read offline.
+(async function() {
+  if (!('caches' in window)) return;
+  try {
+    const names = await caches.keys();
+    const pageCaches = names.filter(n => n.startsWith('wikihub-pages-'));
+    if (!pageCaches.length) return;
+    const cache = await caches.open(pageCaches[0]);
+    const reqs = await cache.keys();
+    if (!reqs.length) return;
+    const slice = reqs.slice(-8).reverse();
+    const root = document.getElementById('offline-cached-items');
+    slice.forEach(req => {
+      try {
+        const u = new URL(req.url);
+        if (u.pathname === '/offline.html') return;
+        const link = document.createElement('a');
+        link.href = u.pathname;
+        link.textContent = u.pathname;
+        root.appendChild(link);
+      } catch(e) {}
+    });
+    if (root.children.length) document.getElementById('offline-cached').hidden = false;
+  } catch (e) { /* swallow */ }
+})();
+</script>
+{% endblock %}

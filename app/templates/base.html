@@ -2,10 +2,20 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>{% block title %}wikihub{% endblock %}</title>
 <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
 <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+
+<!-- PWA / iOS Add-to-Home-Screen polish -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="wikihub">
+<meta name="application-name" content="wikihub">
+<meta name="theme-color" content="#0f0e0c" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#faf7f1" media="(prefers-color-scheme: light)">
+<link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='icons/apple-touch-icon-180.png') }}">
 <link rel="apple-touch-icon" href="{{ url_for('static', filename='favicon.svg') }}">
 <!-- agent discovery: point AI agents at plain-markdown + LLM index. wikihub-5764 -->
 <link rel="alternate" type="text/markdown" href="/AGENTS.md" title="Agent setup (markdown)">
@@ -28,6 +38,10 @@
 /* Theme tokens live in _theme.html (included above). This <style> block
    holds base-layout rules only. Colors must come from tokens. */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { /* iOS notch / home-indicator safe areas */
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
 body {
   font-family: var(--font-body);
   font-size: 16px;
@@ -35,6 +49,19 @@ body {
   color: var(--text-primary);
   background: var(--bg-base);
   -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+/* Mobile touch targets — Apple HIG minimum 44px */
+@media (pointer: coarse), (max-width: 640px) {
+  button, .action-btn, .action-btn-mini, .nav-link, .sidebar-item {
+    min-height: 40px;
+  }
+  /* Stop iOS Safari from auto-zooming into form inputs whose font-size <16px */
+  input, textarea, select { font-size: 16px; }
+}
+/* Standalone PWA mode: pad the top so content clears the iOS status bar */
+@media (display-mode: standalone) {
+  .nav { padding-top: env(safe-area-inset-top); height: calc(56px + env(safe-area-inset-top)); }
 }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
@@ -751,9 +778,83 @@ document.addEventListener('DOMContentLoaded', () => {
 })();
 </script>
 <script>
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/static/sw.js', { scope: '/' });
-}
+// PWA: register service worker, handle "new version available", offer "Add to Home Screen"
+(function() {
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function() {
+      navigator.serviceWorker.register('/static/sw.js', { scope: '/' })
+        .then(function(reg) {
+          // Check for updates whenever the user returns to the tab
+          document.addEventListener('visibilitychange', function() {
+            if (document.visibilityState === 'visible') reg.update();
+          });
+          reg.addEventListener('updatefound', function() {
+            var nw = reg.installing;
+            if (!nw) return;
+            nw.addEventListener('statechange', function() {
+              if (nw.state === 'installed' && navigator.serviceWorker.controller) {
+                // New version waiting — auto-activate on next nav
+                nw.postMessage('SKIP_WAITING');
+              }
+            });
+          });
+        })
+        .catch(function(){});
+    });
+  }
+
+  // Add-to-Home-Screen: capture the install prompt; show a small banner on second visit
+  var deferredPrompt = null;
+  window.addEventListener('beforeinstallprompt', function(e) {
+    e.preventDefault();
+    deferredPrompt = e;
+    try {
+      var visits = parseInt(localStorage.getItem('wh_visit_count') || '0', 10) + 1;
+      localStorage.setItem('wh_visit_count', String(visits));
+      var dismissed = localStorage.getItem('wh_a2hs_dismissed');
+      var alreadyInstalled = window.matchMedia && window.matchMedia('(display-mode: standalone)').matches;
+      if (visits >= 2 && !dismissed && !alreadyInstalled) showA2HSBanner();
+    } catch(e) {}
+  });
+
+  function showA2HSBanner() {
+    if (document.getElementById('wh-a2hs')) return;
+    var b = document.createElement('div');
+    b.id = 'wh-a2hs';
+    b.setAttribute('style',
+      'position:fixed;left:12px;right:12px;bottom:max(12px,env(safe-area-inset-bottom));' +
+      'z-index:300;background:var(--bg-elevated,#1a1814);color:var(--text-primary,#f3eee4);' +
+      'border:1px solid var(--border-default,#2a2620);border-radius:12px;padding:12px 14px;' +
+      'box-shadow:0 8px 32px rgba(0,0,0,0.35);display:flex;gap:12px;align-items:center;' +
+      'font-size:0.875rem;line-height:1.4;max-width:480px;margin:0 auto;');
+    b.innerHTML =
+      '<div style="flex:1">Install <b>wikihub</b> to your home screen for a faster, full-screen reading experience.</div>' +
+      '<button id="wh-a2hs-yes" style="background:var(--accent,#d4a04a);color:#18130a;border:none;border-radius:8px;padding:8px 12px;font-weight:600;cursor:pointer;font-family:inherit">Install</button>' +
+      '<button id="wh-a2hs-no" style="background:transparent;color:var(--text-muted,#b8ad9e);border:none;cursor:pointer;font-family:inherit;padding:6px 4px" aria-label="Dismiss">✕</button>';
+    document.body.appendChild(b);
+    document.getElementById('wh-a2hs-yes').addEventListener('click', function() {
+      if (!deferredPrompt) { b.remove(); return; }
+      deferredPrompt.prompt();
+      deferredPrompt.userChoice.then(function(choice) {
+        if (choice.outcome === 'accepted') {
+          try { localStorage.setItem('wh_a2hs_dismissed', '1'); } catch(e) {}
+        }
+        deferredPrompt = null;
+        b.remove();
+      });
+    });
+    document.getElementById('wh-a2hs-no').addEventListener('click', function() {
+      try { localStorage.setItem('wh_a2hs_dismissed', '1'); } catch(e) {}
+      b.remove();
+    });
+  }
+
+  // Count this visit even if beforeinstallprompt never fires (iOS doesn't fire it)
+  try {
+    var v = parseInt(localStorage.getItem('wh_visit_count') || '0', 10) + 1;
+    localStorage.setItem('wh_visit_count', String(v));
+  } catch(e) {}
+})();
 </script>
 {% block scripts %}{% endblock %}
 </body>
