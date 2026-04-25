@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Welcome — WikiHub</title>
+<meta name="description" content="GitHub for LLM wikis. Publish markdown knowledge bases in seconds. Designed to be read and edited by both humans and AI agents.">
+<link rel="alternate" type="text/markdown" href="/AGENTS.md" title="Agent setup (markdown)">
+<link rel="alternate" type="text/plain" href="/llms.txt" title="LLM index">
+<link rel="canonical" href="https://wikihub.md/">
+<meta property="og:title" content="WikiHub — GitHub for LLM wikis">
+<meta property="og:description" content="Publish markdown knowledge bases in seconds. Built to be read and edited by humans and AI agents alike.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://wikihub.md/">
+<meta property="og:site_name" content="wikihub">
+<meta name="theme-color" content="#0f0e0c">
+<style>
+:root {
+  --bg: #0f0e0c;
+  --bg-2: #181613;
+  --fg: #f3eee4;
+  --fg-2: #b8ad9e;
+  --fg-3: #6f665b;
+  --accent: #d4a04a;
+  --accent-2: #e6b86a;
+  --border: #2a2620;
+  --radius: 10px;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+@media (prefers-color-scheme: light) {
+  :root { --bg: #faf7f1; --bg-2: #f1ece1; --fg: #19150e; --fg-2: #4a4234; --fg-3: #7a715f; --border: #e3dcc9; }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--bg); color: var(--fg);
+  font-family: var(--sans); line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 720px; margin: 0 auto; padding: 64px 24px 96px; }
+.brand {
+  display: inline-flex; align-items: center; gap: 10px;
+  font-family: var(--mono); font-size: 0.875rem;
+  color: var(--fg-2); text-decoration: none;
+  margin-bottom: 48px;
+}
+.brand .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.brand:hover { color: var(--fg); }
+h1 {
+  font-size: clamp(2rem, 5vw, 3rem); font-weight: 700;
+  letter-spacing: -0.025em; line-height: 1.1; margin: 0 0 20px;
+}
+h1 .accent { color: var(--accent); }
+.lede { font-size: 1.125rem; color: var(--fg-2); margin: 0 0 40px; max-width: 560px; }
+section {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg-2); padding: 24px 28px; margin: 24px 0;
+}
+section h2 {
+  font-size: 0.75rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--accent);
+  margin: 0 0 16px; font-family: var(--mono);
+}
+section p { margin: 0 0 16px; color: var(--fg-2); }
+section p:last-child { margin-bottom: 0; }
+section a { color: var(--accent-2); }
+section a:hover { color: var(--accent); }
+form { display: flex; flex-direction: column; gap: 12px; }
+input[type=email], textarea {
+  background: var(--bg); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 12px 14px; font-size: 0.9375rem;
+  font-family: inherit; outline: none; width: 100%;
+}
+textarea { min-height: 80px; resize: vertical; }
+input[type=email]:focus, textarea:focus { border-color: var(--accent); }
+button {
+  background: var(--accent); color: #18130a;
+  border: none; border-radius: 8px;
+  padding: 11px 18px; font-weight: 600; font-size: 0.9375rem;
+  cursor: pointer; align-self: flex-start;
+  font-family: inherit;
+}
+button:hover { background: var(--accent-2); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+.success {
+  color: var(--accent); font-family: var(--mono); font-size: 0.875rem;
+  padding: 8px 0;
+}
+.error {
+  color: #c45c3c; font-family: var(--mono); font-size: 0.875rem;
+  padding: 8px 0;
+}
+code, pre {
+  font-family: var(--mono); font-size: 0.8125rem;
+  background: rgba(0,0,0,0.25); padding: 2px 6px; border-radius: 4px;
+}
+@media (prefers-color-scheme: light) {
+  code, pre { background: rgba(0,0,0,0.05); }
+}
+pre { display: block; padding: 12px 14px; overflow-x: auto; }
+ul { padding-left: 20px; margin: 8px 0; color: var(--fg-2); }
+ul li { margin-bottom: 6px; }
+.foot {
+  margin-top: 64px; padding-top: 24px;
+  border-top: 1px solid var(--border);
+  font-family: var(--mono); font-size: 0.8125rem;
+  color: var(--fg-3);
+}
+.foot a { color: var(--fg-2); text-decoration: none; }
+.foot a:hover { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a href="/" class="brand"><span class="dot"></span>wikihub</a>
+
+  <h1>You found <span class="accent">WikiHub</span>.</h1>
+  <p class="lede">
+    GitHub for LLM wikis. Publish a markdown knowledge base in seconds — designed to be read and edited by humans and AI agents alike.
+  </p>
+
+  <section>
+    <h2>For humans</h2>
+    <p>You hit a page that doesn't exist (yet). We're glad you stumbled in. WikiHub is in active build — leave your email and we'll tell you when there's something worth coming back for.</p>
+    <form id="interest-form" onsubmit="return submitInterest(event)">
+      <input type="email" name="email" placeholder="you@example.com" required autocomplete="email">
+      <textarea name="note" placeholder="(optional) what brought you here, what you'd like to see, or who you are"></textarea>
+      <button type="submit" id="submit-btn">Keep me posted</button>
+      <div id="form-msg" aria-live="polite"></div>
+    </form>
+    <p style="margin-top:20px;font-size:0.875rem;">
+      Have an idea, bug, or wishlist item? Post on our public feedback board at <a href="https://worldissuetracker.com/tracker/wikihub" target="_blank" rel="noopener">worldissuetracker.com/tracker/wikihub</a> — anyone can post, no signup.
+    </p>
+    <p style="margin-top:20px;font-size:0.875rem;">
+      Or just explore: <a href="/explore">/explore</a> · <a href="/roadmap">/roadmap</a> · <a href="/AGENTS.md">/AGENTS.md</a>
+    </p>
+  </section>
+
+  <section>
+    <h2>For agents &amp; crawlers</h2>
+    <p>If you're an AI agent or search crawler, welcome — WikiHub is built for you. A few notes so we can keep the lights on:</p>
+    <ul>
+      <li><strong>Use the structured surfaces.</strong> Plain markdown is at <code>/&lt;path&gt;.md</code>. The site index is at <a href="/llms.txt"><code>/llms.txt</code></a>. Agent-setup docs at <a href="/AGENTS.md"><code>/AGENTS.md</code></a>. JSON listing of public wikis at <a href="/api/v1/wikis"><code>/api/v1/wikis</code></a>.</li>
+      <li><strong>Skip <code>/history</code> and <code>/commit/&lt;sha&gt;</code> on a hot loop.</strong> They run a git log per request and are throttled to 10 req/min per UA. Cache <code>/commit/&lt;sha&gt;</code> aggressively — it's immutable.</li>
+      <li><strong>Polite crawl rate is &lt;= 10 req/min</strong> overall. Crawl regular pages first; revisit history only when your index says the page changed.</li>
+      <li><strong>Want priority / partner access?</strong> Programmatically POST to <a href="/api/v1/feedback"><code>/api/v1/feedback</code></a> with <code>{"kind":"comment","subject":"crawler intro","body":"...", "contact_email":"..."}</code> — we read these. Or have a human on your team fill the form above.</li>
+      <li><strong>Use a real User-Agent</strong> with a contact URL. Generic <code>Mozilla/5.0</code> with no contact gets throttled harder.</li>
+    </ul>
+    <pre>curl -s -X POST https://wikihub.md/api/v1/feedback \
+  -H "Content-Type: application/json" \
+  -d '{"kind":"comment","subject":"crawler intro from MyBot","body":"hi, we crawl on schedule X","contact_email":"team@mybot.example"}'</pre>
+  </section>
+
+  <div class="foot">
+    <a href="/">wikihub.md</a> · <a href="/llms.txt">llms.txt</a> · <a href="/AGENTS.md">AGENTS.md</a> · <a href="/roadmap">roadmap</a> · <a href="https://worldissuetracker.com/tracker/wikihub" target="_blank" rel="noopener">feedback</a> · <a href="https://github.com/tmad4000/wikihub" target="_blank" rel="noopener">github</a> · <a href="https://x.com/jacobcole4000" rel="me noopener" target="_blank">@jacobcole4000</a>
+  </div>
+</div>
+
+<script>
+async function submitInterest(ev) {
+  ev.preventDefault();
+  const form = ev.target;
+  const btn = document.getElementById("submit-btn");
+  const msg = document.getElementById("form-msg");
+  const email = form.email.value.trim();
+  const note = form.note.value.trim();
+  if (!email) return false;
+
+  btn.disabled = true;
+  msg.className = "";
+  msg.textContent = "Sending…";
+
+  try {
+    const resp = await fetch("/api/v1/feedback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        kind: "comment",
+        subject: "Interest from welcome page",
+        body: note || "(no note)",
+        contact_email: email,
+      }),
+    });
+    if (resp.ok) {
+      msg.className = "success";
+      msg.textContent = "✓ Thanks — we'll be in touch.";
+      form.reset();
+    } else {
+      let err = "Something went wrong.";
+      try { const j = await resp.json(); err = j.message || err; } catch (_) {}
+      msg.className = "error";
+      msg.textContent = "✕ " + err;
+    }
+  } catch (e) {
+    msg.className = "error";
+    msg.textContent = "✕ Network error — try again in a moment.";
+  } finally {
+    btn.disabled = false;
+  }
+  return false;
+}
+</script>
+</body>
+</html>
