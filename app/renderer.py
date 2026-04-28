@@ -195,20 +195,28 @@ def _figure_image_plugin(md):
 
 
 def _hardbreak_no_newline_plugin(md):
-    """Render hard line breaks as bare '<br>' with no trailing newline.
+    """Render line breaks as a structural span instead of <br>.
 
-    Cloudflare's HTML Auto Minify strips '<br>\\n' inside paragraphs (treating
-    it as redundant inline whitespace), so rendered pages lose all soft-break
-    line breaks. Emitting '<br>' with no newline survives the minifier and
-    produces identical visual output (wikihub-eiv7).
+    Cloudflare's HTML transforms (Email Address Obfuscation, legacy Auto
+    Minify) on this zone strip <br> tags from rendered HTML — replacing
+    '<br>' with a literal '\\n' on the way out. Cache-Control: no-transform
+    is also stripped/ignored. Empirically verified 2026-04-28: origin emits
+    7 <br> tags on /jacobcole/health/Sleep, the public response delivers 1.
+
+    Workaround: emit an empty inline-block-becomes-block span. Cloudflare
+    does not touch arbitrary spans, and an empty <span style="display:block">
+    inside a <p> creates a visual line break identical to <br>. Reverts to
+    a normal <br> easily if the CF dashboard transforms get disabled
+    (wikihub-eiv7).
     """
+    BREAK_HTML = '<span class="md-line-break" style="display:block"></span>'
+
     def hardbreak(tokens, idx, options, env):
-        return "<br>"
+        return BREAK_HTML
 
     def softbreak(tokens, idx, options, env):
-        # only relevant when breaks=true; mirrors hardbreak in that mode
         if options.get("breaks"):
-            return "<br>"
+            return BREAK_HTML
         return "\n"
 
     md.renderer.rules["hardbreak"] = hardbreak
