@@ -102,6 +102,26 @@ def create_app(config_class="config.Config"):
     from app.canonical_redirect import maybe_redirect
     app.before_request(maybe_redirect)
 
+    @app.after_request
+    def _disable_proxy_html_transforms(response):
+        """Cloudflare's HTML transformations (Email Obfuscation, legacy Auto
+        Minify) strip <br> tags from rendered markdown — losing every soft
+        line break for users writing one-line-per-thought (wikihub-eiv7).
+        Cache-Control: no-transform is the HTTP-standard signal to proxies
+        not to mutate the body. We append rather than replace existing
+        Cache-Control values so per-route directives still apply."""
+        ct = response.headers.get("Content-Type", "")
+        if not ct.startswith("text/html"):
+            return response
+        existing = response.headers.get("Cache-Control", "")
+        if "no-transform" in existing:
+            return response
+        if existing:
+            response.headers["Cache-Control"] = existing + ", no-transform"
+        else:
+            response.headers["Cache-Control"] = "no-transform"
+        return response
+
     from app.url_utils import url_path_from_page_path
 
     @app.template_filter("page_url")
