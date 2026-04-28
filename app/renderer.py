@@ -195,31 +195,26 @@ def _figure_image_plugin(md):
 
 
 def _hardbreak_no_newline_plugin(md):
-    """Render line breaks as a structural span instead of <br>.
+    """Render hard line breaks as bare '<br>' with no trailing newline.
 
-    Cloudflare's HTML transforms (Email Address Obfuscation, legacy Auto
-    Minify) on this zone strip <br> tags from rendered HTML — replacing
-    '<br>' with a literal '\\n' on the way out. Cache-Control: no-transform
-    is also stripped/ignored. Empirically verified 2026-04-28: origin emits
-    7 <br> tags on /jacobcole/health/Sleep, the public response delivers 1.
+    NOTE on Cloudflare: this domain runs Cloudflare HTML Auto Minify (or
+    similar transform) which actively strips <br> tags from text/html
+    responses — verified empirically. The proper fix is to disable HTML
+    Auto Minify and Email Address Obfuscation in the CF dashboard. The
+    'no-transform' Cache-Control header (set in app/__init__.py) does NOT
+    persuade CF to back off — they ignore it.
 
-    Workaround: emit an empty inline-block-becomes-block span. Cloudflare
-    does not touch arbitrary spans, and an empty <span style="display:block">
-    inside a <p> creates a visual line break identical to <br>. Reverts to
-    a normal <br> easily if the CF dashboard transforms get disabled
-    (wikihub-eiv7).
+    We still emit <br> here because (a) it's correct standard HTML, (b)
+    every alternative we tested (XHTML, empty span, span+ZWNJ, div+wbr)
+    is also stripped by the same minifier, and (c) on any non-CF
+    deployment this works perfectly. (wikihub-eiv7)
     """
-    # Cloudflare's HTML transforms strip <br> tags AND empty/zwnj spans with
-    # display:block. <div> with content survives. The <wbr> child is a real
-    # element with semantic meaning so the minifier should leave it alone.
-    BREAK_HTML = '<div class="md-line-break"><wbr></div>'
-
     def hardbreak(tokens, idx, options, env):
-        return BREAK_HTML
+        return "<br>"
 
     def softbreak(tokens, idx, options, env):
         if options.get("breaks"):
-            return BREAK_HTML
+            return "<br>"
         return "\n"
 
     md.renderer.rules["hardbreak"] = hardbreak

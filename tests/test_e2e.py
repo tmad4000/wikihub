@@ -2061,7 +2061,8 @@ def test_soft_line_breaks_render_as_visual_break():
 
     src = "Line one.\nLine two.\nLine three."
     html = render_markdown(src)
-    # accept <br>, <br/>, <br />, or our display:block span workaround
+    # accept any form of line-break element; the renderer emits <br> by default,
+    # but a future CF-bypass workaround might use a different element.
     break_count = html.count("<br") + html.count('class="md-line-break"')
     assert break_count >= 2, \
         f"expected at least 2 line-break elements between 3 lines; got: {html!r}"
