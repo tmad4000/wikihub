@@ -274,7 +274,12 @@ def create_renderer():
     # breaks=True renders single newlines inside a paragraph as <br>, matching
     # Obsidian / GitHub-comment behavior. Strict CommonMark would collapse them
     # to spaces, which surprises users writing one-line-per-thought (wikihub-eiv7).
-    md = MarkdownIt("commonmark", {"html": False, "typographer": True, "breaks": True})
+    # xhtmlOut=False emits HTML5 <br> instead of XHTML <br />, because Cloudflare's
+    # HTML Auto Minify strips the latter entirely (verified empirically 2026-04-28).
+    md = MarkdownIt(
+        "commonmark",
+        {"html": False, "typographer": True, "breaks": True, "xhtmlOut": False},
+    )
     md.enable(["table", "strikethrough"])
 
     footnote_plugin(md)
