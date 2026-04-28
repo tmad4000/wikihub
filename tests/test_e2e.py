@@ -2046,6 +2046,26 @@ def test_frontmatter_title_renders_h1(client, api_key):
     assert _re.search(r'<h1[^>]*>\s*Doc Title\s*</h1>', html)
 
 
+def test_soft_line_breaks_render_as_br():
+    """single newlines inside a paragraph must render as <br> (wikihub-eiv7).
+    strict commonmark would collapse them to spaces, which surprises users
+    writing one-line-per-thought (Obsidian/chat style). Reported when a
+    supplement list on /jacobcole/health/Sleep rendered as one wall of text.
+    if someone reverts the breaks=true option in app/renderer.py, this fails."""
+    from app.renderer import render_markdown
+
+    src = "Line one.\nLine two.\nLine three."
+    html = render_markdown(src)
+    # expect two <br> tags between three lines, all inside one paragraph
+    assert html.count("<br") >= 2, \
+        f"expected at least 2 <br> tags for soft line breaks; got: {html!r}"
+    assert "Line one." in html and "Line two." in html and "Line three." in html
+
+    # blank-line-separated paragraphs still produce separate <p> blocks (no regression)
+    html = render_markdown("Para one.\n\nPara two.")
+    assert html.count("<p>") == 2, f"expected two <p> blocks, got: {html!r}"
+
+
 def test_admin_claude_auth_page_requires_token(client):
     """anonymous GET to /api/v1/admin/claude-auth must not expose admin HTML
     (wikihub-6q3). Return 404 to avoid leaking that the route exists."""
@@ -2973,6 +2993,7 @@ def run_all():
             ("feedback submission", lambda: test_feedback_submission(client)),
             ("me capabilities", lambda: test_me_capabilities(client, key)),
             ("frontmatter title renders h1", lambda: test_frontmatter_title_renders_h1(client, key)),
+            ("soft line breaks render as <br> (wikihub-eiv7)", lambda: test_soft_line_breaks_render_as_br()),
             ("admin claude-auth page requires token", lambda: test_admin_claude_auth_page_requires_token(client)),
             ("history API with anon + deleted page", lambda: test_history_api_with_anon_and_deleted_page(client, key)),
             ("API CORS headers", lambda: test_api_cors_headers(client, key)),

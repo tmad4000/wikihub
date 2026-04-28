@@ -271,7 +271,10 @@ def _preprocess_latex_math(text):
 
 def create_renderer():
     """create a configured markdown-it renderer."""
-    md = MarkdownIt("commonmark", {"html": False, "typographer": True})
+    # breaks=True renders single newlines inside a paragraph as <br>, matching
+    # Obsidian / GitHub-comment behavior. Strict CommonMark would collapse them
+    # to spaces, which surprises users writing one-line-per-thought (wikihub-eiv7).
+    md = MarkdownIt("commonmark", {"html": False, "typographer": True, "breaks": True})
     md.enable(["table", "strikethrough"])
 
     footnote_plugin(md)
