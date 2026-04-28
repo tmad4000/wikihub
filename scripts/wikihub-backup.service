@@ -1,0 +1,19 @@
+[Unit]
+Description=WikiHub nightly backup (DB + repos + .env to GCS)
+Documentation=file:/opt/wikihub-app/docs/backup-and-restore.md
+Wants=network-online.target
+After=network-online.target postgresql.service
+OnFailure=wikihub-backup-alert.service
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/opt/wikihub-app/scripts/backup.sh
+# Don't let a stuck backup wedge the box overnight.
+TimeoutStartSec=30min
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,10 @@
+[Unit]
+Description=Alert on wikihub-backup.service failure
+Documentation=file:/opt/wikihub-app/docs/backup-and-restore.md
+
+[Service]
+Type=oneshot
+# Drops a sentinel that login MOTD / monitoring picks up. The backup script
+# itself also writes /var/log/wikihub-backup.FAIL, so this is belt-and-braces.
+# When you fix the cause, run: sudo rm /var/log/wikihub-backup.FAIL
+ExecStart=/bin/bash -c 'echo "wikihub-backup.service FAILED at $(date -u +%%FT%%TZ)" | tee -a /var/log/wikihub-backup.log >> /var/log/wikihub-backup.FAIL; tail -40 /var/log/wikihub-backup.log >> /var/log/wikihub-backup.FAIL || true; logger -t wikihub-backup "BACKUP FAILED — see /var/log/wikihub-backup.FAIL"'

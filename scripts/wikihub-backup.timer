@@ -1,0 +1,15 @@
+[Unit]
+Description=Run wikihub-backup.service nightly at 03:00 UTC
+Documentation=file:/opt/wikihub-app/docs/backup-and-restore.md
+
+[Timer]
+# 03:00 UTC every day. Low-traffic for wikihub.md.
+OnCalendar=*-*-* 03:00:00 UTC
+# If the box was off at 03:00, run when it next boots.
+Persistent=true
+# Spread out a bit so we don't slam GCS at the exact second.
+RandomizedDelaySec=2min
+Unit=wikihub-backup.service
+
+[Install]
+WantedBy=timers.target
