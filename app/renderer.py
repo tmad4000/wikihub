@@ -209,10 +209,10 @@ def _hardbreak_no_newline_plugin(md):
     a normal <br> easily if the CF dashboard transforms get disabled
     (wikihub-eiv7).
     """
-    # Non-empty content (zero-width-non-joiner) so Cloudflare's HTML minifier
-    # doesn't strip the span as "empty/redundant" — verified that empty spans
-    # are removed too. ZWNJ is invisible but counts as content.
-    BREAK_HTML = '<span class="md-line-break" style="display:block">&zwnj;</span>'
+    # Cloudflare's HTML transforms strip <br> tags AND empty/zwnj spans with
+    # display:block. <div> with content survives. The <wbr> child is a real
+    # element with semantic meaning so the minifier should leave it alone.
+    BREAK_HTML = '<div class="md-line-break"><wbr></div>'
 
     def hardbreak(tokens, idx, options, env):
         return BREAK_HTML
