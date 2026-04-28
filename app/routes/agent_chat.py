@@ -18,8 +18,11 @@ import uuid
 import anthropic
 from flask import Blueprint, Response, current_app, jsonify, request, stream_with_context
 
+from app.acl import can_read, can_write
 from app.auth_utils import get_current_user_from_request
 from app.git_sync import list_files_in_repo, read_file_from_repo
+from app.models import Page, User, Wiki
+from app.wiki_ops import load_acl_rules
 
 agent_chat_bp = Blueprint("agent_chat", __name__)
 
@@ -114,13 +117,103 @@ def _commit_and_push(wiki_dir, message="Curator edit"):
 
 # --- Tool implementations ---
 
-def _tool_read_file(work_dir, path):
-    """Read a file from the working directory."""
+# Generic refusal — does not leak existence of private content. (wikihub-7w40)
+_ACL_DENIED = "Error: file not found or no access"
+
+
+def _split_session_path(path):
+    """Split a tool-input path like 'owner/wiki/dir/page.md' into
+    (owner, slug, page_path_in_wiki). Returns (None, None, None) on bad input."""
+    if not path:
+        return None, None, None
+    parts = path.split("/", 2)
+    if len(parts) < 2:
+        return None, None, None
+    owner = parts[0]
+    slug = parts[1]
+    page_path = parts[2] if len(parts) == 3 else ""
+    return owner, slug, page_path
+
+
+def _check_path_access(session, path, write=False):
+    """Per-tool ACL gate. Returns (ok: bool, error_message: str|None).
+
+    Enforces (wikihub-7w40):
+      1. Path must be inside session's owner/wiki — no cross-wiki reads via the agent.
+      2. Path must not escape the work_dir.
+      3. The requesting user (session['username']) must have can_read (or can_write)
+         on the resolved (wiki, page_path).
+
+    For directory listings or queries that don't bind to a single page (e.g.
+    list_files at the wiki root), pass page_path == ''. We still gate on the
+    wiki-level access — the per-file filtering happens in the tool body.
+    """
+    work_dir = session["work_dir"]
     full = os.path.normpath(os.path.join(work_dir, path))
     if not full.startswith(work_dir):
-        return "Error: path escapes working directory"
+        return False, "Error: path escapes working directory"
+
+    sess_owner = session.get("owner") or ""
+    sess_slug = session.get("wiki_slug") or ""
+    if not sess_owner or not sess_slug:
+        # Session has no wiki context — refuse all filesystem tool calls.
+        return False, _ACL_DENIED
+
+    owner, slug, page_path = _split_session_path(path)
+    if owner is None:
+        return False, _ACL_DENIED
+
+    # Cross-wiki tool calls are blocked at the tool layer regardless of what
+    # the model asks for. The session is bound to one (owner, slug).
+    if owner != sess_owner or slug != sess_slug:
+        return False, _ACL_DENIED
+
+    username = session.get("username")
+
+    # Owner of the wiki always has full access. Look up the wiki to confirm.
+    owner_user = User.query.filter_by(username=sess_owner).first()
+    if not owner_user:
+        return False, _ACL_DENIED
+    wiki = Wiki.query.filter_by(owner_id=owner_user.id, slug=sess_slug).first()
+    if not wiki:
+        return False, _ACL_DENIED
+
+    is_owner = bool(username and username == sess_owner)
+    if is_owner:
+        return True, None
+
+    acl_rules = load_acl_rules(sess_owner, sess_slug)
+
+    # Empty page_path means a wiki-root operation (list_files, search). Allow it
+    # to proceed; the tool body must filter per-file.
+    if not page_path:
+        return True, None
+
+    # Look up the page to get its frontmatter visibility (most-specific wins).
+    page = Page.query.filter_by(wiki_id=wiki.id, path=page_path).first()
+    if not page and not page_path.endswith(".md"):
+        page = Page.query.filter_by(wiki_id=wiki.id, path=page_path + ".md").first()
+
+    fm_visibility = page.visibility if page else None
+
+    if write:
+        if not can_write(page_path, acl_rules, username, fm_visibility):
+            return False, _ACL_DENIED
+    else:
+        if not can_read(page_path, acl_rules, username, fm_visibility):
+            return False, _ACL_DENIED
+    return True, None
+
+
+def _tool_read_file(session, path):
+    """Read a file from the working directory, gated by ACL."""
+    ok, err = _check_path_access(session, path, write=False)
+    if not ok:
+        return err
+    work_dir = session["work_dir"]
+    full = os.path.normpath(os.path.join(work_dir, path))
     if not os.path.isfile(full):
-        return f"Error: file not found: {path}"
+        return _ACL_DENIED
     try:
         with open(full, "r", encoding="utf-8", errors="replace") as f:
             content = f.read()
@@ -132,11 +225,13 @@ def _tool_read_file(work_dir, path):
         return f"Error reading file: {e}"
 
 
-def _tool_write_file(work_dir, path, content):
-    """Write a file in the working directory."""
+def _tool_write_file(session, path, content):
+    """Write a file in the working directory, gated by ACL."""
+    ok, err = _check_path_access(session, path, write=True)
+    if not ok:
+        return err
+    work_dir = session["work_dir"]
     full = os.path.normpath(os.path.join(work_dir, path))
-    if not full.startswith(work_dir):
-        return "Error: path escapes working directory"
     try:
         os.makedirs(os.path.dirname(full), exist_ok=True)
         with open(full, "w", encoding="utf-8") as f:
@@ -146,13 +241,33 @@ def _tool_write_file(work_dir, path, content):
         return f"Error writing file: {e}"
 
 
-def _tool_list_files(work_dir, directory=""):
-    """List files in a directory within the working directory."""
+def _tool_list_files(session, directory=""):
+    """List files in a directory within the working directory, ACL-filtered."""
+    ok, err = _check_path_access(session, directory or f"{session.get('owner','')}/{session.get('wiki_slug','')}", write=False)
+    if not ok:
+        return err
+    work_dir = session["work_dir"]
     full = os.path.normpath(os.path.join(work_dir, directory))
     if not full.startswith(work_dir):
         return "Error: path escapes working directory"
     if not os.path.isdir(full):
-        return f"Error: directory not found: {directory}"
+        return _ACL_DENIED
+
+    sess_owner = session.get("owner") or ""
+    sess_slug = session.get("wiki_slug") or ""
+    username = session.get("username")
+    is_owner = bool(username and username == sess_owner)
+    acl_rules = load_acl_rules(sess_owner, sess_slug) if not is_owner else []
+
+    # Build a cache of page visibilities for this wiki
+    page_vis = {}
+    if not is_owner:
+        owner_user = User.query.filter_by(username=sess_owner).first()
+        wiki = Wiki.query.filter_by(owner_id=owner_user.id, slug=sess_slug).first() if owner_user else None
+        if wiki:
+            for p in Page.query.filter_by(wiki_id=wiki.id).all():
+                page_vis[p.path] = p.visibility
+
     try:
         entries = []
         for entry in sorted(os.listdir(full)):
@@ -161,29 +276,81 @@ def _tool_list_files(work_dir, directory=""):
             entry_path = os.path.join(full, entry)
             kind = "dir" if os.path.isdir(entry_path) else "file"
             rel = os.path.relpath(entry_path, work_dir)
+            # ACL filter for files (not the owner). For directories, allow listing
+            # but the per-file filter will catch private files inside.
+            if not is_owner and kind == "file":
+                _o, _s, page_path = _split_session_path(rel)
+                if page_path:
+                    fm = page_vis.get(page_path)
+                    if not can_read(page_path, acl_rules, username, fm):
+                        continue
             entries.append(f"{kind}\t{rel}")
         return "\n".join(entries) if entries else "(empty directory)"
     except Exception as e:
         return f"Error listing directory: {e}"
 
 
-def _tool_search_content(work_dir, query):
-    """Search for content across files in the working directory."""
+def _tool_search_content(session, query):
+    """Search for content across files, ACL-filtered.
+
+    Crucially, we run grep then drop any line whose file the requester can't
+    read. (wikihub-7w40 — search must not leak private file existence.)
+    """
+    work_dir = session["work_dir"]
+    sess_owner = session.get("owner") or ""
+    sess_slug = session.get("wiki_slug") or ""
+    if not sess_owner or not sess_slug:
+        return _ACL_DENIED
+    username = session.get("username")
+    is_owner = bool(username and username == sess_owner)
+
+    acl_rules = load_acl_rules(sess_owner, sess_slug) if not is_owner else []
+    page_vis = {}
+    if not is_owner:
+        owner_user = User.query.filter_by(username=sess_owner).first()
+        wiki = Wiki.query.filter_by(owner_id=owner_user.id, slug=sess_slug).first() if owner_user else None
+        if wiki:
+            for p in Page.query.filter_by(wiki_id=wiki.id).all():
+                page_vis[p.path] = p.visibility
+
     try:
+        # Restrict the search to the bound wiki only — never grep across the
+        # whole work_dir (defense in depth even though clones are 1-per-wiki).
+        scope = os.path.join(sess_owner, sess_slug)
+        scope_dir = os.path.join(work_dir, scope)
+        if not os.path.isdir(scope_dir):
+            return f"No matches found for: {query}"
         result = subprocess.run(
             ["grep", "-r", "-n", "-i", "--include=*.md", "--include=*.txt",
              "--include=*.yaml", "--include=*.yml", "--include=*.json",
              query, "."],
-            cwd=work_dir, capture_output=True, text=True, timeout=10,
+            cwd=scope_dir, capture_output=True, text=True, timeout=10,
         )
         output = result.stdout.strip()
         if not output:
             return f"No matches found for: {query}"
-        # Truncate long results
-        lines = output.split("\n")
-        if len(lines) > 50:
-            output = "\n".join(lines[:50]) + f"\n\n[... {len(lines) - 50} more matches ...]"
-        return output
+
+        # Filter lines by ACL. grep output: "./path/file.md:LINE:content"
+        kept = []
+        for line in output.split("\n"):
+            if not line.startswith("./"):
+                continue
+            try:
+                fpath, _rest = line[2:].split(":", 1)
+            except ValueError:
+                continue
+            if not is_owner:
+                fm = page_vis.get(fpath)
+                if not can_read(fpath, acl_rules, username, fm):
+                    continue
+            # Rewrite path to be agent-friendly: "owner/wiki/path:LINE:content"
+            kept.append(f"{scope}/{fpath}:{line[2 + len(fpath) + 1:]}")
+
+        if not kept:
+            return f"No matches found for: {query}"
+        if len(kept) > 50:
+            return "\n".join(kept[:50]) + f"\n\n[... {len(kept) - 50} more matches ...]"
+        return "\n".join(kept)
     except subprocess.TimeoutExpired:
         return "Search timed out"
     except Exception as e:
@@ -320,27 +487,33 @@ def _build_system_prompt(username, owner, wiki_slug, page_path, page_content, pa
 
 
 def _execute_tool(tool_name, tool_input, session):
-    """Execute a tool call and return the result string."""
+    """Execute a tool call and return the result string.
+
+    All filesystem tools (read_file, write_file, list_files, search_content)
+    enforce ACL using the session's bound user — see _check_path_access.
+    The wikihub_api tool proxies via the public API which enforces ACL itself.
+    """
     work_dir = session["work_dir"]
 
     if tool_name == "read_file":
-        return _tool_read_file(work_dir, tool_input["path"])
+        return _tool_read_file(session, tool_input["path"])
     elif tool_name == "write_file":
-        result = _tool_write_file(work_dir, tool_input["path"], tool_input["content"])
-        # Auto-commit and push after writes
-        wiki_dir = None
-        path_parts = tool_input["path"].split("/")
-        if len(path_parts) >= 2:
-            wiki_dir = os.path.join(work_dir, path_parts[0], path_parts[1])
-        if wiki_dir and os.path.isdir(os.path.join(wiki_dir, ".git")):
-            summary = tool_input["path"].split("/")[-1]
-            ok, msg = _commit_and_push(wiki_dir, f"Curator: update {summary}")
-            result += f"\n{msg}"
+        result = _tool_write_file(session, tool_input["path"], tool_input["content"])
+        # Only commit+push if the write actually succeeded (i.e. wasn't ACL-denied).
+        if result.startswith("Written "):
+            wiki_dir = None
+            path_parts = tool_input["path"].split("/")
+            if len(path_parts) >= 2:
+                wiki_dir = os.path.join(work_dir, path_parts[0], path_parts[1])
+            if wiki_dir and os.path.isdir(os.path.join(wiki_dir, ".git")):
+                summary = tool_input["path"].split("/")[-1]
+                ok, msg = _commit_and_push(wiki_dir, f"Curator: update {summary}")
+                result += f"\n{msg}"
         return result
     elif tool_name == "list_files":
-        return _tool_list_files(work_dir, tool_input.get("directory", ""))
+        return _tool_list_files(session, tool_input.get("directory", ""))
     elif tool_name == "search_content":
-        return _tool_search_content(work_dir, tool_input["query"])
+        return _tool_search_content(session, tool_input["query"])
     elif tool_name == "wikihub_api":
         return _tool_wikihub_api(
             session["base_url"],
@@ -409,6 +582,33 @@ def agent_chat():
             session = _sessions.get(conversation_id)
 
     if session is None:
+        # ACL gate (wikihub-7w40): before cloning anything to disk, verify the
+        # requesting user can actually access the wiki they claim to be viewing.
+        # The agent must NEVER materialize private content from another user's
+        # wiki into a session it controls.
+        if owner and wiki_slug:
+            owner_user = User.query.filter_by(username=owner).first()
+            wiki_obj = (
+                Wiki.query.filter_by(owner_id=owner_user.id, slug=wiki_slug).first()
+                if owner_user else None
+            )
+            if not owner_user or not wiki_obj:
+                return {"error": "not_found", "message": "Wiki not found"}, 404
+            is_owner = (user.id == wiki_obj.owner_id)
+            if not is_owner:
+                acl_rules = load_acl_rules(owner, wiki_slug)
+                # Pre-flight check: user must be able to read at least the page
+                # they're viewing. Otherwise refuse.
+                if page_path:
+                    page = Page.query.filter_by(wiki_id=wiki_obj.id, path=page_path).first()
+                    if not page and not page_path.endswith(".md"):
+                        page = Page.query.filter_by(
+                            wiki_id=wiki_obj.id, path=page_path + ".md",
+                        ).first()
+                    fm_vis = page.visibility if page else None
+                    if not can_read(page_path, acl_rules, user.username, fm_vis):
+                        return {"error": "not_found", "message": "Wiki not found"}, 404
+
         # New session: create work dir, clone repo
         conversation_id = str(uuid.uuid4())
         work_dir = tempfile.mkdtemp(prefix="curator-")
@@ -417,12 +617,38 @@ def agent_chat():
         if owner and wiki_slug:
             clone_path = _clone_wiki(repos_dir, owner, wiki_slug, work_dir)
 
-        # Read current page content and file list for system prompt
+        # Read current page content and file list for system prompt — but ONLY
+        # show what the user can read (wikihub-7w40).
         page_content = ""
         page_list = []
         if owner and wiki_slug:
-            page_content = read_file_from_repo(owner, wiki_slug, page_path) or ""
-            page_list = list_files_in_repo(owner, wiki_slug)
+            owner_user = User.query.filter_by(username=owner).first()
+            wiki_obj = (
+                Wiki.query.filter_by(owner_id=owner_user.id, slug=wiki_slug).first()
+                if owner_user else None
+            )
+            is_owner = bool(wiki_obj and user.id == wiki_obj.owner_id)
+            acl_rules = load_acl_rules(owner, wiki_slug) if not is_owner else []
+            page_vis = {}
+            if not is_owner and wiki_obj:
+                for p in Page.query.filter_by(wiki_id=wiki_obj.id).all():
+                    page_vis[p.path] = p.visibility
+
+            # current page content
+            if is_owner or (wiki_obj and can_read(
+                page_path, acl_rules, user.username,
+                page_vis.get(page_path) or page_vis.get(page_path + ".md"),
+            )):
+                page_content = read_file_from_repo(owner, wiki_slug, page_path) or ""
+
+            # filtered file list
+            for f in list_files_in_repo(owner, wiki_slug):
+                if is_owner:
+                    page_list.append(f)
+                else:
+                    fm = page_vis.get(f)
+                    if can_read(f, acl_rules, user.username, fm):
+                        page_list.append(f)
 
         system_prompt = _build_system_prompt(
             user.username, owner, wiki_slug, page_path, page_content, page_list,
@@ -439,10 +665,20 @@ def agent_chat():
             "auth_token": auth_token,
             "owner": owner,
             "wiki_slug": wiki_slug,
+            # Bind the requesting user's identity to the session. Tools enforce
+            # ACL using THIS username — never trust subsequent request inputs.
+            # (wikihub-7w40)
+            "username": user.username,
+            "user_id": user.id,
         }
         with _sessions_lock:
             _sessions[conversation_id] = session
     else:
+        # Existing session: identity is locked at creation; do NOT rebind to a
+        # different user even if the request comes in with another bearer token.
+        # (wikihub-7w40 — defense against session-id sharing.)
+        if session.get("user_id") and session["user_id"] != user.id:
+            return {"error": "forbidden", "message": "Session belongs to a different user"}, 403
         session["last_used"] = time.time()
         if auth_token:
             session["auth_token"] = auth_token

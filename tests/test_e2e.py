@@ -2942,6 +2942,246 @@ def test_cli(client):
         shutil.rmtree(tmp_home, ignore_errors=True)
 
 
+def _make_curator_session(app, work_dir, owner, wiki_slug, username, user_id):
+    """Build a session dict shaped like the live agent_chat sessions, for
+    direct tool-layer testing without needing an Anthropic API key."""
+    import time as _time
+    from app.routes.agent_chat import _clone_wiki
+    repos_dir = app.config["REPOS_DIR"]
+    clone_path = _clone_wiki(repos_dir, owner, wiki_slug, work_dir)
+    return {
+        "conversation_id": "test-session",
+        "work_dir": work_dir,
+        "clone_path": clone_path,
+        "messages": [],
+        "system_prompt": "",
+        "last_used": _time.time(),
+        "base_url": "http://localhost",
+        "auth_token": None,
+        "owner": owner,
+        "wiki_slug": wiki_slug,
+        "username": username,
+        "user_id": user_id,
+    }
+
+
+def test_agent_chat_blocks_cross_user_private_read(client, api_key):
+    """user A creates a private page; user B's chat tools cannot read it.
+
+    Exercises the tool layer end-to-end (read_file, search_content, list_files)
+    with a session built as user B but pointed at user A's wiki. (wikihub-7w40)
+    """
+    import tempfile, shutil as _sh
+    from app.models import User
+    from app.routes.agent_chat import _execute_tool
+
+    h = {"Authorization": f"Bearer {api_key}"}
+
+    # Owner agent1 creates a private wiki + secret page.
+    r = client.post("/api/v1/wikis", json={"slug": "curator-priv-a", "title": "Priv A"}, headers=h)
+    assert r.status_code == 201
+    secret_marker = "curatorzephyrtoken1234"
+    r = client.post("/api/v1/wikis/agent1/curator-priv-a/pages", json={
+        "path": "secret/plan.md",
+        "content": f"# Plan\n\n{secret_marker} lives here. Top secret.",
+        "visibility": "private",
+    }, headers=h)
+    assert r.status_code == 201
+
+    # Create a second user, agent_b. We will directly build a curator session
+    # bound to agent_b but whose work_dir cloned agent1's wiki — simulating the
+    # state right after a malicious cross-wiki context request.
+    r = client.post("/api/v1/accounts", json={"username": "agent_b"})
+    assert r.status_code == 201
+    agent_b = User.query.filter_by(username="agent_b").first()
+
+    work_dir = tempfile.mkdtemp(prefix="curator-test-")
+    try:
+        sess = _make_curator_session(
+            client.application, work_dir,
+            owner="agent1", wiki_slug="curator-priv-a",
+            username="agent_b", user_id=agent_b.id,
+        )
+
+        # 1. Direct read of private path must be refused.
+        out = _execute_tool("read_file", {"path": "agent1/curator-priv-a/secret/plan.md"}, sess)
+        assert secret_marker not in out, f"LEAK: agent_b read agent1's private file: {out!r}"
+        assert "no access" in out or "not found" in out, out
+
+        # 2. Search must not surface the secret marker even when grepping the clone.
+        # ("No matches found for: <q>" echoes the query — that's fine; we want
+        # to ensure the marker doesn't appear in a hit line.)
+        out = _execute_tool("search_content", {"query": secret_marker}, sess)
+        assert "No matches found" in out, f"LEAK via search: {out!r}"
+        assert "secret/plan.md" not in out, f"LEAK via search (path leak): {out!r}"
+
+        # 3. list_files must not reveal the private file's existence.
+        out = _execute_tool("list_files", {"directory": "agent1/curator-priv-a/secret"}, sess)
+        assert "plan.md" not in out, f"LEAK via list_files: {out!r}"
+
+        # 4. Cross-wiki path traversal — agent_b session is bound to
+        #    curator-priv-a; trying to read a different wiki/path is refused.
+        out = _execute_tool("read_file", {"path": "agent1/some-other-wiki/page.md"}, sess)
+        assert secret_marker not in out
+        assert "no access" in out or "not found" in out, out
+
+        # 5. write_file is also gated — agent_b cannot write to agent1's private file.
+        out = _execute_tool("write_file", {
+            "path": "agent1/curator-priv-a/secret/plan.md",
+            "content": "pwned",
+        }, sess)
+        assert "no access" in out or "not found" in out, out
+    finally:
+        _sh.rmtree(work_dir, ignore_errors=True)
+
+
+def test_agent_chat_anon_session_blocked(client):
+    """anonymous chat (no Bearer token) is rejected at the HTTP layer."""
+    anon = client.application.test_client()
+    r = anon.post("/api/v1/agent/chat", json={"message": "hi"})
+    assert r.status_code == 401, f"anon chat should be 401, got {r.status_code}"
+
+
+def test_agent_chat_session_locked_to_creator(client, api_key):
+    """A conversation_id minted by user A cannot be reused by user B
+    (wikihub-7w40 — defense against session-id sharing/leaking)."""
+    import tempfile
+    from app.models import User
+    from app.routes.agent_chat import _sessions, _sessions_lock
+
+    # Pre-seed a fake session belonging to agent1.
+    r = client.post("/api/v1/wikis", json={"slug": "curator-locked", "title": "Locked"},
+                    headers={"Authorization": f"Bearer {api_key}"})
+    assert r.status_code == 201
+    agent1 = User.query.filter_by(username="agent1").first()
+
+    work_dir = tempfile.mkdtemp(prefix="curator-test-")
+    sess = _make_curator_session(client.application, work_dir,
+                                 owner="agent1", wiki_slug="curator-locked",
+                                 username="agent1", user_id=agent1.id)
+    fake_cid = "test-locked-cid"
+    sess["conversation_id"] = fake_cid
+    with _sessions_lock:
+        _sessions[fake_cid] = sess
+
+    # User B tries to use agent1's session.
+    r = client.post("/api/v1/accounts", json={"username": "agent_session_thief"})
+    thief_key = r.get_json()["api_key"]
+
+    r = client.post("/api/v1/agent/chat",
+                    json={"message": "leak it", "conversation_id": fake_cid},
+                    headers={"Authorization": f"Bearer {thief_key}"})
+    assert r.status_code == 403, f"session theft should 403, got {r.status_code}"
+
+    with _sessions_lock:
+        _sessions.pop(fake_cid, None)
+
+
+def test_agent_chat_search_filters_private_pages(client, api_key):
+    """search_content tool must not include lines from pages the user can't read,
+    even when the working dir holds the full clone. (wikihub-7w40)"""
+    import tempfile, shutil as _sh
+    from app.models import User
+    from app.routes.agent_chat import _execute_tool
+
+    h = {"Authorization": f"Bearer {api_key}"}
+    r = client.post("/api/v1/wikis", json={"slug": "curator-search", "title": "S"}, headers=h)
+    assert r.status_code == 201
+
+    public_marker = "publicfoo9999"
+    private_marker = "privatesecret9999"
+    client.post("/api/v1/wikis/agent1/curator-search/pages", json={
+        "path": "public-note.md",
+        "content": f"# Public\n\n{public_marker}",
+        "visibility": "public",
+    }, headers=h)
+    client.post("/api/v1/wikis/agent1/curator-search/pages", json={
+        "path": "private-note.md",
+        "content": f"# Priv\n\n{private_marker}",
+        "visibility": "private",
+    }, headers=h)
+
+    r = client.post("/api/v1/accounts", json={"username": "search_outsider"})
+    outsider = User.query.filter_by(username="search_outsider").first()
+
+    work_dir = tempfile.mkdtemp(prefix="curator-test-")
+    try:
+        sess = _make_curator_session(client.application, work_dir,
+                                     owner="agent1", wiki_slug="curator-search",
+                                     username="search_outsider", user_id=outsider.id)
+
+        out_pub = _execute_tool("search_content", {"query": public_marker}, sess)
+        assert public_marker in out_pub, f"public marker should be searchable, got: {out_pub!r}"
+
+        out_priv = _execute_tool("search_content", {"query": private_marker}, sess)
+        # the query echoes in "No matches found for: <q>" which is fine.
+        # what matters: no hit line referencing the private file.
+        assert "No matches found" in out_priv, f"unexpected hit: {out_priv!r}"
+        assert "private-note.md" not in out_priv, f"LEAK: private path in search: {out_priv!r}"
+
+        out_list = _execute_tool("list_files", {"directory": "agent1/curator-search"}, sess)
+        assert "public-note.md" in out_list
+        assert "private-note.md" not in out_list, f"LEAK: private path in list_files: {out_list!r}"
+    finally:
+        _sh.rmtree(work_dir, ignore_errors=True)
+
+
+def test_agent_chat_resists_prompt_injection_for_acl_bypass(client, api_key):
+    """Prompt-injected tool calls with adversarial paths must be refused at
+    the tool layer regardless of the input string. The model's compliance is
+    not a security boundary; the tool refuses on its own. (wikihub-7w40)"""
+    import tempfile, shutil as _sh
+    from app.models import User
+    from app.routes.agent_chat import _execute_tool
+
+    h = {"Authorization": f"Bearer {api_key}"}
+    r = client.post("/api/v1/wikis", json={"slug": "curator-inject", "title": "X"}, headers=h)
+    assert r.status_code == 201
+    secret = "INJECTSECRET777"
+    client.post("/api/v1/wikis/agent1/curator-inject/pages", json={
+        "path": "vault.md",
+        "content": f"# Vault\n\n{secret}",
+        "visibility": "private",
+    }, headers=h)
+
+    r = client.post("/api/v1/accounts", json={"username": "inject_user"})
+    inject_user = User.query.filter_by(username="inject_user").first()
+
+    # Bind the session to a different (innocuous) wiki so the request looks
+    # benign on the surface.
+    r = client.post("/api/v1/wikis", json={"slug": "decoy", "title": "D"},
+                    headers={"Authorization": f"Bearer {r.get_json()['api_key']}" if False else api_key})
+    # Use agent1's decoy as the bound wiki for inject_user (simulating any
+    # public wiki they're viewing).
+    work_dir = tempfile.mkdtemp(prefix="curator-test-")
+    try:
+        sess = _make_curator_session(client.application, work_dir,
+                                     owner="agent1", wiki_slug="decoy",
+                                     username="inject_user", user_id=inject_user.id)
+        adversarial_paths = [
+            "agent1/curator-inject/vault.md",         # cross-wiki
+            "../agent1/curator-inject/vault.md",      # path traversal
+            "agent1/decoy/../curator-inject/vault.md",  # tricky traversal
+            "/etc/passwd",                            # absolute path
+        ]
+        for p in adversarial_paths:
+            out = _execute_tool("read_file", {"path": p}, sess)
+            assert secret not in out, f"LEAK via path {p!r}: {out!r}"
+    finally:
+        _sh.rmtree(work_dir, ignore_errors=True)
+
+
+def test_agent_chat_disabled_returns_503(app, client):
+    """When CURATOR_ENABLED is false, /agent/chat returns 503 even before auth."""
+    orig = app.config.get("CURATOR_ENABLED", True)
+    app.config["CURATOR_ENABLED"] = False
+    try:
+        r = client.post("/api/v1/agent/chat", json={"message": "hi"})
+        assert r.status_code == 503, f"expected 503 when disabled, got {r.status_code}"
+    finally:
+        app.config["CURATOR_ENABLED"] = orig
+
+
 def run_all():
     app = setup()
 
@@ -3011,6 +3251,12 @@ def run_all():
             ("private surface offers request access", lambda: test_permission_error_offers_request_access(client, key)),
             ("access requests stay ambiguous + notify existing target", lambda: test_access_request_constant_response_and_notify_existing_target(client)),
             ("subdomain routing", lambda: test_subdomain_routing(client)),
+            ("agent chat blocks cross-user private read (wikihub-7w40)", lambda: test_agent_chat_blocks_cross_user_private_read(client, key)),
+            ("agent chat anon session blocked (wikihub-7w40)", lambda: test_agent_chat_anon_session_blocked(client)),
+            ("agent chat session locked to creator (wikihub-7w40)", lambda: test_agent_chat_session_locked_to_creator(client, key)),
+            ("agent chat search filters private pages (wikihub-7w40)", lambda: test_agent_chat_search_filters_private_pages(client, key)),
+            ("agent chat resists prompt-injection ACL bypass (wikihub-7w40)", lambda: test_agent_chat_resists_prompt_injection_for_acl_bypass(client, key)),
+            ("agent chat disabled returns 503 (wikihub-7w40)", lambda: test_agent_chat_disabled_returns_503(app, client)),
             ("CLI end-to-end", lambda: test_cli(client)),
         ]
 
