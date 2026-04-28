@@ -194,6 +194,27 @@ def _figure_image_plugin(md):
     md.renderer.rules["paragraph_close"] = paragraph_close
 
 
+def _hardbreak_no_newline_plugin(md):
+    """Render hard line breaks as bare '<br>' with no trailing newline.
+
+    Cloudflare's HTML Auto Minify strips '<br>\\n' inside paragraphs (treating
+    it as redundant inline whitespace), so rendered pages lose all soft-break
+    line breaks. Emitting '<br>' with no newline survives the minifier and
+    produces identical visual output (wikihub-eiv7).
+    """
+    def hardbreak(tokens, idx, options, env):
+        return "<br>"
+
+    def softbreak(tokens, idx, options, env):
+        # only relevant when breaks=true; mirrors hardbreak in that mode
+        if options.get("breaks"):
+            return "<br>"
+        return "\n"
+
+    md.renderer.rules["hardbreak"] = hardbreak
+    md.renderer.rules["softbreak"] = softbreak
+
+
 def _highlight_fence_plugin(md):
     def fence_renderer(tokens, idx, options, env):
         token = tokens[idx]
@@ -291,6 +312,7 @@ def create_renderer():
     _external_link_plugin(md)
     _figure_image_plugin(md)
     _highlight_fence_plugin(md)
+    _hardbreak_no_newline_plugin(md)
 
     return md
 
