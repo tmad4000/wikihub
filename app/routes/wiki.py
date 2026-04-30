@@ -184,6 +184,12 @@ def _sibling_wikis(owner, current_wiki):
     return [w for w in wikis if w.id != current_wiki.id]
 
 
+def _render_permission_error(owner, wiki, status_code=None):
+    if status_code is None:
+        status_code = 401 if not current_user.is_authenticated else 403
+    return render_template("permission_error.html", owner=owner, wiki=wiki), status_code
+
+
 def _normalize_folder_path(raw_path):
     clean = (raw_path or "").replace("\\", "/").strip().strip("/")
     clean = clean.removesuffix("/index.md").removesuffix("/index").removesuffix(".md")
@@ -688,7 +694,7 @@ def wiki_settings(username, slug):
     """wiki settings page — subdomain, visibility, danger zone."""
     owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
     if not _is_owner(wiki):
-        abort(403)
+        return _render_permission_error(owner, wiki)
     return render_template("wiki_settings.html", owner=owner, wiki=wiki)
 
 
@@ -1093,7 +1099,7 @@ def edit_page(username, slug, page_path):
     username_for_acl = current_user.username if current_user.is_authenticated else None
 
     if not is_owner and not can_write(file_path, acl_rules, username_for_acl, page.visibility if page else None):
-        return render_template("permission_error.html", owner=owner, wiki=wiki), 403
+        return _render_permission_error(owner, wiki)
 
     if request.method == "POST":
         content = request.form.get("content", "")
@@ -1165,7 +1171,7 @@ def new_page(username, slug):
         if not page_path.endswith(".md"):
             page_path += ".md"
         if not is_owner and not can_write(page_path, acl_rules, username_for_acl):
-            return render_template("permission_error.html", owner=owner, wiki=wiki), 403
+            return _render_permission_error(owner, wiki)
         content = request.form.get("content", "")
 
         visibility = request.form.get("visibility", resolve_visibility(page_path, acl_rules))
@@ -1210,7 +1216,7 @@ def new_page(username, slug):
             page_path = f"{base}-{n}.md"
             n += 1
     if not is_owner and not can_write(page_path, acl_rules, username_for_acl):
-        return render_template("permission_error.html", owner=owner, wiki=wiki), 403
+        return _render_permission_error(owner, wiki)
     default_vis = resolve_visibility(page_path, acl_rules)
     return render_template(
         "editor.html",
@@ -1229,7 +1235,7 @@ def new_page(username, slug):
 def new_folder(username, slug):
     owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
     if not _is_owner(wiki):
-        return render_template("permission_error.html", owner=owner, wiki=wiki), 403
+        return _render_permission_error(owner, wiki)
 
     acl_rules = load_acl_rules(owner.username, wiki.slug)
     parent_path = page_path_from_url_path(request.values.get("parent", "").strip().strip("/"))

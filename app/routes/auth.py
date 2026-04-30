@@ -81,14 +81,15 @@ _USERNAME_RE = re.compile(r'^[a-z0-9_-]+$')
 def _safe_next_url(fallback=None):
     """Validate the ?next= parameter to prevent open redirects.
 
-    Order: explicit ?next= → Referer header (same-origin only) → fallback → main.index.
+    Order: POST form `next` → explicit ?next= → Referer header (same-origin only)
+    → fallback → main.index.
     The Referer fallback means clicking "Sign in" from any page redirects back after login,
     even if the link itself didn't include ?next=.
     """
-    target = request.args.get("next", "")
+    target = request.form.get("next", "").strip() or request.args.get("next", "").strip()
     if target:
         parsed = urlparse(target)
-        if not parsed.scheme and not parsed.netloc:
+        if not parsed.scheme and not parsed.netloc and not target.startswith("//"):
             return target
 
     referer = request.headers.get("Referer", "")
@@ -102,8 +103,15 @@ def _safe_next_url(fallback=None):
 
 
 def _safe_redirect_target(target, fallback=None):
-    parsed = urlparse(target or "")
-    if target and not parsed.scheme and not parsed.netloc:
+    target = (target or "").strip()
+    parsed = urlparse(target)
+    if (
+        target
+        and not parsed.scheme
+        and not parsed.netloc
+        and not target.startswith("//")
+        and not parsed.path.startswith("/auth/")
+    ):
         return target
     return fallback or url_for("main.index")
 
@@ -149,9 +157,22 @@ def _check_login_rate_limit():
         attempts.popleft()
     if len(attempts) >= _LOGIN_MAX_PER_IP:
         flash("Too many login attempts. Try again in a few minutes.")
-        return render_template("auth/login.html"), 429
+        return _render_login(), 429
     attempts.append(now)
     return None
+
+
+def _login_template_context():
+    return {
+        "testing_login": current_app.debug and current_app.config.get("TESTING_LOGIN"),
+        "prefill_email": request.values.get("email", "").strip().lower(),
+        "invite_token": request.values.get("it", "").strip(),
+        "next_value": _safe_next_url(fallback=""),
+    }
+
+
+def _render_login():
+    return render_template("auth/login.html", **_login_template_context())
 
 
 def _render_forgot_password_success(email=""):
@@ -219,11 +240,7 @@ def login():
     elif request.args.get("api_key") or request.args.get("password"):
         source = request.args
     else:
-        return render_template(
-            "auth/login.html",
-            testing_login=current_app.debug and current_app.config.get("TESTING_LOGIN"),
-            prefill_email=request.args.get("email", "").strip().lower(),
-        )
+        return _render_login()
 
     rate_limited = _check_login_rate_limit()
     if rate_limited:
@@ -239,7 +256,7 @@ def login():
         user = User.query.get(key_row.user_id) if key_row else None
         if not user:
             flash("Invalid API key")
-            return render_template("auth/login.html"), 401
+            return _render_login(), 401
         login_user(user)
         if request.method == "GET":
             flash("Signed in via URL. Rotate this key if the link was shared.")
@@ -248,7 +265,7 @@ def login():
     user = User.query.filter_by(username=username).first()
     if not user or not user.password_hash or not check_password(password, user.password_hash):
         flash("Invalid username or password")
-        return render_template("auth/login.html"), 401
+        return _render_login(), 401
 
     login_user(user)
     _apply_pending_invites_on_login(user)
@@ -266,8 +283,8 @@ def _apply_pending_invites_on_login(user, *, invite_email=None, invite_token=Non
     Token-less invite links fall through to the separate verify-email flow."""
     if not user or not user.email:
         return
-    invite_email = (invite_email if invite_email is not None else request.args.get("email", "")).strip().lower()
-    invite_token = (invite_token if invite_token is not None else request.args.get("it", "")).strip()
+    invite_email = (invite_email if invite_email is not None else request.values.get("email", "")).strip().lower()
+    invite_token = (invite_token if invite_token is not None else request.values.get("it", "")).strip()
     if (
         invite_email
         and invite_token
@@ -548,7 +565,7 @@ def magic_login(token):
     token_row.used_at = utcnow()
     db.session.commit()
     login_user(user)
-    return redirect(token_row.redirect_path or url_for("main.index"))
+    return redirect(_safe_redirect_target(token_row.redirect_path))
 
 
 # --- Google OAuth ---

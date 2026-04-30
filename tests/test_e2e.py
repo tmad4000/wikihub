@@ -11,7 +11,7 @@ import shutil
 import sys
 import zipfile
 from datetime import timedelta
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from sqlalchemy import text
 
 # ensure app is importable
@@ -547,6 +547,149 @@ def test_magic_link_login(client):
     r = other_browser.get(magic_path, follow_redirects=False)
     assert r.status_code == 302
     assert "/auth/login" in r.headers["Location"]
+
+
+def test_signin_flow_redirects_back_to_target(app, client):
+    """wikihub-kvwh: sign-in CTAs must round-trip back to the private target."""
+    import app.routes.auth as auth_routes
+    from flask import g as _g
+    from flask import redirect
+
+    target_path = "/@signinowner/private-wiki/notes/deep-secret"
+    encoded_target = quote(target_path, safe="/")
+    google_next = target_path
+
+    r = client.post("/api/v1/accounts", json={
+        "username": "signinowner",
+        "email": "signinowner@example.com",
+        "password": "testpass12345",
+    })
+    assert r.status_code == 201
+    api_key = r.get_json()["api_key"]
+    h = {"Authorization": f"Bearer {api_key}"}
+
+    owner = db.session.execute(text("SELECT id FROM users WHERE username = 'signinowner'")).scalar_one()
+    db.session.execute(
+        text(
+            "UPDATE users SET email_verified_at = NOW() WHERE id = :user_id"
+        ),
+        {"user_id": owner},
+    )
+    db.session.commit()
+
+    r = client.post("/api/v1/wikis", json={"slug": "private-wiki", "title": "Private Wiki"}, headers=h)
+    assert r.status_code == 201
+    r = client.post("/api/v1/wikis/signinowner/private-wiki/pages", json={
+        "path": "notes/deep-secret.md",
+        "content": "# Deep Secret\n\nPrivate content.",
+        "visibility": "private",
+    }, headers=h)
+    assert r.status_code == 201
+
+    _g.pop("_login_user", None)
+    anon = app.test_client()
+    r = anon.get(target_path)
+    assert r.status_code == 404
+    assert b"This page is private or doesn't exist" in r.data
+    assert f'/auth/login?next={encoded_target}'.encode() in r.data
+
+    r = anon.get("/@signinowner/private-wiki/settings")
+    assert r.status_code == 401
+    assert b"Sign in" in r.data
+
+    login_path = f"/auth/login?next={encoded_target}"
+    login_page = anon.get(login_path)
+    assert login_page.status_code == 200
+    assert f'name="next" value="{target_path}"'.encode() in login_page.data
+    assert f'/auth/google?next={google_next}'.encode() in login_page.data
+
+    _g.pop("_login_user", None)
+    password_browser = app.test_client()
+    r = password_browser.post("/auth/login", data={
+        "username": "signinowner",
+        "password": "testpass12345",
+        "next": target_path,
+    }, follow_redirects=False)
+    assert r.status_code == 302
+    assert r.headers["Location"].endswith(target_path)
+    r = password_browser.get(target_path)
+    assert r.status_code == 200
+    assert b"Deep Secret" in r.data
+
+    _g.pop("_login_user", None)
+    api_key_browser = app.test_client()
+    r = api_key_browser.post("/auth/login", data={
+        "api_key": api_key,
+        "next": target_path,
+    }, follow_redirects=False)
+    assert r.status_code == 302
+    assert r.headers["Location"].endswith(target_path)
+    r = api_key_browser.get(target_path)
+    assert r.status_code == 200
+    assert b"Deep Secret" in r.data
+
+    class FakeGoogleClient:
+        def authorize_redirect(self, redirect_uri):
+            return redirect(
+                f"https://accounts.google.test/o/oauth2/auth?state=signin-flow-state&redirect_uri={redirect_uri}"
+            )
+
+        def authorize_access_token(self):
+            return {
+                "userinfo": {
+                    "sub": "google-sub-signin-flow",
+                    "email": "signinowner@example.com",
+                    "email_verified": True,
+                    "name": "Signin Owner",
+                }
+            }
+
+    try:
+        original_google = auth_routes.oauth.google
+        had_original = True
+    except AttributeError:
+        original_google = None
+        had_original = False
+
+    auth_routes.oauth.google = FakeGoogleClient()
+    try:
+        _g.pop("_login_user", None)
+        google_browser = app.test_client()
+        r = google_browser.get(login_path)
+        assert r.status_code == 200
+        assert f'/auth/google?next={google_next}'.encode() in r.data
+
+        r = google_browser.get(f"/auth/google?next={google_next}", follow_redirects=False)
+        assert r.status_code == 302
+        assert "state=signin-flow-state" in r.headers["Location"]
+
+        with google_browser.session_transaction() as sess:
+            pending_contexts = sess.get("google_oauth_contexts", {})
+            assert pending_contexts["signin-flow-state"]["next"] == target_path
+
+        r = google_browser.get("/auth/google/callback?state=signin-flow-state&code=fake", follow_redirects=False)
+        assert r.status_code == 302
+        assert r.headers["Location"].endswith(target_path)
+        r = google_browser.get(target_path)
+        assert r.status_code == 200
+        assert b"Deep Secret" in r.data
+    finally:
+        if had_original:
+            auth_routes.oauth.google = original_google
+        else:
+            delattr(auth_routes.oauth, "google")
+
+    _g.pop("_login_user", None)
+    magic_browser = app.test_client()
+    r = client.post("/api/v1/auth/magic-link", json={"next": target_path}, headers=h)
+    assert r.status_code == 201
+    magic_path = urlparse(r.get_json()["login_url"]).path
+    r = magic_browser.get(magic_path, follow_redirects=False)
+    assert r.status_code == 302
+    assert r.headers["Location"].endswith(target_path)
+    r = magic_browser.get(target_path)
+    assert r.status_code == 200
+    assert b"Deep Secret" in r.data
 
 
 def test_logout(client):
@@ -3299,6 +3442,7 @@ def run_all():
             ("token + settings", lambda: test_token_and_settings(client)),
             ("client_config hint", lambda: test_client_config_hint(client)),
             ("magic link login", lambda: test_magic_link_login(client)),
+            ("sign-in flow redirects back to target (wikihub-kvwh)", lambda: test_signin_flow_redirects_back_to_target(app, client)),
             ("logout (wikihub-uq9)", lambda: test_logout(client)),
             ("email verification flow (wikihub-ks5t.3)", lambda: test_email_verification_flow(client)),
             ("password reset flow (wikihub-ks5t.5)", lambda: test_password_reset_lifecycle(client)),
