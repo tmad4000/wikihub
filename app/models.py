@@ -102,6 +102,23 @@ class Wikilink(db.Model):
     source_page = db.relationship("Page", foreign_keys=[source_page_id])
     target_page = db.relationship("Page", foreign_keys=[target_page_id])
 
+    # Backlink lookups — see migrations/2026-04-29_wikilinks_backlink_indexes.sql.
+    # Partial indexes mirror the migration so fresh DBs (tests, new installs)
+    # match dev/prod exactly. (1) covers the resolved-target lookup,
+    # (2) covers the forward-ref alias fallback.
+    __table_args__ = (
+        db.Index(
+            "ix_wikilinks_target_page_id",
+            "target_page_id",
+            postgresql_where=db.text("target_page_id IS NOT NULL"),
+        ),
+        db.Index(
+            "ix_wikilinks_unresolved_target_path",
+            "target_path",
+            postgresql_where=db.text("target_page_id IS NULL"),
+        ),
+    )
+
 
 class Star(db.Model):
     __tablename__ = "stars"

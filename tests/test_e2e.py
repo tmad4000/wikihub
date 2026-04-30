@@ -3182,6 +3182,90 @@ def test_agent_chat_disabled_returns_503(app, client):
         app.config["CURATOR_ENABLED"] = orig
 
 
+def test_backlinks_api(client, api_key):
+    """wikihub-yqe6: backlinks API + ?include=backlinks + forward-ref fallback.
+
+    Covers four scenarios:
+      1. POST source page that wikilinks to existing target → backlink shows.
+      2. GET .../pages/<target>/backlinks returns the source.
+      3. GET .../pages/<target>?include=backlinks embeds the same list.
+      4. Forward ref: source links to a target that doesn't exist yet; create
+         the target later — backlink appears via alias fallback.
+    """
+    h = {"Authorization": f"Bearer {api_key}"}
+
+    # Fresh wiki for this test (avoid cross-talk with other tests' agent1 wikis).
+    r = client.post("/api/v1/wikis", json={"slug": "backlinks-test", "title": "BL"}, headers=h)
+    assert r.status_code == 201, r.get_json()
+
+    # Target page (Body Masters)
+    r = client.post("/api/v1/wikis/agent1/backlinks-test/pages", json={
+        "path": "health/Body Masters.md",
+        "content": "---\ntitle: Body Masters\nvisibility: public\n---\n\n# Body Masters\n\nA roster.",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201, r.get_json()
+
+    # Source page that wikilinks to it.
+    r = client.post("/api/v1/wikis/agent1/backlinks-test/pages", json={
+        "path": "health/Meditation Masters.md",
+        "content": "---\ntitle: Meditation Masters\nvisibility: public\n---\n\n# Meditation Masters\n\nSee also [[health/Body Masters]].",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201
+
+    # 1+2: backlinks endpoint returns Meditation Masters as a backlink to Body Masters.
+    r = client.get("/api/v1/wikis/agent1/backlinks-test/pages/health/Body Masters.md/backlinks", headers=h)
+    assert r.status_code == 200, r.get_json()
+    payload = r.get_json()
+    assert payload["target"]["path"] == "health/Body Masters.md"
+    paths = [b["path"] for b in payload["backlinks"]]
+    assert "health/Meditation Masters.md" in paths, paths
+    assert payload["total"] == 1
+
+    # 3: ?include=backlinks embeds the same list on the page-read response.
+    r = client.get("/api/v1/wikis/agent1/backlinks-test/pages/health/Body Masters.md?include=backlinks", headers=h)
+    assert r.status_code == 200
+    payload = r.get_json()
+    assert "backlinks" in payload, payload.keys()
+    paths = [b["path"] for b in payload["backlinks"]]
+    assert "health/Meditation Masters.md" in paths
+
+    # Without include= the field must NOT appear (keeps the default response shape clean).
+    r = client.get("/api/v1/wikis/agent1/backlinks-test/pages/health/Body Masters.md", headers=h)
+    assert r.status_code == 200
+    assert "backlinks" not in r.get_json()
+
+    # 4: forward-ref fallback — page links to a target that doesn't exist yet.
+    r = client.post("/api/v1/wikis/agent1/backlinks-test/pages", json={
+        "path": "health/India Remote Sleep Hacking.md",
+        "content": "---\ntitle: India Remote Sleep Hacking\nvisibility: public\n---\n\nSee [[health/Sleep]].",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201
+
+    # Sleep doesn't exist yet — its backlinks endpoint should 404.
+    r = client.get("/api/v1/wikis/agent1/backlinks-test/pages/health/Sleep.md/backlinks", headers=h)
+    assert r.status_code == 404
+
+    # Create Sleep AFTER the link was made.
+    r = client.post("/api/v1/wikis/agent1/backlinks-test/pages", json={
+        "path": "health/Sleep.md",
+        "content": "---\ntitle: Sleep\nvisibility: public\n---\n\n# Sleep",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201
+
+    # Now Sleep should see India Remote Sleep Hacking as a backlink — even
+    # though India was created first and never re-saved.
+    r = client.get("/api/v1/wikis/agent1/backlinks-test/pages/health/Sleep.md/backlinks", headers=h)
+    assert r.status_code == 200
+    paths = [b["path"] for b in r.get_json()["backlinks"]]
+    assert "health/India Remote Sleep Hacking.md" in paths, (
+        f"forward-ref fallback failed: expected India Remote Sleep Hacking in backlinks of Sleep, got {paths}"
+    )
+
+
 def run_all():
     app = setup()
 
@@ -3257,6 +3341,7 @@ def run_all():
             ("agent chat search filters private pages (wikihub-7w40)", lambda: test_agent_chat_search_filters_private_pages(client, key)),
             ("agent chat resists prompt-injection ACL bypass (wikihub-7w40)", lambda: test_agent_chat_resists_prompt_injection_for_acl_bypass(client, key)),
             ("agent chat disabled returns 503 (wikihub-7w40)", lambda: test_agent_chat_disabled_returns_503(app, client)),
+            ("backlinks API + forward-ref fallback (wikihub-yqe6)", lambda: test_backlinks_api(client, key)),
             ("CLI end-to-end", lambda: test_cli(client)),
         ]
 

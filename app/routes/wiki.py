@@ -10,6 +10,7 @@ from flask_login import current_user
 
 from app import db
 from app.acl import can_read, can_write, grants_for_user, resolve_grants, resolve_visibility
+from app.backlinks import get_backlinks_for_page
 from app.content_utils import has_private_bands, parse_markdown_document, set_visibility_in_content
 from app.discovery import discoverable_page_for_wiki, visible_wikis_for_owner
 from app.git_backend import _repo_path
@@ -29,17 +30,13 @@ def _recently_updated_pages(wiki, limit=8, public_only=False):
 
 
 def _get_backlinks(page):
-    """get pages that link to this page via wikilinks."""
-    if not page or not hasattr(page, 'id') or not page.id:
-        return []
-    links = (
-        Wikilink.query
-        .filter_by(target_page_id=page.id)
-        .join(Page, Wikilink.source_page_id == Page.id)
-        .add_entity(Page)
-        .all()
-    )
-    return [source_page for _, source_page in links]
+    """get pages that link to this page via wikilinks.
+
+    Delegates to app.backlinks.get_backlinks_for_page so the API route and
+    reader view stay in lockstep. See that module for resolution semantics
+    (including the unresolved-alias forward-ref fallback).
+    """
+    return get_backlinks_for_page(page)
 
 
 def _get_link_graph(page, wiki):

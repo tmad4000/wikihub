@@ -12,6 +12,7 @@ from flask import Response, current_app, jsonify, request
 from app.url_utils import url_path_from_page_path
 
 from app import db
+from app.backlinks import get_backlinks_for_page, serialize_backlink
 from app.models import User, Wiki, Page, Star, Fork, Wikilink, WikiSlugRedirect, PendingInvite, utcnow
 from app.auth_utils import api_auth_optional, api_auth_required, rate_limit_writes
 from app.git_backend import init_wiki_repo
@@ -622,7 +623,7 @@ def read_page(owner, slug, page_path):
             resp.headers["ETag"] = etag
         return resp
 
-    resp = jsonify({
+    body_payload = {
         "id": page.id,
         "path": page.path,
         "title": page.title,
@@ -635,10 +636,64 @@ def read_page(owner, slug, page_path):
         "claimable": page.claimable,
         "author": None if page.anonymous else page.author,
         "updated_at": page.updated_at.isoformat(),
-    })
+    }
+
+    # Optional include=backlinks (comma-separated for forward compatibility:
+    # ?include=backlinks,outgoing_links could be supported later in the same shape).
+    includes = {tok.strip() for tok in (request.args.get("include") or "").split(",") if tok.strip()}
+    if "backlinks" in includes:
+        sources = get_backlinks_for_page(page)
+        # Apply ACL: do not surface a private backlink source to a viewer who
+        # can't read it. The fact that it links here is itself information.
+        viewer_username = user.username if user else None
+        body_payload["backlinks"] = [
+            serialize_backlink(src)
+            for src in sources
+            if is_owner or can_read(src.path, acl_rules, viewer_username, src.visibility)
+        ]
+
+    resp = jsonify(body_payload)
     if etag:
         resp.headers["ETag"] = etag
     return resp
+
+
+@api_bp.route("/wikis/<owner>/<slug>/pages/<path:page_path>/backlinks", methods=["GET"])
+@api_auth_optional
+def page_backlinks(owner, slug, page_path):
+    """List pages in this wiki that wikilink to the given page.
+
+    Intra-wiki only for v1 — see app/backlinks.py for the resolution strategy
+    (primary target_page_id match + alias-based fallback for forward refs).
+    """
+    owner_user, wiki, err = _get_wiki_or_404(owner, slug)
+    if err:
+        return err
+
+    page_path = _normalize_page_path_param(page_path)
+    page = Page.query.filter_by(wiki_id=wiki.id, path=page_path).first()
+    if not page and not page_path.endswith(".md"):
+        page = Page.query.filter_by(wiki_id=wiki.id, path=page_path + ".md").first()
+    if not page:
+        return {"error": "not_found", "message": "Page not found"}, 404
+
+    user = getattr(request, "current_user", None)
+    is_owner = bool(user and user.id == wiki.owner_id)
+    acl_rules = load_acl_rules(owner_user.username, wiki.slug)
+    viewer_username = user.username if user else None
+    if not is_owner and not can_read(page.path, acl_rules, viewer_username, page.visibility):
+        return {"error": "not_found", "message": "Page not found"}, 404
+
+    sources = get_backlinks_for_page(page)
+    visible = [
+        src for src in sources
+        if is_owner or can_read(src.path, acl_rules, viewer_username, src.visibility)
+    ]
+    return jsonify({
+        "target": {"path": page.path, "title": page.title},
+        "backlinks": [serialize_backlink(p) for p in visible],
+        "total": len(visible),
+    })
 
 
 @api_bp.route("/wikis/<owner>/<slug>/pages/<path:page_path>", methods=["PUT"])
