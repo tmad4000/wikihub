@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}Suggested edits — {{ wiki.title or wiki.slug }} — wikihub{% endblock %}
+
+{% block extra_css %}
+.proposal-page {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 32px 16px 64px;
+}
+@media (min-width: 720px) { .proposal-page { padding: 44px 24px 72px; } }
+.proposal-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 22px;
+}
+.proposal-head h1 {
+  margin: 0;
+  font-size: 1.45rem;
+  letter-spacing: 0;
+}
+.proposal-back {
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+.proposal-list {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.proposal-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  padding: 14px 16px;
+  color: var(--text-primary);
+  text-decoration: none;
+}
+.proposal-row + .proposal-row { border-top: 1px solid var(--border-default); }
+.proposal-row:hover { background: var(--accent-subtle); }
+.proposal-title {
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+.proposal-meta {
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+}
+.proposal-status {
+  align-self: start;
+  border: 1px solid var(--border-emphasis);
+  border-radius: var(--radius-sm);
+  padding: 3px 8px;
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+.proposal-status.pending { color: var(--accent); border-color: rgba(212, 160, 74, 0.38); }
+.proposal-empty {
+  color: var(--text-muted);
+  padding: 16px;
+  font-size: 0.875rem;
+}
+{% endblock %}
+
+{% block body %}
+<main class="proposal-page">
+  <div class="proposal-head">
+    <h1>Suggested edits</h1>
+    <a class="proposal-back" href="/@{{ owner.username }}/{{ wiki.slug }}">Back to wiki</a>
+  </div>
+
+  <div class="proposal-list">
+    {% for proposal in proposals %}
+    <a class="proposal-row" href="/@{{ owner.username }}/{{ wiki.slug }}/-/proposals/{{ proposal.id }}">
+      <div>
+        <div class="proposal-title">{{ proposal.title }}</div>
+        <div class="proposal-meta">
+          {{ proposal.page_path }} · {{ proposal.author_name or 'anonymous' }} · {{ proposal.created_at.strftime('%Y-%m-%d') }}
+        </div>
+      </div>
+      <span class="proposal-status {{ proposal.status }}">{{ proposal.status }}</span>
+    </a>
+    {% else %}
+    <div class="proposal-empty">No suggested edits yet.</div>
+    {% endfor %}
+  </div>
+</main>
+{% endblock %}

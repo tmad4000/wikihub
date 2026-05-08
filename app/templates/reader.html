@@ -753,6 +753,11 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
       </a>
 
+      <a href="/@{{ owner.username }}/{{ wiki.slug }}/-/suggest/{{ page.path | page_url }}" class="action-btn" title="Suggest edit">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+        Suggest
+      </a>
+
       <div class="download-menu" id="download-menu">
         <button class="action-btn-mini" title="Download / Clone" onclick="event.stopPropagation(); this.parentElement.classList.toggle('open')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -787,6 +792,12 @@
       </div>
 
       {% if current_user.is_authenticated and current_user.id == wiki.owner_id %}
+      {% if pending_proposals_count is defined and pending_proposals_count %}
+      <a href="/@{{ owner.username }}/{{ wiki.slug }}/-/proposals" class="action-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        Review <span class="count">{{ pending_proposals_count }}</span>
+      </a>
+      {% endif %}
       <a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ page.path | page_url }}/edit" class="action-btn">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
         Edit

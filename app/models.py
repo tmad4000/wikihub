@@ -162,6 +162,92 @@ class PendingInvite(db.Model):
     )
 
 
+class Proposal(db.Model):
+    """owner-reviewed suggested edit workflow for one or more wiki pages."""
+    __tablename__ = "proposals"
+
+    id = db.Column(db.Integer, primary_key=True)
+    wiki_id = db.Column(db.Integer, db.ForeignKey("wikis.id", ondelete="CASCADE"), nullable=False, index=True)
+    page_id = db.Column(db.Integer, db.ForeignKey("pages.id", ondelete="SET NULL"), nullable=True, index=True)
+    page_path = db.Column(db.Text, nullable=False)
+    author_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    author_name = db.Column(db.String(256), nullable=True)
+    title = db.Column(db.String(256), nullable=False)
+    status = db.Column(db.String(32), default="pending", nullable=False, index=True)
+    base_content_hash = db.Column(db.String(64), nullable=True)
+    reviewed_by_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reviewed_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+    wiki = db.relationship("Wiki", backref=db.backref("proposals", lazy="dynamic"))
+    page = db.relationship("Page")
+    author = db.relationship("User", foreign_keys=[author_id])
+    reviewed_by = db.relationship("User", foreign_keys=[reviewed_by_id])
+    revisions = db.relationship(
+        "ProposalRevision",
+        backref="proposal",
+        lazy="dynamic",
+        cascade="all, delete-orphan",
+        order_by="ProposalRevision.revision_number",
+    )
+    comments = db.relationship(
+        "ProposalComment",
+        backref="proposal",
+        lazy="dynamic",
+        cascade="all, delete-orphan",
+        order_by="ProposalComment.created_at",
+    )
+
+
+class ProposalRevision(db.Model):
+    __tablename__ = "proposal_revisions"
+
+    id = db.Column(db.Integer, primary_key=True)
+    proposal_id = db.Column(db.Integer, db.ForeignKey("proposals.id", ondelete="CASCADE"), nullable=False, index=True)
+    revision_number = db.Column(db.Integer, nullable=False)
+    note = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
+
+    patches = db.relationship(
+        "ProposalPagePatch",
+        backref="revision",
+        lazy="dynamic",
+        cascade="all, delete-orphan",
+        order_by="ProposalPagePatch.id",
+    )
+
+    __table_args__ = (
+        db.UniqueConstraint("proposal_id", "revision_number", name="uq_proposal_revision_number"),
+    )
+
+
+class ProposalPagePatch(db.Model):
+    __tablename__ = "proposal_page_patches"
+
+    id = db.Column(db.Integer, primary_key=True)
+    revision_id = db.Column(db.Integer, db.ForeignKey("proposal_revisions.id", ondelete="CASCADE"), nullable=False, index=True)
+    page_path = db.Column(db.Text, nullable=False)
+    base_content_hash = db.Column(db.String(64), nullable=True)
+    base_content = db.Column(db.Text, nullable=False)
+    proposed_content = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class ProposalComment(db.Model):
+    __tablename__ = "proposal_comments"
+
+    id = db.Column(db.Integer, primary_key=True)
+    proposal_id = db.Column(db.Integer, db.ForeignKey("proposals.id", ondelete="CASCADE"), nullable=False, index=True)
+    author_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    author_name = db.Column(db.String(256), nullable=True)
+    body = db.Column(db.Text, nullable=False)
+    event = db.Column(db.String(32), default="comment", nullable=False)
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
+
+    author = db.relationship("User")
+
+
 class ApiKey(db.Model):
     __tablename__ = "api_keys"
 
