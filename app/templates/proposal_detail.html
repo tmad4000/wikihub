@@ -1,0 +1,285 @@
+{% extends "base.html" %}
+{% block title %}{{ proposal.title }} — suggested edit — wikihub{% endblock %}
+
+{% block extra_css %}
+.proposal-detail {
+  max-width: 1060px;
+  margin: 0 auto;
+  padding: 28px 16px 64px;
+}
+@media (min-width: 720px) { .proposal-detail { padding: 40px 24px 72px; } }
+.proposal-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+.proposal-detail h1 {
+  margin: 0 0 7px;
+  font-size: 1.35rem;
+  letter-spacing: 0;
+}
+.proposal-meta {
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+.proposal-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.proposal-btn {
+  min-height: 36px;
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-emphasis);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-body);
+  font-size: 0.8125rem;
+  font-weight: 700;
+  cursor: pointer;
+  text-decoration: none;
+}
+.proposal-btn.accept {
+  border-color: transparent;
+  background: var(--accent);
+  color: #0f0e0c;
+}
+.proposal-btn.reject {
+  border-color: rgba(196, 92, 60, 0.34);
+  color: var(--color-private);
+  background: rgba(196, 92, 60, 0.08);
+}
+.proposal-state {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 3px 8px;
+  border: 1px solid var(--border-emphasis);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  font-weight: 800;
+  margin-bottom: 10px;
+}
+.proposal-state.pending { color: var(--accent); border-color: rgba(212, 160, 74, 0.38); }
+.proposal-state.changes_requested { color: var(--color-private); border-color: rgba(196, 92, 60, 0.34); }
+.proposal-note, .proposal-stale, .proposal-panel {
+  margin: 14px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  background: var(--bg-surface);
+}
+.proposal-panel h2 {
+  margin: 0 0 10px;
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  letter-spacing: 0;
+}
+.proposal-panel textarea {
+  width: 100%;
+  min-height: 88px;
+  resize: vertical;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--control-bg);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 0.875rem;
+  padding: 9px 10px;
+}
+.proposal-panel .proposal-editor {
+  min-height: 340px;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  line-height: 1.55;
+}
+.proposal-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.discussion {
+  margin-top: 20px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.discussion-title {
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--border-default);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  font-weight: 800;
+}
+.discussion-item {
+  padding: 12px 14px;
+}
+.discussion-item + .discussion-item { border-top: 1px solid var(--border-default); }
+.discussion-meta {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 7px;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+}
+.discussion-event {
+  border: 1px solid var(--border-emphasis);
+  border-radius: var(--radius-sm);
+  padding: 1px 6px;
+  color: var(--accent);
+  font-family: var(--font-body);
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+.discussion-body {
+  white-space: pre-wrap;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  line-height: 1.55;
+}
+.revision-strip {
+  margin-top: 12px;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+}
+.proposal-stale {
+  border-color: rgba(196, 92, 60, 0.34);
+  color: var(--color-private);
+  background: rgba(196, 92, 60, 0.08);
+}
+.proposal-diff {
+  margin: 18px 0 0;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--control-bg);
+  overflow: auto;
+}
+.proposal-diff pre {
+  margin: 0;
+  padding: 14px 16px;
+  min-width: 720px;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+.diff-add { color: #6fa36b; }
+.diff-del { color: #c45c3c; }
+.diff-meta { color: var(--text-tertiary); }
+{% endblock %}
+
+{% block body %}
+<main class="proposal-detail">
+  <div class="proposal-detail-head">
+    <div>
+      <span class="proposal-state {{ proposal.status }}">{{ proposal.status }}</span>
+      <h1>{{ proposal.title }}</h1>
+      <div class="proposal-meta">
+        {{ patch.page_path }} · {{ proposal.author_name or 'anonymous' }} · {{ proposal.created_at.strftime('%Y-%m-%d %H:%M') }}
+      </div>
+    </div>
+    <div class="proposal-actions">
+      <a class="proposal-btn" href="/@{{ owner.username }}/{{ wiki.slug }}/{{ patch.page_path | page_url }}">View page</a>
+      {% if is_owner %}
+      <a class="proposal-btn" href="/@{{ owner.username }}/{{ wiki.slug }}/-/proposals">All suggestions</a>
+      {% endif %}
+      {% if is_owner and proposal.status == 'pending' %}
+      <form method="POST" action="/@{{ owner.username }}/{{ wiki.slug }}/-/proposals/{{ proposal.id }}/reject">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="proposal-btn reject" type="submit">Reject</button>
+      </form>
+      {% if not stale %}
+      <form method="POST" action="/@{{ owner.username }}/{{ wiki.slug }}/-/proposals/{{ proposal.id }}/accept">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="proposal-btn accept" type="submit">Accept</button>
+      </form>
+      {% endif %}
+      {% endif %}
+    </div>
+  </div>
+
+  {% if stale %}
+  <div class="proposal-stale">This suggestion is based on an older version of the page.</div>
+  {% endif %}
+  {% if revision and revision.note %}
+  <div class="proposal-note">{{ revision.note }}</div>
+  {% endif %}
+  {% if revisions and revisions|length > 1 %}
+  <div class="revision-strip">Showing revision {{ revision.revision_number }} of {{ revisions|length }}.</div>
+  {% endif %}
+
+  <div class="proposal-diff">
+    <pre>{% for line in diff_lines %}<span class="{% if line.startswith('+') and not line.startswith('+++') %}diff-add{% elif line.startswith('-') and not line.startswith('---') %}diff-del{% elif line.startswith('@@') or line.startswith('---') or line.startswith('+++') %}diff-meta{% endif %}">{{ line }}</span>
+{% endfor %}</pre>
+  </div>
+
+  {% if is_owner and proposal.status == 'pending' %}
+  <section class="proposal-panel">
+    <h2>Request changes</h2>
+    <form method="POST" action="/@{{ owner.username }}/{{ wiki.slug }}/-/proposals/{{ proposal.id }}/request-changes">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <textarea name="body" placeholder="What needs to change before this can be accepted?"></textarea>
+      <div class="proposal-form-actions">
+        <button class="proposal-btn reject" type="submit">Request changes</button>
+      </div>
+    </form>
+  </section>
+  {% endif %}
+
+  {% if can_resubmit %}
+  <section class="proposal-panel">
+    <h2>Submit revision</h2>
+    <form method="POST" action="/@{{ owner.username }}/{{ wiki.slug }}/-/proposals/{{ proposal.id }}/resubmit">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <textarea class="proposal-editor" name="content">{{ patch.proposed_content }}</textarea>
+      <textarea name="note" placeholder="What changed in this revision?"></textarea>
+      <div class="proposal-form-actions">
+        <button class="proposal-btn accept" type="submit">Resubmit</button>
+      </div>
+    </form>
+  </section>
+  {% endif %}
+
+  <section class="discussion">
+    <div class="discussion-title">Discussion</div>
+    {% for comment in comments %}
+    <div class="discussion-item">
+      <div class="discussion-meta">
+        <strong>{{ comment.author_name or 'anonymous' }}</strong>
+        <span>{{ comment.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+        {% if comment.event != 'comment' %}<span class="discussion-event">{{ comment.event | replace('_', ' ') }}</span>{% endif %}
+      </div>
+      <div class="discussion-body">{{ comment.body }}</div>
+    </div>
+    {% else %}
+    <div class="discussion-item">
+      <div class="discussion-body">No comments yet.</div>
+    </div>
+    {% endfor %}
+  </section>
+
+  {% if proposal.status in ('pending', 'changes_requested') %}
+  <section class="proposal-panel">
+    <h2>Add comment</h2>
+    <form method="POST" action="/@{{ owner.username }}/{{ wiki.slug }}/-/proposals/{{ proposal.id }}/comment">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <textarea name="body"></textarea>
+      <div class="proposal-form-actions">
+        <button class="proposal-btn" type="submit">Comment</button>
+      </div>
+    </form>
+  </section>
+  {% endif %}
+</main>
+{% endblock %}

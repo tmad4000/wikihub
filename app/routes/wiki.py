@@ -1,3 +1,4 @@
+import difflib
 import os
 import subprocess
 from datetime import timezone
@@ -15,7 +16,19 @@ from app.content_utils import has_private_bands, parse_markdown_document, set_vi
 from app.discovery import discoverable_page_for_wiki, visible_wikis_for_owner
 from app.git_backend import _repo_path
 from app.git_sync import read_file_from_repo, read_file_bytes_from_repo, list_files_in_repo, regenerate_public_mirror, remove_page_from_repo, sync_page_to_repo, update_mirror_page
-from app.models import Page, User, UsernameRedirect, Wiki, WikiSlugRedirect, Wikilink, utcnow
+from app.models import (
+    Page,
+    Proposal,
+    ProposalComment,
+    ProposalPagePatch,
+    ProposalRevision,
+    User,
+    UsernameRedirect,
+    Wiki,
+    WikiSlugRedirect,
+    Wikilink,
+    utcnow,
+)
 from app.renderer import extract_toc, render_page
 from app.routes import wiki_bp
 from app.wiki_ops import index_repo_pages, load_acl_rules, refresh_wikilinks_for_page, sync_wiki_counters, update_page_metadata
@@ -254,6 +267,7 @@ def _page_url(username, slug, page_path):
 
 
 _SIDEBAR_NON_CONTENT_ROOTS = {
+    "-",
     "commit",
     "graph",
     "graph.json",
@@ -265,6 +279,66 @@ _SIDEBAR_NON_CONTENT_ROOTS = {
     "sidebar.json",
     "tag",
 }
+
+
+def _resolve_markdown_page(wiki, raw_page_path):
+    """Resolve a clean URL path to an existing markdown Page row."""
+    page_path = page_path_from_url_path(raw_page_path)
+    raw_file_path = raw_page_path if raw_page_path.endswith(".md") else raw_page_path + ".md"
+    file_path = raw_file_path
+    page = Page.query.filter_by(wiki_id=wiki.id, path=file_path).first()
+    if page is None and "_" in raw_page_path:
+        space_path = page_path if page_path.endswith(".md") else page_path + ".md"
+        page = Page.query.filter_by(wiki_id=wiki.id, path=space_path).first()
+        if page:
+            file_path = space_path
+    return page, file_path
+
+
+def _latest_proposal_patch(proposal):
+    revision = proposal.revisions.order_by(None).order_by(ProposalRevision.revision_number.desc()).first()
+    if not revision:
+        return None, None
+    return revision, revision.patches.first()
+
+
+def _proposal_diff(base_content, proposed_content, path):
+    return list(difflib.unified_diff(
+        (base_content or "").splitlines(),
+        (proposed_content or "").splitlines(),
+        fromfile=f"a/{path}",
+        tofile=f"b/{path}",
+        lineterm="",
+    ))
+
+
+def _proposal_participant_can_view(proposal, current_page, owner, wiki, patch):
+    if _is_owner(wiki):
+        return True
+    if current_user.is_authenticated and proposal.author_id == current_user.id:
+        return True
+    acl_rules = load_acl_rules(owner.username, wiki.slug)
+    username_for_acl = current_user.username if current_user.is_authenticated else None
+    return bool(current_page and can_read(patch.page_path, acl_rules, username_for_acl, current_page.visibility))
+
+
+def _proposal_participant_name():
+    return current_user.username if current_user.is_authenticated else "anonymous"
+
+
+def _add_proposal_comment(proposal, body, event="comment"):
+    body = (body or "").strip()
+    if not body:
+        return None
+    comment = ProposalComment(
+        proposal_id=proposal.id,
+        author_id=current_user.id if current_user.is_authenticated else None,
+        author_name=_proposal_participant_name(),
+        body=body,
+        event=event,
+    )
+    db.session.add(comment)
+    return comment
 
 
 def _normalize_sidebar_current_path(current_path):
@@ -759,6 +833,266 @@ def wiki_index(username, slug):
     )
 
 
+@wiki_bp.route("/@<username>/<slug>/-/suggest/<path:page_path>", methods=["GET", "POST"])
+def suggest_edit(username, slug, page_path):
+    owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
+    page, file_path = _resolve_markdown_page(wiki, page_path)
+    if not page:
+        abort(404)
+
+    acl_rules = load_acl_rules(owner.username, wiki.slug)
+    is_owner = _is_owner(wiki)
+    username_for_acl = current_user.username if current_user.is_authenticated else None
+    if not is_owner and not can_read(file_path, acl_rules, username_for_acl, page.visibility):
+        return render_template("permission_error.html", owner=owner, wiki=wiki), 404
+
+    user_can_write = is_owner or can_write(file_path, acl_rules, username_for_acl, page.visibility)
+    read_public = not user_can_write and _use_public_repo(wiki, acl_rules)
+    content = read_file_from_repo(owner.username, wiki.slug, file_path, public=read_public)
+    if content is None:
+        abort(404)
+    if request.method == "POST":
+        proposed_content = request.form.get("content", "")
+        note = request.form.get("note", "").strip()
+        title = request.form.get("title", "").strip() or f"Suggested edit to {page.title or file_path}"
+        author_name = current_user.username if current_user.is_authenticated else (
+            request.form.get("author_name", "").strip() or "anonymous"
+        )
+
+        # Suggestions never change page visibility or path. Owners can still make
+        # those changes explicitly in the normal editor.
+        proposed_content = set_visibility_in_content(proposed_content, page.visibility)
+
+        proposal = Proposal(
+            wiki_id=wiki.id,
+            page_id=page.id,
+            page_path=file_path,
+            author_id=current_user.id if current_user.is_authenticated else None,
+            author_name=author_name,
+            title=title,
+            status="pending",
+            base_content_hash=page.content_hash,
+        )
+        db.session.add(proposal)
+        db.session.flush()
+
+        revision = ProposalRevision(proposal_id=proposal.id, revision_number=1, note=note)
+        db.session.add(revision)
+        db.session.flush()
+
+        db.session.add(ProposalPagePatch(
+            revision_id=revision.id,
+            page_path=file_path,
+            base_content_hash=page.content_hash,
+            base_content=content,
+            proposed_content=proposed_content,
+        ))
+        if note:
+            _add_proposal_comment(proposal, note, event="submitted")
+        db.session.commit()
+        return redirect(url_for(
+            "wiki.proposal_detail",
+            username=owner.username,
+            slug=wiki.slug,
+            proposal_id=proposal.id,
+        ))
+
+    return render_template(
+        "suggest_edit.html",
+        owner=owner,
+        wiki=wiki,
+        page=page,
+        page_path=file_path,
+        content=content,
+        is_authenticated=current_user.is_authenticated,
+    )
+
+
+@wiki_bp.route("/@<username>/<slug>/-/proposals")
+def proposal_list(username, slug):
+    owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
+    if not _is_owner(wiki):
+        return render_template("permission_error.html", owner=owner, wiki=wiki), 403
+
+    proposals = (
+        Proposal.query
+        .filter_by(wiki_id=wiki.id)
+        .order_by(Proposal.status.asc(), Proposal.created_at.desc())
+        .all()
+    )
+    return render_template("proposals.html", owner=owner, wiki=wiki, proposals=proposals)
+
+
+@wiki_bp.route("/@<username>/<slug>/-/proposals/<int:proposal_id>")
+def proposal_detail(username, slug, proposal_id):
+    owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
+    proposal = Proposal.query.filter_by(id=proposal_id, wiki_id=wiki.id).first_or_404()
+    revision, patch = _latest_proposal_patch(proposal)
+    if not patch:
+        abort(404)
+
+    current_page = Page.query.filter_by(wiki_id=wiki.id, path=patch.page_path).first()
+    if not _proposal_participant_can_view(proposal, current_page, owner, wiki, patch):
+        return render_template("permission_error.html", owner=owner, wiki=wiki), 403
+
+    stale = bool(current_page and patch.base_content_hash and current_page.content_hash != patch.base_content_hash)
+    can_resubmit = current_user.is_authenticated and proposal.author_id == current_user.id and proposal.status == "changes_requested"
+    return render_template(
+        "proposal_detail.html",
+        owner=owner,
+        wiki=wiki,
+        proposal=proposal,
+        revision=revision,
+        patch=patch,
+        revisions=proposal.revisions.order_by(None).order_by(ProposalRevision.revision_number.desc()).all(),
+        comments=proposal.comments.order_by(ProposalComment.created_at.asc()).all(),
+        diff_lines=_proposal_diff(patch.base_content, patch.proposed_content, patch.page_path),
+        stale=stale,
+        is_owner=_is_owner(wiki),
+        can_resubmit=can_resubmit,
+    )
+
+
+@wiki_bp.route("/@<username>/<slug>/-/proposals/<int:proposal_id>/accept", methods=["POST"])
+def accept_proposal(username, slug, proposal_id):
+    owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
+    if not _is_owner(wiki):
+        return render_template("permission_error.html", owner=owner, wiki=wiki), 403
+
+    proposal = Proposal.query.filter_by(id=proposal_id, wiki_id=wiki.id).first_or_404()
+    if proposal.status != "pending":
+        return redirect(url_for("wiki.proposal_detail", username=owner.username, slug=wiki.slug, proposal_id=proposal.id))
+
+    _, patch = _latest_proposal_patch(proposal)
+    if not patch:
+        abort(404)
+
+    page = Page.query.filter_by(wiki_id=wiki.id, path=patch.page_path).first()
+    if not page:
+        abort(404)
+    if patch.base_content_hash and page.content_hash != patch.base_content_hash:
+        return redirect(url_for("wiki.proposal_detail", username=owner.username, slug=wiki.slug, proposal_id=proposal.id, stale="1"))
+
+    content = set_visibility_in_content(patch.proposed_content, page.visibility)
+    frontmatter, _ = parse_markdown_document(content)
+    page.visibility = frontmatter.get("visibility") or page.visibility
+    page.author = proposal.author_name
+    update_page_metadata(page, content, frontmatter)
+    refresh_wikilinks_for_page(page, content)
+
+    author_name = proposal.author_name or "anonymous"
+    author_email = f"{author_name}@wikihub"
+    sync_page_to_repo(
+        owner.username,
+        wiki.slug,
+        page.path,
+        content,
+        message=f"Accept suggestion #{proposal.id} for {page.path}",
+        author_name=author_name,
+        author_email=author_email,
+    )
+    update_mirror_page(owner.username, wiki.slug, page.path, load_acl_rules(owner.username, wiki.slug))
+
+    proposal.status = "accepted"
+    proposal.reviewed_by_id = current_user.id
+    proposal.reviewed_at = utcnow()
+    db.session.commit()
+    return redirect(_page_url(owner.username, wiki.slug, page.path))
+
+
+@wiki_bp.route("/@<username>/<slug>/-/proposals/<int:proposal_id>/reject", methods=["POST"])
+def reject_proposal(username, slug, proposal_id):
+    owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
+    if not _is_owner(wiki):
+        return render_template("permission_error.html", owner=owner, wiki=wiki), 403
+
+    proposal = Proposal.query.filter_by(id=proposal_id, wiki_id=wiki.id).first_or_404()
+    if proposal.status == "pending":
+        proposal.status = "rejected"
+        proposal.reviewed_by_id = current_user.id
+        proposal.reviewed_at = utcnow()
+        db.session.commit()
+    return redirect(url_for("wiki.proposal_detail", username=owner.username, slug=wiki.slug, proposal_id=proposal.id))
+
+
+@wiki_bp.route("/@<username>/<slug>/-/proposals/<int:proposal_id>/comment", methods=["POST"])
+def comment_proposal(username, slug, proposal_id):
+    owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
+    proposal = Proposal.query.filter_by(id=proposal_id, wiki_id=wiki.id).first_or_404()
+    _, patch = _latest_proposal_patch(proposal)
+    if not patch:
+        abort(404)
+    current_page = Page.query.filter_by(wiki_id=wiki.id, path=patch.page_path).first()
+    if not _proposal_participant_can_view(proposal, current_page, owner, wiki, patch):
+        return render_template("permission_error.html", owner=owner, wiki=wiki), 403
+
+    _add_proposal_comment(proposal, request.form.get("body"), event="comment")
+    db.session.commit()
+    return redirect(url_for("wiki.proposal_detail", username=owner.username, slug=wiki.slug, proposal_id=proposal.id))
+
+
+@wiki_bp.route("/@<username>/<slug>/-/proposals/<int:proposal_id>/request-changes", methods=["POST"])
+def request_proposal_changes(username, slug, proposal_id):
+    owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
+    if not _is_owner(wiki):
+        return render_template("permission_error.html", owner=owner, wiki=wiki), 403
+
+    proposal = Proposal.query.filter_by(id=proposal_id, wiki_id=wiki.id).first_or_404()
+    if proposal.status == "pending":
+        proposal.status = "changes_requested"
+        proposal.reviewed_by_id = current_user.id
+        proposal.reviewed_at = utcnow()
+        _add_proposal_comment(proposal, request.form.get("body"), event="changes_requested")
+        db.session.commit()
+    return redirect(url_for("wiki.proposal_detail", username=owner.username, slug=wiki.slug, proposal_id=proposal.id))
+
+
+@wiki_bp.route("/@<username>/<slug>/-/proposals/<int:proposal_id>/resubmit", methods=["POST"])
+def resubmit_proposal(username, slug, proposal_id):
+    owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
+    proposal = Proposal.query.filter_by(id=proposal_id, wiki_id=wiki.id).first_or_404()
+    if not current_user.is_authenticated or proposal.author_id != current_user.id:
+        return render_template("permission_error.html", owner=owner, wiki=wiki), 403
+    if proposal.status != "changes_requested":
+        return redirect(url_for("wiki.proposal_detail", username=owner.username, slug=wiki.slug, proposal_id=proposal.id))
+
+    page = Page.query.filter_by(wiki_id=wiki.id, path=proposal.page_path).first()
+    if not page:
+        abort(404)
+    acl_rules = load_acl_rules(owner.username, wiki.slug)
+    if not can_read(proposal.page_path, acl_rules, current_user.username, page.visibility):
+        return render_template("permission_error.html", owner=owner, wiki=wiki), 403
+
+    user_can_write = can_write(proposal.page_path, acl_rules, current_user.username, page.visibility)
+    read_public = not user_can_write and _use_public_repo(wiki, acl_rules)
+    base_content = read_file_from_repo(owner.username, wiki.slug, proposal.page_path, public=read_public)
+    if base_content is None:
+        abort(404)
+
+    proposed_content = set_visibility_in_content(request.form.get("content", ""), page.visibility)
+    note = request.form.get("note", "").strip()
+    latest_revision = proposal.revisions.order_by(None).order_by(ProposalRevision.revision_number.desc()).first()
+    next_number = (latest_revision.revision_number if latest_revision else 0) + 1
+
+    revision = ProposalRevision(proposal_id=proposal.id, revision_number=next_number, note=note)
+    db.session.add(revision)
+    db.session.flush()
+    db.session.add(ProposalPagePatch(
+        revision_id=revision.id,
+        page_path=proposal.page_path,
+        base_content_hash=page.content_hash,
+        base_content=base_content,
+        proposed_content=proposed_content,
+    ))
+    proposal.status = "pending"
+    proposal.base_content_hash = page.content_hash
+    proposal.reviewed_by_id = None
+    proposal.reviewed_at = None
+    _add_proposal_comment(proposal, note or f"Submitted revision {next_number}.", event="resubmitted")
+    db.session.commit()
+    return redirect(url_for("wiki.proposal_detail", username=owner.username, slug=wiki.slug, proposal_id=proposal.id))
+
+
 @wiki_bp.route("/@<username>/<slug>/<path:page_path>/graph.json")
 def page_graph_json(username, slug, page_path):
     """return wikilink graph data for a page as JSON."""
@@ -1050,6 +1384,13 @@ def wiki_page(username, slug, page_path):
     rendered_html = render_page(content, owner.username, wiki.slug, current_page_path=file_path)
     page_grants = resolve_grants(file_path, acl_rules) if is_owner else []
     user_can_edit = is_owner or can_write(file_path, acl_rules, user_name, page.visibility if page else None)
+    pending_proposals_count = 0
+    if is_owner:
+        pending_proposals_count = Proposal.query.filter_by(
+            wiki_id=wiki.id,
+            page_path=file_path,
+            status="pending",
+        ).count()
     return render_template(
         "reader.html",
         owner=owner,
@@ -1066,6 +1407,7 @@ def wiki_page(username, slug, page_path):
         sibling_wikis=siblings,
         page_grants=page_grants,
         user_can_edit=user_can_edit,
+        pending_proposals_count=pending_proposals_count,
     ), 200, {
         "Vary": "Accept",
         "Link": f'</@{owner.username}/{wiki.slug}/{md_url_path}>; rel="alternate"; type="text/markdown"',

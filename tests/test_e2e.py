@@ -45,6 +45,10 @@ def teardown():
 
 def reset_database():
     for table in [
+        "proposal_comments",
+        "proposal_page_patches",
+        "proposal_revisions",
+        "proposals",
         "wikilinks",
         "forks",
         "stars",
@@ -2488,6 +2492,176 @@ def test_bulk_sharing(client, api_key):
     assert r.status_code == 403
 
 
+def test_suggested_edit_proposal_flow(client, api_key):
+    """wikihub-b6lc: users can suggest edits, then owners accept/reject them."""
+    h = {"Authorization": f"Bearer {api_key}"}
+
+    r = client.post("/api/v1/accounts", json={"username": "suggestor", "password": "testpass12345"})
+    assert r.status_code == 201
+
+    r = client.post("/api/v1/wikis", json={"slug": "suggest-test", "title": "Suggest Test"}, headers=h)
+    assert r.status_code == 201
+    original = "---\ntitle: Public Draft\nvisibility: public-edit\n---\n\n# Public Draft\n\nOriginal line."
+    r = client.post("/api/v1/wikis/agent1/suggest-test/pages", json={
+        "path": "draft.md",
+        "content": original,
+        "visibility": "public-edit",
+    }, headers=h)
+    assert r.status_code == 201
+
+    browser = client
+    r = browser.post(
+        "/auth/login",
+        data={"username": "suggestor", "password": "testpass12345"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 302
+
+    r = browser.get("/@agent1/suggest-test/draft")
+    assert r.status_code == 200
+    assert b"/-/suggest/draft" in r.data
+    assert b"/@agent1/suggest-test/draft/edit" in r.data, "public-edit should still allow direct edits"
+
+    proposed = "---\ntitle: Public Draft\nvisibility: private\n---\n\n# Public Draft\n\nSuggested replacement."
+    r = browser.post("/@agent1/suggest-test/-/suggest/draft", data={
+        "title": "Tighten draft",
+        "note": "Cleaner phrasing.",
+        "content": proposed,
+    }, follow_redirects=False)
+    assert r.status_code in (302, 303), r.get_data(as_text=True)[:200]
+    proposal_path = urlparse(r.headers["Location"]).path
+    assert "/-/proposals/" in proposal_path
+
+    # The live page is not overwritten until the owner accepts the proposal.
+    r = client.get("/api/v1/wikis/agent1/suggest-test/pages/draft.md", headers=h)
+    assert r.status_code == 200
+    assert "Original line." in r.get_json()["content"]
+    assert "Suggested replacement." not in r.get_json()["content"]
+
+    r = browser.get(f"/auth/login?api_key={api_key}&next={proposal_path}", follow_redirects=False)
+    assert r.status_code == 302
+    r = browser.get(proposal_path)
+    assert r.status_code == 200
+    assert b"Tighten draft" in r.data
+    assert b"Cleaner phrasing." in r.data
+    assert b"Suggested replacement." in r.data
+
+    r = browser.post(proposal_path + "/accept", follow_redirects=False)
+    assert r.status_code in (302, 303)
+    assert r.headers["Location"].endswith("/@agent1/suggest-test/draft")
+
+    r = client.get("/api/v1/wikis/agent1/suggest-test/pages/draft.md", headers=h)
+    assert r.status_code == 200
+    accepted = r.get_json()["content"]
+    assert "Suggested replacement." in accepted
+    assert "visibility: public-edit" in accepted
+    assert "visibility: private" not in accepted, "suggestions must not change visibility"
+
+    # Rejection path: another suggestion is stored but never applied.
+    r = browser.post("/@agent1/suggest-test/-/suggest/draft", data={
+        "title": "Rejected draft",
+        "note": "Do not merge this.",
+        "content": accepted.replace("Suggested replacement.", "Rejected replacement."),
+    }, follow_redirects=False)
+    assert r.status_code in (302, 303)
+    reject_path = urlparse(r.headers["Location"]).path
+    r = browser.get(f"/auth/login?api_key={api_key}&next={reject_path}", follow_redirects=False)
+    assert r.status_code == 302
+    r = browser.post(reject_path + "/reject", follow_redirects=False)
+    assert r.status_code in (302, 303)
+
+    r = client.get("/api/v1/wikis/agent1/suggest-test/pages/draft.md", headers=h)
+    assert r.status_code == 200
+    assert "Rejected replacement." not in r.get_json()["content"]
+
+
+def test_proposal_comments_and_revision_flow(client, api_key):
+    """wikihub-7cus: owners request changes, authors resubmit, owner accepts latest."""
+    h = {"Authorization": f"Bearer {api_key}"}
+
+    r = client.post("/api/v1/accounts", json={"username": "reviewer2", "password": "testpass12345"})
+    assert r.status_code == 201
+
+    r = client.post("/api/v1/wikis", json={"slug": "review-flow", "title": "Review Flow"}, headers=h)
+    assert r.status_code == 201
+    original = "---\ntitle: Review Draft\nvisibility: public-edit\n---\n\n# Review Draft\n\nOriginal review line."
+    r = client.post("/api/v1/wikis/agent1/review-flow/pages", json={
+        "path": "draft.md",
+        "content": original,
+        "visibility": "public-edit",
+    }, headers=h)
+    assert r.status_code == 201
+
+    browser = client
+    r = browser.post(
+        "/auth/login",
+        data={"username": "reviewer2", "password": "testpass12345"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 302
+
+    r = browser.post("/@agent1/review-flow/-/suggest/draft", data={
+        "title": "Reviewable suggestion",
+        "note": "First pass.",
+        "content": original.replace("Original review line.", "First suggested line."),
+    }, follow_redirects=False)
+    assert r.status_code in (302, 303)
+    proposal_path = urlparse(r.headers["Location"]).path
+
+    r = browser.get(f"/auth/login?api_key={api_key}&next={proposal_path}", follow_redirects=False)
+    assert r.status_code == 302
+    r = browser.post(proposal_path + "/request-changes", data={
+        "body": "Please include the source note.",
+    }, follow_redirects=False)
+    assert r.status_code in (302, 303)
+
+    r = browser.get(proposal_path)
+    assert r.status_code == 200
+    assert b"changes_requested" in r.data
+    assert b"Please include the source note." in r.data
+
+    r = browser.post(
+        "/auth/login",
+        data={"username": "reviewer2", "password": "testpass12345"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 302
+    r = browser.get(proposal_path)
+    assert r.status_code == 200
+    assert b"Submit revision" in r.data
+    r = browser.post(proposal_path + "/comment", data={"body": "Revision incoming."}, follow_redirects=False)
+    assert r.status_code in (302, 303)
+    second = original.replace("Original review line.", "Second suggested line with source.")
+    r = browser.post(proposal_path + "/resubmit", data={
+        "note": "Added the source note.",
+        "content": second,
+    }, follow_redirects=False)
+    assert r.status_code in (302, 303)
+
+    r = client.get("/api/v1/wikis/agent1/review-flow/pages/draft.md", headers=h)
+    assert r.status_code == 200
+    assert "Original review line." in r.get_json()["content"]
+    assert "Second suggested line" not in r.get_json()["content"]
+
+    r = browser.get(f"/auth/login?api_key={api_key}&next={proposal_path}", follow_redirects=False)
+    assert r.status_code == 302
+    r = browser.get(proposal_path)
+    assert r.status_code == 200
+    assert b"pending" in r.data
+    assert b"Added the source note." in r.data
+    assert b"Second suggested line with source." in r.data
+    assert b"Revision incoming." in r.data
+
+    r = browser.post(proposal_path + "/accept", follow_redirects=False)
+    assert r.status_code in (302, 303)
+
+    r = client.get("/api/v1/wikis/agent1/review-flow/pages/draft.md", headers=h)
+    assert r.status_code == 200
+    content = r.get_json()["content"]
+    assert "Second suggested line with source." in content
+    assert "First suggested line." not in content
+
+
 def test_pending_invite_lifecycle(client, api_key):
     """share by email before the user exists → PendingInvite stashed → user signs up
     via Google (auto-verified email) → invite materializes as a real ACL grant and
@@ -3474,6 +3648,8 @@ def run_all():
             ("API CORS headers", lambda: test_api_cors_headers(client, key)),
             ("list wikis API", lambda: test_list_wikis_api(client, key)),
             ("bulk sharing (wikihub-iga9)", lambda: test_bulk_sharing(client, key)),
+            ("suggested edit proposal flow (wikihub-b6lc)", lambda: test_suggested_edit_proposal_flow(client, key)),
+            ("proposal comments + revisions (wikihub-7cus)", lambda: test_proposal_comments_and_revision_flow(client, key)),
             ("pending invite lifecycle (wikihub-skp7)", lambda: test_pending_invite_lifecycle(client, key)),
             ("share sends email (wikihub-exj1 mock)", lambda: test_share_sends_email(client, key)),
             ("private surface offers request access", lambda: test_permission_error_offers_request_access(client, key)),
