@@ -3,8 +3,8 @@
 These files mirror what is deployed at `/etc/nginx/conf.d/` and `/etc/nginx/sites-enabled/` on the GCP prod box (`wikihub-prod` in `us-east1-b`, IP 35.237.163.58).
 
 ## Files
-- `wikihub-bot-ratelimit.conf` → `/etc/nginx/conf.d/wikihub-bot-ratelimit.conf`. UA map for AI/SEO bots + global rate-limit zone (10 r/m per UA).
-- `wikihub-ai-ratelimit.conf` → `/etc/nginx/conf.d/wikihub-ai-ratelimit.conf`. Per-IP rate-limit zones for /api/v1/agent/chat (6 r/m) and general /api/ (60 r/m).
+- `wikihub-bot-ratelimit.conf` → `/etc/nginx/conf.d/wikihub-bot-ratelimit.conf`. UA map for AI/SEO bots + global rate-limit zone (60 r/m per UA).
+- `wikihub-ai-ratelimit.conf` → `/etc/nginx/conf.d/wikihub-ai-ratelimit.conf`. Per-IP rate-limit zones for /api/v1/agent/chat (12 r/m) and general /api/ (600 r/m).
 - `wikihub.conf` → `/etc/nginx/sites-enabled/wikihub`. Main site config: HTTP/HTTPS server blocks, upstream wikihub_app, regex location matching /history and /commit/<sha> that 429s bots, /api/ pass-through with proxy_intercept_errors off, welcome-page interception on 404 + 429.
 - `wikihub-mcp.conf` → `/etc/nginx/sites-enabled/wikihub-mcp`. mcp.wikihub.md → 127.0.0.1:4200 (the standalone Node MCP server).
 

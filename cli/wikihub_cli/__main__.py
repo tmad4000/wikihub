@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -154,10 +155,28 @@ def get_client(args: argparse.Namespace, require_auth: bool = True) -> tuple[str
 
 
 def api_request(method: str, url: str, headers: dict[str, str], **kwargs) -> requests.Response:
-    try:
-        return requests.request(method, url, headers=headers, timeout=30, **kwargs)
-    except requests.RequestException as e:
-        raise ClientError(f"network error: {e}")
+    max_retries = int(os.environ.get("WIKIHUB_HTTP_RETRIES", "3"))
+    for attempt in range(max_retries + 1):
+        try:
+            resp = requests.request(method, url, headers=headers, timeout=30, **kwargs)
+        except requests.RequestException as e:
+            if attempt >= max_retries:
+                raise ClientError(f"network error: {e}")
+            time.sleep(min(2 ** attempt, 10))
+            continue
+
+        if resp.status_code != 429 or attempt >= max_retries:
+            return resp
+
+        retry_after = resp.headers.get("Retry-After")
+        try:
+            wait = max(1, int(float(retry_after))) if retry_after else min(2 ** attempt, 10)
+        except ValueError:
+            wait = min(2 ** attempt, 10)
+        print(f"rate limited; retrying in {wait}s...", file=sys.stderr)
+        time.sleep(wait)
+
+    raise ClientError("request retry loop exhausted")
 
 
 def raise_for_api_error(resp: requests.Response) -> None:

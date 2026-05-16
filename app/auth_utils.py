@@ -116,44 +116,89 @@ def api_auth_optional(f):
 _ip_write_timestamps = defaultdict(list)
 
 
-def rate_limit_writes(max_per_minute=10, max_per_ip_per_minute=10):
-    """reject requests when a user or IP exceeds write limits.
-    per-user: authenticated users get max_per_minute writes.
-    per-IP: all requests (including anonymous) get max_per_ip_per_minute writes."""
+def _prune_window(timestamps, now, window):
+    return [t for t in timestamps if now - t < window]
+
+
+def _configured_int(name, fallback):
+    from flask import current_app
+    try:
+        return int(current_app.config.get(name, fallback))
+    except (TypeError, ValueError):
+        return fallback
+
+
+def rate_limit_writes(
+    max_per_minute=None,
+    max_per_ip_per_minute=None,
+    anonymous_max_per_ip_per_minute=None,
+    window_seconds=60,
+):
+    """Reject write bursts while allowing authenticated bulk publishing.
+
+    Authenticated agents get a much roomier per-user and per-IP quota by
+    default. Anonymous write surfaces keep the older tight IP cap unless a
+    route opts into a different value.
+    """
     def decorator(f):
         @wraps(f)
         def wrapped(*args, **kwargs):
             from flask import current_app
-            if current_app.testing:
+            if current_app.testing and not current_app.config.get("WRITE_RATE_LIMITS_IN_TESTS"):
                 return f(*args, **kwargs)
 
             now = time.monotonic()
-            window = 60
+            window = int(window_seconds)
+            user = getattr(request, "current_user", None)
 
-            # IP rate limit (catches anonymous + authenticated)
+            if user:
+                effective_user_limit = (
+                    max_per_minute
+                    if max_per_minute is not None
+                    else _configured_int("WRITE_RATE_LIMIT_AUTHENTICATED_PER_MINUTE", 180)
+                )
+                effective_ip_limit = (
+                    max_per_ip_per_minute
+                    if max_per_ip_per_minute is not None
+                    else _configured_int("WRITE_RATE_LIMIT_AUTHENTICATED_IP_PER_MINUTE", 360)
+                )
+                ip_bucket_prefix = "auth"
+            else:
+                effective_user_limit = None
+                effective_ip_limit = (
+                    anonymous_max_per_ip_per_minute
+                    if anonymous_max_per_ip_per_minute is not None
+                    else (
+                        max_per_ip_per_minute
+                        if max_per_ip_per_minute is not None
+                        else _configured_int("WRITE_RATE_LIMIT_ANONYMOUS_IP_PER_MINUTE", 10)
+                    )
+                )
+                ip_bucket_prefix = "anon"
+
             ip = request.remote_addr or "unknown"
-            ip_ts = _ip_write_timestamps[ip]
-            _ip_write_timestamps[ip] = ip_ts = [t for t in ip_ts if now - t < window]
-            if len(ip_ts) >= max_per_ip_per_minute:
+            ip_key = (ip_bucket_prefix, ip)
+            ip_ts = _ip_write_timestamps[ip_key]
+            _ip_write_timestamps[ip_key] = ip_ts = _prune_window(ip_ts, now, window)
+            if effective_ip_limit is not None and len(ip_ts) >= effective_ip_limit:
                 retry_after = int(ip_ts[0] + window - now) + 1
+                scope = "authenticated requests from this IP" if user else "anonymous write requests from this IP"
                 return {
                     "error": "rate_limited",
-                    "message": f"Too many write requests from this IP ({max_per_ip_per_minute}/min). Retry in {retry_after}s.",
+                    "message": f"Too many {scope} ({effective_ip_limit}/min). Retry in {retry_after}s.",
                     "retry_after": retry_after,
                 }, 429, {"Retry-After": str(retry_after)}
             ip_ts.append(now)
 
-            # per-user rate limit
-            user = getattr(request, "current_user", None)
-            if user:
+            if user and effective_user_limit is not None:
                 key = user.id
                 timestamps = _write_timestamps[key]
-                _write_timestamps[key] = timestamps = [t for t in timestamps if now - t < window]
-                if len(timestamps) >= max_per_minute:
+                _write_timestamps[key] = timestamps = _prune_window(timestamps, now, window)
+                if len(timestamps) >= effective_user_limit:
                     retry_after = int(timestamps[0] + window - now) + 1
                     return {
                         "error": "rate_limited",
-                        "message": f"Too many write requests ({max_per_minute}/min). Retry in {retry_after}s.",
+                        "message": f"Too many write requests ({effective_user_limit}/min). Retry in {retry_after}s.",
                         "retry_after": retry_after,
                     }, 429, {"Retry-After": str(retry_after)}
                 timestamps.append(now)

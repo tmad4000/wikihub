@@ -24,7 +24,7 @@ os.environ["ADMIN_TOKEN"] = "test-admin-token"
 os.environ["SESSION_COOKIE_SECURE"] = "0"
 
 from app import create_app, db
-from app.auth_utils import _write_timestamps
+from app.auth_utils import _ip_write_timestamps, _write_timestamps
 from app.models import utcnow
 
 
@@ -174,6 +174,70 @@ def test_page_etag_conflict(client, api_key):
     }, headers={**h, "If-Match": etag})
     assert r.status_code == 409
     assert r.get_json()["error"] == "conflict"
+
+
+def test_authenticated_bulk_writes_rate_limit(client, api_key, app):
+    """authenticated bulk publishing gets a roomy quota; anonymous writes stay tight."""
+    h = {"Authorization": f"Bearer {api_key}"}
+    old_config = {
+        "WRITE_RATE_LIMITS_IN_TESTS": app.config.get("WRITE_RATE_LIMITS_IN_TESTS"),
+        "WRITE_RATE_LIMIT_AUTHENTICATED_PER_MINUTE": app.config.get("WRITE_RATE_LIMIT_AUTHENTICATED_PER_MINUTE"),
+        "WRITE_RATE_LIMIT_AUTHENTICATED_IP_PER_MINUTE": app.config.get("WRITE_RATE_LIMIT_AUTHENTICATED_IP_PER_MINUTE"),
+        "WRITE_RATE_LIMIT_ANONYMOUS_IP_PER_MINUTE": app.config.get("WRITE_RATE_LIMIT_ANONYMOUS_IP_PER_MINUTE"),
+    }
+    app.config["WRITE_RATE_LIMITS_IN_TESTS"] = True
+    app.config["WRITE_RATE_LIMIT_AUTHENTICATED_PER_MINUTE"] = 12
+    app.config["WRITE_RATE_LIMIT_AUTHENTICATED_IP_PER_MINUTE"] = 24
+    app.config["WRITE_RATE_LIMIT_ANONYMOUS_IP_PER_MINUTE"] = 2
+    _write_timestamps.clear()
+    _ip_write_timestamps.clear()
+
+    try:
+        r = client.post("/api/v1/wikis", json={"slug": "bulk-rate", "title": "Bulk Rate"}, headers=h)
+        assert r.status_code == 201
+
+        for i in range(12):
+            r = client.post("/api/v1/wikis/agent1/bulk-rate/pages", json={
+                "path": f"bulk/page-{i}.md",
+                "content": f"---\ntitle: Page {i}\nvisibility: public\n---\n\n# Page {i}\n",
+                "visibility": "public",
+            }, headers=h)
+            assert r.status_code == 201, f"authenticated write {i} should pass, got {r.status_code}: {r.get_data(as_text=True)[:200]}"
+
+        r = client.post("/api/v1/wikis/agent1/bulk-rate/pages", json={
+            "path": "bulk/page-over.md",
+            "content": "# Over user limit\n",
+            "visibility": "public",
+        }, headers=h)
+        assert r.status_code == 429
+        assert "12/min" in r.get_json()["message"]
+
+        _write_timestamps.clear()
+        _ip_write_timestamps.clear()
+        r = client.post("/api/v1/wikis/agent1/bulk-rate/pages", json={
+            "path": "anonymous/open.md",
+            "content": "---\ntitle: Open\nvisibility: public-edit\n---\n\n# Open\n",
+            "visibility": "public-edit",
+        }, headers=h)
+        assert r.status_code == 201
+        _write_timestamps.clear()
+        _ip_write_timestamps.clear()
+
+        for i in range(2):
+            r = client.put("/api/v1/wikis/agent1/bulk-rate/pages/anonymous/open.md", json={
+                "content": f"# Anonymous edit {i}\n",
+            })
+            assert r.status_code == 200, f"anonymous write {i} should pass, got {r.status_code}: {r.get_data(as_text=True)[:200]}"
+
+        r = client.put("/api/v1/wikis/agent1/bulk-rate/pages/anonymous/open.md", json={
+            "content": "# Over anonymous limit\n",
+        })
+        assert r.status_code == 429
+        assert "2/min" in r.get_json()["message"]
+    finally:
+        app.config.update(old_config)
+        _write_timestamps.clear()
+        _ip_write_timestamps.clear()
 
 
 def test_binary_file_serving(client, api_key):
@@ -2878,6 +2942,7 @@ def run_all():
         test_funcs = [
             ("wiki lifecycle", lambda: test_wiki_lifecycle(client, key)),
             ("page ETag conflict", lambda: test_page_etag_conflict(client, key)),
+            ("authenticated bulk write rate limits", lambda: test_authenticated_bulk_writes_rate_limit(client, key, app)),
             ("binary file serving", lambda: test_binary_file_serving(client, key)),
             ("search", lambda: test_search(client, key)),
             ("reader owner visibility control", lambda: test_reader_owner_visibility_control(client, key)),
@@ -2927,6 +2992,7 @@ def run_all():
         failed = 0
         for name, fn in test_funcs:
             _write_timestamps.clear()
+            _ip_write_timestamps.clear()
             try:
                 fn()
                 print(f"  PASS  {name}")
