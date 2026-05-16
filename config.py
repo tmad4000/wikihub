@@ -27,6 +27,10 @@ class Config:
     MAX_PAGE_SIZE = 2 * 1024 * 1024  # 2MB per page
     MAX_UPLOAD_FILES = 5000  # max files in a single upload/zip
     MAX_WIKIS_PER_USER = 50
+    WRITE_RATE_LIMIT_AUTHENTICATED_PER_MINUTE = int(os.environ.get("WRITE_RATE_LIMIT_AUTHENTICATED_PER_MINUTE", "180"))
+    WRITE_RATE_LIMIT_AUTHENTICATED_IP_PER_MINUTE = int(os.environ.get("WRITE_RATE_LIMIT_AUTHENTICATED_IP_PER_MINUTE", "360"))
+    WRITE_RATE_LIMIT_ANONYMOUS_IP_PER_MINUTE = int(os.environ.get("WRITE_RATE_LIMIT_ANONYMOUS_IP_PER_MINUTE", "10"))
+    WRITE_RATE_LIMITS_IN_TESTS = os.environ.get("WRITE_RATE_LIMITS_IN_TESTS", "").lower() in ("1", "true", "yes")
     MAGIC_LOGIN_TTL_SECONDS = int(os.environ.get("MAGIC_LOGIN_TTL_SECONDS", "900"))
     TESTING_LOGIN = os.environ.get("TESTING_LOGIN", "").lower() in ("1", "true", "yes")
     SESSION_COOKIE_SECURE = os.environ.get("SESSION_COOKIE_SECURE", "1").lower() in ("1", "true", "yes")
