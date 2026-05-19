@@ -8,7 +8,8 @@ sequence.
 
 ## What is backed up
 
-Every night at 03:00 UTC the production Lightsail box runs
+Every night at 03:00 UTC the production GCP VM `wikihub-prod` (project
+`wikihub-prod`, zone `us-east1-b`, IP `35.237.163.58`) runs
 `/opt/wikihub-app/scripts/backup.sh`. That script writes four files into
 `gs://wikihub-backups-932822f5/daily/YYYY/MM/DD/`:
 
@@ -39,7 +40,7 @@ ticket. nginx/systemd live in this repo and can be replayed from `git pull`.
 ### Encryption choice
 
 Google-managed encryption (default). The bucket is private, the SA key is
-mode-600 root-only on the Lightsail box, and the only thing in the bucket
+mode-600 root-only on the GCP VM, and the only thing in the bucket
 that's actually sensitive is the `.env` snapshot — and an attacker who got
 that key already had root on the box. Adding a passphrase + KMS would mean
 managing a separate secret to enable disaster recovery, which makes the
@@ -83,14 +84,17 @@ restore is the only meaningful cost driver and we don't restore often.
 ### Daily checks (the operator habit)
 
 ```bash
+# SSH alias
+GCP_SSH="gcloud compute ssh wikihub-prod --project=wikihub-prod --zone=us-east1-b"
+
 # Has any backup failed since last success?
-ssh ubuntu@54.145.123.7 'ls -la /var/log/wikihub-backup.FAIL 2>/dev/null && echo "FAILED — investigate"'
+$GCP_SSH --command='ls -la /var/log/wikihub-backup.FAIL 2>/dev/null && echo "FAILED — investigate"'
 
 # When did the last backup actually run?
-ssh ubuntu@54.145.123.7 'sudo systemctl status wikihub-backup.timer wikihub-backup.service --no-pager'
+$GCP_SSH --command='sudo systemctl status wikihub-backup.timer wikihub-backup.service --no-pager'
 
 # Last 30 lines of the log
-ssh ubuntu@54.145.123.7 'sudo tail -30 /var/log/wikihub-backup.log'
+$GCP_SSH --command='sudo tail -30 /var/log/wikihub-backup.log'
 
 # What's actually in the bucket today?
 gcloud storage ls --long --readable-sizes gs://wikihub-backups-932822f5/daily/$(date -u +%Y/%m/%d)/
@@ -118,10 +122,10 @@ always restore to a scratch DB first.
 ### Quickstart: pull yesterday's backup down for inspection
 
 ```bash
-ssh ubuntu@54.145.123.7
+gcloud compute ssh wikihub-prod --project=wikihub-prod --zone=us-east1-b
 sudo /opt/wikihub-app/scripts/restore.sh latest
 # or:
-sudo /opt/wikihub-app/scripts/restore.sh 2026-04-28
+sudo /opt/wikihub-app/scripts/restore.sh 2026-05-19
 ```
 
 The script downloads `db-…dump`, `repos-…tar.gz`, `env-…txt`, and
@@ -258,3 +262,23 @@ rm /tmp/wikihub-gcs-key-new.json
 - `scripts/wikihub-backup.timer` — systemd timer (03:00 UTC daily)
 - `scripts/wikihub-backup-alert.service` — `OnFailure=` handler
 - `docs/backup-and-restore.md` — this doc
+
+## History
+
+- **2026-04-28** (wikihub-alfy): Original backup pipeline shipped — but installed
+  on the AWS Lightsail box `54.145.123.7`, which was *not* the production
+  origin. Cloudflare routes `wikihub.md` to the GCP VM `wikihub-prod`
+  (`35.237.163.58`, project `wikihub-prod`, zone `us-east1-b`). The Lightsail
+  timer also got its `WIKIHUB_BACKUP_BUCKET` env overridden to a fake bucket
+  (failure-mode rehearsal that never got cleared), so every nightly run after
+  the original 2026-04-28 success failed silently. Net result: real prod was
+  unbacked for 21 days.
+- **2026-05-19** (wikihub-lilm): Backup pipeline re-installed on the GCP VM
+  `wikihub-prod`. Same GCS bucket + service account reused (bucket is
+  `us-east1`, co-located with the GCP origin). First successful GCP-origin
+  backup landed in `gs://wikihub-backups-932822f5/daily/2026/05/19/`. Restore
+  drill confirmed 59 users / 6391 pages match between dump and live prod.
+  Lightsail timer disabled (`systemctl disable --now wikihub-backup.timer`);
+  the single stale 2026-04-28 Lightsail-origin artifact moved to
+  `gs://wikihub-backups-932822f5/lightsail-stale/` so it can't be picked up by
+  future restore drills.
