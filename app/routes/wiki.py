@@ -1341,6 +1341,25 @@ def wiki_page(username, slug, page_path):
     is_owner = _is_owner(wiki)
 
     if page and not is_owner and not can_read(page.path, acl_rules, user_name, page.visibility):
+        # wikihub-3rjt: agent requests (Accept: text/markdown, or .md suffix
+        # with markdown Accept) must NOT receive HTML permission_error — that
+        # would be parsed as the page's content. Return JSON 4xx with
+        # WWW-Authenticate hint so agents know auth is required.
+        wants_markdown_now = "text/markdown" in request.headers.get("Accept", "")
+        is_md_url = raw_page_path.endswith(".md") or page_path.endswith(".md")
+        if wants_markdown_now or (is_md_url and not request.headers.get("Accept", "").startswith("text/html")):
+            from flask import jsonify, make_response
+            status = 401 if not current_user.is_authenticated else 403
+            body = {
+                "error": "authentication_required" if status == 401 else "forbidden",
+                "message": "This page is private or doesn't exist",
+                "sign_in_url": "https://wikihub.md/auth/login",
+            }
+            resp = make_response(jsonify(body), status)
+            resp.headers["Cache-Control"] = "no-store"
+            if status == 401:
+                resp.headers["WWW-Authenticate"] = 'Bearer realm="wikihub"'
+            return resp
         return render_template("permission_error.html", owner=owner, wiki=wiki), 404
 
     use_public, acl_filter_user = _repo_access(wiki, acl_rules)

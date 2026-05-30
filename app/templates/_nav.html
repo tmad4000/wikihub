@@ -1,4 +1,4 @@
-<nav class="nav">
+<nav class="nav" data-nav-root>
   <a href="/" class="nav-logo"><span class="bracket">[[</span><span class="wordmark">wikihub</span><span class="bracket">]]</span></a>
   <button class="search-trigger" onclick="wikihubSearch && wikihubSearch.open()" aria-label="Search">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
@@ -8,6 +8,20 @@
   <a href="/explore" class="nav-link">Explore</a>
   <a href="/people" class="nav-link nav-hide-mobile">People</a>
   <a href="/agents" class="nav-link nav-agents nav-hide-mobile">For Agents</a>
+  <button
+    type="button"
+    class="nav-menu-toggle"
+    aria-label="Open menu"
+    aria-expanded="false"
+    aria-controls="nav-mobile-menu"
+    data-nav-toggle
+  >
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <line x1="3" y1="6" x2="21" y2="6"/>
+      <line x1="3" y1="12" x2="21" y2="12"/>
+      <line x1="3" y1="18" x2="21" y2="18"/>
+    </svg>
+  </button>
   <button type="button" class="theme-toggle" data-theme-toggle aria-label="Theme: Auto (follow system)" title="Theme: Auto (follow system)">
     <!-- auto: half sun/half moon -->
     <svg class="theme-ico-auto" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
@@ -67,3 +81,54 @@
     <a href="/auth/login?next={{ request.path|urlencode }}" class="nav-link">Sign in</a>
   {% endif %}
 </nav>
+<div id="nav-mobile-menu" class="nav-mobile-menu" role="menu" aria-label="Navigation" hidden>
+  <div class="nav-mobile-backdrop" data-nav-backdrop></div>
+  <div class="nav-mobile-panel" role="presentation">
+    <button type="button" class="nav-mobile-close" aria-label="Close menu" data-nav-close>
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <line x1="18" y1="6" x2="6" y2="18"/>
+        <line x1="6" y1="6" x2="18" y2="18"/>
+      </svg>
+    </button>
+    <a href="/explore" class="nav-mobile-item" role="menuitem">Explore</a>
+    <a href="/people" class="nav-mobile-item" role="menuitem">People</a>
+    <a href="/agents" class="nav-mobile-item" role="menuitem">For Agents</a>
+    {% if current_user and current_user.is_authenticated %}
+      <a href="/@{{ current_user.username }}" class="nav-mobile-item" role="menuitem">My Wiki</a>
+      <a href="/shared" class="nav-mobile-item" role="menuitem">Shared</a>
+      <a href="/settings" class="nav-mobile-item" role="menuitem">Settings</a>
+      <a href="/auth/logout" class="nav-mobile-item nav-mobile-item-danger" role="menuitem">Logout</a>
+    {% else %}
+      <a href="/auth/login?next={{ request.path|urlencode }}" class="nav-mobile-item" role="menuitem">Sign in</a>
+    {% endif %}
+  </div>
+</div>
+<script>
+(function(){
+  var toggle = document.querySelector('[data-nav-toggle]');
+  var menu = document.getElementById('nav-mobile-menu');
+  if (!toggle || !menu) return;
+  var backdrop = menu.querySelector('[data-nav-backdrop]');
+  var closeBtn = menu.querySelector('[data-nav-close]');
+  function open() {
+    menu.hidden = false;
+    requestAnimationFrame(function(){ menu.classList.add('open'); });
+    toggle.setAttribute('aria-expanded', 'true');
+    document.body.style.overflow = 'hidden';
+  }
+  function close() {
+    menu.classList.remove('open');
+    toggle.setAttribute('aria-expanded', 'false');
+    document.body.style.overflow = '';
+    setTimeout(function(){ if (!menu.classList.contains('open')) menu.hidden = true; }, 200);
+  }
+  toggle.addEventListener('click', function(){
+    if (menu.classList.contains('open')) close(); else open();
+  });
+  if (backdrop) backdrop.addEventListener('click', close);
+  if (closeBtn) closeBtn.addEventListener('click', close);
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'Escape' && menu.classList.contains('open')) close();
+  });
+})();
+</script>

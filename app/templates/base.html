@@ -84,7 +84,72 @@ a:hover { text-decoration: underline; }
 .nav-link:hover { color: var(--text-primary); text-decoration: none; }
 .nav-agents { color: var(--accent); font-weight: 500; font-family: var(--font-mono); font-size: 0.8125rem; }
 .nav-agents:hover { color: var(--accent-hover); }
-@media (max-width: 640px) { .nav-hide-mobile { display: none; } }
+/* wikihub-pz27: hide secondary nav links below 1024px (covers iPad portrait
+   768px + smaller). A hamburger (.nav-menu-toggle) surfaces them in a panel. */
+@media (max-width: 1024px) { .nav-hide-mobile { display: none; } }
+
+/* wikihub-pz27: mobile hamburger */
+.nav-menu-toggle {
+  display: none;
+  align-items: center; justify-content: center;
+  min-width: 44px; min-height: 44px;
+  padding: 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.nav-menu-toggle:hover, .nav-menu-toggle[aria-expanded="true"] {
+  color: var(--text-primary);
+  border-color: var(--border-default);
+  background: var(--accent-subtle);
+}
+@media (max-width: 1024px) {
+  .nav-menu-toggle { display: inline-flex; }
+}
+.nav-mobile-menu {
+  position: fixed; inset: 0; z-index: 300;
+}
+.nav-mobile-menu[hidden] { display: none; }
+.nav-mobile-backdrop {
+  position: absolute; inset: 0;
+  background: var(--scrim);
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+.nav-mobile-menu.open .nav-mobile-backdrop { opacity: 1; }
+.nav-mobile-panel {
+  position: absolute; top: 0; right: 0; bottom: 0;
+  width: min(320px, 85vw);
+  background: var(--bg-elevated);
+  border-left: 1px solid var(--border-emphasis);
+  padding: 16px 12px;
+  padding-top: calc(16px + env(safe-area-inset-top));
+  display: flex; flex-direction: column; gap: 4px;
+  transform: translateX(100%);
+  transition: transform 0.2s ease;
+  box-shadow: -8px 0 24px rgba(0,0,0,0.25);
+}
+.nav-mobile-menu.open .nav-mobile-panel { transform: translateX(0); }
+.nav-mobile-close {
+  align-self: flex-end;
+  min-width: 44px; min-height: 44px;
+  padding: 10px; margin-bottom: 8px;
+  background: transparent; border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm); color: var(--text-secondary); cursor: pointer;
+}
+.nav-mobile-close:hover { color: var(--text-primary); border-color: var(--border-emphasis); }
+.nav-mobile-item {
+  display: flex; align-items: center;
+  min-height: 44px; padding: 12px 14px;
+  color: var(--text-primary);
+  font-size: 0.9375rem;
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+}
+.nav-mobile-item:hover { background: var(--accent-subtle); text-decoration: none; }
+.nav-mobile-item-danger { color: var(--color-error-soft); }
 .nav-account {
   position: relative;
   display: flex;

@@ -3805,6 +3805,175 @@ def test_unauth_private_page_renders_permission_error_with_sign_in(client):
     assert "Sign in" in body, "permission_error.html missing 'Sign in' CTA text"
 
 
+def test_mobile_hamburger_exposes_hidden_nav_links():
+    """wikihub-pz27: mobile nav must include a hamburger button (.nav-menu-toggle)
+    that surfaces People / For Agents / My Wiki / Sign in below 1024px.
+
+    Before the fix, _nav.html had class 'nav-hide-mobile' on those links
+    with no fallback — they vanished entirely on phones (<640px) and on
+    iPad portrait (768px).
+    """
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    nav_path = os.path.join(repo_root, "app", "templates", "_nav.html")
+    base_path = os.path.join(repo_root, "app", "templates", "base.html")
+    with open(nav_path) as f:
+        nav = f.read()
+    with open(base_path) as f:
+        base = f.read()
+    # 1. nav template must include a menu-toggle button
+    assert "nav-menu-toggle" in nav, (
+        "_nav.html missing .nav-menu-toggle button. Hidden links have no fallback "
+        "on mobile/iPad portrait viewports."
+    )
+    # 2. CSS must show the toggle below 1024px and hide it above
+    assert "nav-menu-toggle" in base, "base.html missing CSS for .nav-menu-toggle"
+    # 3. A nav-mobile-menu container must exist
+    assert "nav-mobile-menu" in nav, (
+        "_nav.html missing .nav-mobile-menu container for the slide-out list"
+    )
+    # 4. nav-hide-mobile breakpoint must include iPad-portrait viewports (<= 1024px)
+    import re
+    # find @media (max-width: Npx) {... nav-hide-mobile ... display: none ...}
+    matches = re.findall(
+        r"@media\s*\(\s*max-width:\s*(\d+)px\s*\)[^{}]*\{[^}]*\.nav-hide-mobile[^}]*display\s*:\s*none",
+        base,
+        re.DOTALL,
+    )
+    assert matches, "base.html: expected a .nav-hide-mobile display:none rule under @media max-width"
+    widths = [int(w) for w in matches]
+    assert max(widths) >= 1024, (
+        f"nav-hide-mobile breakpoint is {max(widths)}px — should be >= 1024 so "
+        "iPad portrait (768px) also gets the hamburger fallback."
+    )
+
+
+def test_md_request_for_private_page_returns_json_4xx_not_landing(client):
+    """wikihub-3rjt: Accept: text/markdown for an unauthenticated private page
+    must return a 4xx (401/403/404) with non-HTML content type. Agents must
+    NOT receive 200 + HTML landing as the markdown body of the page.
+    """
+    r = client.post("/api/v1/accounts", json={"username": "rjtowner"})
+    assert r.status_code == 201
+    key = r.get_json()["api_key"]
+    h = {"Authorization": f"Bearer {key}"}
+
+    r = client.post("/api/v1/wikis", json={"slug": "rjt-wiki", "title": "RJT"}, headers=h)
+    assert r.status_code == 201
+    r = client.post("/api/v1/wikis/rjtowner/rjt-wiki/pages", json={
+        "path": "secret/notes.md",
+        "content": "# Secret",
+        "visibility": "private",
+    }, headers=h)
+    assert r.status_code == 201
+
+    anon = client.application.test_client()
+    anon.get("/auth/logout")
+    # Request .md via Accept: text/markdown
+    r = anon.get(
+        "/@rjtowner/rjt-wiki/secret/notes.md",
+        headers={"Accept": "text/markdown"},
+    )
+    assert r.status_code in (401, 403, 404), (
+        f"unauth .md GET for private page returned {r.status_code} (expected 4xx)"
+    )
+    ctype = r.headers.get("Content-Type", "")
+    assert "text/html" not in ctype, (
+        f"unauth .md GET returned Content-Type {ctype!r} — agents will parse "
+        "HTML landing as markdown. Expected text/plain, text/markdown, or application/json."
+    )
+    # If 401, must include WWW-Authenticate header
+    if r.status_code == 401:
+        assert "WWW-Authenticate" in r.headers, (
+            "401 must include WWW-Authenticate header for agent client compliance"
+        )
+
+
+def test_api_wikis_endpoint_returns_401_with_www_authenticate_for_private(client):
+    """wikihub-uonp: /api/wikis/<owner>/<slug> for an unauthenticated request
+    to a private wiki must return 401 with WWW-Authenticate: Bearer header and
+    a JSON error body with a sign_in_url hint.
+
+    Owner with valid auth should get 200.
+    """
+    r = client.post("/api/v1/accounts", json={"username": "uonpowner"})
+    assert r.status_code == 201
+    key = r.get_json()["api_key"]
+    h = {"Authorization": f"Bearer {key}"}
+
+    r = client.post("/api/v1/wikis", json={"slug": "uonp-wiki", "title": "UONP", "visibility": "private"}, headers=h)
+    assert r.status_code == 201
+
+    # Owner authed — should get 200
+    r = client.get("/api/wikis/uonpowner/uonp-wiki", headers=h)
+    assert r.status_code == 200, (
+        f"authed owner GET /api/wikis/<owner>/<slug> returned {r.status_code} "
+        f"(expected 200). Body: {r.data[:200]!r}"
+    )
+
+    # Anon — should get 401 with WWW-Authenticate
+    anon = client.application.test_client()
+    anon.get("/auth/logout")
+    r = anon.get("/api/wikis/uonpowner/uonp-wiki")
+    assert r.status_code == 401, (
+        f"anon GET /api/wikis/<owner>/<slug> for private wiki returned {r.status_code} "
+        f"(expected 401)"
+    )
+    assert "WWW-Authenticate" in r.headers, (
+        "401 must include WWW-Authenticate header"
+    )
+    assert "Bearer" in r.headers["WWW-Authenticate"], (
+        f"WWW-Authenticate should announce Bearer scheme, got: {r.headers['WWW-Authenticate']!r}"
+    )
+    import json as _json
+    body = _json.loads(r.data.decode("utf-8"))
+    assert body.get("error") == "authentication_required", (
+        f"401 body missing/wrong 'error' field: {body!r}"
+    )
+    assert "sign_in_url" in body, "401 body missing sign_in_url hint"
+
+
+def test_logged_out_search_returns_only_public(client):
+    """wikihub-7dml: logged-out search must NOT return private content."""
+    r = client.post("/api/v1/accounts", json={"username": "scopeowner"})
+    assert r.status_code == 201
+    key = r.get_json()["api_key"]
+    h = {"Authorization": f"Bearer {key}"}
+
+    r = client.post("/api/v1/wikis", json={"slug": "scope-pub", "title": "Scope Pub", "visibility": "public"}, headers=h)
+    assert r.status_code == 201
+    r = client.post("/api/v1/wikis/scopeowner/scope-pub/pages", json={
+        "path": "public-zzunique-marker.md",
+        "content": "# Public\n\nThis is a public page with a unique marker: zzpubmarker.",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201
+
+    r = client.post("/api/v1/wikis", json={"slug": "scope-priv", "title": "Scope Priv", "visibility": "private"}, headers=h)
+    assert r.status_code == 201
+    r = client.post("/api/v1/wikis/scopeowner/scope-priv/pages", json={
+        "path": "private-zzsecret-marker.md",
+        "content": "# Private\n\nSecret marker: zzprivmarker.",
+        "visibility": "private",
+    }, headers=h)
+    assert r.status_code == 201
+
+    anon = client.application.test_client()
+    anon.get("/auth/logout")
+    # logged-out global search
+    r = anon.get("/api/search?q=zzprivmarker")
+    if r.status_code == 200:
+        import json as _json
+        body = _json.loads(r.data.decode("utf-8"))
+        results = body.get("results", body) if isinstance(body, dict) else body
+        result_str = repr(results)
+        assert "zzprivmarker" not in result_str, (
+            "logged-out search leaked private page content marker zzprivmarker"
+        )
+        assert "scope-priv" not in result_str, (
+            "logged-out search leaked private wiki title"
+        )
+
+
 def run_all():
     app = setup()
 
@@ -3889,6 +4058,10 @@ def run_all():
             ("welcome.html has Sign in link (wikihub-46ke)", lambda: test_welcome_html_has_sign_in_link()),
             ("search trigger visible on mobile (wikihub-31s3)", lambda: test_search_trigger_visible_on_mobile()),
             ("unauth private page renders permission_error with Sign in (wikihub-ffqt)", lambda: test_unauth_private_page_renders_permission_error_with_sign_in(client)),
+            ("mobile hamburger exposes hidden nav (wikihub-pz27)", lambda: test_mobile_hamburger_exposes_hidden_nav_links()),
+            ("md request for private page returns 4xx (wikihub-3rjt)", lambda: test_md_request_for_private_page_returns_json_4xx_not_landing(client)),
+            ("/api/wikis 401+WWW-Authenticate (wikihub-uonp)", lambda: test_api_wikis_endpoint_returns_401_with_www_authenticate_for_private(client)),
+            ("logged-out search returns only public (wikihub-7dml)", lambda: test_logged_out_search_returns_only_public(client)),
             ("CLI end-to-end", lambda: test_cli(client)),
         ]
 
