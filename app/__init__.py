@@ -233,6 +233,27 @@ def create_app(config_class="config.Config"):
     def not_found(e):
         if req.path.startswith("/api/"):
             return jsonify({"error": "not_found", "message": "The requested resource was not found"}), 404
+        # wikihub-3rjt: agents requesting .md / Accept: text/markdown for a
+        # missing or private page must NOT receive an HTML body — that would
+        # parse as the page's markdown content. Return JSON 4xx with a
+        # WWW-Authenticate hint when unauthenticated.
+        accept_hdr = req.headers.get("Accept", "")
+        wants_md = "text/markdown" in accept_hdr
+        is_md_url = req.path.endswith(".md")
+        if wants_md or (is_md_url and "text/html" not in accept_hdr):
+            from flask_login import current_user as _cu
+            status = 401 if not _cu.is_authenticated else 404
+            body = {
+                "error": "authentication_required" if status == 401 else "not_found",
+                "message": "Page is private, does not exist, or you lack access",
+                "sign_in_url": "https://wikihub.md/auth/login",
+            }
+            resp = jsonify(body)
+            resp.status_code = status
+            resp.headers["Cache-Control"] = "no-store"
+            if status == 401:
+                resp.headers["WWW-Authenticate"] = 'Bearer realm="wikihub"'
+            return resp
         return render_template("error.html", code=404, title="Page not found",
                                message="The page you're looking for doesn't exist or has been moved."), 404
 
