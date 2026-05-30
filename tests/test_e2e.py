@@ -3757,6 +3757,54 @@ def test_search_trigger_visible_on_mobile():
     )
 
 
+def test_unauth_private_page_renders_permission_error_with_sign_in(client):
+    """wikihub-ffqt: GET of a private wiki page while logged out must return
+    the permission_error.html template with a visible Sign in link.
+
+    Before the fix, prod nginx intercepted Flask's 404 and served welcome.html
+    with HTTP 200 — user saw 'You found WikiHub' marketing copy with no
+    sign-in path. Flask already returns the right template; this test guards
+    the app-layer behavior. The nginx-layer fix is covered separately.
+    """
+    # Need a fresh authenticated user to set up the private wiki+page.
+    r = client.post("/api/v1/accounts", json={"username": "ffqtowner"})
+    assert r.status_code == 201, r.get_json()
+    key = r.get_json()["api_key"]
+    h = {"Authorization": f"Bearer {key}"}
+
+    r = client.post("/api/v1/wikis", json={"slug": "ffqt-wiki", "title": "FFQT"}, headers=h)
+    assert r.status_code == 201
+
+    r = client.post("/api/v1/wikis/ffqtowner/ffqt-wiki/pages", json={
+        "path": "secret/summary.md",
+        "content": "# Secret\n\nPrivate.",
+        "visibility": "private",
+    }, headers=h)
+    assert r.status_code == 201, r.get_json()
+
+    # Unauth GET — no Authorization header, fresh test client. We logout first
+    # to clear any flask-login session leaked from earlier shared-client tests
+    # (Flask-Login's current_user proxy can carry over within the same app context).
+    anon = client.application.test_client()
+    anon.get("/auth/logout", follow_redirects=False)
+    r = anon.get("/@ffqtowner/ffqt-wiki/secret/summary")
+    # Must not be 200 (would leak existence + drop user on welcome page).
+    assert r.status_code in (401, 403, 404), (
+        f"unauth private page returned {r.status_code} (expected 401/403/404). "
+        "If 200, the app is leaking private content to anonymous users."
+    )
+    body = r.data.decode("utf-8", errors="replace")
+    # Must render the permission_error template (recognizable heading).
+    assert "This page is private or doesn't exist" in body, (
+        "expected permission_error.html template, got something else. "
+        "If welcome.html is returned, the nginx intercept or a Flask routing "
+        "bug is hiding the real error template."
+    )
+    # Must contain a Sign in link with next= pointing back at the requested path.
+    assert "/auth/login" in body, "permission_error.html missing /auth/login link"
+    assert "Sign in" in body, "permission_error.html missing 'Sign in' CTA text"
+
+
 def run_all():
     app = setup()
 
@@ -3840,6 +3888,7 @@ def run_all():
             ("nginx does not intercept Flask errors (wikihub-fg1p)", lambda: test_nginx_does_not_intercept_flask_errors(client)),
             ("welcome.html has Sign in link (wikihub-46ke)", lambda: test_welcome_html_has_sign_in_link()),
             ("search trigger visible on mobile (wikihub-31s3)", lambda: test_search_trigger_visible_on_mobile()),
+            ("unauth private page renders permission_error with Sign in (wikihub-ffqt)", lambda: test_unauth_private_page_renders_permission_error_with_sign_in(client)),
             ("CLI end-to-end", lambda: test_cli(client)),
         ]
 
