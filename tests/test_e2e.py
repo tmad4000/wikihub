@@ -3696,6 +3696,28 @@ def test_nginx_does_not_intercept_flask_errors(client):
     )
 
 
+def test_welcome_html_has_sign_in_link():
+    """wikihub-46ke: deploy/static/welcome.html must offer a Sign in path.
+
+    Before the fix, welcome.html had only an email capture form and links to
+    /explore, /roadmap, /AGENTS.md — but no /auth/login or /auth/signup link.
+    A logged-out user hitting the 404 fallback dead-ended with no path back to
+    their account.
+    """
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    welcome_path = os.path.join(repo_root, "deploy", "static", "welcome.html")
+    with open(welcome_path) as f:
+        html = f.read()
+
+    assert "/auth/login" in html, (
+        "welcome.html is missing a Sign in link (/auth/login). Logged-out users "
+        "hitting a 404 dead-end with no path back to their account."
+    )
+    # Ensure there's at least one visible CTA that says Sign in (not just a footer link).
+    lower = html.lower()
+    assert "sign in" in lower, "welcome.html must include a visible 'Sign in' label"
+
+
 def run_all():
     app = setup()
 
@@ -3777,6 +3799,7 @@ def run_all():
             ("agent chat disabled returns 503 (wikihub-7w40)", lambda: test_agent_chat_disabled_returns_503(app, client)),
             ("backlinks API + forward-ref fallback (wikihub-yqe6)", lambda: test_backlinks_api(client, key)),
             ("nginx does not intercept Flask errors (wikihub-fg1p)", lambda: test_nginx_does_not_intercept_flask_errors(client)),
+            ("welcome.html has Sign in link (wikihub-46ke)", lambda: test_welcome_html_has_sign_in_link()),
             ("CLI end-to-end", lambda: test_cli(client)),
         ]
 

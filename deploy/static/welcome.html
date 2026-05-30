@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Welcome — WikiHub</title>
+<title>Not found or private — WikiHub</title>
 <meta name="description" content="GitHub for LLM wikis. Publish markdown knowledge bases in seconds. Designed to be read and edited by both humans and AI agents.">
 <link rel="alternate" type="text/markdown" href="/AGENTS.md" title="Agent setup (markdown)">
 <link rel="alternate" type="text/plain" href="/llms.txt" title="LLM index">
@@ -47,6 +47,27 @@ body {
 }
 .brand .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
 .brand:hover { color: var(--fg); }
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin-bottom: 48px;
+}
+.topbar .brand { margin-bottom: 0; }
+.auth-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.auth-actions a {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: 44px; padding: 10px 16px; border-radius: 8px;
+  font-size: 0.875rem; font-weight: 600; text-decoration: none;
+  font-family: var(--sans);
+}
+.auth-actions .btn-signin {
+  background: var(--accent); color: #18130a;
+}
+.auth-actions .btn-signin:hover { background: var(--accent-2); }
+.auth-actions .btn-signup {
+  background: transparent; color: var(--fg-2);
+  border: 1px solid var(--border);
+}
+.auth-actions .btn-signup:hover { color: var(--fg); border-color: var(--fg-3); }
 h1 {
   font-size: clamp(2rem, 5vw, 3rem); font-weight: 700;
   letter-spacing: -0.025em; line-height: 1.1; margin: 0 0 20px;
@@ -114,11 +135,17 @@ ul li { margin-bottom: 6px; }
 </head>
 <body>
 <div class="wrap">
-  <a href="/" class="brand"><span class="dot"></span>wikihub</a>
+  <div class="topbar">
+    <a href="/" class="brand"><span class="dot"></span>wikihub</a>
+    <div class="auth-actions">
+      <a href="/auth/login" class="btn-signin">Sign in</a>
+      <a href="/auth/signup" class="btn-signup">Create account</a>
+    </div>
+  </div>
 
-  <h1>You found <span class="accent">WikiHub</span>.</h1>
+  <h1>Not found or private.</h1>
   <p class="lede">
-    GitHub for LLM wikis. Publish a markdown knowledge base in seconds — designed to be read and edited by humans and AI agents alike.
+    This page doesn't exist (yet) or is private to its owner. If you have an account, sign in — the page may be waiting for you. Otherwise, welcome to WikiHub: GitHub for LLM wikis, built for humans and AI agents alike.
   </p>
 
   <section>
@@ -154,7 +181,7 @@ ul li { margin-bottom: 6px; }
   </section>
 
   <div class="foot">
-    <a href="/">wikihub.md</a> · <a href="/llms.txt">llms.txt</a> · <a href="/AGENTS.md">AGENTS.md</a> · <a href="/roadmap">roadmap</a> · <a href="https://worldissuetracker.com/tracker/wikihub" target="_blank" rel="noopener">feedback</a> · <a href="https://github.com/tmad4000/wikihub" target="_blank" rel="noopener">github</a> · <a href="https://x.com/jacobcole4000" rel="me noopener" target="_blank">@jacobcole4000</a>
+    <a href="/auth/login">sign in</a> · <a href="/auth/signup">create account</a> · <a href="/">wikihub.md</a> · <a href="/llms.txt">llms.txt</a> · <a href="/AGENTS.md">AGENTS.md</a> · <a href="/roadmap">roadmap</a> · <a href="https://worldissuetracker.com/tracker/wikihub" target="_blank" rel="noopener">feedback</a> · <a href="https://github.com/tmad4000/wikihub" target="_blank" rel="noopener">github</a> · <a href="https://x.com/jacobcole4000" rel="me noopener" target="_blank">@jacobcole4000</a>
   </div>
 </div>
 
