@@ -3718,6 +3718,45 @@ def test_welcome_html_has_sign_in_link():
     assert "sign in" in lower, "welcome.html must include a visible 'Sign in' label"
 
 
+def test_search_trigger_visible_on_mobile():
+    """wikihub-31s3: global search must be reachable at mobile widths.
+
+    Before the fix, app/templates/base.html and landing.html had:
+        .search-trigger { display: none; }
+        @media (min-width: 640px) { .search-trigger { display: flex; } }
+    which hid search entirely below 640px — users on phones had no way to
+    search wikihub.
+
+    Fix: make the search-trigger visible by default (display: flex) so it
+    shows at every viewport size.
+    """
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    base_path = os.path.join(repo_root, "app", "templates", "base.html")
+    with open(base_path) as f:
+        base = f.read()
+
+    # The default rule (outside any media query) for .search-trigger must not
+    # set display:none. Find the base rule and assert it's display:flex (or
+    # at least not 'none').
+    import re
+    # Capture the default .search-trigger { ... } block (not the @media one)
+    match = re.search(
+        r"\.search-trigger\s*\{([^}]*)\}",
+        base,
+        re.DOTALL,
+    )
+    assert match, "base.html: expected a .search-trigger {} CSS rule"
+    default_block = match.group(1)
+    # The "display:" value in the default block determines mobile visibility.
+    disp_match = re.search(r"display\s*:\s*([a-z\-]+)", default_block)
+    assert disp_match, f"base.html: .search-trigger has no display property in default block: {default_block!r}"
+    assert disp_match.group(1) != "none", (
+        "base.html: .search-trigger has display:none by default, hiding it on "
+        "mobile (the @media min-width:640px override leaves <640px broken). "
+        "Set display:flex by default so search is reachable on phones."
+    )
+
+
 def run_all():
     app = setup()
 
@@ -3800,6 +3839,7 @@ def run_all():
             ("backlinks API + forward-ref fallback (wikihub-yqe6)", lambda: test_backlinks_api(client, key)),
             ("nginx does not intercept Flask errors (wikihub-fg1p)", lambda: test_nginx_does_not_intercept_flask_errors(client)),
             ("welcome.html has Sign in link (wikihub-46ke)", lambda: test_welcome_html_has_sign_in_link()),
+            ("search trigger visible on mobile (wikihub-31s3)", lambda: test_search_trigger_visible_on_mobile()),
             ("CLI end-to-end", lambda: test_cli(client)),
         ]
 

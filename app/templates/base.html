@@ -200,14 +200,22 @@ a:hover { text-decoration: underline; }
 }
 @media (min-width: 640px) { .nav { padding: 0 24px; } }
 
+/* wikihub-31s3: search must be reachable at every viewport size, including
+   phones. Default display:flex so it shows on mobile too. On narrow viewports
+   we collapse the label + ⌘K kbd via .search-label-text so only the icon
+   shows. */
 .search-trigger {
-  display: none; align-items: center; gap: 6px; padding: 6px 12px;
+  display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px;
   -webkit-appearance: none; appearance: none;
   background: var(--search-trigger-bg) !important; border: 1px solid var(--control-border);
   border-radius: var(--radius-sm); color: var(--text-muted); cursor: pointer;
-  font-size: 0.75rem; font-family: var(--font-body); min-height: 32px;
+  font-size: 0.75rem; font-family: var(--font-body); min-height: 40px; min-width: 40px;
 }
-@media (min-width: 640px) { .search-trigger { display: flex; } }
+@media (max-width: 639px) {
+  .search-trigger .search-label-text { display: none; }
+  .search-trigger kbd { display: none; }
+  .search-trigger { padding: 6px 10px; }
+}
 .search-trigger:hover { border-color: var(--border-emphasis); color: var(--text-secondary); }
 .search-trigger kbd { font-family: var(--font-mono); font-size: 0.625rem; background: var(--bg-elevated); padding: 1px 4px; border-radius: 3px; border: 1px solid var(--border-default); }
 
