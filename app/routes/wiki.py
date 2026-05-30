@@ -1377,6 +1377,26 @@ def wiki_page(username, slug, page_path):
         # fallback: try authoritative repo (handles edge cases)
         content = read_file_from_repo(owner.username, wiki.slug, file_path, public=False)
     if content is None:
+        # wikihub-3rjt: agent-friendly content negotiation on miss. If the
+        # client asked for markdown (or used a .md URL without HTML Accept),
+        # return JSON 4xx so they can distinguish "missing/private" from
+        # "valid markdown page" instead of getting an HTML 404 body.
+        wants_markdown_miss = "text/markdown" in request.headers.get("Accept", "")
+        is_md_url_miss = raw_page_path.endswith(".md") or page_path.endswith(".md")
+        accept_hdr = request.headers.get("Accept", "")
+        if wants_markdown_miss or (is_md_url_miss and "text/html" not in accept_hdr):
+            from flask import jsonify, make_response
+            status = 401 if not current_user.is_authenticated else 404
+            body = {
+                "error": "authentication_required" if status == 401 else "not_found",
+                "message": "Page is private, does not exist, or you lack access",
+                "sign_in_url": "https://wikihub.md/auth/login",
+            }
+            resp = make_response(jsonify(body), status)
+            resp.headers["Cache-Control"] = "no-store"
+            if status == 401:
+                resp.headers["WWW-Authenticate"] = 'Bearer realm="wikihub"'
+            return resp
         abort(404)
 
     wants_markdown = "text/markdown" in request.headers.get("Accept", "")
