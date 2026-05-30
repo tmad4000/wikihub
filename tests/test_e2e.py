@@ -3647,6 +3647,55 @@ def test_backlinks_api(client, api_key):
     )
 
 
+def test_nginx_does_not_intercept_flask_errors(client):
+    """wikihub-fg1p: nginx must NOT proxy_intercept_errors on the main location.
+
+    Regression guard. Before the fix, the conf had `proxy_intercept_errors on;`
+    in the wikihub.md server blocks alongside `error_page 404 = @welcome_redirect;`
+    which meant nginx swallowed every Flask 4xx and returned welcome.html with
+    HTTP 200 — masking permission_error.html and breaking the sign-in flow for
+    logged-out users hitting private wiki URLs.
+
+    The fix removes the global `error_page 404 = @welcome_redirect;` from the
+    Flask-proxying server blocks. Rate-limit 429 from nginx itself remains
+    routed to the welcome page (it's served by nginx before Flask sees it).
+    """
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    conf_path = os.path.join(repo_root, "deploy", "nginx", "wikihub.conf")
+    with open(conf_path) as f:
+        conf = f.read()
+
+    # The bad pattern: error_page 404 routes to welcome — applied to the whole
+    # server block (i.e. NOT inside a location-block that's static-only).
+    # Strict: no error_page 404 line at all in the file (the static welcome
+    # fallback is reachable directly via /welcome.html and via 429-only).
+    bad_lines = [
+        line.strip()
+        for line in conf.splitlines()
+        if not line.lstrip().startswith("#")
+        and "error_page" in line and "404" in line and "@welcome_redirect" in line
+    ]
+    assert not bad_lines, (
+        f"deploy/nginx/wikihub.conf still intercepts Flask 404s: {bad_lines!r}. "
+        "Remove 'error_page 404 = @welcome_redirect;' so Flask's permission_error.html "
+        "is returned with its real status code."
+    )
+
+    # proxy_intercept_errors must not be `on` at server scope where the Flask
+    # app is proxied. We allow it inside specific static-only locations.
+    # Heuristic: count active (non-comment) `proxy_intercept_errors on;` lines.
+    intercept_on_lines = [
+        line.strip()
+        for line in conf.splitlines()
+        if not line.lstrip().startswith("#")
+        and "proxy_intercept_errors on;" in line
+    ]
+    assert not intercept_on_lines, (
+        f"deploy/nginx/wikihub.conf still has 'proxy_intercept_errors on;' "
+        f"at server scope: {intercept_on_lines!r}. This swallows Flask 4xx responses."
+    )
+
+
 def run_all():
     app = setup()
 
@@ -3727,6 +3776,7 @@ def run_all():
             ("agent chat resists prompt-injection ACL bypass (wikihub-7w40)", lambda: test_agent_chat_resists_prompt_injection_for_acl_bypass(client, key)),
             ("agent chat disabled returns 503 (wikihub-7w40)", lambda: test_agent_chat_disabled_returns_503(app, client)),
             ("backlinks API + forward-ref fallback (wikihub-yqe6)", lambda: test_backlinks_api(client, key)),
+            ("nginx does not intercept Flask errors (wikihub-fg1p)", lambda: test_nginx_does_not_intercept_flask_errors(client)),
             ("CLI end-to-end", lambda: test_cli(client)),
         ]
 
