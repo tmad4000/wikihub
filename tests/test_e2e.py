@@ -1425,6 +1425,118 @@ def test_url_login_log_redaction():
     assert "password=REDACTED" in rec2.args[0]
 
 
+def test_login_post_without_referer_succeeds_with_csrf_token_wikihub_m8zi(client):
+    """wikihub-m8zi: API-key login POST must work without a Referer header.
+
+    iOS Safari (ITP, Private Browsing, in-app browsers) strips the Referer
+    header on form POSTs. Flask-WTF's default WTF_CSRF_SSL_STRICT=True over
+    HTTPS rejects POSTs without a same-origin Referer with a 400 "The referrer
+    header is missing", breaking the login form on iPad with no user-facing
+    indication of why.
+
+    Repro on prod (before fix):
+      curl -X POST https://wikihub.md/auth/login --data 'csrf_token=...&api_key=...'
+      # (no Referer) -> 400 "The referrer header is missing"
+      curl -X POST https://wikihub.md/auth/login --data '...' -H 'Referer: https://wikihub.md/...'
+      # -> 302 success
+
+    The fix sets WTF_CSRF_SSL_STRICT=False in app/__init__.py. CSRF token
+    validation continues to run (and continues to reject token-less or
+    invalid-token POSTs); SameSite=Lax session cookies (already set in
+    config.py) carry the cross-site-request defense load.
+
+    The main test fixture sets WTF_CSRF_ENABLED=False so most flows can post
+    without tokens. This test re-enables CSRF (flask-wtf reads both config
+    keys per-request, not at init time) and forces HTTPS via base_url so
+    WTF_CSRF_SSL_STRICT's Referer-check code path actually runs.
+    """
+    import re as _re
+    from flask import g
+
+    app = client.application
+    prev_csrf_enabled = app.config.get("WTF_CSRF_ENABLED")
+    prev_ssl_strict = app.config.get("WTF_CSRF_SSL_STRICT")
+    try:
+        # The bug only triggers when CSRF protection is fully ON.
+        app.config["WTF_CSRF_ENABLED"] = True
+        # IMPORTANT: do NOT set WTF_CSRF_SSL_STRICT here — we are testing
+        # whether create_app()'s default-setdefault applies. The fix is in
+        # app/__init__.py: app.config.setdefault("WTF_CSRF_SSL_STRICT", False)
+
+        # Create an account with an API key (this client has CSRF temporarily
+        # back on, so we use the JSON API which is csrf-exempt for api_bp).
+        r = client.post("/api/v1/accounts", json={"username": "ipad_safari_user"})
+        assert r.status_code == 201, f"account create failed: {r.status_code}"
+        api_key = r.get_json()["api_key"]
+
+        # Use a fresh test client over HTTPS so cookies start clean and
+        # wsgi.url_scheme=='https' (the precondition for SSL_STRICT).
+        c = app.test_client()
+
+        # The full test suite runs inside one shared `with app.app_context():`
+        # block, so flask's `g` proxy persists across test_client requests.
+        # flask-wtf's generate_csrf() caches the signed token on g.csrf_token
+        # and short-circuits if it's already there — meaning a fresh client's
+        # GET would re-render a *previous* request's token without writing
+        # csrf_token to its own (empty) session. Clear it to force a fresh
+        # generate-and-store cycle. (In real prod, every WSGI request gets a
+        # new app_context and this is unnecessary.)
+        g.pop("csrf_token", None)
+
+        # GET the login form over HTTPS — captures session cookie + CSRF token.
+        r = c.get("/auth/login", base_url="https://localhost")
+        assert r.status_code == 200
+        html = r.get_data(as_text=True)
+        m = _re.search(r'name="csrf_token"[^>]*value="([^"]+)"', html)
+        assert m, "no csrf_token in login form HTML"
+        csrf_token = m.group(1)
+
+        # iOS Safari behavior: POST WITHOUT a Referer header.
+        # Werkzeug test client doesn't add Referer by default.
+        r = c.post(
+            "/auth/login",
+            data={"csrf_token": csrf_token, "api_key": api_key},
+            base_url="https://localhost",
+        )
+
+        # Before the fix: 400 "The referrer header is missing".
+        # After the fix: 302 (login succeeded; CSRF token still validated).
+        body_preview = r.get_data(as_text=True)[:300]
+        assert r.status_code == 302, (
+            f"POST /auth/login without Referer returned {r.status_code} "
+            f"(expected 302). Body: {body_preview}"
+        )
+        assert "referrer header is missing" not in body_preview.lower(), (
+            f"server still requires Referer: {body_preview}"
+        )
+
+        # Confirm CSRF token validation is still wired up — a POST with
+        # NO csrf_token (and no Referer) must still be rejected, otherwise
+        # we've accidentally disabled CSRF entirely.
+        c2 = app.test_client()
+        g.pop("csrf_token", None)
+        c2.get("/auth/login", base_url="https://localhost")
+        r = c2.post(
+            "/auth/login",
+            data={"api_key": api_key},  # no csrf_token
+            base_url="https://localhost",
+        )
+        assert r.status_code == 400, (
+            f"POST without csrf_token must be rejected (CSRF still on); "
+            f"got {r.status_code}"
+        )
+    finally:
+        # Restore main-suite config so subsequent tests still pass.
+        if prev_csrf_enabled is None:
+            app.config.pop("WTF_CSRF_ENABLED", None)
+        else:
+            app.config["WTF_CSRF_ENABLED"] = prev_csrf_enabled
+        if prev_ssl_strict is None:
+            app.config.pop("WTF_CSRF_SSL_STRICT", None)
+        else:
+            app.config["WTF_CSRF_SSL_STRICT"] = prev_ssl_strict
+
+
 def test_client_config_hint(client):
     """signup and token responses include client_config telling agents where to save credentials"""
     # signup
@@ -4017,6 +4129,7 @@ def run_all():
             ("login redirects back (?next + Referer fallback)", lambda: test_login_redirect_back(client)),
             ("URL login (GET ?api_key / ?password)", lambda: test_url_login(client)),
             ("URL login — log redaction", lambda: test_url_login_log_redaction()),
+            ("login POST without Referer succeeds with CSRF token (wikihub-m8zi)", lambda: test_login_post_without_referer_succeeds_with_csrf_token_wikihub_m8zi(client)),
             ("magic link from password", lambda: test_magic_link_from_password(client)),
             ("ACL permissions", lambda: test_acl_permissions(client, key)),
             ("private /new requires write access", lambda: test_private_new_page_requires_write_access(client, key)),

@@ -49,6 +49,13 @@ def create_app(config_class="config.Config"):
     db.init_app(app)
     login_manager.init_app(app)
     login_manager.login_view = "auth.login"
+    # wikihub-m8zi: iOS Safari (ITP, Private Browsing, in-app browsers) strips
+    # the Referer header on form POSTs. Flask-WTF's default WTF_CSRF_SSL_STRICT=True
+    # rejects HTTPS POSTs without a same-origin Referer, breaking the API-key
+    # login form on iPad with an unactionable 400 "The referrer header is missing".
+    # Disable the Referer check; CSRF defense is now token + SameSite=Lax cookies
+    # (already configured in config.py). Matches GitHub/GitLab.
+    app.config.setdefault("WTF_CSRF_SSL_STRICT", False)
     csrf.init_app(app)
 
     # CORS for API endpoints (wikihub-gzj). Read endpoints are fully open;
