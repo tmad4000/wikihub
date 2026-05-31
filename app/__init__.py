@@ -273,10 +273,26 @@ def create_app(config_class="config.Config"):
 
     @app.errorhandler(500)
     def internal_error(e):
+        # wikihub-bug-fix: generate a short correlation id so users can quote
+        # it in bug reports. Logged server-side; surfaced in the 500 page so
+        # future incidents like the proposals-grant 500 are debuggable without
+        # an SSH+log-tail dance.
+        import uuid as _uuid
+        ref = _uuid.uuid4().hex[:8]
+        try:
+            app.logger.error("internal_error ref=%s path=%s", ref, req.path)
+        except Exception:
+            pass
         if req.path.startswith("/api/"):
-            return jsonify({"error": "internal_error", "message": "Something went wrong"}), 500
-        return render_template("error.html", code=500, title="Something went wrong",
-                               message="An unexpected error occurred. Try again later."), 500
+            return jsonify({"error": "internal_error", "message": "Something went wrong", "reference": ref}), 500
+        return render_template(
+            "error.html",
+            code=500,
+            title="Something went wrong",
+            message="An unexpected error occurred on our end.",
+            reference=ref,
+            retry_url=req.full_path if req.query_string else req.path,
+        ), 500
 
     @app.errorhandler(413)
     def too_large(e):
