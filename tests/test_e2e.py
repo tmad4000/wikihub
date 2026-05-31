@@ -3801,6 +3801,60 @@ def test_highlight_js_script_url_is_canonical():
     )
 
 
+def test_nginx_serves_service_worker_allowed_header():
+    """wikihub-o1ib: nginx must add `Service-Worker-Allowed: /` for /static/sw.js.
+
+    Before the fix, the SW registration call in base.html:
+        navigator.serviceWorker.register('/static/sw.js', { scope: '/' })
+    was rejected by browsers with:
+        The path of the provided scope ('/') is not under the max scope
+        allowed ('/static/'). ... use the Service-Worker-Allowed HTTP header
+        to allow the scope.
+
+    Fix: in deploy/nginx/wikihub.conf, add a `location = /static/sw.js` block
+    in each Flask-proxying server block that proxies upstream AND sets
+    `add_header Service-Worker-Allowed "/" always;`. Don't move the SW file
+    (would break paths). Don't reduce scope to /static/ (defeats the SW).
+    """
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    conf_path = os.path.join(repo_root, "deploy", "nginx", "wikihub.conf")
+    with open(conf_path) as f:
+        conf = f.read()
+
+    # There are two Flask-proxying server blocks for wikihub.md (443 + 80
+    # fallback). Both must have a location handling /static/sw.js with the
+    # Service-Worker-Allowed header.
+    import re
+    # Find non-commented `Service-Worker-Allowed` directives.
+    allowed_lines = [
+        line.strip()
+        for line in conf.splitlines()
+        if not line.lstrip().startswith("#")
+        and "Service-Worker-Allowed" in line
+    ]
+    assert allowed_lines, (
+        "deploy/nginx/wikihub.conf does not set Service-Worker-Allowed for "
+        "/static/sw.js. The SW registration in base.html uses scope='/' which "
+        "browsers reject without this header."
+    )
+    # And the header value must allow scope '/'.
+    assert any('"/"' in line or "'/'" in line for line in allowed_lines), (
+        f"Service-Worker-Allowed must be set to '/' to permit the SW's scope; "
+        f"got: {allowed_lines!r}"
+    )
+
+    # The header must live within a location matching /static/sw.js.
+    sw_loc = re.search(
+        r'location\s*=?\s*/static/sw\.js\s*\{([^}]*)\}',
+        conf,
+        re.DOTALL,
+    )
+    assert sw_loc, (
+        "deploy/nginx/wikihub.conf must have a `location = /static/sw.js` "
+        "block where the Service-Worker-Allowed header is added."
+    )
+
+
 def test_nginx_does_not_intercept_flask_errors(client):
     """wikihub-fg1p: nginx must NOT proxy_intercept_errors on the main location.
 
@@ -4271,6 +4325,7 @@ def run_all():
             ("agent chat disabled returns 503 (wikihub-7w40)", lambda: test_agent_chat_disabled_returns_503(app, client)),
             ("backlinks API + forward-ref fallback (wikihub-yqe6)", lambda: test_backlinks_api(client, key)),
             ("highlight.js script URL is canonical (wikihub-1rx9)", lambda: test_highlight_js_script_url_is_canonical()),
+            ("nginx serves Service-Worker-Allowed header (wikihub-o1ib)", lambda: test_nginx_serves_service_worker_allowed_header()),
             ("nginx does not intercept Flask errors (wikihub-fg1p)", lambda: test_nginx_does_not_intercept_flask_errors(client)),
             ("welcome.html has Sign in link (wikihub-46ke)", lambda: test_welcome_html_has_sign_in_link()),
             ("search trigger visible on mobile (wikihub-31s3)", lambda: test_search_trigger_visible_on_mobile()),
