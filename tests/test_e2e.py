@@ -3959,6 +3959,67 @@ def test_mobile_hamburger_exposes_hidden_nav_links():
     )
 
 
+def test_error_page_ipad_alignment_fix():
+    """wikihub-dw8u: permission_error.html and error.html (404) must not use the
+    old `min-height: calc(100vh - 56px)` + `justify-content: center` trick that
+    floated content in the middle of iPad-portrait viewports and pushed the
+    footer 600+px below content.
+
+    The corrected layout anchors content near the top with a clamp-based
+    padding-top so it breathes on desktop without leaving a wall of whitespace
+    on tablet. Buttons must wrap and be centered with consistent min-width so
+    the primary CTA doesn't look smaller than the secondaries on iPad.
+    """
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    import re as _re
+    # Strip /* ... */ CSS/JS comments so prose mentioning the old anti-pattern
+    # in rationale comments doesn't false-positive.
+    _strip_comments = lambda s: _re.sub(r"/\*.*?\*/", "", s, flags=_re.DOTALL)
+    for name in ("permission_error.html", "error.html"):
+        path = os.path.join(repo_root, "app", "templates", name)
+        with open(path) as f:
+            css = _strip_comments(f.read())
+        # Old bad pattern must be gone.
+        assert "calc(100vh - 56px)" not in css, (
+            f"{name}: regression — `min-height: calc(100vh - 56px)` is back. "
+            "On iPad portrait this vertically-centers content and leaves a "
+            "wall of whitespace above and below. Use top-anchored padding."
+        )
+        # Extract just the .error-page block to check it doesn't vertical-center.
+        ep_match = _re.search(r"\.error-page\s*\{([^}]*)\}", css)
+        assert ep_match, f"{name}: could not find .error-page block"
+        ep_block = ep_match.group(1)
+        assert "justify-content: center" not in ep_block, (
+            f"{name}: regression — `.error-page` has `justify-content: center`. "
+            "Top-anchor with padding-top instead so the content sits near the top "
+            "of tall viewports (iPad portrait) and doesn't strand the footer 600px below."
+        )
+        # New correct pattern must be present on .error-page: clamp-based padding.
+        assert "clamp(" in ep_block and "padding:" in ep_block, (
+            f"{name}: .error-page missing clamp-based padding. Required so content "
+            "anchors near top instead of mid-viewport on iPad portrait."
+        )
+        # Button row must wrap, center, and have min-width so primary is not undersized.
+        ea_match = _re.search(r"\.error-actions\s*\{([^}]*)\}", css)
+        assert ea_match, f"{name}: could not find .error-actions block"
+        ea_block = ea_match.group(1)
+        assert "flex-wrap: wrap" in ea_block, (
+            f"{name}: .error-actions must use `flex-wrap: wrap` so the row "
+            "doesn't overflow narrow phone widths."
+        )
+        assert "justify-content: center" in ea_block, (
+            f"{name}: .error-actions must `justify-content: center` so the row is "
+            "horizontally centered when wrapped."
+        )
+        btn_match = _re.search(r"\.btn\s*\{([^}]*)\}", css)
+        assert btn_match, f"{name}: could not find .btn block"
+        btn_block = btn_match.group(1)
+        assert "min-width:" in btn_block, (
+            f"{name}: .btn must declare `min-width` so the primary CTA "
+            "doesn't look visually undersized next to longer-text secondaries."
+        )
+
+
 def test_md_request_for_private_page_returns_json_4xx_not_landing(client):
     """wikihub-3rjt: Accept: text/markdown for an unauthenticated private page
     must return a 4xx (401/403/404) with non-HTML content type. Agents must
@@ -4172,6 +4233,7 @@ def run_all():
             ("search trigger visible on mobile (wikihub-31s3)", lambda: test_search_trigger_visible_on_mobile()),
             ("unauth private page renders permission_error with Sign in (wikihub-ffqt)", lambda: test_unauth_private_page_renders_permission_error_with_sign_in(client)),
             ("mobile hamburger exposes hidden nav (wikihub-pz27)", lambda: test_mobile_hamburger_exposes_hidden_nav_links()),
+            ("error pages iPad alignment fix (wikihub-dw8u)", lambda: test_error_page_ipad_alignment_fix()),
             ("md request for private page returns 4xx (wikihub-3rjt)", lambda: test_md_request_for_private_page_returns_json_4xx_not_landing(client)),
             ("/api/wikis 401+WWW-Authenticate (wikihub-uonp)", lambda: test_api_wikis_endpoint_returns_401_with_www_authenticate_for_private(client)),
             ("logged-out search returns only public (wikihub-7dml)", lambda: test_logged_out_search_returns_only_public(client)),
