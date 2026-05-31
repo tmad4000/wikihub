@@ -3759,6 +3759,48 @@ def test_backlinks_api(client, api_key):
     )
 
 
+def test_highlight_js_script_url_is_canonical():
+    """wikihub-1rx9: base.html must reference the canonical @highlightjs/cdn-assets
+    package, not the bare highlight.js npm package.
+
+    Before the fix, base.html had:
+        <script src=".../npm/highlight.js@11.9.0/highlight.min.js"></script>
+    That path 404s on JSDelivr (the highlight.js npm package has no root-level
+    highlight.min.js — the build artifacts live under @highlightjs/cdn-assets).
+    JSDelivr returns text/plain 404 → Chrome ORB blocks → code blocks never
+    received client-side syntax highlighting.
+
+    Fix: switch the <script> src to
+        https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.9.0/highlight.min.js
+    which returns HTTP 200 with content-type: application/javascript.
+    """
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    base_path = os.path.join(repo_root, "app", "templates", "base.html")
+    with open(base_path) as f:
+        base = f.read()
+
+    # The good URL must be present.
+    assert "@highlightjs/cdn-assets@11.9.0/highlight.min.js" in base, (
+        "base.html must load highlight.js from @highlightjs/cdn-assets@11.9.0/"
+        "highlight.min.js (the canonical CDN package). The bare "
+        "highlight.js@11.9.0/highlight.min.js path 404s on JSDelivr."
+    )
+
+    # The bad URL pattern — bare "highlight.js@<ver>/highlight.min.js" as a
+    # <script src=...> — must NOT appear. Note: the CSS theme URLs at
+    # highlight.js@11.9.0/styles/*.min.css ARE valid (verified 200) and are
+    # intentionally left alone.
+    import re
+    bad_script = re.search(
+        r'<script[^>]+src=["\'][^"\']*\bhighlight\.js@[\d.]+/highlight\.min\.js["\']',
+        base,
+    )
+    assert not bad_script, (
+        f"base.html still loads the broken highlight.js script URL: "
+        f"{bad_script.group(0)!r}. Switch to @highlightjs/cdn-assets."
+    )
+
+
 def test_nginx_does_not_intercept_flask_errors(client):
     """wikihub-fg1p: nginx must NOT proxy_intercept_errors on the main location.
 
@@ -4228,6 +4270,7 @@ def run_all():
             ("agent chat resists prompt-injection ACL bypass (wikihub-7w40)", lambda: test_agent_chat_resists_prompt_injection_for_acl_bypass(client, key)),
             ("agent chat disabled returns 503 (wikihub-7w40)", lambda: test_agent_chat_disabled_returns_503(app, client)),
             ("backlinks API + forward-ref fallback (wikihub-yqe6)", lambda: test_backlinks_api(client, key)),
+            ("highlight.js script URL is canonical (wikihub-1rx9)", lambda: test_highlight_js_script_url_is_canonical()),
             ("nginx does not intercept Flask errors (wikihub-fg1p)", lambda: test_nginx_does_not_intercept_flask_errors(client)),
             ("welcome.html has Sign in link (wikihub-46ke)", lambda: test_welcome_html_has_sign_in_link()),
             ("search trigger visible on mobile (wikihub-31s3)", lambda: test_search_trigger_visible_on_mobile()),
