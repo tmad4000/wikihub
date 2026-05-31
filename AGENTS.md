@@ -60,11 +60,16 @@ Make the SQL idempotent (`IF NOT EXISTS`, `DROP CONSTRAINT IF EXISTS`) so it
 can be re-run safely. Apply with:
 
 ```bash
-ssh ubuntu@54.145.123.7 "sudo -u postgres psql -d wikihub -f -" < migrations/FILE.sql
+# Production (GCP):
+gcloud compute scp migrations/FILE.sql wikihub-prod:/tmp/ --project=wikihub-prod --zone=us-east1-b \
+  && gcloud compute ssh wikihub-prod --project=wikihub-prod --zone=us-east1-b \
+       --command='sudo -u postgres psql -d wikihub -f /tmp/FILE.sql'
 ```
 
 The header comment of each migration file should document its why + the exact
-apply command. Keep migrations in chronological order.
+apply command. Keep migrations in chronological order. Note: many existing
+migration headers (`migrations/2026-04-*.sql`) still reference the old Lightsail
+host (`ubuntu@54.145.123.7`) — that's historical. Production is GCP now.
 
 ## architecture
 
@@ -123,20 +128,39 @@ Explicit phase ordering (Jacob 2026-04-22):
 ## deployment
 
 - **Live URL:** https://wikihub.md (legacy alias: https://wikihub.globalbr.ai, still redirects)
-- **Server:** AWS Lightsail instance `wikihub-dev` (54.145.123.7)
-- **SSH:** `ssh -i ~/.ssh/wikihub-dev-key ubuntu@54.145.123.7`
+- **Server:** GCP Compute Engine `wikihub-prod` (project `wikihub-prod`, zone `us-east1-b`, IP `35.237.163.58`)
+- **SSH:** `gcloud compute ssh wikihub-prod --project=wikihub-prod --zone=us-east1-b`
 - **Code on server:** `/opt/wikihub-app`
-- **DB:** PostgreSQL `wikihub` database (local to server)
+- **DB:** PostgreSQL 16 `wikihub` database (local to server)
 - **Process:** gunicorn on port 5100, managed by systemd (`wikihub.service`)
-- **Reverse proxy:** nginx on server, Cloudflare DNS in front (proxied, handles SSL)
-- **ListHub also on same box:** `/opt/listhub-app` at https://listhub2.globalbr.ai
+- **Reverse proxy:** nginx on server (site config at `/etc/nginx/sites-enabled/wikihub`, mirrored from `deploy/nginx/wikihub.conf`), Cloudflare DNS in front (proxied, handles SSL)
+- **Static welcome page:** `/var/www/wikihub-static/welcome.html`, source at `deploy/static/welcome.html`
+- **Sibling service on same box:** `idea-bank-social` (`/opt/idea-bank-social`, separate)
+- **MCP server:** `wikihub-mcp.service` (sibling), see `mcp-server/README.md`
 
 **Deploy:**
 ```bash
-ssh -i ~/.ssh/wikihub-dev-key ubuntu@54.145.123.7 'cd /opt/wikihub-app && git pull && sudo systemctl restart wikihub'
+gcloud compute ssh wikihub-prod --project=wikihub-prod --zone=us-east1-b \
+  --command='cd /opt/wikihub-app && sudo git pull && sudo systemctl restart wikihub'
+# If nginx config (deploy/nginx/wikihub.conf) or welcome.html changed:
+gcloud compute ssh wikihub-prod --project=wikihub-prod --zone=us-east1-b \
+  --command='sudo cp /opt/wikihub-app/deploy/nginx/wikihub.conf /etc/nginx/sites-enabled/wikihub \
+    && sudo cp /opt/wikihub-app/deploy/static/welcome.html /var/www/wikihub-static/welcome.html \
+    && sudo nginx -t && sudo systemctl reload nginx'
+```
+
+**Apply a SQL migration:**
+```bash
+gcloud compute scp migrations/FILE.sql wikihub-prod:/tmp/ --project=wikihub-prod --zone=us-east1-b
+gcloud compute ssh wikihub-prod --project=wikihub-prod --zone=us-east1-b \
+  --command='sudo -u postgres psql -d wikihub -f /tmp/FILE.sql'
 ```
 
 **Secrets** are in `/opt/wikihub-app/.env` on the server (not in repo). Collaborator access keys are in `wikihub-dev-access/` (gitignored).
+
+### Lightsail (legacy / staging — DO NOT deploy here for prod)
+
+The AWS Lightsail instance `wikihub-dev` (`54.145.123.7`, `ssh -i ~/.ssh/wikihub-dev-key ubuntu@54.145.123.7`) hosted wikihub.md briefly (April–May 2026) and still runs a copy of the Flask app + Postgres. Its DB is **stale** (drifted after DNS was moved back to GCP on 2026-05-30). Treat it as a warm staging / failover box only; do NOT `git pull` here for production deploys. Migration headers in `migrations/*.sql` still reference this host — they were written when Lightsail was prod and are kept for historical context only.
 
 ## issue tracking (beads)
 
@@ -217,9 +241,9 @@ see `docs/deploy.md` for full details. the short version:
 1. `python3 tests/test_e2e.py` — all tests pass
 2. `git status` — **every modified file is committed** (most common deploy failure is a missing file)
 3. `git push origin main`
-4. `ssh -i ~/.ssh/wikihub-dev-key ubuntu@54.145.123.7 "cd /opt/wikihub-app && git pull && sudo systemctl restart wikihub"`
+4. `gcloud compute ssh wikihub-prod --project=wikihub-prod --zone=us-east1-b --command='cd /opt/wikihub-app && sudo git pull && sudo systemctl restart wikihub'`
 5. `curl -s -o /dev/null -w "%{http_code}" https://wikihub.md/` — must be 200, not 502
-6. if 502, check logs: `ssh -i ~/.ssh/wikihub-dev-key ubuntu@54.145.123.7 "sudo journalctl -u wikihub --no-pager -n 30"`
+6. if 502, check logs: `gcloud compute ssh wikihub-prod --project=wikihub-prod --zone=us-east1-b --command='sudo journalctl -u wikihub --no-pager -n 30'`
 7. agent-browser smoke test on production for the specific changes made
 
 ## agent instruction surfaces (keep in sync)
