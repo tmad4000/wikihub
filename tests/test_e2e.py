@@ -4243,6 +4243,182 @@ def test_logged_out_search_returns_only_public(client):
         )
 
 
+def test_history_route_acl_gated_for_private_wiki(client, api_key):
+    """wikihub-8888.1: web /history and /commit must not leak private content.
+
+    Setup: a wiki with one PRIVATE page only. Anonymous viewers should NOT
+    see commit metadata, filenames, SHAs, or diffs via the web routes.
+    Owner of the wiki must still see history (don't over-restrict).
+
+    Test order is anon-first to avoid flask-login's app-context-cached
+    current_user from polluting fresh test_clients (see test_anonymous_upload).
+    """
+    import re
+    h = {"Authorization": f"Bearer {api_key}"}
+    r = client.post("/api/v1/wikis", json={"slug": "acl-hist-priv", "title": "Hist Priv"}, headers=h)
+    assert r.status_code == 201
+    r = client.post("/api/v1/wikis/agent1/acl-hist-priv/pages", json={
+        "path": "secret.md",
+        "content": "---\ntitle: Top Secret\nvisibility: private\n---\n\nsuper-secret-marker-zz9876",
+        "visibility": "private",
+    }, headers=h)
+    assert r.status_code == 201
+
+    # Clear any leaked login from prior tests.
+    from flask_login import logout_user
+    app = client.application
+    with app.test_request_context():
+        logout_user()
+
+    # Anonymous: must NOT get 200 with private metadata.
+    anon = app.test_client()
+    r = anon.get("/@agent1/acl-hist-priv/history")
+    assert r.status_code in (401, 403, 404), (
+        f"anon got {r.status_code} on private-only wiki history — expected 4xx"
+    )
+    anon_body = r.data.decode("utf-8", errors="replace")
+    assert "secret.md" not in anon_body, "anon history leaked private filename"
+
+    # Now exercise the owner branch.
+    owner = app.test_client()
+    r = owner.get(f"/auth/login?api_key={api_key}&next=/", follow_redirects=False)
+    assert r.status_code == 302
+    r = owner.get("/@agent1/acl-hist-priv/history")
+    assert r.status_code == 200, f"owner history got {r.status_code}"
+    body = r.data.decode("utf-8", errors="replace")
+    assert "secret.md" in body, "owner should see private filename in their own history"
+
+    # Re-derive a real sha from the owner-visible page for the commit test.
+    sha_match = re.search(r"\b[0-9a-f]{40}\b", body)
+    if sha_match:
+        sha = sha_match.group(0)
+        r = owner.get(f"/@agent1/acl-hist-priv/commit/{sha}")
+        assert r.status_code == 200, f"owner commit view returned {r.status_code}"
+
+        # Clear leaked owner login again, then verify anon can't see /commit.
+        with app.test_request_context():
+            logout_user()
+        anon2 = app.test_client()
+        r = anon2.get(f"/@agent1/acl-hist-priv/commit/{sha}")
+        assert r.status_code in (401, 403, 404), (
+            f"anon got {r.status_code} on private commit — expected 4xx"
+        )
+        leak_body = r.data.decode("utf-8", errors="replace")
+        assert "super-secret-marker-zz9876" not in leak_body, (
+            "anon /commit leaked private page contents"
+        )
+        assert "secret.md" not in leak_body, "anon /commit leaked private filename"
+
+
+def test_graph_route_filters_private_pages_for_anon(client, api_key):
+    """wikihub-8888.2: graph endpoints must not expose private page titles/edges to anon."""
+    import json as _json
+    from flask_login import logout_user
+    app = client.application
+    h = {"Authorization": f"Bearer {api_key}"}
+    r = client.post("/api/v1/wikis", json={"slug": "graph-mix", "title": "Graph Mix"}, headers=h)
+    assert r.status_code == 201
+
+    # Public page links to private page
+    r = client.post("/api/v1/wikis/agent1/graph-mix/pages", json={
+        "path": "public-hub.md",
+        "content": "---\ntitle: Public Hub\nvisibility: public\n---\n\nSee [[private-deets]] for details.",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201
+    r = client.post("/api/v1/wikis/agent1/graph-mix/pages", json={
+        "path": "private-deets.md",
+        "content": "---\ntitle: Private Deets\nvisibility: private\n---\n\nsecrets",
+        "visibility": "private",
+    }, headers=h)
+    assert r.status_code == 201
+
+    # Populate Wikilink rows manually — the e2e POST endpoint stores page
+    # content but doesn't run the wikilink extractor (that's normally a
+    # git_sync hook). The graph endpoint filters orphans, so without a
+    # wikilink every node disappears even for the owner. Insert the
+    # `public-hub -> private-deets` edge that the page body declares.
+    from app.models import db as _db, Page as _Page, Wikilink as _Wikilink, Wiki as _Wiki, User as _User
+    with app.app_context():
+        _owner = _User.query.filter_by(username="agent1").first()
+        _wiki = _Wiki.query.filter_by(owner_id=_owner.id, slug="graph-mix").first()
+        _hub = _Page.query.filter_by(wiki_id=_wiki.id, path="public-hub.md").first()
+        _priv = _Page.query.filter_by(wiki_id=_wiki.id, path="private-deets.md").first()
+        _db.session.add(_Wikilink(source_page_id=_hub.id, target_path="private-deets", target_page_id=_priv.id))
+        _db.session.commit()
+
+    # Anon first to avoid login leakage.
+    with app.test_request_context():
+        logout_user()
+    anon = app.test_client()
+    r = anon.get("/@agent1/graph-mix/graph.json")
+    assert r.status_code == 200, f"anon got {r.status_code}"
+    data = _json.loads(r.data.decode("utf-8"))
+    nodes = data.get("nodes", [])
+    titles = [n.get("title", "") for n in nodes]
+    paths = [n.get("url", "") for n in nodes]
+    assert "Private Deets" not in titles, f"graph leaked private title: {titles}"
+    assert not any("private-deets" in p for p in paths), f"graph leaked private path: {paths}"
+
+    # anon page-level graph of the private page itself: 4xx
+    r = anon.get("/@agent1/graph-mix/private-deets/graph.json")
+    assert r.status_code in (401, 403, 404), (
+        f"anon page-graph on private page returned {r.status_code}"
+    )
+
+    # Now exercise the owner branch.
+    owner = app.test_client()
+    r = owner.get(f"/auth/login?api_key={api_key}&next=/", follow_redirects=False)
+    assert r.status_code == 302
+    r = owner.get("/@agent1/graph-mix/graph.json")
+    assert r.status_code == 200
+    odata = _json.loads(r.data.decode("utf-8"))
+    otitles = [n.get("title", "") for n in odata.get("nodes", [])]
+    assert "Private Deets" in otitles, f"owner missing private node from graph: {otitles}"
+
+
+def test_tag_index_filters_private_pages_for_anon(client, api_key):
+    """wikihub-8888.3: tag index must not expose private tagged pages to anon."""
+    from flask_login import logout_user
+    app = client.application
+    h = {"Authorization": f"Bearer {api_key}"}
+    r = client.post("/api/v1/wikis", json={"slug": "tag-mix", "title": "Tag Mix"}, headers=h)
+    assert r.status_code == 201
+
+    r = client.post("/api/v1/wikis/agent1/tag-mix/pages", json={
+        "path": "open.md",
+        "content": "---\ntitle: Open Page\nvisibility: public\ntags: [shared-tag]\n---\n\nopen content",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201
+    r = client.post("/api/v1/wikis/agent1/tag-mix/pages", json={
+        "path": "hidden.md",
+        "content": "---\ntitle: Hidden Page\nvisibility: private\ntags: [shared-tag]\n---\n\nhidden content",
+        "visibility": "private",
+    }, headers=h)
+    assert r.status_code == 201
+
+    # Anon first to avoid login leakage.
+    with app.test_request_context():
+        logout_user()
+    anon = app.test_client()
+    r = anon.get("/@agent1/tag-mix/tag/shared-tag")
+    assert r.status_code == 200, f"anon got {r.status_code}"
+    body = r.data.decode("utf-8", errors="replace")
+    assert "Open Page" in body, "public page missing from anon tag index"
+    assert "Hidden Page" not in body, "tag index leaked private page title to anon"
+    assert "hidden.md" not in body, "tag index leaked private page path to anon"
+
+    # Now exercise the owner branch.
+    owner = app.test_client()
+    r = owner.get(f"/auth/login?api_key={api_key}&next=/", follow_redirects=False)
+    assert r.status_code == 302
+    r = owner.get("/@agent1/tag-mix/tag/shared-tag")
+    assert r.status_code == 200
+    obody = r.data.decode("utf-8", errors="replace")
+    assert "Open Page" in obody and "Hidden Page" in obody, "owner missing pages from tag index"
+
+
 def test_owner_can_render_deep_nested_page_no_500(client, api_key):
     """Regression: logged-in owner GETting a deep-nested page path renders 200.
 
@@ -4527,6 +4703,9 @@ def run_all():
             ("md request for private page returns 4xx (wikihub-3rjt)", lambda: test_md_request_for_private_page_returns_json_4xx_not_landing(client)),
             ("/api/wikis 401+WWW-Authenticate (wikihub-uonp)", lambda: test_api_wikis_endpoint_returns_401_with_www_authenticate_for_private(client)),
             ("logged-out search returns only public (wikihub-7dml)", lambda: test_logged_out_search_returns_only_public(client)),
+            ("history/commit ACL-gated for private wiki (wikihub-8888.1)", lambda: test_history_route_acl_gated_for_private_wiki(client, key)),
+            ("graph filters private pages for anon (wikihub-8888.2)", lambda: test_graph_route_filters_private_pages_for_anon(client, key)),
+            ("tag index filters private pages for anon (wikihub-8888.3)", lambda: test_tag_index_filters_private_pages_for_anon(client, key)),
             ("owner renders deep nested page (proposals-grant regression)", lambda: test_owner_can_render_deep_nested_page_no_500(client, key)),
             ("500 page has reference + retry link", lambda: test_500_page_has_reference_and_retry(app, client)),
             ("visibility toggle resolves underscore filename (wikihub-vbug)", lambda: test_visibility_toggle_for_underscore_filename(client, key)),

@@ -52,8 +52,14 @@ def _get_backlinks(page):
     return get_backlinks_for_page(page)
 
 
-def _get_link_graph(page, wiki):
-    """get wikilink graph centered on a page (outgoing + incoming links)."""
+def _get_link_graph(page, wiki, viewer_filter=True):
+    """get wikilink graph centered on a page (outgoing + incoming links).
+
+    When ``viewer_filter`` is True (default), neighboring pages the viewer
+    cannot read are excluded from the graph, along with their edges. The
+    center page is assumed already authorized by the caller (it would not
+    have rendered otherwise). (wikihub-8888.2)
+    """
     if not page or not hasattr(page, 'id') or not page.id:
         return {"nodes": [], "links": []}
 
@@ -62,14 +68,29 @@ def _get_link_graph(page, wiki):
     page_url = _page_url(wiki.owner.username, wiki.slug, page.path)
     nodes[page.id] = {"id": page.id, "title": page.title or page.path.replace('.md', ''), "url": page_url, "current": True}
 
+    apply_filter = viewer_filter and not _is_owner(wiki)
+    acl_rules = None
+    owner_obj = None
+    if apply_filter:
+        owner_obj = db.session.get(User, wiki.owner_id)
+        acl_rules = load_acl_rules(owner_obj.username, wiki.slug)
+
+    def _neighbor_visible(neighbor_page):
+        if not apply_filter:
+            return True
+        return _viewer_can_read_page(wiki, neighbor_page, acl_rules=acl_rules, owner=owner_obj)
+
     # outgoing links
     outgoing = Wikilink.query.filter_by(source_page_id=page.id).all()
     for wl in outgoing:
-        if wl.target_page_id and wl.target_page_id not in nodes:
+        if not wl.target_page_id:
+            continue
+        if wl.target_page_id not in nodes:
             tgt = db.session.get(Page, wl.target_page_id)
-            if tgt:
-                nodes[tgt.id] = {"id": tgt.id, "title": tgt.title or tgt.path.replace('.md', ''), "url": _page_url(wiki.owner.username, wiki.slug, tgt.path), "current": False}
-        if wl.target_page_id:
+            if not tgt or not _neighbor_visible(tgt):
+                continue
+            nodes[tgt.id] = {"id": tgt.id, "title": tgt.title or tgt.path.replace('.md', ''), "url": _page_url(wiki.owner.username, wiki.slug, tgt.path), "current": False}
+        if wl.target_page_id in nodes:
             links.append({"source": page.id, "target": wl.target_page_id})
 
     # incoming links (backlinks)
@@ -77,17 +98,34 @@ def _get_link_graph(page, wiki):
     for wl in incoming:
         if wl.source_page_id not in nodes:
             src = db.session.get(Page, wl.source_page_id)
-            if src:
-                nodes[src.id] = {"id": src.id, "title": src.title or src.path.replace('.md', ''), "url": _page_url(wiki.owner.username, wiki.slug, src.path), "current": False}
-        links.append({"source": wl.source_page_id, "target": page.id})
+            if not src or not _neighbor_visible(src):
+                continue
+            nodes[src.id] = {"id": src.id, "title": src.title or src.path.replace('.md', ''), "url": _page_url(wiki.owner.username, wiki.slug, src.path), "current": False}
+        if wl.source_page_id in nodes:
+            links.append({"source": wl.source_page_id, "target": page.id})
 
     return {"nodes": list(nodes.values()), "links": links}
 
 
-def _get_full_graph(wiki):
-    """get full wikilink graph for an entire wiki."""
+def _get_full_graph(wiki, viewer_filter=True):
+    """get full wikilink graph for an entire wiki.
+
+    When ``viewer_filter`` is True (default), filters nodes to pages the
+    current viewer can read, and only includes edges where BOTH endpoints
+    are visible to the viewer. An edge from a private page to a public page
+    would otherwise reveal the private page's existence (wikihub-8888.2).
+    """
     pages = Page.query.filter_by(wiki_id=wiki.id).all()
     owner = db.session.get(User, wiki.owner_id)
+
+    visible_ids = None
+    if viewer_filter and not _is_owner(wiki):
+        acl_rules = load_acl_rules(owner.username, wiki.slug)
+        visible_ids = {
+            p.id for p in pages
+            if _viewer_can_read_page(wiki, p, acl_rules=acl_rules, owner=owner)
+        }
+        pages = [p for p in pages if p.id in visible_ids]
 
     # build node map, skip index.md from being a hub (still a node, just filter its links)
     nodes = {}
@@ -188,6 +226,60 @@ def _repo_access(wiki, acl_rules=None):
         if grants_for_user(acl_rules, uname):
             return False, uname
     return True, None
+
+
+def _viewer_can_read_page(wiki, page, acl_rules=None, owner=None):
+    """Can the current viewer read this Page?
+
+    Canonical reader-route logic, extracted for reuse by history / commit /
+    graph / tag routes (wikihub-8888).
+
+    - Owner of the wiki: always True
+    - Otherwise: gate on can_read(path, acl_rules, username, page.visibility)
+
+    Page is a Page row OR an object exposing .path and .visibility.
+    """
+    if page is None:
+        return False
+    if _is_owner(wiki):
+        return True
+    if acl_rules is None:
+        if owner is None:
+            owner = db.session.get(User, wiki.owner_id)
+        acl_rules = load_acl_rules(owner.username, wiki.slug)
+    user_name = current_user.username if current_user.is_authenticated else None
+    return can_read(page.path, acl_rules, user_name, page.visibility)
+
+
+def _viewer_can_see_any_page(wiki, acl_rules=None, owner=None):
+    """Does the viewer have read access to ANY page in this wiki?
+
+    Used to gate wiki-level surfaces (history, commit diff) where access to
+    one page implies access to the historical record. Owners and ACL grantees
+    see authoritative; anonymous users who can read at least one public page
+    see the public mirror; viewers with no access at all get a permission error.
+    """
+    if _is_owner(wiki):
+        return True
+    if acl_rules is None:
+        if owner is None:
+            owner = db.session.get(User, wiki.owner_id)
+        acl_rules = load_acl_rules(owner.username, wiki.slug)
+    # Anyone can see public/public-view/public-edit and unlisted-* pages.
+    public_visibilities = ("public", "public-view", "public-edit", "unlisted", "unlisted-view", "unlisted-edit")
+    has_public = (
+        Page.query.filter_by(wiki_id=wiki.id)
+        .filter(Page.visibility.in_(public_visibilities))
+        .first()
+        is not None
+    )
+    if has_public:
+        return True
+    # ACL grantee with a per-user grant against any page → can see authoritative
+    if current_user.is_authenticated and acl_rules:
+        if grants_for_user(acl_rules, current_user.username):
+            return True
+    return False
 
 
 def _sibling_wikis(owner, current_wiki):
@@ -1095,7 +1187,11 @@ def resubmit_proposal(username, slug, proposal_id):
 
 @wiki_bp.route("/@<username>/<slug>/<path:page_path>/graph.json")
 def page_graph_json(username, slug, page_path):
-    """return wikilink graph data for a page as JSON."""
+    """return wikilink graph data for a page as JSON.
+
+    wikihub-8888.2: ACL-gate the central page, and filter the neighborhood
+    through the viewer's read access.
+    """
     raw_page_path = page_path
     page_path = page_path_from_url_path(page_path)
     owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
@@ -1106,12 +1202,18 @@ def page_graph_json(username, slug, page_path):
         space_path = page_path if page_path.endswith(".md") else page_path + ".md"
         page = Page.query.filter_by(wiki_id=wiki.id, path=space_path).first()
     from flask import jsonify
+    if page is None:
+        return jsonify({"nodes": [], "links": []}), 404
+    acl_rules = load_acl_rules(owner.username, wiki.slug)
+    if not _viewer_can_read_page(wiki, page, acl_rules=acl_rules, owner=owner):
+        status = 401 if not current_user.is_authenticated else 403
+        return jsonify({"error": "forbidden", "nodes": [], "links": []}), status
     return jsonify(_get_link_graph(page, wiki))
 
 
 @wiki_bp.route("/@<username>/<slug>/graph.json")
 def wiki_graph_json(username, slug):
-    """return full wikilink graph for a wiki as JSON."""
+    """return full wikilink graph for a wiki as JSON. wikihub-8888.2: filter to visible pages."""
     owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
     from flask import jsonify
     return jsonify(_get_full_graph(wiki))
@@ -1119,7 +1221,7 @@ def wiki_graph_json(username, slug):
 
 @wiki_bp.route("/@<username>/<slug>/graph")
 def wiki_graph(username, slug):
-    """full-screen interactive graph view."""
+    """full-screen interactive graph view. wikihub-8888.2: filter to visible pages."""
     owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
     return render_template(
         "graph.html",
@@ -1131,13 +1233,27 @@ def wiki_graph(username, slug):
 
 @wiki_bp.route("/@<username>/<slug>/tag/<tag_name>")
 def wiki_tag_index(username, slug, tag_name):
+    """Tag index. wikihub-8888.3: filter pages to those the viewer can read."""
     owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
-    pages = (
-        Page.query.filter_by(wiki_id=wiki.id)
-        .filter(Page.frontmatter_json["tags"].astext.contains(tag_name))
-        .order_by(Page.title.asc())
-        .all()
-    )
+    # JSON (not JSONB) — filter in Python after pulling pages for this wiki.
+    # Volume per-wiki is bounded; this avoids JSONB-only operators.
+    candidates = Page.query.filter_by(wiki_id=wiki.id).order_by(Page.title.asc()).all()
+    pages = []
+    for p in candidates:
+        fm = p.frontmatter_json or {}
+        tags = fm.get("tags") if isinstance(fm, dict) else None
+        if isinstance(tags, str):
+            tags = [tags]
+        if not isinstance(tags, (list, tuple)):
+            continue
+        if tag_name in tags:
+            pages.append(p)
+    if not _is_owner(wiki):
+        acl_rules = load_acl_rules(owner.username, wiki.slug)
+        pages = [
+            p for p in pages
+            if _viewer_can_read_page(wiki, p, acl_rules=acl_rules, owner=owner)
+        ]
     return render_template("folder.html", owner=owner, wiki=wiki, items=[
         {
             "kind": "page",
@@ -1153,38 +1269,53 @@ def wiki_tag_index(username, slug, tag_name):
 
 @wiki_bp.route("/@<username>/<slug>/history")
 def wiki_history(username, slug):
+    """Wiki history. wikihub-8888.1: ACL-gate; only owners/grantees see authoritative."""
     owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
-    # always read from authoritative repo — public mirror is linearized to 1 commit
-    raw_commits = _git_history(owner.username, wiki.slug, public=False)
+    acl_rules = load_acl_rules(owner.username, wiki.slug)
+    if not _viewer_can_see_any_page(wiki, acl_rules=acl_rules, owner=owner):
+        return _render_permission_error(owner, wiki)
+    use_public, _ = _repo_access(wiki, acl_rules)
+    raw_commits = _git_history(owner.username, wiki.slug, public=use_public)
     # filter out internal event log commits (noise)
     commits = [c for c in raw_commits if not c["message"].startswith("Log ")]
-    return render_template("folder.html", owner=owner, wiki=wiki, items=[], sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, public=not _is_owner(wiki)), folder_path="history", rendered_html=None, breadcrumb=[("History", None)], history_commits=commits)
+    return render_template("folder.html", owner=owner, wiki=wiki, items=[], sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, public=use_public), folder_path="history", rendered_html=None, breadcrumb=[("History", None)], history_commits=commits)
 
 
 @wiki_bp.route("/@<username>/<slug>/<path:folder_path>/history")
 def page_history(username, slug, folder_path):
+    """Page/folder history. wikihub-8888.1: ACL-gate against the specific page when one exists."""
     raw_folder_path = folder_path
     folder_path = page_path_from_url_path(folder_path)
     owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
     path = raw_folder_path if raw_folder_path.endswith(".md") else f"{raw_folder_path}.md"
-    # always read from authoritative repo
-    raw_commits = _git_history(owner.username, wiki.slug, public=False, path=path)
+    acl_rules = load_acl_rules(owner.username, wiki.slug)
+    # If there's a Page row at this exact path, gate on it. If not (folder
+    # history, deleted page), fall back to the wiki-level "any visible page"
+    # check.
+    page = Page.query.filter_by(wiki_id=wiki.id, path=path).first()
+    if page is not None:
+        if not _viewer_can_read_page(wiki, page, acl_rules=acl_rules, owner=owner):
+            return _render_permission_error(owner, wiki)
+    elif not _viewer_can_see_any_page(wiki, acl_rules=acl_rules, owner=owner):
+        return _render_permission_error(owner, wiki)
+    use_public, _ = _repo_access(wiki, acl_rules)
+    raw_commits = _git_history(owner.username, wiki.slug, public=use_public, path=path)
     commits = [c for c in raw_commits if not c["message"].startswith("Log ")]
-    return render_template("folder.html", owner=owner, wiki=wiki, items=[], sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, public=not _is_owner(wiki), current_path=path), folder_path=f"{path} history", rendered_html=None, breadcrumb=[("History", None)], history_commits=commits)
+    return render_template("folder.html", owner=owner, wiki=wiki, items=[], sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, public=use_public, current_path=path), folder_path=f"{path} history", rendered_html=None, breadcrumb=[("History", None)], history_commits=commits)
 
 
 @wiki_bp.route("/@<username>/<slug>/commit/<sha>")
 def wiki_commit(username, slug, sha):
-    """show diff for a single commit."""
+    """show diff for a single commit. wikihub-8888.1: never fall back to authoritative for non-owner/non-grantee."""
     owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
-    is_owner = _is_owner(wiki)
+    acl_rules = load_acl_rules(owner.username, wiki.slug)
+    if not _viewer_can_see_any_page(wiki, acl_rules=acl_rules, owner=owner):
+        return _render_permission_error(owner, wiki)
+    use_public, _ = _repo_access(wiki, acl_rules)
 
-    # try public mirror first, fall back to authoritative repo
-    diff_text = _git_diff(owner.username, wiki.slug, sha, public=True)
-    use_public = True
-    if diff_text is None:
-        diff_text = _git_diff(owner.username, wiki.slug, sha, public=False)
-        use_public = False
+    # Owners/grantees read authoritative directly; everyone else is hard-gated
+    # to the public mirror (no fallback — falling back leaks private diffs).
+    diff_text = _git_diff(owner.username, wiki.slug, sha, public=use_public)
     if diff_text is None:
         abort(404)
 
