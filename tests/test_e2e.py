@@ -4243,6 +4243,94 @@ def test_logged_out_search_returns_only_public(client):
         )
 
 
+def test_owner_can_render_deep_nested_page_no_500(client, api_key):
+    """Regression: logged-in owner GETting a deep-nested page path renders 200.
+
+    The reader view does Proposal.query.filter_by(...).count() for the owner.
+    If that query path is broken (e.g. by a schema/grant/import regression),
+    EVERY non-root wiki page 500s for the owner. We had exactly this in prod
+    when the proposals migration left tables owned by `postgres` instead of
+    the app role, so SELECT was denied. This test exercises the Proposal
+    codepath under the owner-session in the same way the prod request does.
+    """
+    h = {"Authorization": f"Bearer {api_key}"}
+
+    r = client.post("/api/v1/wikis", json={"slug": "deep-render", "title": "Deep Render"}, headers=h)
+    assert r.status_code == 201
+
+    # public to keep ACL out of the picture
+    deep_path = "2026-05-29/nvc/nvc_guide.md"
+    r = client.post("/api/v1/wikis/agent1/deep-render/pages", json={
+        "path": deep_path,
+        "content": "---\ntitle: NVC Guide\nvisibility: public\n---\n\n# NVC Guide\n\nNested page body.",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201
+
+    # log in as owner via the URL api_key path (same as prod owner session)
+    r = client.get(f"/auth/login?api_key={api_key}&next=/", follow_redirects=False)
+    assert r.status_code == 302
+
+    # Hit the nested page as owner. This is what blew up in prod (proposals
+    # SELECT permission denied) — even at the route level we must get 200.
+    r = client.get("/@agent1/deep-render/2026-05-29/nvc/nvc_guide")
+    assert r.status_code == 200, (
+        f"owner GET of deep nested page must return 200, got {r.status_code}. "
+        f"Body: {r.get_data(as_text=True)[:300]}"
+    )
+    assert b"NVC Guide" in r.data
+
+    # Also exercise the SUMMARY-style root-of-folder path that prod 500'd on.
+    r = client.post("/api/v1/wikis/agent1/deep-render/pages", json={
+        "path": "2026-05-29/SUMMARY.md",
+        "content": "---\ntitle: Summary\nvisibility: public\n---\n\n# Summary\n",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201
+    r = client.get("/@agent1/deep-render/2026-05-29/SUMMARY")
+    assert r.status_code == 200
+
+
+def test_500_page_has_reference_and_retry(app, client):
+    """Regression: the 500 error page must surface a correlation id, a try-again
+    link to the same URL, and a Report-this link with the reference in it.
+
+    Without this, prod 500s like the proposals-grant outage are debuggable
+    only by SSH+log-tail. This test invokes the 500 errorhandler directly
+    (Flask doesn't allow late route registration after the first request)
+    and asserts the rendered body carries the reference + retry affordances.
+    """
+    from werkzeug.exceptions import InternalServerError
+
+    # Need TESTING off so the errorhandler isn't bypassed; need PROPAGATE off
+    # too. Restore at the end.
+    prev_testing = app.config.get("TESTING")
+    prev_propagate = app.config.get("PROPAGATE_EXCEPTIONS")
+    app.config["TESTING"] = False
+    app.config["PROPAGATE_EXCEPTIONS"] = False
+    try:
+        # Drive the registered errorhandler under a real request context for
+        # a deep nested path with a query string — mirrors prod 500 shape.
+        with app.test_request_context("/@jacobcole/otter-highlights/2026-05-29/SUMMARY?x=1"):
+            handler = app.error_handler_spec[None][500].get(InternalServerError) \
+                      or list(app.error_handler_spec[None][500].values())[0]
+            resp = handler(InternalServerError())
+            body = resp[0] if isinstance(resp, tuple) else resp.get_data(as_text=True)
+            if hasattr(body, "decode"):
+                body = body.decode("utf-8")
+        import re as _re
+        m = _re.search(r"Reference:\s*<strong>([0-9a-f]{8})</strong>", body)
+        assert m, f"500 page missing 8-hex Reference. Body: {body[:500]}"
+        ref = m.group(1)
+        assert "/@jacobcole/otter-highlights/2026-05-29/SUMMARY" in body, \
+            "500 page missing retry link to original URL"
+        assert (f"ref%3D{ref}" in body) or (f"ref={ref}" in body), \
+            "500 page Report link must include reference"
+    finally:
+        app.config["TESTING"] = prev_testing
+        app.config["PROPAGATE_EXCEPTIONS"] = prev_propagate
+
+
 def run_all():
     app = setup()
 
@@ -4335,6 +4423,8 @@ def run_all():
             ("md request for private page returns 4xx (wikihub-3rjt)", lambda: test_md_request_for_private_page_returns_json_4xx_not_landing(client)),
             ("/api/wikis 401+WWW-Authenticate (wikihub-uonp)", lambda: test_api_wikis_endpoint_returns_401_with_www_authenticate_for_private(client)),
             ("logged-out search returns only public (wikihub-7dml)", lambda: test_logged_out_search_returns_only_public(client)),
+            ("owner renders deep nested page (proposals-grant regression)", lambda: test_owner_can_render_deep_nested_page_no_500(client, key)),
+            ("500 page has reference + retry link", lambda: test_500_page_has_reference_and_retry(app, client)),
             ("CLI end-to-end", lambda: test_cli(client)),
         ]
 
