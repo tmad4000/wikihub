@@ -90,6 +90,41 @@ def _normalize_page_path_param(page_path):
     return page_path_from_url_path(page_path)
 
 
+def _lookup_page(wiki_id, raw_page_path):
+    """Resolve a URL page-path segment to an existing Page row.
+
+    Tries (in order, Gollum 5.0-style — exact match wins):
+      1. raw path as-is (preserves underscores)
+      2. raw path + ".md"
+      3. underscore->space variant
+      4. underscore->space + ".md"
+
+    Returns the Page or None. This MUST stay in lockstep with
+    `_resolve_markdown_page` in app/routes/wiki.py — both routes resolve the
+    same URL space. Centralized so the broken/working endpoint divergence
+    (wikihub-wkmg, wikihub-vbug) can't recur. See wikihub-vbug.
+    """
+    if raw_page_path is None:
+        return None
+    candidates = [raw_page_path]
+    if not raw_page_path.endswith(".md"):
+        candidates.append(raw_page_path + ".md")
+    if "_" in raw_page_path:
+        space = page_path_from_url_path(raw_page_path)
+        candidates.append(space)
+        if not space.endswith(".md"):
+            candidates.append(space + ".md")
+    seen = set()
+    for cand in candidates:
+        if cand in seen:
+            continue
+        seen.add(cand)
+        page = Page.query.filter_by(wiki_id=wiki_id, path=cand).first()
+        if page:
+            return page
+    return None
+
+
 def _load_page_content(owner, slug, page_path, public=False):
     return read_file_from_repo(owner, slug, page_path, public=public)
 
@@ -587,13 +622,7 @@ def read_page(owner, slug, page_path):
     if err:
         return err
 
-    page_path = _normalize_page_path_param(page_path)
-
-    # try with and without .md extension
-    page = Page.query.filter_by(wiki_id=wiki.id, path=page_path).first()
-    if not page and not page_path.endswith(".md"):
-        page = Page.query.filter_by(wiki_id=wiki.id, path=page_path + ".md").first()
-
+    page = _lookup_page(wiki.id, page_path)
     if not page:
         return {"error": "not_found", "message": "Page not found"}, 404
 
@@ -670,10 +699,7 @@ def page_backlinks(owner, slug, page_path):
     if err:
         return err
 
-    page_path = _normalize_page_path_param(page_path)
-    page = Page.query.filter_by(wiki_id=wiki.id, path=page_path).first()
-    if not page and not page_path.endswith(".md"):
-        page = Page.query.filter_by(wiki_id=wiki.id, path=page_path + ".md").first()
+    page = _lookup_page(wiki.id, page_path)
     if not page:
         return {"error": "not_found", "message": "Page not found"}, 404
 
@@ -704,9 +730,7 @@ def replace_page(owner, slug, page_path):
     if err:
         return err
 
-    page_path = _normalize_page_path_param(page_path)
-
-    page = Page.query.filter_by(wiki_id=wiki.id, path=page_path).first()
+    page = _lookup_page(wiki.id, page_path)
     if not page:
         return {"error": "not_found", "message": "Page not found"}, 404
 
@@ -756,9 +780,7 @@ def patch_page(owner, slug, page_path):
     if err:
         return err
 
-    page_path = _normalize_page_path_param(page_path)
-
-    page = Page.query.filter_by(wiki_id=wiki.id, path=page_path).first()
+    page = _lookup_page(wiki.id, page_path)
     if not page:
         return {"error": "not_found", "message": "Page not found"}, 404
 
@@ -874,9 +896,7 @@ def delete_page(owner, slug, page_path):
     if err:
         return err
 
-    page_path = _normalize_page_path_param(page_path)
-
-    page = Page.query.filter_by(wiki_id=wiki.id, path=page_path).first()
+    page = _lookup_page(wiki.id, page_path)
     if not page:
         return {"error": "not_found", "message": "Page not found"}, 404
 
@@ -905,9 +925,7 @@ def set_page_visibility(owner, slug, page_path):
     if request.current_user.id != wiki.owner_id:
         return {"error": "forbidden", "message": "Only the owner can change visibility"}, 403
 
-    page_path = _normalize_page_path_param(page_path)
-
-    page = Page.query.filter_by(wiki_id=wiki.id, path=page_path).first()
+    page = _lookup_page(wiki.id, page_path)
     if not page:
         return {"error": "not_found", "message": "Page not found"}, 404
 
@@ -1042,10 +1060,7 @@ def claim_page(owner, slug, page_path):
     if err:
         return err
 
-    page_path = _normalize_page_path_param(page_path)
-    page = Page.query.filter_by(wiki_id=wiki.id, path=page_path).first()
-    if not page and not page_path.endswith(".md"):
-        page = Page.query.filter_by(wiki_id=wiki.id, path=page_path + ".md").first()
+    page = _lookup_page(wiki.id, page_path)
     if not page:
         return {"error": "not_found", "message": "Page not found"}, 404
 

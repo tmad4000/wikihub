@@ -147,18 +147,34 @@ def api_wiki_page_compat(owner, slug, page_path):
     if not wiki:
         return _unauthorized_json(request.path) if not user else _not_found_json(request.path, "Wiki not found")
 
-    norm_path = page_path_from_url_path(page_path)
+    # wikihub-vbug: use same lookup as wiki render — try raw + .md before
+    # falling back to underscore->space, so paths whose filename actually
+    # contains an underscore resolve correctly.
+    candidates = [page_path]
+    if not page_path.endswith(".md"):
+        candidates.append(page_path + ".md")
+    if "_" in page_path:
+        space = page_path_from_url_path(page_path)
+        candidates.append(space)
+        if not space.endswith(".md"):
+            candidates.append(space + ".md")
+    page = None
+    for cand in candidates:
+        page = Page.query.filter_by(wiki_id=wiki.id, path=cand).first()
+        if page:
+            break
+
     try:
         rules = load_acl_rules(owner_user.username, wiki.slug)
     except Exception:
         rules = []
     username = user.username if user else None
-    if not can_read(norm_path, rules, user=username):
+    acl_lookup_path = page.path if page else page_path_from_url_path(page_path)
+    if not can_read(acl_lookup_path, rules, user=username):
         if not user:
             return _unauthorized_json(request.path)
         return _not_found_json(request.path, "Page not found or not accessible")
 
-    page = Page.query.filter_by(wiki_id=wiki.id, path=norm_path).first()
     if not page:
         return _not_found_json(request.path, "Page not found")
     return jsonify({

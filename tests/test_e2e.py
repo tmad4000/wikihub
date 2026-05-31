@@ -4331,6 +4331,110 @@ def test_500_page_has_reference_and_retry(app, client):
         app.config["PROPAGATE_EXCEPTIONS"] = prev_propagate
 
 
+def test_visibility_toggle_for_underscore_filename(client, api_key):
+    """wikihub-vbug: clicking the visibility indicator on a page whose
+    filename contains an underscore (e.g. nvc_tutorial.md) must succeed.
+
+    Before the fix the URL→path normalization converted `_` to space
+    unconditionally, so /pages/.../nvc_tutorial/visibility looked up
+    `nvc tutorial.md` (which did not exist) and returned 404 "Page not
+    found", while the page was clearly visible in the sidebar.
+    """
+    h = {"Authorization": f"Bearer {api_key}"}
+
+    r = client.post("/api/v1/wikis", json={"slug": "vbug-wiki", "title": "VBug"}, headers=h)
+    assert r.status_code == 201, r.get_data(as_text=True)
+
+    # Page filename literally contains an underscore.
+    r = client.post("/api/v1/wikis/agent1/vbug-wiki/pages", json={
+        "path": "nvc/nvc_tutorial.md",
+        "content": "---\ntitle: NVC Tutorial\nvisibility: private\n---\n\n# NVC Tutorial\n",
+        "visibility": "private",
+    }, headers=h)
+    assert r.status_code == 201, r.get_data(as_text=True)
+
+    # Visibility toggle from the reader UI uses the clean URL path
+    # (no .md, underscore preserved). This MUST resolve.
+    r = client.post(
+        "/api/v1/wikis/agent1/vbug-wiki/pages/nvc/nvc_tutorial/visibility",
+        json={"visibility": "public"}, headers=h,
+    )
+    assert r.status_code == 200, (
+        f"visibility POST returned {r.status_code}: {r.get_data(as_text=True)}"
+    )
+    body = r.get_json()
+    assert body["visibility"] == "public"
+    assert body["path"] == "nvc/nvc_tutorial.md"
+
+    # Read back via the same clean URL — must succeed too.
+    r = client.get("/api/v1/wikis/agent1/vbug-wiki/pages/nvc/nvc_tutorial", headers=h)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert r.get_json()["visibility"] == "public"
+
+    # Toggle back to private — and confirm the visibility actually changed
+    # (i.e. our fix didn't silently fail).
+    r = client.post(
+        "/api/v1/wikis/agent1/vbug-wiki/pages/nvc/nvc_tutorial/visibility",
+        json={"visibility": "private"}, headers=h,
+    )
+    assert r.status_code == 200
+    assert r.get_json()["visibility"] == "private"
+
+
+def test_page_lookup_consistent_across_endpoints_for_underscore_path(client, api_key):
+    """wikihub-wkmg + wikihub-vbug: every endpoint that takes a <path:page_path>
+    must resolve the same DB row for the same URL path. The CLI's
+    `wikihub write` does a GET to decide POST-vs-PUT — if GET returns 404 for a
+    path that POST then 409's on, the page is permanently stuck.
+
+    Cover GET, PUT, PATCH, DELETE, visibility POST, /pages POST (409 case)
+    for a page whose filename contains an underscore.
+    """
+    h = {"Authorization": f"Bearer {api_key}"}
+
+    r = client.post("/api/v1/wikis", json={"slug": "wkmg-wiki", "title": "WKMG"}, headers=h)
+    assert r.status_code == 201
+
+    r = client.post("/api/v1/wikis/agent1/wkmg-wiki/pages", json={
+        "path": "nvc/nvc_tutorial.md",
+        "content": "---\ntitle: First\nvisibility: private\n---\n\n# First\n",
+        "visibility": "private",
+    }, headers=h)
+    assert r.status_code == 201
+
+    # Listing shows the page.
+    r = client.get("/api/v1/wikis/agent1/wkmg-wiki/pages", headers=h)
+    assert r.status_code == 200
+    paths = [p["path"] for p in r.get_json()["pages"]]
+    assert "nvc/nvc_tutorial.md" in paths
+
+    # The CLI hits this URL — must NOT 404.
+    base = "/api/v1/wikis/agent1/wkmg-wiki/pages/nvc/nvc_tutorial"
+
+    r = client.get(base, headers=h)
+    assert r.status_code == 200, f"GET clean-URL must resolve: {r.get_data(as_text=True)}"
+
+    # PUT (replace_page) — same URL must resolve.
+    r = client.put(base, json={"content": "# Updated via PUT\n"}, headers=h)
+    assert r.status_code == 200, f"PUT must resolve: {r.get_data(as_text=True)}"
+
+    # PATCH (patch_page).
+    r = client.patch(base, json={"content": "# Updated via PATCH\n"}, headers=h)
+    assert r.status_code == 200, f"PATCH must resolve: {r.get_data(as_text=True)}"
+
+    # Visibility toggle.
+    r = client.post(base + "/visibility", json={"visibility": "public"}, headers=h)
+    assert r.status_code == 200
+
+    # DELETE.
+    r = client.delete(base, headers=h)
+    assert r.status_code == 204, f"DELETE must resolve: {r.get_data(as_text=True)}"
+
+    # And after delete, GET must 404.
+    r = client.get(base, headers=h)
+    assert r.status_code == 404
+
+
 def run_all():
     app = setup()
 
@@ -4425,6 +4529,8 @@ def run_all():
             ("logged-out search returns only public (wikihub-7dml)", lambda: test_logged_out_search_returns_only_public(client)),
             ("owner renders deep nested page (proposals-grant regression)", lambda: test_owner_can_render_deep_nested_page_no_500(client, key)),
             ("500 page has reference + retry link", lambda: test_500_page_has_reference_and_retry(app, client)),
+            ("visibility toggle resolves underscore filename (wikihub-vbug)", lambda: test_visibility_toggle_for_underscore_filename(client, key)),
+            ("page lookup consistent across endpoints for underscore path (wikihub-wkmg+vbug)", lambda: test_page_lookup_consistent_across_endpoints_for_underscore_path(client, key)),
             ("CLI end-to-end", lambda: test_cli(client)),
         ]
 
