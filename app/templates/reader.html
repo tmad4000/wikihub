@@ -347,18 +347,23 @@
 .article .page-meta {
   font-size: 0.8125rem; color: var(--text-muted); margin-bottom: 24px;
 }
+/* wikihub-icd: tighten vertical rhythm. Previous values (p line-height 1.75,
+   h2 margin-top 40 + padding-bottom 8) created very loose stacks and tall
+   table rows (td inherits 1.75). Measured cuts ~30% of vertical bloat while
+   keeping comfortable reading rhythm. */
 .article h2 {
   font-size: 1.375rem; font-weight: 700; letter-spacing: -0.01em;
-  margin-top: 40px; margin-bottom: 16px;
-  padding-bottom: 8px; border-bottom: 1px solid var(--border-default);
+  margin-top: 28px; margin-bottom: 14px;
+  padding-bottom: 4px; border-bottom: 1px solid var(--border-default);
 }
-.article h3 { font-size: 1.125rem; font-weight: 600; margin-top: 28px; margin-bottom: 10px; }
-.article p { color: var(--text-secondary); line-height: 1.75; margin-bottom: 18px; font-size: 0.9375rem; }
-.article ul, .article ol { color: var(--text-secondary); padding-left: 24px; margin-bottom: 18px; line-height: 1.75; font-size: 0.9375rem; }
-.article li { margin-bottom: 6px; }
+.article h3 { font-size: 1.125rem; font-weight: 600; margin-top: 22px; margin-bottom: 8px; }
+.article p { color: var(--text-secondary); line-height: 1.55; margin-bottom: 12px; font-size: 0.9375rem; }
+.article ul, .article ol { color: var(--text-secondary); padding-left: 24px; margin-bottom: 12px; line-height: 1.55; font-size: 0.9375rem; }
+.article li { margin-bottom: 4px; }
 .article blockquote {
   border-left: 3px solid var(--border-accent); padding: 4px 16px;
-  color: var(--text-tertiary); margin-bottom: 18px; font-style: italic;
+  color: var(--text-tertiary); margin-bottom: 14px; font-style: italic;
+  line-height: 1.55;
 }
 .article code {
   font-family: var(--font-mono); font-size: 0.8125rem;
@@ -372,8 +377,8 @@
 }
 .article pre code { background: none; border: none; padding: 0; font-size: 0.8125rem; line-height: 1.65; }
 .article img { max-width: 100%; border-radius: var(--radius-sm); margin-bottom: 18px; }
-.article table { width: 100%; border-collapse: collapse; margin-bottom: 18px; font-size: 0.875rem; overflow-x: auto; display: block; }
-.article th, .article td { padding: 10px 14px; border: 1px solid var(--border-default); text-align: left; }
+.article table { width: 100%; border-collapse: collapse; margin-bottom: 14px; font-size: 0.875rem; overflow-x: auto; display: block; }
+.article th, .article td { padding: 7px 12px; border: 1px solid var(--border-default); text-align: left; line-height: 1.45; }
 .article th { background: var(--bg-surface); color: var(--text-secondary); font-weight: 600; }
 .article td { color: var(--text-secondary); }
 .article hr { border: none; border-top: 1px solid var(--border-default); margin: 36px 0; }

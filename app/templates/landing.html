@@ -164,11 +164,12 @@
     .nav-account-item:hover { background: var(--accent-subtle); color: var(--text-primary); text-decoration: none; }
     .nav-account-item.logout { color: var(--color-error-soft); }
     .nav-account-item .menu-hint { font-family: var(--font-mono); font-size: 0.6875rem; color: var(--text-muted); }
-    /* wikihub-31s3: search reachable at every viewport. On unauth landing,
-       we hide it (marketing page; the hero is the CTA). When authed, show at
-       all widths; collapse to icon-only on narrow viewports. */
+    /* wikihub-31s3 + wikihub-n6l7: search reachable at every viewport AND
+       for every visitor (auth + anon). Default to inline-flex so it shows on
+       the marketing landing page too; below 640px we collapse the label and
+       ⌘K kbd to icon-only (40x40 touch target). */
     .search-trigger {
-      display: none; -webkit-appearance: none; appearance: none;
+      display: inline-flex; -webkit-appearance: none; appearance: none;
       background: var(--search-trigger-bg) !important; border: 1px solid var(--control-border);
       border-radius: var(--radius-sm); color: var(--text-muted); cursor: pointer;
       font-size: 0.75rem; font-family: var(--font-body); min-height: 40px; min-width: 40px;
@@ -176,13 +177,10 @@
     }
     .search-trigger:hover { border-color: var(--border-emphasis); color: var(--text-secondary); }
     .search-trigger kbd { font-family: var(--font-mono); font-size: 0.625rem; background: var(--bg-elevated); padding: 1px 4px; border-radius: 3px; border: 1px solid var(--border-default); }
-    {% if current_user and current_user.is_authenticated %}
-    .search-trigger { display: inline-flex; }
     @media (max-width: 639px) {
       .search-trigger .search-label-text { display: none; }
       .search-trigger kbd { display: none; }
     }
-    {% endif %}
     @media (min-width: 640px) { .nav { padding: 0 24px; } }
 
     /* ── btn (used elsewhere on landing) ── */
