@@ -1,0 +1,13 @@
+{# Search modal markup — shared by base.html and landing.html.
+   Extracted in wikihub-zlgt so the close button + scope container live in one
+   place and can't drift between templates.
+   Style rules still live in each template's <style> block. #}
+<div class="search-overlay" id="search-overlay"></div>
+<div class="search-modal" id="search-modal"{% if current_user and current_user.is_authenticated %} data-username="{{ current_user.username }}"{% endif %}>
+  <div class="search-modal-header">
+    <input type="text" class="search-input" id="search-input" placeholder="Search wikihub..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+    <button type="button" class="search-close" id="search-close" aria-label="Close search">&times;</button>
+  </div>
+  <div class="search-scope" id="search-scope"></div>
+  <div id="search-results"></div>
+</div>

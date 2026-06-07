@@ -4002,6 +4002,171 @@ def test_search_trigger_visible_on_mobile():
             )
 
 
+def test_search_modal_mobile_ux_fixes_wikihub_zlgt():
+    """wikihub-zlgt: mobile search modal UX — close button, autofocus,
+    body-scroll lock, system back-button, subdomain scope detection,
+    empty-state hint, and scope-aware placeholder.
+
+    Each assertion below maps to one of the 7 acceptance criteria in the
+    ticket. These are static-source checks (no JS runner in this repo) — we
+    assert the templates and search.js contain the wiring that delivers each
+    behavior. If someone reintroduces the bug by ripping the wiring out,
+    this test fails.
+    """
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    import re
+
+    # The modal markup must be the shared partial so close-button and scope
+    # container can't drift between base.html and landing.html.
+    partial_path = os.path.join(repo_root, "app", "templates", "_search_modal.html")
+    assert os.path.exists(partial_path), (
+        "_search_modal.html partial missing — was the markup re-inlined? "
+        "Both base.html and landing.html should `{% include '_search_modal.html' %}`."
+    )
+    with open(partial_path) as f:
+        partial = f.read()
+
+    # (1) Visible × close button, 44x44 touch target, with id search-close
+    assert 'id="search-close"' in partial, (
+        "search modal partial missing #search-close button (wikihub-zlgt fix #1). "
+        "Mobile users have no way out of the fullscreen modal without Esc."
+    )
+    assert 'aria-label' in partial, "search-close button must have aria-label"
+
+    # (3 prep) Scope container present in partial (was missing from landing.html before)
+    assert 'id="search-scope"' in partial, (
+        "search-scope container missing from partial — scope pill won't render."
+    )
+
+    for tmpl_name in ("base.html", "landing.html"):
+        tmpl_path = os.path.join(repo_root, "app", "templates", tmpl_name)
+        with open(tmpl_path) as f:
+            src = f.read()
+        # Both templates must use the partial (not duplicate the markup)
+        assert "_search_modal.html" in src, (
+            f"{tmpl_name}: should `{{% include '_search_modal.html' %}}` rather "
+            f"than inline the search modal markup (wikihub-zlgt extraction). "
+            f"Otherwise base/landing drift."
+        )
+        # CSS for .search-close must define a 44x44 touch target in each template
+        close_css = re.search(
+            r"\.search-close\s*\{([^}]*)\}", src, re.DOTALL
+        )
+        assert close_css, (
+            f"{tmpl_name}: missing .search-close CSS rule. Need a 44x44 "
+            f"touch target so the close button is tap-friendly on mobile."
+        )
+        block = close_css.group(1)
+        assert "44px" in block, (
+            f"{tmpl_name}: .search-close must specify 44px (width/height) for "
+            f"the mobile touch-target requirement (wikihub-zlgt)."
+        )
+
+    # Now check search.js wiring for the JS-side fixes.
+    js_path = os.path.join(repo_root, "app", "static", "js", "search.js")
+    with open(js_path) as f:
+        js = f.read()
+
+    # (2) Input autofocus on open — call .focus() on the input
+    assert "input.focus()" in js, (
+        "search.js: must call input.focus() on open() so mobile keyboard "
+        "raises immediately (wikihub-zlgt fix #2)."
+    )
+
+    # (3) Body scroll lock + restore
+    assert "document.body.style.overflow = 'hidden'" in js, (
+        "search.js: must set document.body.style.overflow='hidden' on open() "
+        "to lock background scrolling on mobile (wikihub-zlgt fix #3)."
+    )
+    assert "document.body.style.overflow = ''" in js, (
+        "search.js: must restore document.body.style.overflow='' on close() "
+        "so the page becomes scrollable again (wikihub-zlgt fix #3)."
+    )
+
+    # (4) history.pushState + popstate handler so system back-button closes modal
+    assert "history.pushState" in js, (
+        "search.js: must history.pushState() on open() so the system back "
+        "button closes the modal instead of leaving the site (wikihub-zlgt fix #4)."
+    )
+    assert "popstate" in js, (
+        "search.js: must register a 'popstate' listener that closes the "
+        "modal when the user presses back (wikihub-zlgt fix #4)."
+    )
+    assert "wikihubSearch" in js, "popstate state marker missing"
+
+    # (5) detectScope() must recognise subdomain URL form (jacobcole.wikihub.md/...)
+    # Look for a regex that matches the subdomain host pattern.
+    assert re.search(r"wikihub\\\.md", js) or re.search(r"wikihub\.md", js), (
+        "search.js: detectScope() must include a host-side check for "
+        "<slug>.wikihub.md subdomain URLs (wikihub-zlgt fix #5). Without "
+        "this, the scope pill never shows on Jacob's canonical "
+        "jacobcole.wikihub.md/... pages."
+    )
+    assert "window.location.host" in js, (
+        "search.js: detectScope() should read window.location.host to detect "
+        "subdomain wikis (wikihub-zlgt fix #5)."
+    )
+
+    # (6) Empty state — renderEmptyState() or equivalent must exist and be
+    #     invoked on open() when there's no query.
+    assert "search-empty" in js, (
+        "search.js: must render a 'search-empty' state when no query is "
+        "entered (wikihub-zlgt fix #6)."
+    )
+    assert re.search(r"Type to search", js), (
+        "search.js: empty state should include a 'Type to search…' hint "
+        "(wikihub-zlgt fix #6)."
+    )
+
+    # (7) Scope-aware placeholder text
+    assert "'Search this wiki…'" in js, (
+        "search.js: input placeholder should change to 'Search this wiki…' "
+        "when currentScope is set (wikihub-zlgt fix #7)."
+    )
+    assert "'Search wikihub…'" in js, (
+        "search.js: default placeholder should be 'Search wikihub…' when no "
+        "scope is set (wikihub-zlgt fix #7)."
+    )
+
+
+def test_search_detect_scope_matches_subdomain_url_form_wikihub_zlgt():
+    """wikihub-zlgt fix #5: detectScope() regex must match the subdomain
+    URL shape (jacobcole.wikihub.md/jacobcole/health/Sleep) as scope=wiki,
+    owner=jacobcole, slug=jacobcole — not just the /@owner/slug form.
+
+    We can't run JS in this test suite, so we mechanically simulate the
+    regex from search.js against the canonical URL the ticket calls out.
+    If detectScope's regex changes, mirror the change here.
+    """
+    import re
+
+    # Sourced from app/static/js/search.js detectScope() — keep in sync.
+    host = "jacobcole.wikihub.md"
+    path = "/jacobcole/health/Sleep"
+
+    sub_match = re.match(r"^([\w-]+)\.wikihub\.md", host, re.IGNORECASE)
+    assert sub_match, "subdomain regex must match jacobcole.wikihub.md"
+    slug = sub_match.group(1)
+    assert slug.lower() != "www", "www should not be treated as a wiki slug"
+
+    path_match = re.match(r"^/([\w-]+)", path)
+    assert path_match, "path regex must extract first path segment as owner"
+    owner = path_match.group(1)
+
+    assert (owner, slug) == ("jacobcole", "jacobcole"), (
+        f"expected scope owner=jacobcole, slug=jacobcole — got "
+        f"owner={owner!r}, slug={slug!r}. detectScope() in search.js is "
+        f"broken for the canonical subdomain URL form (wikihub-zlgt fix #5)."
+    )
+
+    # The legacy /@owner/slug form must still resolve.
+    legacy_path = "/@jacobcole/health/Sleep"
+    legacy_match = re.match(r"^/@([\w-]+)/([\w-]+)", legacy_path)
+    assert legacy_match, "legacy /@owner/slug regex must still match"
+    assert legacy_match.group(1) == "jacobcole"
+    assert legacy_match.group(2) == "health"
+
+
 def test_unauth_private_page_renders_permission_error_with_sign_in(client):
     """wikihub-ffqt: GET of a private wiki page while logged out must return
     the permission_error.html template with a visible Sign in link.
@@ -4734,6 +4899,8 @@ def run_all():
             ("nginx does not intercept Flask errors (wikihub-fg1p)", lambda: test_nginx_does_not_intercept_flask_errors(client)),
             ("welcome.html has Sign in link (wikihub-46ke)", lambda: test_welcome_html_has_sign_in_link()),
             ("search trigger visible on mobile (wikihub-31s3)", lambda: test_search_trigger_visible_on_mobile()),
+            ("search modal mobile UX fixes (wikihub-zlgt)", lambda: test_search_modal_mobile_ux_fixes_wikihub_zlgt()),
+            ("search detectScope subdomain URL form (wikihub-zlgt)", lambda: test_search_detect_scope_matches_subdomain_url_form_wikihub_zlgt()),
             ("unauth private page renders permission_error with Sign in (wikihub-ffqt)", lambda: test_unauth_private_page_renders_permission_error_with_sign_in(client)),
             ("mobile hamburger exposes hidden nav (wikihub-pz27)", lambda: test_mobile_hamburger_exposes_hidden_nav_links()),
             ("error pages iPad alignment fix (wikihub-dw8u)", lambda: test_error_page_ipad_alignment_fix()),

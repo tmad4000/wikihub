@@ -5,19 +5,40 @@
   const input = document.getElementById('search-input');
   const results = document.getElementById('search-results');
   const scopeContainer = document.getElementById('search-scope');
+  const closeBtn = document.getElementById('search-close');
   if (!modal) return;
 
   let debounceTimer;
   let activeIndex = 0;
   let items = [];
   let searchId = 0; // track request freshness
+  let savedScrollY = 0; // restore body scroll position on close
+  let didPushState = false; // track whether we pushed history (wikihub-zlgt: mobile back-button)
 
   // --- scope detection ---
   let currentScope = null; // { type: 'wiki'|'author', owner, slug? }
   let originalScope = null; // remember initial scope for re-scoping
 
   function detectScope() {
+    const host = window.location.host;
     const path = window.location.pathname;
+
+    // subdomain wiki: <slug>.wikihub.md/<owner>/<page-path>
+    // (e.g. jacobcole.wikihub.md/jacobcole/health/Sleep — owner=jacobcole, slug=jacobcole)
+    // The leading host label is the WIKI SLUG; the first path segment is the OWNER.
+    // wikihub-zlgt: include this case so the scope pill shows on Jacob's canonical URLs.
+    const subMatch = host.match(/^([\w-]+)\.wikihub\.md/i);
+    if (subMatch) {
+      const slug = subMatch[1];
+      // Skip the bare wikihub.md / www case (no real subdomain wiki context)
+      if (slug.toLowerCase() !== 'www') {
+        const m = path.match(/^\/([\w-]+)/);
+        if (m) {
+          return { type: 'wiki', owner: m[1], slug: slug };
+        }
+      }
+    }
+
     // wiki page: /@owner/slug/...
     const wikiMatch = path.match(/^\/@([\w-]+)\/([\w-]+)/);
     if (wikiMatch) {
@@ -29,6 +50,10 @@
       return { type: 'author', owner: profileMatch[1] };
     }
     return null;
+  }
+
+  function scopedPlaceholder() {
+    return currentScope ? 'Search this wiki…' : 'Search wikihub…';
   }
 
   function renderScope() {
@@ -52,7 +77,7 @@
       });
       pill.appendChild(dismiss);
       scopeContainer.appendChild(pill);
-      input.placeholder = 'Search…';
+      input.placeholder = 'Search this wiki…';
     } else if (originalScope) {
       // show "All wikis" with option to re-scope
       scopeContainer.classList.add('active');
@@ -74,7 +99,7 @@
       input.placeholder = 'Search all wikis…';
     } else {
       scopeContainer.classList.remove('active');
-      input.placeholder = 'Search wikis…';
+      input.placeholder = 'Search wikihub…';
     }
   }
 
@@ -84,23 +109,64 @@
     doSearch();
   }
 
+  function renderEmptyState() {
+    results.textContent = '';
+    const hint = document.createElement('div');
+    hint.className = 'search-empty search-empty-hint';
+    if (currentScope && currentScope.type === 'wiki') {
+      hint.textContent = 'Type to search @' + currentScope.owner + '/' + currentScope.slug + '…';
+    } else if (currentScope && currentScope.type === 'author') {
+      hint.textContent = 'Type to search @' + currentScope.owner + '…';
+    } else {
+      hint.textContent = 'Type to search wikihub…';
+    }
+    results.appendChild(hint);
+  }
+
   function open() {
+    if (modal.classList.contains('open')) return;
     modal.classList.add('open');
     overlay.classList.add('open');
     input.value = '';
-    results.textContent = '';
     items = [];
     activeIndex = 0;
     // detect scope from current URL
     originalScope = detectScope();
     currentScope = originalScope ? { ...originalScope } : null;
     renderScope();
-    setTimeout(() => input.focus(), 50);
+    renderEmptyState();
+    // lock body scroll while modal is open (wikihub-zlgt mobile fix #3)
+    savedScrollY = window.scrollY || window.pageYOffset || 0;
+    document.body.style.overflow = 'hidden';
+    // push history state so system back-button closes modal (wikihub-zlgt fix #4)
+    try {
+      history.pushState({ wikihubSearch: true }, '', '');
+      didPushState = true;
+    } catch (_) {
+      didPushState = false;
+    }
+    // focus the input immediately so the mobile keyboard raises (wikihub-zlgt fix #2)
+    // Use rAF + setTimeout for iOS Safari which needs a tick after layout.
+    requestAnimationFrame(() => {
+      input.focus();
+      // Belt-and-suspenders for iOS — sometimes the first focus doesn't take.
+      setTimeout(() => { if (document.activeElement !== input) input.focus(); }, 50);
+    });
   }
 
-  function close() {
+  function close(opts) {
+    if (!modal.classList.contains('open')) return;
     modal.classList.remove('open');
     overlay.classList.remove('open');
+    // restore body scroll
+    document.body.style.overflow = '';
+    // unwind the history entry we pushed (skip if called from popstate — browser already did it)
+    if (didPushState && !(opts && opts.fromPopstate)) {
+      didPushState = false;
+      try { history.back(); } catch (_) {}
+    } else {
+      didPushState = false;
+    }
   }
 
   function setActive(index) {
@@ -152,7 +218,23 @@
     }
   });
 
-  overlay.addEventListener('click', close);
+  overlay.addEventListener('click', () => close());
+
+  // close button (wikihub-zlgt fix #1)
+  if (closeBtn) {
+    closeBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      close();
+    });
+  }
+
+  // popstate handler — system/browser back-button closes the modal (wikihub-zlgt fix #4)
+  window.addEventListener('popstate', (e) => {
+    if (modal.classList.contains('open')) {
+      // The history entry we pushed has already been popped by the browser.
+      close({ fromPopstate: true });
+    }
+  });
 
   // search on input
   input.addEventListener('input', () => {
@@ -163,9 +245,9 @@
   function doSearch() {
     const q = input.value.trim();
     if (!q) {
-      results.textContent = '';
       items = [];
       activeIndex = 0;
+      renderEmptyState();
       return;
     }
 

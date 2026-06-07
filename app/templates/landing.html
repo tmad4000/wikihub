@@ -1137,14 +1137,53 @@ document.querySelectorAll('[data-account-menu]').forEach(menu => {
 .search-modal.open { display: block; }
 @media (max-width: 767px) {
   .search-modal.open { top: 0; left: 0; right: 0; bottom: 0; transform: none; width: 100%; max-width: none; border-radius: 0; max-height: 100vh; }
+  .search-modal.open #search-results { max-height: calc(100vh - 120px); }
 }
-.search-input {
-  width: 100%; padding: 16px 20px; border: none; outline: none;
-  background: transparent; color: var(--text-primary);
-  font-size: 1.125rem; font-family: var(--font-body);
+.search-modal-header {
+  display: flex; align-items: stretch;
   border-bottom: 1px solid var(--border-default);
 }
+.search-input {
+  flex: 1 1 auto; min-width: 0;
+  padding: 16px 20px; border: none; outline: none;
+  background: transparent; color: var(--text-primary);
+  font-size: 1.125rem; font-family: var(--font-body);
+}
 .search-input::placeholder { color: var(--text-muted); }
+.search-close {
+  flex: 0 0 auto;
+  width: 44px; height: 44px; min-width: 44px;
+  align-self: center; margin-right: 6px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: none; cursor: pointer;
+  color: var(--text-muted); font-size: 1.5rem; line-height: 1;
+  border-radius: var(--radius-md);
+  padding: 0;
+}
+.search-close:hover { color: var(--text-primary); background: var(--bg-base); }
+.search-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.search-scope {
+  display: none; align-items: center; gap: 6px; padding: 4px 12px;
+  font-size: 0.75rem; color: var(--text-tertiary);
+  border-bottom: 1px solid var(--border-default);
+}
+.search-scope.active { display: flex; }
+.search-scope-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; border-radius: 99px;
+  border: 1px solid var(--accent); color: var(--accent);
+  font-family: var(--font-mono); font-size: 0.6875rem;
+}
+.search-scope-pill button {
+  background: none; border: none; color: var(--text-muted);
+  cursor: pointer; padding: 0; font-size: 0.75rem; line-height: 1;
+}
+.search-scope-pill button:hover { color: var(--text-primary); }
+.search-scope-global {
+  font-family: var(--font-mono); font-size: 0.6875rem;
+  color: var(--text-muted); cursor: pointer;
+}
+.search-scope-global:hover { color: var(--text-secondary); }
 #search-results { max-height: 400px; overflow-y: auto; }
 .search-result {
   display: block; padding: 12px 20px; text-decoration: none;
@@ -1159,11 +1198,7 @@ document.querySelectorAll('[data-account-menu]').forEach(menu => {
 .search-create { display: block; padding: 12px 20px; color: var(--accent); font-size: 0.875rem; text-decoration: none; font-weight: 500; }
 .search-create:hover { background: var(--accent-subtle); text-decoration: none; }
 </style>
-<div class="search-overlay" id="search-overlay"></div>
-<div class="search-modal" id="search-modal"{% if current_user and current_user.is_authenticated %} data-username="{{ current_user.username }}"{% endif %}>
-  <input type="text" class="search-input" id="search-input" placeholder="Search wikis..." autocomplete="off">
-  <div id="search-results"></div>
-</div>
+{% include '_search_modal.html' %}
 <script src="{{ url_for('static', filename='js/search.js') }}"></script>
 <script>
 // theme toggle: cycle Auto → Light → Dark, persist in localStorage
