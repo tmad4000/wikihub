@@ -145,6 +145,48 @@ def test_wiki_lifecycle(client, api_key):
     assert r.status_code == 201
 
 
+def test_gdoc_toc_anchors_rewritten(client, api_key):
+    """Google-Docs-imported pages carry a TOC linking to Google bookmark ids
+    (#h.xxxx) that never resolve, because headings render with slug ids. The
+    renderer must rewrite those TOC links to the real heading slugs by
+    recovering the title from the link text. (wikihub-vcrq)"""
+    h = {"Authorization": f"Bearer {api_key}"}
+
+    # TOC links use Google's #h.xxxx bookmark ids; link text is "Title<tab>page#".
+    # Two "Misc" sections exercise the duplicate-heading ordering.
+    content = (
+        "---\ntitle: TOC Doc\nvisibility: public\n"
+        "source_gdoc: https://docs.google.com/document/d/abc\n---\n\n"
+        "[Feeds        3](#h.v92l0g36bhyw)\n\n"
+        "[Misc        4](#h.95iqrijn7rba)\n\n"
+        "[Misc        7](#h.onq6k9elt3aq)\n\n"
+        "### Feeds\nfeeds content\n\n"
+        "### Misc\nfirst misc\n\n"
+        "### Other\nother\n\n"
+        "### Misc\nsecond misc\n"
+    )
+    r = client.post("/api/v1/wikis/agent1/test-wiki/pages", json={
+        "path": "wiki/tocdoc.md",
+        "content": content,
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201
+
+    r = client.get("/@agent1/test-wiki/wiki/tocdoc")
+    assert r.status_code == 200
+    html = r.get_data(as_text=True)
+
+    # no dead Google bookmark anchors remain
+    assert 'href="#h.' not in html, "unresolved #h. TOC anchor still present"
+    # TOC links now point at real heading slugs, duplicates ordered
+    assert 'href="#feeds"' in html
+    assert 'href="#misc"' in html
+    assert 'href="#misc-1"' in html
+    # and those slugs exist as heading ids
+    assert 'id="feeds"' in html
+    assert 'id="misc-1"' in html
+
+
 def test_page_etag_conflict(client, api_key):
     """stale If-Match writes are rejected with 409 instead of silently overwriting."""
     h = {"Authorization": f"Bearer {api_key}"}
@@ -4834,6 +4876,7 @@ def run_all():
 
         test_funcs = [
             ("wiki lifecycle", lambda: test_wiki_lifecycle(client, key)),
+            ("gdoc TOC anchors rewritten (wikihub-vcrq)", lambda: test_gdoc_toc_anchors_rewritten(client, key)),
             ("page ETag conflict", lambda: test_page_etag_conflict(client, key)),
             ("authenticated bulk write rate limits", lambda: test_authenticated_bulk_writes_rate_limit(client, key, app)),
             ("binary file serving", lambda: test_binary_file_serving(client, key)),

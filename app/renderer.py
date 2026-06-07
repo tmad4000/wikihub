@@ -43,6 +43,62 @@ def extract_toc(html):
     return toc
 
 
+# Google Docs TOC anchors look like #h.v92l0g36bhyw (internal bookmark ids).
+_GDOC_TOC_ANCHOR_RE = re.compile(r'<a href="#(h\.[a-z0-9]+)">(.*?)</a>', re.IGNORECASE | re.DOTALL)
+_HEADING_ID_RE = re.compile(r'<h[1-6]\s+id="([^"]+)"', re.IGNORECASE)
+# TOC entries end with a tab/spaces + a page number, e.g. "Feeds        3".
+_TRAILING_PAGENUM_RE = re.compile(r'[\s ]+\d+\s*$')
+
+
+def _rewrite_gdoc_toc_anchors(html):
+    """Rewrite Google-Docs-style table-of-contents anchor links to real slugs.
+
+    Pages imported from Google Docs (frontmatter ``source_gdoc``) carry an
+    auto-generated TOC whose links point to Google's internal bookmark ids
+    (e.g. ``#h.v92l0g36bhyw``). Our renderer emits heading ids by slugifying
+    the heading text (``#feeds``), so those bookmark anchors never resolve and
+    every TOC link is dead.
+
+    Each TOC link's visible text is the heading title followed by a page number
+    (``Feeds        3``). We strip the trailing page number, slugify the text,
+    and rewrite the href to the matching heading slug. Duplicate headings
+    ("Misc" -> ``misc``, ``misc-1``) are consumed in document order, which is
+    the order the TOC lists them. Links with no matching heading are left
+    untouched. No-op when there are no such anchors.
+    """
+    if 'href="#h.' not in html:
+        return html
+
+    heading_ids = _HEADING_ID_RE.findall(html)
+    if not heading_ids:
+        return html
+
+    # base slug -> ordered queue of concrete ids (handles duplicate headings)
+    from collections import defaultdict, deque
+    buckets = defaultdict(deque)
+    for hid in heading_ids:
+        base = re.sub(r'-\d+$', '', hid)
+        buckets[base].append(hid)
+    valid_ids = set(heading_ids)
+
+    def repl(match):
+        text = match.group(2)
+        plain = re.sub(r'<[^>]+>', '', text)
+        plain = _TRAILING_PAGENUM_RE.sub('', plain).strip()
+        candidate = _heading_slug(plain)
+        target = None
+        queue = buckets.get(candidate)
+        if queue:
+            target = queue.popleft()
+        elif candidate in valid_ids:
+            target = candidate
+        if not target:
+            return match.group(0)  # leave broken anchor untouched; don't fabricate
+        return f'<a href="#{target}">{text}</a>'
+
+    return _GDOC_TOC_ANCHOR_RE.sub(repl, html)
+
+
 def _wikilink_plugin(md):
     """custom plugin for [[wikilink]] syntax.
     renders resolved links as amber-colored internal links,
@@ -349,6 +405,9 @@ def render_markdown(content, resolve_wikilinks=None):
     content = _preprocess_latex_math(content)
     md = get_renderer()
     html = md.render(content)
+
+    # rewrite Google-Docs TOC anchors (#h.xxxx) to real heading slugs
+    html = _rewrite_gdoc_toc_anchors(html)
 
     # post-process wikilinks if resolver provided
     if resolve_wikilinks:
