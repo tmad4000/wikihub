@@ -187,6 +187,29 @@ def test_gdoc_toc_anchors_rewritten(client, api_key):
     assert 'id="misc-1"' in html
 
 
+def test_wysiwyg_editor_surface(client, api_key):
+    """The editor serves the Milkdown WYSIWYG surface alongside the markdown
+    textarea: bundle script, mount div, and the WYSIWYG tab. (wikihub-s2cj)
+
+    Uses a public-edit page so the edit route is reachable anonymously (core
+    product principle 2) — avoids the session-auth dance."""
+    h = {"Authorization": f"Bearer {api_key}"}
+    r = client.post("/api/v1/wikis/agent1/test-wiki/pages", json={
+        "path": "wiki/wyz.md",
+        "content": "---\ntitle: Wyz\nvisibility: public-edit\n---\n\n# Wyz\n\nHello **world**.",
+        "visibility": "public-edit",
+    }, headers=h)
+    assert r.status_code == 201
+
+    r = client.get("/@agent1/test-wiki/wiki/wyz/edit")
+    assert r.status_code == 200, f"editor GET failed: {r.status_code} {r.get_data(as_text=True)[:200]}"
+    html = r.get_data(as_text=True)
+    assert "milkdown-bundle.js" in html, "Milkdown bundle not referenced in editor"
+    assert 'id="milkdown-editor"' in html, "Milkdown mount div missing"
+    assert ">WYSIWYG<" in html, "WYSIWYG tab missing"
+    assert 'id="editor-textarea"' in html, "canonical markdown textarea missing"
+
+
 def test_page_etag_conflict(client, api_key):
     """stale If-Match writes are rejected with 409 instead of silently overwriting."""
     h = {"Authorization": f"Bearer {api_key}"}
@@ -4877,6 +4900,7 @@ def run_all():
         test_funcs = [
             ("wiki lifecycle", lambda: test_wiki_lifecycle(client, key)),
             ("gdoc TOC anchors rewritten (wikihub-vcrq)", lambda: test_gdoc_toc_anchors_rewritten(client, key)),
+            ("WYSIWYG editor surface (wikihub-s2cj)", lambda: test_wysiwyg_editor_surface(client, key)),
             ("page ETag conflict", lambda: test_page_etag_conflict(client, key)),
             ("authenticated bulk write rate limits", lambda: test_authenticated_bulk_writes_rate_limit(client, key, app)),
             ("binary file serving", lambda: test_binary_file_serving(client, key)),

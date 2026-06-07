@@ -132,6 +132,52 @@
 .status-pill {
   display: inline-flex; align-items: center; gap: 6px; min-height: 20px;
 }
+
+/* Milkdown WYSIWYG surface — themed to match wikihub obsidian+amber */
+#milkdown-editor {
+  flex: 1; overflow-y: auto; background: var(--control-bg);
+  padding: 20px 16px; display: none;
+}
+@media (min-width: 640px) { #milkdown-editor { padding: 20px 24px; } }
+#milkdown-editor .milkdown { max-width: 760px; margin: 0 auto; }
+#milkdown-editor .ProseMirror {
+  outline: none; color: var(--text-primary); font-family: var(--font-body);
+  font-size: 1rem; line-height: 1.7; min-height: 100%;
+}
+#milkdown-editor .ProseMirror:focus { outline: none; }
+#milkdown-editor .ProseMirror p { margin: 0 0 1em; }
+#milkdown-editor .ProseMirror h1,
+#milkdown-editor .ProseMirror h2,
+#milkdown-editor .ProseMirror h3,
+#milkdown-editor .ProseMirror h4 {
+  color: var(--text-primary); font-weight: 650; margin: 1.4em 0 0.5em; line-height: 1.25;
+}
+#milkdown-editor .ProseMirror h1 { font-size: 1.9em; border-bottom: 1px solid var(--border-default); padding-bottom: 0.25em; }
+#milkdown-editor .ProseMirror h2 { font-size: 1.5em; border-bottom: 1px solid var(--border-default); padding-bottom: 0.2em; }
+#milkdown-editor .ProseMirror h3 { font-size: 1.25em; }
+#milkdown-editor .ProseMirror a { color: var(--accent); }
+#milkdown-editor .ProseMirror code {
+  background: var(--bg-surface); border: 1px solid var(--border-default);
+  border-radius: 4px; padding: 0.1em 0.35em; font-family: var(--font-mono); font-size: 0.9em;
+}
+#milkdown-editor .ProseMirror pre {
+  background: var(--bg-surface); border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm); padding: 12px 14px; overflow-x: auto;
+}
+#milkdown-editor .ProseMirror pre code { background: none; border: none; padding: 0; }
+#milkdown-editor .ProseMirror blockquote {
+  border-left: 3px solid var(--border-emphasis); margin: 0 0 1em; padding-left: 1em; color: var(--text-secondary);
+}
+#milkdown-editor .ProseMirror ul, #milkdown-editor .ProseMirror ol { padding-left: 1.5em; margin: 0 0 1em; }
+#milkdown-editor .ProseMirror hr { border: none; border-top: 1px solid var(--border-default); margin: 1.5em 0; }
+#milkdown-editor .ProseMirror img { max-width: 100%; }
+.wysiwyg-hint {
+  display: none; padding: 6px 16px; font-size: 0.6875rem; color: var(--text-muted);
+  background: var(--bg-surface); border-bottom: 1px solid var(--border-default);
+  font-family: var(--font-mono);
+}
+@media (min-width: 640px) { .wysiwyg-hint { padding: 6px 24px; } }
+.wysiwyg-hint.open { display: block; }
 {% endblock %}
 
 {% block body %}
@@ -181,12 +227,15 @@
   </div>
 
   <div class="editor-tabs">
-    <button type="button" class="editor-tab active" onclick="showTab('edit')">Edit</button>
+    <button type="button" class="editor-tab active" onclick="showTab('edit')">Markdown</button>
+    <button type="button" class="editor-tab" onclick="showTab('wysiwyg')">WYSIWYG</button>
     <button type="button" class="editor-tab" onclick="showTab('preview')">Preview</button>
   </div>
+  <div class="wysiwyg-hint" id="wysiwyg-hint">WYSIWYG (CommonMark). Wikilinks, math, and embeds are best edited in the Markdown tab — switching may rewrite their syntax.</div>
 
   <div class="editor-wrap">
     <textarea name="content" class="editor-textarea" id="editor-textarea" autofocus>{{ content or '' }}</textarea>
+    <div id="milkdown-editor"></div>
     <div class="preview-wrap" id="preview-wrap">
       <article class="article" id="preview-article"></article>
     </div>
@@ -246,17 +295,34 @@ const editorState = {
 function showTab(tab) {
   const tabs = document.querySelectorAll('.editor-tab');
   tabs.forEach(t => t.classList.remove('active'));
-  event.target.classList.add('active');
+  if (typeof event !== 'undefined' && event && event.target) event.target.classList.add('active');
 
   const textarea = document.getElementById('editor-textarea');
+  const milk = document.getElementById('milkdown-editor');
+  const hint = document.getElementById('wysiwyg-hint');
   const preview = document.getElementById('preview-wrap');
   const previewEl = document.getElementById('preview-article');
 
+  // hide all surfaces, then reveal the selected one
+  textarea.style.display = 'none';
+  milk.style.display = 'none';
+  preview.style.display = 'none';
+  hint.classList.remove('open');
+  closeWikilinkMenu();
+
   if (tab === 'edit') {
     textarea.style.display = '';
-    preview.style.display = 'none';
-  } else {
-    textarea.style.display = 'none';
+  } else if (tab === 'wysiwyg') {
+    milk.style.display = 'block';
+    hint.classList.add('open');
+    // window.wysiwygEnter is provided by the milkdown module script
+    if (window.wysiwygEnter) {
+      window.wysiwygEnter().catch(() => { showEditFallback(); });
+    } else {
+      // module not ready (or failed to load) — fall back to raw markdown
+      showEditFallback();
+    }
+  } else { // preview
     preview.style.display = 'block';
     previewEl.textContent = 'Rendering…';
     fetch('/@{{ owner.username }}/{{ wiki.slug }}/preview', {
@@ -268,6 +334,15 @@ function showTab(tab) {
     .then(d => { previewEl.innerHTML = d.html; })
     .catch(() => { previewEl.textContent = 'Preview failed'; });
   }
+}
+
+function showEditFallback() {
+  document.getElementById('milkdown-editor').style.display = 'none';
+  document.getElementById('wysiwyg-hint').classList.remove('open');
+  document.getElementById('preview-wrap').style.display = 'none';
+  document.getElementById('editor-textarea').style.display = '';
+  const tabs = document.querySelectorAll('.editor-tab');
+  tabs.forEach(t => t.classList.toggle('active', t.textContent.trim() === 'Markdown'));
 }
 
 function setVisibility(v) {
@@ -694,5 +769,52 @@ document.getElementById('editor-form').addEventListener('submit', function(event
 });
 
 setInterval(pollForRemoteChanges, 15000);
+</script>
+
+<!-- Milkdown WYSIWYG (pre-bundled, no build step). Loaded as a module; the classic
+     script above stays the source of truth via the hidden #editor-textarea. -->
+<script type="module">
+import { createMilkdownEditor } from '{{ url_for("static", filename="js/milkdown-bundle.js") }}';
+
+const textarea = document.getElementById('editor-textarea');
+const container = document.getElementById('milkdown-editor');
+
+let editor = null;
+let storedFm = '';          // YAML frontmatter held aside while editing the body in WYSIWYG
+let syncEnabled = false;    // only true after a real edit in the WYSIWYG surface
+
+function splitFrontmatter(text) {
+  // commonmark would mangle a leading ---fm--- block, so keep it out of Milkdown
+  const m = (text || '').match(/^(---\r?\n[\s\S]*?\r?\n---\r?\n?)([\s\S]*)$/);
+  if (m) return { fm: m[1], body: m[2] };
+  return { fm: '', body: text || '' };
+}
+
+function syncToTextarea(markdown) {
+  if (!syncEnabled) return;  // ignore the load-time fire + view-only switches
+  textarea.value = storedFm + markdown;
+  // reuse the existing input handler (line count, dirty state, save status)
+  textarea.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+window.wysiwygEnter = async function () {
+  const { fm, body } = splitFrontmatter(textarea.value);
+  storedFm = fm;
+  syncEnabled = false;
+  // recreate each time so the surface always reflects the latest textarea content
+  if (editor) {
+    try { await editor.destroy(); } catch (_e) {}
+    editor = null;
+    container.innerHTML = '';
+  }
+  editor = await createMilkdownEditor(container, body, syncToTextarea);
+  // start syncing only once the user actually edits here — viewing or commonmark
+  // re-serialization on load must never clobber the canonical markdown
+  const enable = () => { syncEnabled = true; };
+  container.addEventListener('keydown', enable, { once: true });
+  container.addEventListener('paste', enable, { once: true });
+  container.addEventListener('drop', enable, { once: true });
+  return true;
+};
 </script>
 {% endblock %}
