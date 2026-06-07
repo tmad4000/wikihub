@@ -1121,7 +1121,10 @@ document.querySelectorAll('[data-account-menu]').forEach(menu => {
   });
 });
 </script>
-{% if current_user and current_user.is_authenticated %}
+{# wikihub-n6l7 + (mobile bug 2026-05-19): search overlay/modal+script must be
+   present for anonymous visitors too, since the search trigger is shown to
+   everyone now. data-username falls back to empty string for anon, which
+   search.js falsy-checks before offering the "+ Create" affordance. #}
 <style>
 .search-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 200; }
 .search-overlay.open { display: block; }
@@ -1157,12 +1160,11 @@ document.querySelectorAll('[data-account-menu]').forEach(menu => {
 .search-create:hover { background: var(--accent-subtle); text-decoration: none; }
 </style>
 <div class="search-overlay" id="search-overlay"></div>
-<div class="search-modal" id="search-modal" data-username="{{ current_user.username }}">
+<div class="search-modal" id="search-modal"{% if current_user and current_user.is_authenticated %} data-username="{{ current_user.username }}"{% endif %}>
   <input type="text" class="search-input" id="search-input" placeholder="Search wikis..." autocomplete="off">
   <div id="search-results"></div>
 </div>
 <script src="{{ url_for('static', filename='js/search.js') }}"></script>
-{% endif %}
 <script>
 // theme toggle: cycle Auto → Light → Dark, persist in localStorage
 (function(){

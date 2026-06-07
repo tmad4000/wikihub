@@ -3962,9 +3962,6 @@ def test_search_trigger_visible_on_mobile():
         )
         # landing.html must not gate the trigger visibility behind an auth check.
         if tmpl == "landing.html":
-            assert "current_user.is_authenticated" not in re.search(
-                r"\.search-trigger\s*\{[^}]*\}(?:\s*[^{]*\{[^}]*\})*", src
-            ).group(0) if False else True
             # Stronger check: no inline-flex override gated on current_user
             assert not re.search(
                 r"\{%\s*if current_user[^%]*%\}\s*\.search-trigger\s*\{\s*display:\s*inline-flex",
@@ -3973,6 +3970,35 @@ def test_search_trigger_visible_on_mobile():
                 "landing.html: .search-trigger is gated behind an auth check. "
                 "Remove the {% if current_user.is_authenticated %} wrap so "
                 "anonymous visitors see the search button too (wikihub-n6l7)."
+            )
+            # ALSO: the search modal + overlay + search.js script must NOT be
+            # behind an auth gate — otherwise the visible button is wired to a
+            # non-existent global and clicks silently no-op (mobile bug
+            # 2026-05-19). The previous structure was:
+            #   {% if current_user.is_authenticated %}
+            #     <style>.search-modal{...}</style>
+            #     <div id="search-modal">...</div>
+            #     <script src=".../search.js"></script>
+            #   {% endif %}
+            # which left anon visitors with a click-no-op trigger.
+            assert not re.search(
+                r"\{%\s*if current_user[^%]*%\}[\s\S]{0,200}id=[\"']search-modal[\"']",
+                src,
+            ), (
+                "landing.html: the #search-modal markup is wrapped in an auth "
+                "{% if %} gate. Anonymous visitors will see the search button "
+                "(visible at all viewports) but clicks will silently no-op "
+                "because window.wikihubSearch is never initialised. Remove "
+                "the auth wrap around the modal+script (data-username on the "
+                "modal element can stay conditional inline)."
+            )
+            assert not re.search(
+                r"\{%\s*if current_user[^%]*%\}[\s\S]{0,1000}static/js/search\.js",
+                src,
+            ), (
+                "landing.html: search.js include is behind an auth gate. "
+                "Remove the {% if %} wrap — search.js must load for everyone "
+                "so window.wikihubSearch is defined for the visible button."
             )
 
 
