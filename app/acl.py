@@ -68,6 +68,35 @@ def validate_acl(text):
     return errors
 
 
+def parse_serve_inline(text):
+    """parse a .wikihub/serve-inline file into a list of glob patterns.
+
+    This is the OWNER OPT-IN for serving stored .html (and other otherwise-
+    download-only files) INLINE with their natural Content-Type, instead of as
+    a forced `attachment` download. One glob pattern per line; '#' comments and
+    blank lines ignored. Same fnmatch globbing as .wikihub/acl.
+
+    Security: serving attacker-controlled HTML from the wiki origin is a
+    stored-XSS risk. .wikihub/ files are plumbing only the wiki owner can write
+    (via git push or authenticated API; they are skipped during page indexing),
+    so listing a path here is an explicit, owner-authored opt-in. Inline serving
+    is additionally hardened in the route with a CSP sandbox + nosniff.
+    """
+    patterns = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        # only the first whitespace-delimited token is the pattern
+        patterns.append(line.split()[0])
+    return patterns
+
+
+def matches_serve_inline(path, patterns):
+    """True if `path` matches any opt-in glob in a parsed serve-inline list."""
+    return any(fnmatch.fnmatch(path, pattern) for pattern in patterns)
+
+
 def _pattern_specificity(pattern):
     """score a glob pattern by specificity. more specific = higher score.
     exact paths > deep globs > shallow globs > wildcards."""

@@ -5,7 +5,7 @@ import shutil
 from datetime import date, datetime
 
 from app import db
-from app.acl import parse_acl, resolve_visibility
+from app.acl import parse_acl, parse_serve_inline, resolve_visibility
 from app.content_utils import extract_wikilinks, parse_markdown_document
 from app.git_backend import _repo_path, init_wiki_repo
 from app.git_sync import list_files_in_repo, read_file_from_repo, regenerate_public_mirror, scaffold_wiki, sync_page_to_repo
@@ -26,6 +26,15 @@ def _sanitize_for_json(obj):
 def load_acl_rules(username, slug):
     acl_content = read_file_from_repo(username, slug, ".wikihub/acl")
     return parse_acl(acl_content) if acl_content else []
+
+
+def load_serve_inline_patterns(username, slug, public=False):
+    """load the owner opt-in list (.wikihub/serve-inline) of glob patterns whose
+    matching files should be served INLINE with their natural Content-Type
+    instead of as a forced download. See app.acl.parse_serve_inline. Returns []
+    when the file is absent (the safe default — everything non-md downloads)."""
+    content = read_file_from_repo(username, slug, ".wikihub/serve-inline", public=public)
+    return parse_serve_inline(content) if content else []
 
 
 def _plain_excerpt(text, length=200):

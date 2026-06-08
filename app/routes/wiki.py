@@ -10,7 +10,7 @@ from app.url_utils import page_path_from_url_path, url_path_from_page_path
 from flask_login import current_user
 
 from app import db
-from app.acl import can_read, can_write, grants_for_user, resolve_grants, resolve_visibility
+from app.acl import can_read, can_write, grants_for_user, matches_serve_inline, resolve_grants, resolve_visibility
 from app.backlinks import get_backlinks_for_page
 from app.content_utils import has_private_bands, parse_markdown_document, set_visibility_in_content
 from app.discovery import discoverable_page_for_wiki, visible_wikis_for_owner
@@ -31,7 +31,7 @@ from app.models import (
 )
 from app.renderer import extract_toc, render_page
 from app.routes import wiki_bp
-from app.wiki_ops import index_repo_pages, load_acl_rules, refresh_wikilinks_for_page, sync_wiki_counters, update_page_metadata
+from app.wiki_ops import index_repo_pages, load_acl_rules, load_serve_inline_patterns, refresh_wikilinks_for_page, sync_wiki_counters, update_page_metadata
 
 
 def _recently_updated_pages(wiki, limit=8, public_only=False):
@@ -1398,6 +1398,18 @@ def wiki_page(username, slug, page_path):
         # archives — browsers download these naturally via correct mime
         ".zip", ".tar", ".gz",
     }
+    # Active-content (HTML) extensions: a *top-level navigation* to one of these
+    # executes script in the wiki origin, so they are only served inline when the
+    # OWNER explicitly opts the path in via .wikihub/serve-inline (see wikihub-6ag).
+    # Default stays attachment to prevent stored-XSS against other wikihub users'
+    # session cookies.
+    #
+    # NOTE: .svg is deliberately NOT here. SVG is in _INLINE_EXTS and served as
+    # image/svg+xml so markdown image embeds (![[diagram.svg]] -> <img src>) keep
+    # working; an <img>-loaded SVG cannot run scripts. (Gating SVG by default would
+    # regress embedded diagrams.) Owners who store script-bearing SVGs as standalone
+    # documents accept the same direct-navigation behavior SVG has always had.
+    _ACTIVE_EXTS = {".html", ".htm", ".xhtml"}
     ext = os.path.splitext(page_path)[1].lower()
     if ext and ext not in _MARKDOWN_EXTS and not request.path.endswith("/"):
         import mimetypes
@@ -1420,15 +1432,43 @@ def wiki_page(username, slug, page_path):
             pass
         else:
             headers = {"Cache-Control": "public, max-age=3600"}
+            # Owner opt-in: serve an active-content file (HTML/SVG/etc.) inline as
+            # its real type, but ONLY if the path is allowlisted in
+            # .wikihub/serve-inline. Hardened with a CSP sandbox + nosniff so the
+            # rendered document is isolated (no same-origin DOM/cookie access).
+            serve_inline_patterns = load_serve_inline_patterns(
+                owner.username, wiki.slug, public=use_public
+            )
+            opted_in = matches_serve_inline(page_path, serve_inline_patterns)
+            if ext in _ACTIVE_EXTS:
+                if opted_in:
+                    content_type = mimetypes.guess_type(page_path)[0] or "text/html"
+                    headers["Content-Disposition"] = f'inline; filename="{os.path.basename(page_path)}"'
+                    # Hardening: sandbox the document (scripts may run but in a
+                    # null origin — no access to wikihub cookies / same-origin DOM),
+                    # and forbid MIME sniffing.
+                    headers["Content-Security-Policy"] = "sandbox allow-scripts allow-popups allow-forms"
+                    headers["X-Content-Type-Options"] = "nosniff"
+                    return Response(data, content_type=content_type, headers=headers)
+                # Not opted in: force download. (Default safe behavior.)
+                content_type = "application/octet-stream"
+                headers["Content-Disposition"] = f'attachment; filename="{os.path.basename(page_path)}"'
+                headers["X-Content-Type-Options"] = "nosniff"
+                return Response(data, content_type=content_type, headers=headers)
             if ext in _INLINE_EXTS:
+                # Known-safe passive types: serve with their natural Content-Type so
+                # browsers render/preview them (images, PDF, text, audio/video, ...).
                 content_type = mimetypes.guess_type(page_path)[0] or "application/octet-stream"
+                # nosniff stops a passive type from being reinterpreted as HTML.
+                headers["X-Content-Type-Options"] = "nosniff"
                 if content_type == "application/pdf":
                     headers["Content-Disposition"] = f'inline; filename="{os.path.basename(page_path)}"'
             else:
-                # Unknown extension: force octet-stream + attachment.
-                # Prevents XSS via uploaded .html, .swf, etc. while still letting users download anything.
+                # Unknown / unrecognized extension: force octet-stream + attachment.
+                # Still downloadable, but never executed in the wiki origin.
                 content_type = "application/octet-stream"
                 headers["Content-Disposition"] = f'attachment; filename="{os.path.basename(page_path)}"'
+                headers["X-Content-Type-Options"] = "nosniff"
             return Response(data, content_type=content_type, headers=headers)
 
     if request.path.endswith("/"):

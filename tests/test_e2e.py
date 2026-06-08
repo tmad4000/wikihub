@@ -428,6 +428,35 @@ def test_binary_file_serving(client, api_key):
     assert "application/octet-stream" in r.content_type, "XSS guard: .html must not be served inline"
     assert "attachment" in r.headers.get("Content-Disposition", "")
 
+    # wikihub-6ag: owner opt-in via .wikihub/serve-inline serves matching .html
+    # INLINE as text/html, hardened with a CSP sandbox + nosniff. Files not listed
+    # keep the safe attachment default above.
+    r = client.post("/api/v1/wikis/agent1/media-wiki/pages", json={
+        "path": "wiki/deck.html",
+        "content": "<!doctype html><h1>interactive deck</h1>",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201
+    # Before opt-in: deck.html still downloads (default safe behavior).
+    r = client.get("/@agent1/media-wiki/wiki/deck.html")
+    assert "application/octet-stream" in r.content_type
+    assert "attachment" in r.headers.get("Content-Disposition", "")
+    # Owner writes the opt-in allowlist (a .wikihub/ plumbing file) and republishes.
+    sync_page_to_repo("agent1", "media-wiki", ".wikihub/serve-inline", "wiki/deck.html\n")
+    regenerate_public_mirror("agent1", "media-wiki", load_acl_rules("agent1", "media-wiki"))
+    r = client.get("/@agent1/media-wiki/wiki/deck.html")
+    assert r.status_code == 200
+    assert r.content_type.startswith("text/html"), f"opted-in .html should be text/html, got {r.content_type}"
+    assert "inline" in r.headers.get("Content-Disposition", "")
+    csp = r.headers.get("Content-Security-Policy", "")
+    assert "sandbox" in csp and "allow-scripts" in csp, f"opted-in .html must be CSP-sandboxed, got {csp!r}"
+    assert r.headers.get("X-Content-Type-Options") == "nosniff"
+    assert b"interactive deck" in r.data
+    # The NON-opted .html (evil.html) is unaffected by the allowlist — still downloads.
+    r = client.get("/@agent1/media-wiki/wiki/evil.html")
+    assert "application/octet-stream" in r.content_type
+    assert "attachment" in r.headers.get("Content-Disposition", "")
+
     # wikihub-0idv: non-md Page row with visibility=public must grant anon access
     # even when the file-path ACL is private. (Page visibility wins over ACL, matching
     # the markdown handler's behavior.)

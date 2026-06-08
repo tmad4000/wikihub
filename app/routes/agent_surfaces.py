@@ -481,6 +481,30 @@ Auth order: `--api-key` flag → `WIKIHUB_*` env vars → `~/.wikihub/credential
 `Accept: text/markdown` on any page URL returns raw markdown.
 Or append `.md` to the URL.
 
+## hosting non-markdown files
+
+You can store any file (images, PDFs, CSV, HTML, etc.) in a wiki and it is
+served at its URL. Known-safe types (images, PDF, text, audio/video) render
+inline with their natural Content-Type. Everything else downloads.
+
+`.html` files are a special case: by default they **download** (served as
+`application/octet-stream` + `Content-Disposition: attachment`) to prevent
+stored-XSS against other users' sessions. To serve an HTML page/slideshow
+**inline** (as `text/html`), the wiki owner opts the path in by listing it in
+a `.wikihub/serve-inline` file in the repo — one glob pattern per line, same
+globbing as `.wikihub/acl`:
+
+```
+# .wikihub/serve-inline — owner opt-in to render HTML inline
+decks/*.html
+demos/slideshow.html
+```
+
+Opted-in HTML is served as `text/html` but hardened with a
+`Content-Security-Policy: sandbox allow-scripts allow-popups allow-forms`
+(rendered in a null origin — no access to wikihub cookies or same-origin DOM)
+and `X-Content-Type-Options: nosniff`.
+
 ## discovery
 
 - `/llms.txt` — site-wide index
