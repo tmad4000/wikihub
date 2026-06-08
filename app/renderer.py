@@ -555,6 +555,29 @@ _NEW_TAB_LINK_EXTS = {
 }
 
 
+def build_html_embed_figure(raw_url, name, height=480):
+    """Build the sandboxed <figure class="html-embed"> markup for an HTML deck.
+
+    Shared by the ![[file.html]] inline embed (_resolve_html_embeds) and the
+    sidebar-click embedded viewer (wiki_page ?view branch). The iframe src and
+    the '↗ open' pop-out both point at `raw_url` (the raw .html page URL).
+    Sandbox is allow-scripts allow-popups allow-popups-to-escape-sandbox with
+    NO allow-same-origin, so embedded decks can run JS / open links but cannot
+    touch the parent origin.
+    """
+    raw_url_attr = _escape(raw_url)
+    name_html = _escape(name)
+    return (
+        f'<figure class="html-embed">'
+        f'<div class="html-embed-bar"><span class="html-embed-name">{name_html}</span>'
+        f'<a class="html-embed-open" href="{raw_url_attr}" target="_blank" rel="noopener noreferrer">&#8599; open</a></div>'
+        f'<iframe src="{raw_url_attr}" class="html-embed-frame" loading="lazy" '
+        f'sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox" '
+        f'style="width:100%;height:{height}px;border:0"></iframe>'
+        f'</figure>'
+    )
+
+
 def _resolve_html_embeds(html, wiki_owner, wiki_slug, current_page_path):
     """Replace ![[file.html]] embed placeholders with a sandboxed iframe.
 
@@ -605,15 +628,7 @@ def _resolve_html_embeds(html, wiki_owner, wiki_slug, current_page_path):
                 f'<span class="file-icon">&#128196;</span> {name_html}</a>'
             )
 
-        return (
-            f'<figure class="html-embed">'
-            f'<div class="html-embed-bar"><span class="html-embed-name">{name_html}</span>'
-            f'<a class="html-embed-open" href="{raw_url_attr}" target="_blank" rel="noopener noreferrer">&#8599; open</a></div>'
-            f'<iframe src="{raw_url_attr}" class="html-embed-frame" loading="lazy" '
-            f'sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox" '
-            f'style="width:100%;height:{height}px;border:0"></iframe>'
-            f'</figure>'
-        )
+        return build_html_embed_figure(raw_url, basename, height=height)
 
     return _HTML_EMBED_RE.sub(resolve, html)
 

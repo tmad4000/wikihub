@@ -29,7 +29,7 @@ from app.models import (
     Wikilink,
     utcnow,
 )
-from app.renderer import extract_toc, render_page
+from app.renderer import build_html_embed_figure, extract_toc, render_page
 from app.routes import wiki_bp
 from app.wiki_ops import index_repo_pages, load_acl_rules, load_serve_inline_patterns, refresh_wikilinks_for_page, sync_wiki_counters, update_page_metadata
 
@@ -520,11 +520,18 @@ def _build_sidebar_tree(username, slug, wiki, public=False, current_path=None, a
         page = pages_by_path.get(path)
         updated = page.updated_at.isoformat() if page and page.updated_at else None
         page_is_current = current_path == path
+        # HTML decks open in the embedded viewer (deck inside reader chrome) rather
+        # than replacing the wiki page with the bare standalone deck. The viewer is
+        # the same _page_url with ?view=1 — the route falls back to raw serving when
+        # the path isn't serve-inline-opted-in. (wikihub-ntpc)
+        page_url = _page_url(username, slug, path)
+        if path.lower().endswith((".html", ".htm")):
+            page_url = page_url + "?view=1"
         cursor[("page", path)] = {
             "kind": "page",
             "name": filename.replace(".md", ""),
             "path": path,
-            "url": _page_url(username, slug, path),
+            "url": page_url,
             "active": page_is_current,
             "current": page_is_current,
             "ancestor_of_current": False,
@@ -1443,6 +1450,42 @@ def wiki_page(username, slug, page_path):
                 owner.username, wiki.slug
             )
             opted_in = matches_serve_inline(page_path, serve_inline_patterns)
+            # Embedded viewer (wikihub-ntpc): ?view=1 on an opted-in HTML deck
+            # renders the deck inside the wiki reader chrome via a sandboxed
+            # iframe + '↗ open' pop-out, instead of replacing the page with the
+            # bare standalone deck (wikihub-6ag, unchanged). The iframe src and
+            # pop-out both point at the raw .html URL (no ?view).
+            if ext in _ACTIVE_EXTS and request.args.get("view") and opted_in:
+                raw_url = f"/@{owner.username}/{wiki.slug}/{url_path_from_page_path(page_path, strip_md=False)}"
+                basename = os.path.basename(page_path)
+                rendered_html = build_html_embed_figure(raw_url, basename, height=720)
+                # reader.html derives its breadcrumb from page.path internally.
+                viewer_page = type("Page", (), {
+                    "path": page_path,
+                    "title": basename,
+                    "excerpt": None,
+                    "visibility": file_vis,
+                    "updated_at": page.updated_at if page else wiki.updated_at,
+                })()
+                use_public_viewer, acl_filter_user_viewer = _repo_access(wiki, acl_rules)
+                return render_template(
+                    "reader.html",
+                    owner=owner,
+                    wiki=wiki,
+                    page=viewer_page,
+                    rendered_html=rendered_html,
+                    toc=[],
+                    backlinks=[],
+                    link_graph={"nodes": [], "edges": []},
+                    recently_updated=_recently_updated_pages(wiki, public_only=use_public_viewer and not acl_filter_user_viewer),
+                    sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, public=use_public_viewer, current_path=page_path, acl_filter_user=acl_filter_user_viewer),
+                    private_band_warning=False,
+                    json_ld_author=owner.display_name or owner.username,
+                    sibling_wikis=siblings,
+                    page_grants=[],
+                    user_can_edit=False,
+                    pending_proposals_count=0,
+                )
             if ext in _ACTIVE_EXTS:
                 # Stored HTML carries a leading YAML frontmatter block (visibility
                 # etc.) that is indexed into the Page row. Strip it before serving

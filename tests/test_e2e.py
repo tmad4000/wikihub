@@ -2536,6 +2536,99 @@ def test_html_embed_inline_iframe(client, api_key):
     assert "<iframe" not in html2, "no wiki context -> no iframe (safe fallback)"
 
 
+def test_html_viewer_embedded_in_reader_chrome(client, api_key):
+    """wikihub-ntpc: clicking an HTML deck in the sidebar opens an embedded
+    VIEWER (deck inside reader chrome via a sandboxed iframe + pop-out) rather
+    than the bare standalone deck. Additive: the raw .html URL (no ?view) is
+    unchanged (wikihub-6ag), and the sidebar tree points .html entries at ?view=1.
+    """
+    import re as _re
+    from app.git_sync import sync_page_to_repo, regenerate_public_mirror
+    from app.wiki_ops import load_acl_rules
+    from app.routes.wiki import _build_sidebar_tree
+    from app.models import Wiki, User
+
+    h = {"Authorization": f"Bearer {api_key}"}
+
+    r = client.post("/api/v1/wikis", json={"slug": "viewer-wiki", "title": "Viewer"}, headers=h)
+    assert r.status_code == 201
+    sync_page_to_repo("agent1", "viewer-wiki", ".wikihub/acl", "* private\nwiki/** public\n")
+
+    r = client.post("/api/v1/wikis/agent1/viewer-wiki/pages", json={
+        "path": "wiki/deck.html",
+        "content": "<!doctype html><h1>interactive deck</h1>",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201
+
+    # opt the deck in for inline serving, then publish the mirror
+    sync_page_to_repo("agent1", "viewer-wiki", ".wikihub/serve-inline", "wiki/deck.html\n")
+    regenerate_public_mirror("agent1", "viewer-wiki", load_acl_rules("agent1", "viewer-wiki"))
+
+    raw_url = "/@agent1/viewer-wiki/wiki/deck.html"
+
+    # (c) plain .html (no ?view) still serves the bare deck inline (6ag UNCHANGED)
+    r = client.get(raw_url)
+    assert r.status_code == 200
+    assert r.content_type.startswith("text/html"), f"raw .html should serve inline, got {r.content_type}"
+    csp = r.headers.get("Content-Security-Policy", "")
+    assert "sandbox" in csp and "allow-scripts" in csp, "raw serve must keep CSP sandbox"
+    assert b"interactive deck" in r.data, "raw serve must return the actual deck body"
+
+    # (a) ?view=1 on an opted-in deck renders reader chrome + a sandboxed iframe
+    #     whose src is the raw .html URL (no ?view).
+    r = client.get(raw_url + "?view=1")
+    assert r.status_code == 200
+    body = r.data.decode("utf-8")
+    # reader chrome present (the breadcrumb owner link is unique to reader/folder shells)
+    assert "@agent1" in body and 'class="breadcrumb"' in body, "viewer must render full reader chrome"
+    # the deck body itself must NOT be inlined (it lives behind the sandboxed iframe)
+    assert "interactive deck" not in body, "viewer must embed via iframe, not inline the deck body"
+    iframe_m = _re.search(r'<iframe [^>]*src="([^"]+)"[^>]*>', body)
+    assert iframe_m, f"viewer must contain an iframe; got: {body[:400]!r}"
+    assert iframe_m.group(1) == raw_url, f"iframe src must be the raw .html URL (no ?view); got {iframe_m.group(1)!r}"
+    sandbox_m = _re.search(r'<iframe [^>]*sandbox="([^"]+)"', body)
+    assert sandbox_m, "viewer iframe must declare a sandbox"
+    sandbox = sandbox_m.group(1)
+    assert "allow-scripts" in sandbox and "allow-popups-to-escape-sandbox" in sandbox
+    assert "allow-same-origin" not in sandbox, "null-origin isolation: no allow-same-origin"
+    # pop-out '↗ open' targets the raw deck in a new tab
+    assert f'class="html-embed-open" href="{raw_url}" target="_blank"' in body, \
+        "viewer must offer an '↗ open full' pop-out to the raw deck"
+
+    # (b) the sidebar tree gives the .html entry a URL ending in ?view=1
+    owner = User.query.filter_by(username="agent1").first()
+    wiki = Wiki.query.filter_by(owner_id=owner.id, slug="viewer-wiki").first()
+    tree = _build_sidebar_tree("agent1", "viewer-wiki", wiki, public=False)
+
+    def find_item(items, path):
+        for item in items:
+            if item.get("path") == path:
+                return item
+            found = find_item(item.get("children") or [], path)
+            if found:
+                return found
+        return None
+
+    deck = find_item(tree, "wiki/deck.html")
+    assert deck is not None, "deck.html should appear in the sidebar tree"
+    assert deck["url"].endswith("?view=1"), f"sidebar .html URL should point at the viewer; got {deck['url']!r}"
+    assert deck["url"] == raw_url + "?view=1"
+
+    # a non-opted-in .html falls through to raw serving even with ?view=1
+    r = client.post("/api/v1/wikis/agent1/viewer-wiki/pages", json={
+        "path": "wiki/other.html",
+        "content": "<!doctype html><h1>not opted in</h1>",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201
+    r = client.get("/@agent1/viewer-wiki/wiki/other.html?view=1")
+    assert r.status_code == 200
+    # not opted-in -> default safe download (no reader chrome, no iframe)
+    assert "application/octet-stream" in r.content_type, \
+        "non-opted-in .html?view must fall through to the safe default serving"
+
+
 def test_soft_line_breaks_render_as_visual_break():
     """single newlines inside a paragraph must produce a visual line break
     (wikihub-eiv7). strict commonmark would collapse them to spaces, which
@@ -5087,6 +5180,7 @@ def run_all():
             ("me capabilities", lambda: test_me_capabilities(client, key)),
             ("frontmatter title renders h1", lambda: test_frontmatter_title_renders_h1(client, key)),
             ("![[file.html]] inline iframe + new-tab links (wikihub-wz2j)", lambda: test_html_embed_inline_iframe(client, key)),
+            ("HTML viewer embedded in reader chrome (wikihub-ntpc)", lambda: test_html_viewer_embedded_in_reader_chrome(client, key)),
             ("soft line breaks render as visual break (wikihub-eiv7)", lambda: test_soft_line_breaks_render_as_visual_break()),
             ("admin claude-auth page requires token", lambda: test_admin_claude_auth_page_requires_token(client)),
             ("history API with anon + deleted page", lambda: test_history_api_with_anon_and_deleted_page(client, key)),
