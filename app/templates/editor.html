@@ -250,7 +250,7 @@
     <button type="button" class="editor-tab active" onclick="showTab('wysiwyg')">WYSIWYG</button>
     <button type="button" class="editor-tab" onclick="showTab('preview')">Preview</button>
   </div>
-  <div class="wysiwyg-hint" id="wysiwyg-hint">WYSIWYG (CommonMark). Wikilinks, math, and embeds are best edited in the Markdown tab — switching may rewrite their syntax.</div>
+  <div class="wysiwyg-hint" id="wysiwyg-hint">WYSIWYG. Wikilinks, math ($…$, $$…$$), and embeds round-trip losslessly.</div>
 
   <div class="editor-wrap">
     <textarea name="content" class="editor-textarea" id="editor-textarea">{{ content or '' }}</textarea>
@@ -838,8 +838,8 @@ window.wysiwygEnter = async function () {
 
 // WYSIWYG is the default editor surface. Mount it on load; fall back to the
 // Markdown textarea if Milkdown fails. Viewing never mutates content (sync is
-// gated on a real edit), but note CommonMark round-trips can rewrite
-// wikilink/math/embed syntax on save — see the hint banner.
+// gated on a real edit). The bundle round-trips wikilinks, math, and embeds
+// losslessly (wikihub-oyf4) — see milkdown-src/ for the build + plugins.
 (function defaultToWysiwyg() {
   const tabs = document.querySelectorAll('.editor-tab');
   const wysTab = [...tabs].find(t => t.textContent.trim() === 'WYSIWYG');

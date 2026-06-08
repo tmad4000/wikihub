@@ -1,0 +1,25 @@
+{
+  "name": "wikihub-milkdown-bundle",
+  "private": true,
+  "version": "1.0.0",
+  "description": "WikiHub Milkdown preset: lossless round-trip for wikilinks, math, embeds. Builds app/static/js/milkdown-bundle.js.",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "@milkdown/core": "7.20.0",
+    "@milkdown/ctx": "7.20.0",
+    "@milkdown/preset-commonmark": "7.20.0",
+    "@milkdown/plugin-history": "7.20.0",
+    "@milkdown/plugin-listener": "7.20.0",
+    "@milkdown/plugin-math": "7.5.9",
+    "@milkdown/prose": "7.20.0",
+    "@milkdown/transformer": "7.20.0",
+    "@milkdown/utils": "7.20.0",
+    "katex": "0.16.45"
+  },
+  "devDependencies": {
+    "esbuild": "0.27.7"
+  }
+}
