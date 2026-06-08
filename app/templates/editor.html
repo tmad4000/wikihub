@@ -72,6 +72,25 @@
 }
 @media (min-width: 640px) { .preview-wrap { padding: 20px 24px; } }
 .preview-wrap .article { max-width: 720px; }
+/* Mirror reader.html's .article content styles so Preview renders identically
+   (blockquotes, lists, code, tables were previously unstyled here — flat
+   indentation). Keep in sync with reader.html .article rules. (wikihub-5cg7) */
+.preview-wrap .article h1 { font-size: 2.25rem; font-weight: 700; letter-spacing: -0.03em; margin-bottom: 8px; line-height: 1.2; }
+.preview-wrap .article h2 { font-size: 1.375rem; font-weight: 700; letter-spacing: -0.01em; margin-top: 28px; margin-bottom: 14px; padding-bottom: 4px; border-bottom: 1px solid var(--border-default); }
+.preview-wrap .article h3 { font-size: 1.125rem; font-weight: 600; margin-top: 22px; margin-bottom: 8px; }
+.preview-wrap .article p { color: var(--text-secondary); line-height: 1.55; margin-bottom: 12px; font-size: 0.9375rem; }
+.preview-wrap .article ul, .preview-wrap .article ol { color: var(--text-secondary); padding-left: 24px; margin-bottom: 12px; line-height: 1.55; font-size: 0.9375rem; }
+.preview-wrap .article li { margin-bottom: 4px; }
+.preview-wrap .article blockquote { border-left: 3px solid var(--border-accent); padding: 4px 16px; color: var(--text-tertiary); margin-bottom: 14px; font-style: italic; line-height: 1.55; }
+.preview-wrap .article code { font-family: var(--font-mono); font-size: 0.8125rem; background: var(--bg-elevated); padding: 2px 7px; border-radius: var(--radius-sm); border: 1px solid var(--border-default); }
+.preview-wrap .article pre { background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-md); padding: 18px; margin-bottom: 20px; overflow-x: auto; }
+.preview-wrap .article pre code { background: none; border: none; padding: 0; font-size: 0.8125rem; line-height: 1.65; }
+.preview-wrap .article img { max-width: 100%; border-radius: var(--radius-sm); margin-bottom: 18px; }
+.preview-wrap .article table { width: 100%; border-collapse: collapse; margin-bottom: 14px; font-size: 0.875rem; }
+.preview-wrap .article th, .preview-wrap .article td { padding: 7px 12px; border: 1px solid var(--border-default); text-align: left; line-height: 1.45; }
+.preview-wrap .article th { background: var(--bg-surface); color: var(--text-secondary); font-weight: 600; }
+.preview-wrap .article hr { border: none; border-top: 1px solid var(--border-default); margin: 36px 0; }
+.preview-wrap .article strong { color: var(--text-primary); }
 
 .editor-statusbar {
   display: flex; align-items: center; gap: 16px; padding: 6px 16px;
