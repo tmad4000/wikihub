@@ -227,14 +227,14 @@
   </div>
 
   <div class="editor-tabs">
-    <button type="button" class="editor-tab active" onclick="showTab('edit')">Markdown</button>
-    <button type="button" class="editor-tab" onclick="showTab('wysiwyg')">WYSIWYG</button>
+    <button type="button" class="editor-tab" onclick="showTab('edit')">Markdown</button>
+    <button type="button" class="editor-tab active" onclick="showTab('wysiwyg')">WYSIWYG</button>
     <button type="button" class="editor-tab" onclick="showTab('preview')">Preview</button>
   </div>
   <div class="wysiwyg-hint" id="wysiwyg-hint">WYSIWYG (CommonMark). Wikilinks, math, and embeds are best edited in the Markdown tab — switching may rewrite their syntax.</div>
 
   <div class="editor-wrap">
-    <textarea name="content" class="editor-textarea" id="editor-textarea" autofocus>{{ content or '' }}</textarea>
+    <textarea name="content" class="editor-textarea" id="editor-textarea">{{ content or '' }}</textarea>
     <div id="milkdown-editor"></div>
     <div class="preview-wrap" id="preview-wrap">
       <article class="article" id="preview-article"></article>
@@ -816,5 +816,32 @@ window.wysiwygEnter = async function () {
   container.addEventListener('drop', enable, { once: true });
   return true;
 };
+
+// WYSIWYG is the default editor surface. Mount it on load; fall back to the
+// Markdown textarea if Milkdown fails. Viewing never mutates content (sync is
+// gated on a real edit), but note CommonMark round-trips can rewrite
+// wikilink/math/embed syntax on save — see the hint banner.
+(function defaultToWysiwyg() {
+  const tabs = document.querySelectorAll('.editor-tab');
+  const wysTab = [...tabs].find(t => t.textContent.trim() === 'WYSIWYG');
+  const mdTab = [...tabs].find(t => t.textContent.trim() === 'Markdown');
+  const ta = document.getElementById('editor-textarea');
+  const milk = document.getElementById('milkdown-editor');
+  const hint = document.getElementById('wysiwyg-hint');
+  const preview = document.getElementById('preview-wrap');
+  ta.style.display = 'none';
+  preview.style.display = 'none';
+  milk.style.display = 'block';
+  hint.classList.add('open');
+  tabs.forEach(t => t.classList.remove('active'));
+  if (wysTab) wysTab.classList.add('active');
+  window.wysiwygEnter().catch(() => {
+    milk.style.display = 'none';
+    hint.classList.remove('open');
+    ta.style.display = '';
+    tabs.forEach(t => t.classList.remove('active'));
+    if (mdTab) mdTab.classList.add('active');
+  });
+})();
 </script>
 {% endblock %}

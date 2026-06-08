@@ -208,6 +208,8 @@ def test_wysiwyg_editor_surface(client, api_key):
     assert 'id="milkdown-editor"' in html, "Milkdown mount div missing"
     assert ">WYSIWYG<" in html, "WYSIWYG tab missing"
     assert 'id="editor-textarea"' in html, "canonical markdown textarea missing"
+    # WYSIWYG is the default (active) tab (wikihub-scay)
+    assert "class=\"editor-tab active\" onclick=\"showTab('wysiwyg')\"" in html, "WYSIWYG should be the default tab"
 
 
 def test_page_etag_conflict(client, api_key):
