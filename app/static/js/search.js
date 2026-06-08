@@ -23,19 +23,24 @@
     const host = window.location.host;
     const path = window.location.pathname;
 
-    // subdomain wiki: <slug>.wikihub.md/<owner>/<page-path>
-    // (e.g. jacobcole.wikihub.md/jacobcole/health/Sleep — owner=jacobcole, slug=jacobcole)
-    // The leading host label is the WIKI SLUG; the first path segment is the OWNER.
-    // wikihub-zlgt: include this case so the scope pill shows on Jacob's canonical URLs.
+    // per-user subdomain: <owner>.wikihub.md/<slug>/<page-path>
+    // (e.g. jacobcole.wikihub.md/systematic-awesome/thoughtfulweb
+    //       -> owner=jacobcole, slug=systematic-awesome)
+    // The subdomain label is the OWNER (username); the first path segment is the WIKI SLUG.
+    // (wikihub-icbe: this was previously swapped, mislabeling the scope pill and
+    //  breaking scoped search on subdomain URLs.)
     const subMatch = host.match(/^([\w-]+)\.wikihub\.md/i);
     if (subMatch) {
-      const slug = subMatch[1];
+      const owner = subMatch[1];
       // Skip the bare wikihub.md / www case (no real subdomain wiki context)
-      if (slug.toLowerCase() !== 'www') {
+      if (owner.toLowerCase() !== 'www') {
         const m = path.match(/^\/([\w-]+)/);
         if (m) {
-          return { type: 'wiki', owner: m[1], slug: slug };
+          return { type: 'wiki', owner: owner, slug: m[1] };
         }
+        // subdomain root (e.g. jacobcole.wikihub.md/) — scope to this author so
+        // "search within my stuff" works from the landing page too.
+        return { type: 'author', owner: owner };
       }
     }
 
