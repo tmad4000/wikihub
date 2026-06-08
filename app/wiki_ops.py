@@ -28,12 +28,19 @@ def load_acl_rules(username, slug):
     return parse_acl(acl_content) if acl_content else []
 
 
-def load_serve_inline_patterns(username, slug, public=False):
+def load_serve_inline_patterns(username, slug):
     """load the owner opt-in list (.wikihub/serve-inline) of glob patterns whose
     matching files should be served INLINE with their natural Content-Type
     instead of as a forced download. See app.acl.parse_serve_inline. Returns []
-    when the file is absent (the safe default — everything non-md downloads)."""
-    content = read_file_from_repo(username, slug, ".wikihub/serve-inline", public=public)
+    when the file is absent (the safe default — everything non-md downloads).
+
+    Read from the AUTHORITATIVE repo only (never the public mirror), exactly like
+    load_acl_rules reads .wikihub/acl. .wikihub/* are owner-authored plumbing
+    files: they're skipped during page indexing and stripped from the public
+    mirror (regenerate_public_mirror defaults non-md files to private), so the
+    mirror has no copy. Reading the mirror always returned [] — the opt-in
+    silently never applied for anonymous/public readers (wikihub-6ag bug)."""
+    content = read_file_from_repo(username, slug, ".wikihub/serve-inline")
     return parse_serve_inline(content) if content else []
 
 

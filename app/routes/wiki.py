@@ -1436,8 +1436,11 @@ def wiki_page(username, slug, page_path):
             # its real type, but ONLY if the path is allowlisted in
             # .wikihub/serve-inline. Hardened with a CSP sandbox + nosniff so the
             # rendered document is isolated (no same-origin DOM/cookie access).
+            # Read from the authoritative repo (NOT use_public): .wikihub/* plumbing
+            # files are stripped from the public mirror, so passing public=True here
+            # always returned [] and the opt-in never applied (wikihub-6ag bug).
             serve_inline_patterns = load_serve_inline_patterns(
-                owner.username, wiki.slug, public=use_public
+                owner.username, wiki.slug
             )
             opted_in = matches_serve_inline(page_path, serve_inline_patterns)
             if ext in _ACTIVE_EXTS:
