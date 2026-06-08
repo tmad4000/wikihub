@@ -71,7 +71,7 @@
 
 {% block body %}
 {% macro render_sidebar(items, level=0) %}
-  {% for item in items %}
+  {% for item in items or [] %}
     {% if item.kind == 'folder' %}
     <div class="sidebar-folder {{ 'open' if item.active else '' }}" data-folder-path="{{ item.path }}" data-name="{{ item.name }}" data-kind="folder" data-updated="{{ item.updated_at or '' }}">
       <div class="sidebar-folder-row">
@@ -104,7 +104,7 @@
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-section">
       <a href="/@{{ owner.username }}/{{ wiki.slug }}" class="sidebar-heading" style="text-decoration:none;display:block;">{{ wiki.title or wiki.slug }}</a>
-      {{ render_sidebar(sidebar_items) }}
+      {{ render_sidebar(sidebar_items or []) }}
     </div>
   </aside>
   <div class="sidebar-overlay" id="sidebar-overlay" onclick="toggleSidebar()"></div>

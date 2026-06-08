@@ -1346,7 +1346,11 @@ def wiki_commit(username, slug, sha):
         sha=sha,
         commit=commit,
         diff_lines=diff_lines,
-        sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, public=use_public),
+        # wikihub-8vwd: _sidebar_for_wiki returns None for large wikis (client
+        # fetches sidebar.json). diff.html iterates sidebar_items directly, so
+        # coalesce to [] here AND guard the template loop to prevent
+        # 'NoneType is not iterable'.
+        sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, public=use_public) or [],
     )
 
 

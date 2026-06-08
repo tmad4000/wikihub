@@ -4579,6 +4579,49 @@ def test_history_route_acl_gated_for_private_wiki(client, api_key):
         assert "secret.md" not in leak_body, "anon /commit leaked private filename"
 
 
+def test_commit_diff_renders_when_sidebar_is_async(client, api_key):
+    """wikihub-8vwd: /commit/<sha> must not 500 when the wiki is large enough
+    that _sidebar_for_wiki returns None (client-side sidebar.json mode).
+
+    Before the fix, diff.html iterated sidebar_items directly, so a None value
+    raised 'NoneType object is not iterable' and the page 500'd.
+    """
+    import re
+    import app.routes.wiki as wiki_routes
+
+    h = {"Authorization": f"Bearer {api_key}"}
+    r = client.post("/api/v1/wikis", json={"slug": "diff-async-sidebar", "title": "Diff Async"}, headers=h)
+    assert r.status_code == 201
+    r = client.post("/api/v1/wikis/agent1/diff-async-sidebar/pages", json={
+        "path": "note.md",
+        "content": "---\ntitle: Note\nvisibility: public\n---\n\nhello world",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201
+
+    app = client.application
+    owner = app.test_client()
+    r = owner.get(f"/auth/login?api_key={api_key}&next=/", follow_redirects=False)
+    assert r.status_code == 302
+    body = owner.get("/@agent1/diff-async-sidebar/history").data.decode("utf-8", errors="replace")
+    sha_match = re.search(r"\b[0-9a-f]{40}\b", body)
+    assert sha_match, "expected a commit SHA in history output"
+    sha = sha_match.group(0)
+
+    # Force the async-sidebar path so _sidebar_for_wiki returns None.
+    original_threshold = wiki_routes.SIDEBAR_ASYNC_THRESHOLD
+    wiki_routes.SIDEBAR_ASYNC_THRESHOLD = 0
+    try:
+        r = owner.get(f"/@agent1/diff-async-sidebar/commit/{sha}")
+    finally:
+        wiki_routes.SIDEBAR_ASYNC_THRESHOLD = original_threshold
+
+    assert r.status_code == 200, (
+        f"wikihub-8vwd REGRESSION: /commit returned {r.status_code} when "
+        "sidebar_items is None (async-sidebar mode) — diff.html must tolerate None"
+    )
+
+
 def test_graph_route_filters_private_pages_for_anon(client, api_key):
     """wikihub-8888.2: graph endpoints must not expose private page titles/edges to anon."""
     import json as _json
@@ -4977,6 +5020,7 @@ def run_all():
             ("/api/wikis 401+WWW-Authenticate (wikihub-uonp)", lambda: test_api_wikis_endpoint_returns_401_with_www_authenticate_for_private(client)),
             ("logged-out search returns only public (wikihub-7dml)", lambda: test_logged_out_search_returns_only_public(client)),
             ("history/commit ACL-gated for private wiki (wikihub-8888.1)", lambda: test_history_route_acl_gated_for_private_wiki(client, key)),
+            ("commit diff renders with async sidebar (wikihub-8vwd)", lambda: test_commit_diff_renders_when_sidebar_is_async(client, key)),
             ("graph filters private pages for anon (wikihub-8888.2)", lambda: test_graph_route_filters_private_pages_for_anon(client, key)),
             ("tag index filters private pages for anon (wikihub-8888.3)", lambda: test_tag_index_filters_private_pages_for_anon(client, key)),
             ("owner renders deep nested page (proposals-grant regression)", lambda: test_owner_can_render_deep_nested_page_no_500(client, key)),
