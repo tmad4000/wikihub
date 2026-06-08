@@ -1444,6 +1444,17 @@ def wiki_page(username, slug, page_path):
             )
             opted_in = matches_serve_inline(page_path, serve_inline_patterns)
             if ext in _ACTIVE_EXTS:
+                # Stored HTML carries a leading YAML frontmatter block (visibility
+                # etc.) that is indexed into the Page row. Strip it before serving
+                # so it doesn't render as literal "--- visibility: ... ---" text at
+                # the top of the document (or land in a downloaded file). (wikihub-htfm)
+                try:
+                    from app.content_utils import parse_markdown_document
+                    _meta, _body = parse_markdown_document(data.decode("utf-8"))
+                    if _meta:
+                        data = _body.encode("utf-8")
+                except (UnicodeDecodeError, ValueError):
+                    pass
                 if opted_in:
                     content_type = mimetypes.guess_type(page_path)[0] or "text/html"
                     headers["Content-Disposition"] = f'inline; filename="{os.path.basename(page_path)}"'
