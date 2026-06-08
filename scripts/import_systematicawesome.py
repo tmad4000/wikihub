@@ -32,7 +32,8 @@ import requests
 SCRAPE_DIR = Path("/tmp/sa-scrape")
 WIKIHUB_BASE = "https://wikihub.md"
 KEY_PATH = Path.home() / ".config/wikihub/jacobcole-import-key.txt"
-API_KEY = KEY_PATH.read_text().strip()
+# Lazy-tolerant: --dry-run must work offline without the import key present.
+API_KEY = KEY_PATH.read_text().strip() if KEY_PATH.exists() else ""
 WIKI_OWNER = "jacobcole"
 WIKI_SLUG = "systematic-awesome"
 SCRAPE_DATE = "2026-01-30"
@@ -330,6 +331,10 @@ def build_page(stem: str, html_path: Path, results: dict) -> tuple[str, str]:
 
 def ensure_wiki(dry_run=False):
     """Create the destination wiki if missing."""
+    if dry_run:
+        # Fully offline dry-run: don't touch the network or require an API key.
+        print(f"[DRY] would ensure wiki {WIKI_OWNER}/{WIKI_SLUG} exists")
+        return
     url = f"{WIKIHUB_BASE}/api/v1/wikis/{WIKI_OWNER}/{WIKI_SLUG}"
     r = requests.get(url, headers=HEADERS, timeout=15)
     if r.status_code == 200:
