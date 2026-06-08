@@ -2465,6 +2465,77 @@ def test_frontmatter_title_renders_h1(client, api_key):
     assert _re.search(r'<h1[^>]*>\s*Doc Title\s*</h1>', html)
 
 
+def test_html_embed_inline_iframe(client, api_key):
+    """![[file.html]] renders a sandboxed iframe ONLY when the owner opts the
+    path in via .wikihub/serve-inline; otherwise it falls back to a plain link.
+    Also covers wikihub-057 part 1: links to non-md files get target=_blank.
+    (wikihub-wz2j)"""
+    from app.renderer import render_page
+    from app.git_sync import sync_page_to_repo, regenerate_public_mirror
+    from app.wiki_ops import load_acl_rules
+    import re as _re
+
+    h = {"Authorization": f"Bearer {api_key}"}
+
+    r = client.post("/api/v1/wikis", json={"slug": "embed-wiki", "title": "Embeds"}, headers=h)
+    assert r.status_code == 201
+
+    sync_page_to_repo("agent1", "embed-wiki", ".wikihub/acl", "* private\nwiki/** public\n")
+
+    # store two decks; opt only the first one in
+    for name in ("deck.html", "other.html"):
+        r = client.post("/api/v1/wikis/agent1/embed-wiki/pages", json={
+            "path": f"wiki/{name}",
+            "content": "<!doctype html><h1>deck</h1>",
+            "visibility": "public",
+        }, headers=h)
+        assert r.status_code == 201
+    sync_page_to_repo("agent1", "embed-wiki", ".wikihub/serve-inline", "wiki/deck.html\n")
+    regenerate_public_mirror("agent1", "embed-wiki", load_acl_rules("agent1", "embed-wiki"))
+
+    # NOTE: render_page resolves the embed against the current page's directory,
+    # so a page living at wiki/index.md embedding ![[deck.html]] resolves to
+    # wiki/deck.html — exactly the opted-in path.
+    md = (
+        "---\ntitle: Slides\nvisibility: public\n---\n\n"
+        "# Slides\n\n"
+        "![[deck.html|600]]\n\n"
+        "![[other.html]]\n"
+    )
+    html = render_page(md, wiki_owner="agent1", wiki_slug="embed-wiki",
+                       current_page_path="wiki/index.md")
+
+    # opted-in deck.html -> sandboxed iframe pointing at the standalone serve URL
+    raw_url = "/@agent1/embed-wiki/wiki/deck.html"
+    assert '<figure class="html-embed">' in html, f"expected html-embed figure; got: {html!r}"
+    iframe_m = _re.search(r'<iframe [^>]*src="([^"]+)"[^>]*>', html)
+    assert iframe_m, f"expected an iframe; got: {html!r}"
+    assert iframe_m.group(1) == raw_url, f"iframe src wrong: {iframe_m.group(1)!r}"
+    sandbox_m = _re.search(r'<iframe [^>]*sandbox="([^"]+)"', html)
+    assert sandbox_m, "iframe must declare a sandbox"
+    sandbox = sandbox_m.group(1)
+    assert "allow-scripts" in sandbox and "allow-popups-to-escape-sandbox" in sandbox
+    assert "allow-same-origin" not in sandbox, "null-origin isolation: no allow-same-origin"
+    assert "height:600px" in html, "the |600 height hint should set iframe height"
+    assert f'class="html-embed-open" href="{raw_url}" target="_blank"' in html, \
+        "pop-out '↗ open' link should target a new tab"
+
+    # NOT opted-in other.html -> plain link, NO iframe for it
+    other_url = "/@agent1/embed-wiki/wiki/other.html"
+    assert f'href="{other_url}"' in html
+    # only one iframe total (deck), none for other.html
+    assert html.count("<iframe") == 1, f"non-allowlisted html must not be iframed; got: {html!r}"
+
+    # wikihub-057 part 1: the fallback link to other.html opens in a new tab
+    link_m = _re.search(r'<a [^>]*href="' + _re.escape(other_url) + r'"[^>]*>', html)
+    assert link_m and 'target="_blank"' in link_m.group(0), \
+        f"non-md file link should open in new tab; got: {link_m.group(0) if link_m else None!r}"
+
+    # render with NO wiki context (singleton path) must never produce an iframe
+    html2 = render_page(md)
+    assert "<iframe" not in html2, "no wiki context -> no iframe (safe fallback)"
+
+
 def test_soft_line_breaks_render_as_visual_break():
     """single newlines inside a paragraph must produce a visual line break
     (wikihub-eiv7). strict commonmark would collapse them to spaces, which
@@ -5015,6 +5086,7 @@ def run_all():
             ("feedback submission", lambda: test_feedback_submission(client)),
             ("me capabilities", lambda: test_me_capabilities(client, key)),
             ("frontmatter title renders h1", lambda: test_frontmatter_title_renders_h1(client, key)),
+            ("![[file.html]] inline iframe + new-tab links (wikihub-wz2j)", lambda: test_html_embed_inline_iframe(client, key)),
             ("soft line breaks render as visual break (wikihub-eiv7)", lambda: test_soft_line_breaks_render_as_visual_break()),
             ("admin claude-auth page requires token", lambda: test_admin_claude_auth_page_requires_token(client)),
             ("history API with anon + deleted page", lambda: test_history_api_with_anon_and_deleted_page(client, key)),

@@ -178,6 +178,7 @@ def _obsidian_embed_plugin(md):
 
         # check file type for appropriate embed rendering
         img_exts = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".avif"}
+        html_exts = {".html", ".htm"}
         ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
 
         if ext in img_exts:
@@ -187,6 +188,16 @@ def _obsidian_embed_plugin(md):
                 token.attrs["width"] = str(width)
                 token.attrs["style"] = f"max-width: {width}px"
             token.children = []
+        elif ext in html_exts:
+            # ![[deck.html]] / ![[deck.html|600]] — inline a sandboxed iframe of
+            # the stored HTML. The embed plugin runs on the shared singleton with
+            # NO wiki owner/slug context, so (mirroring the [[wikilink]] pattern)
+            # we emit a placeholder here and resolve it to an <iframe> in
+            # render_page(), where owner/slug + the .wikihub/serve-inline opt-in
+            # are available. width (after '|') doubles as the iframe height in px.
+            # Placeholder format: <!--htmlembed:HEIGHT:PATH--> (HEIGHT may be empty).
+            token = state.push("html_inline", "", 0)
+            token.content = f"<!--htmlembed:{width if width is not None else ''}:{filename}-->"
         else:
             # non-image files (PDFs, etc.): render as a styled file link
             # matches Obsidian behavior — opens in new tab, not inline
@@ -520,6 +531,121 @@ def render_page(content, wiki_owner=None, wiki_slug=None, current_page_path=None
 
         html = re.sub(r'(href=")([^"]+)(")', resolve_relative_link, html)
 
+    # resolve ![[file.html]] embed placeholders into sandboxed iframes (wikihub-wz2j).
+    # The placeholder (<!--htmlembed:HEIGHT:PATH-->) is emitted by the embed plugin,
+    # which has no wiki context. Here we have owner/slug, so we can resolve the
+    # standalone serve URL and check the owner's .wikihub/serve-inline opt-in.
+    html = _resolve_html_embeds(html, wiki_owner, wiki_slug, current_page_path)
+
+    # add target=_blank to links pointing at non-markdown files (wikihub-057 part 1)
+    html = _retarget_non_md_file_links(html)
+
     html = _prepend_frontmatter_h1(content, html)
 
     return html
+
+
+_HTML_EMBED_RE = re.compile(r'<!--htmlembed:(\d*):(.*?)-->')
+
+# file extensions whose links should open in a new tab (downloads / standalone
+# documents that would otherwise replace the wiki page). wikihub-057 part 1.
+_NEW_TAB_LINK_EXTS = {
+    ".html", ".htm", ".pdf", ".svg", ".png", ".jpg", ".jpeg",
+    ".gif", ".zip",
+}
+
+
+def _resolve_html_embeds(html, wiki_owner, wiki_slug, current_page_path):
+    """Replace ![[file.html]] embed placeholders with a sandboxed iframe.
+
+    Gating: only embed an iframe when the target path is owner-opted-in via
+    .wikihub/serve-inline (reusing load_serve_inline_patterns + matches_serve_inline).
+    If the placeholder can't be resolved (no wiki context) or the file isn't
+    allowlisted, fall back to a plain link so non-allowlisted active content is
+    never iframed.
+    """
+    if '<!--htmlembed:' not in html:
+        return html
+
+    import posixpath
+    from app.url_utils import url_path_from_page_path
+
+    patterns = None
+    if wiki_owner and wiki_slug:
+        from app.wiki_ops import load_serve_inline_patterns
+        patterns = load_serve_inline_patterns(wiki_owner, wiki_slug)
+
+    def resolve(match):
+        height_str = match.group(1)
+        raw_path = match.group(2).strip()
+        height = int(height_str) if height_str else 480
+
+        # resolve a possibly-relative embed path against the current page's dir
+        embed_path = raw_path
+        if current_page_path and not raw_path.startswith("/"):
+            page_dir = posixpath.dirname(current_page_path)
+            embed_path = posixpath.normpath(posixpath.join(page_dir, raw_path)) if page_dir else raw_path
+
+        basename = embed_path.rsplit("/", 1)[-1]
+
+        # without wiki context we can't build a real URL — emit a safe label.
+        if not (wiki_owner and wiki_slug):
+            return f'<a href="{_escape(raw_path)}" target="_blank" rel="noopener noreferrer">{_escape(basename)}</a>'
+
+        from app.acl import matches_serve_inline
+        raw_url = f"/@{wiki_owner}/{wiki_slug}/{url_path_from_page_path(embed_path, strip_md=False)}"
+        raw_url_attr = _escape(raw_url)
+        name_html = _escape(basename)
+
+        # gating: only iframe owner-opted-in files. otherwise fall back to a link.
+        if not (patterns and matches_serve_inline(embed_path, patterns)):
+            return (
+                f'<a href="{raw_url_attr}" class="embed-link file-embed" '
+                f'target="_blank" rel="noopener noreferrer">'
+                f'<span class="file-icon">&#128196;</span> {name_html}</a>'
+            )
+
+        return (
+            f'<figure class="html-embed">'
+            f'<div class="html-embed-bar"><span class="html-embed-name">{name_html}</span>'
+            f'<a class="html-embed-open" href="{raw_url_attr}" target="_blank" rel="noopener noreferrer">&#8599; open</a></div>'
+            f'<iframe src="{raw_url_attr}" class="html-embed-frame" loading="lazy" '
+            f'sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox" '
+            f'style="width:100%;height:{height}px;border:0"></iframe>'
+            f'</figure>'
+        )
+
+    return _HTML_EMBED_RE.sub(resolve, html)
+
+
+def _retarget_non_md_file_links(html):
+    """Add target=_blank rel=noopener to <a> tags whose href resolves to a
+    non-markdown file (.html .pdf .svg images .zip). Links to such files would
+    otherwise replace the wiki page; opening in a new tab keeps the wiki in
+    place (wikihub-057 part 1). Leaves anchors, mailto:, and already-targeted
+    links alone. Does NOT touch the left sidebar tree (rendered elsewhere)."""
+    if "<a " not in html:
+        return html
+
+    def retarget(match):
+        full = match.group(0)
+        href = match.group(1)
+        # skip pure anchors and non-navigational schemes
+        low = href.lower()
+        if low.startswith(("#", "mailto:", "javascript:", "tel:")):
+            return full
+        # strip query/fragment before checking the extension
+        path_part = href.split("#", 1)[0].split("?", 1)[0]
+        ext = "." + path_part.rsplit(".", 1)[-1].lower() if "." in path_part.rsplit("/", 1)[-1] else ""
+        if ext not in _NEW_TAB_LINK_EXTS:
+            return full
+        if 'target=' in full:
+            return full
+        # inject target+rel right after the href attribute
+        return full.replace(
+            f'href="{href}"',
+            f'href="{href}" target="_blank" rel="noopener noreferrer"',
+            1,
+        )
+
+    return re.sub(r'<a [^>]*?href="([^"]+)"[^>]*>', retarget, html)
