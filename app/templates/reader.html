@@ -605,6 +605,51 @@
   0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
   40% { opacity: 1; transform: scale(1); }
 }
+
+/* QR code popover (wikihub-x622) — obsidian+amber, borders not shadows */
+.qr-overlay {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(0,0,0,0.5); display: none;
+  align-items: flex-start; justify-content: center; padding-top: 15vh;
+}
+.qr-overlay.open { display: flex; }
+.qr-modal {
+  background: var(--bg-surface); border: 1px solid var(--border-emphasis);
+  border-radius: var(--radius-lg); width: 100%; max-width: 320px;
+  padding: 24px; text-align: center;
+}
+.qr-modal h3 {
+  margin: 0 0 16px; font-size: 1rem; color: var(--text-primary);
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+}
+.qr-close {
+  width: 28px; height: 28px; border: none; background: transparent;
+  color: var(--text-muted); cursor: pointer; border-radius: var(--radius-sm);
+  font-size: 1.25rem; line-height: 1; display: flex; align-items: center; justify-content: center;
+}
+.qr-close:hover { color: var(--text-secondary); background: var(--accent-subtle); }
+.qr-canvas-wrap {
+  display: inline-block; padding: 12px; background: #fff;
+  border: 1px solid var(--border-emphasis); border-radius: var(--radius-md);
+  margin-bottom: 16px; line-height: 0;
+}
+.qr-canvas-wrap svg { display: block; width: 200px; height: 200px; }
+.qr-url-row {
+  display: flex; align-items: center; gap: 0;
+  border: 1px solid var(--border-emphasis); border-radius: var(--radius-sm);
+  background: var(--control-bg); overflow: hidden;
+}
+.qr-url-row input {
+  flex: 1; padding: 8px 10px; font-family: var(--font-mono); font-size: 0.6875rem;
+  color: var(--text-primary); background: transparent; border: none; outline: none; min-width: 0;
+}
+.qr-copy-btn {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 0 12px; height: 36px; border: none; border-left: 1px solid var(--border-emphasis);
+  background: transparent; color: var(--text-secondary); cursor: pointer;
+  font-size: 0.75rem; font-family: var(--font-body); white-space: nowrap; flex-shrink: 0;
+}
+.qr-copy-btn:hover { color: var(--accent); background: var(--accent-subtle); }
 {% endblock %}
 
 {% block body %}
@@ -794,6 +839,10 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
             Download this page (.md)
           </a>
+          <button type="button" class="download-option" id="qr-trigger" aria-label="Show QR code for this page" onclick="openQrModal()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3"/><path d="M21 14v.01"/><path d="M14 21h.01"/><path d="M21 21v-3a1 1 0 0 0-1-1h-2"/></svg>
+            QR code (open on phone)
+          </button>
           <a href="/@{{ owner.username }}/{{ wiki.slug }}.zip" class="download-option">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             Download entire wiki (.zip)
@@ -1052,6 +1101,72 @@
 {% endblock %}
 
 {% block scripts %}
+{# QR code popover for this page (wikihub-x622) #}
+<div class="qr-overlay" id="qr-overlay" onclick="if(event.target===this)closeQrModal()">
+  <div class="qr-modal" role="dialog" aria-modal="true" aria-label="QR code for this page">
+    <h3>
+      <span>Scan to open</span>
+      <button type="button" class="qr-close" onclick="closeQrModal()" aria-label="Close QR code">&times;</button>
+    </h3>
+    <div class="qr-canvas-wrap" id="qr-canvas-wrap"></div>
+    <div class="qr-url-row">
+      <input type="text" id="qr-url-input" readonly onclick="this.select()">
+      <button type="button" class="qr-copy-btn" id="qr-copy-btn" onclick="copyQrLink()">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        Copy link
+      </button>
+    </div>
+  </div>
+</div>
+<script src="{{ url_for('static', filename='js/qrcode-generator-1.4.4.js') }}"></script>
+<script>
+// QR popover logic (wikihub-x622). Generates the QR client-side from the page's
+// canonical URL (falls back to the current location), renders as SVG.
+function qrPageUrl() {
+  var canonical = document.querySelector('link[rel="canonical"]');
+  if (canonical && canonical.href) return canonical.href;
+  return window.location.href;
+}
+function openQrModal() {
+  var menu = document.getElementById('download-menu');
+  if (menu) menu.classList.remove('open');
+  var url = qrPageUrl();
+  var input = document.getElementById('qr-url-input');
+  if (input) input.value = url;
+  var wrap = document.getElementById('qr-canvas-wrap');
+  if (wrap && typeof qrcode === 'function') {
+    try {
+      if (qrcode.stringToBytesFuncs && qrcode.stringToBytesFuncs['UTF-8']) {
+        qrcode.stringToBytes = qrcode.stringToBytesFuncs['UTF-8'];
+      }
+      var qr = qrcode(0, 'M'); // type 0 = auto-size, error correction level M
+      qr.addData(url);
+      qr.make();
+      wrap.innerHTML = qr.createSvgTag({ scalable: true, margin: 0 });
+    } catch (err) {
+      wrap.innerHTML = '<div style="color:#0f0e0c;font-size:0.75rem;padding:8px;">QR unavailable</div>';
+    }
+  }
+  var overlay = document.getElementById('qr-overlay');
+  if (overlay) overlay.classList.add('open');
+}
+function closeQrModal() {
+  var overlay = document.getElementById('qr-overlay');
+  if (overlay) overlay.classList.remove('open');
+}
+function copyQrLink() {
+  var input = document.getElementById('qr-url-input');
+  var btn = document.getElementById('qr-copy-btn');
+  if (!input) return;
+  navigator.clipboard.writeText(input.value).then(function() {
+    if (!btn) return;
+    var original = btn.innerHTML;
+    btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--color-success)" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Copied';
+    setTimeout(function() { btn.innerHTML = original; }, 1500);
+  });
+}
+document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeQrModal(); });
+</script>
 <script>
 const sidebarStorageScope = '{{ owner.username }}/{{ wiki.slug }}';
 const folderStorageKey = 'wikihub-sidebar-folders:' + sidebarStorageScope;

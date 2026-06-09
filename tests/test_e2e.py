@@ -2091,6 +2091,61 @@ def test_reader_sidebar_collapse_controls(client, api_key):
     )
 
 
+def test_reader_qr_code_affordance(client, api_key):
+    """Reader page exposes a subtle QR-code trigger + vendored client-side QR lib (wikihub-x622)."""
+    h = {"Authorization": f"Bearer {api_key}"}
+
+    r = client.post("/api/v1/wikis", json={"slug": "qr-wiki", "title": "QR Wiki"}, headers=h)
+    assert r.status_code == 201
+
+    r = client.post(
+        "/api/v1/wikis/agent1/qr-wiki/pages",
+        json={
+            "path": "page.md",
+            "content": "---\ntitle: QR Page\nvisibility: public\n---\n\n# QR Page\n\nBody.",
+            "visibility": "public",
+        },
+        headers=h,
+    )
+    assert r.status_code == 201, f"page create failed: {r.status_code} {r.data[:200]}"
+
+    r = client.get("/@agent1/qr-wiki/page")
+    assert r.status_code == 200, f"reader fetch failed: {r.status_code}"
+    html = r.data.decode()
+
+    # The subtle trigger lives in the download menu, keyboard-accessible button.
+    assert 'id="qr-trigger"' in html, (
+        "wikihub-x622 REGRESSION: QR-code trigger missing from the reader "
+        "download menu in app/templates/reader.html."
+    )
+    assert 'aria-label="Show QR code for this page"' in html, (
+        "wikihub-x622 REGRESSION: QR trigger lost its accessible label."
+    )
+    assert 'onclick="openQrModal()"' in html, (
+        "wikihub-x622 REGRESSION: QR trigger no longer wired to openQrModal()."
+    )
+    # The vendored, offline QR library must be referenced (no CDN at runtime).
+    assert "js/qrcode-generator-1.4.4.js" in html, (
+        "wikihub-x622 REGRESSION: vendored qrcode-generator script reference "
+        "missing from the reader page."
+    )
+    assert "cdn" not in html.lower().split("qrcode-generator")[0][-80:], (
+        "wikihub-x622: QR library must be vendored, not loaded from a CDN."
+    )
+    # Popover scaffolding present so the trigger has something to open.
+    assert 'id="qr-overlay"' in html and 'id="qr-canvas-wrap"' in html, (
+        "wikihub-x622 REGRESSION: QR popover markup missing from reader.html."
+    )
+
+    # The vendored asset itself must actually be served.
+    r = client.get("/static/js/qrcode-generator-1.4.4.js")
+    assert r.status_code == 200, f"vendored QR script not served: {r.status_code}"
+    body = r.data.decode()
+    assert "createSvgTag" in body and "addData" in body, (
+        "wikihub-x622: served QR asset does not look like qrcode-generator."
+    )
+
+
 def test_folder_async_sidebar_passes_current_context(client, api_key):
     """Folder views should pass explicit current-path context into sidebar.json."""
     import app.routes.wiki as wiki_routes
@@ -5171,6 +5226,7 @@ def run_all():
             ("people directory + profiles", lambda: test_people_directory_and_profiles(client, key)),
             ("new folder UI", lambda: test_new_folder_ui(client)),
             ("sidebar indentation (wikihub-58c regression guard)", lambda: test_sidebar_indentation(client, key)),
+            ("QR code affordance on reader page (wikihub-x622)", lambda: test_reader_qr_code_affordance(client, key)),
             ("wikipedia-style URLs", lambda: test_wikipedia_urls(client, key)),
             ("sharing lifecycle", lambda: test_sharing_lifecycle(client, key)),
             ("wiki-level sharing", lambda: test_wiki_level_sharing(client, key)),
