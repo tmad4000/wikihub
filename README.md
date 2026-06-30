@@ -109,7 +109,7 @@ createdb wikihub_test  # once
 source .venv/bin/activate && python3 tests/test_e2e.py
 ```
 
-7 end-to-end tests covering account creation, wiki lifecycle, search, social, upload, agent surfaces, and ACL permissions.
+End-to-end tests cover account creation, wiki lifecycle, search, social, upload, agent surfaces, ACL permissions, and UI regression guards such as mobile nav/search and reader chrome.
 
 ## Architecture
 

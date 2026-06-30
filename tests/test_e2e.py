@@ -1,8 +1,8 @@
 """
 wikihub end-to-end tests.
 
-minimal and intentional — each test verifies a real user flow,
-not individual functions. run with: python3 tests/test_e2e.py
+Intentional user-flow coverage and regression guards, not isolated unit tests.
+Run with: python3 tests/test_e2e.py
 """
 
 import io

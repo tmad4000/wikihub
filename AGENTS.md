@@ -21,15 +21,15 @@ source .venv/bin/activate && python3 tests/test_e2e.py
 
 tests use a separate `wikihub_test` database. create it once: `/opt/homebrew/opt/postgresql@16/bin/createdb wikihub_test`.
 
-tests are minimal and intentional — each one verifies a real user flow end-to-end, not individual functions:
+tests are intentional end-to-end and regression guards, not isolated unit tests. Coverage includes:
 
-1. **agent account creation** — POST /api/v1/accounts, get key, authenticate
-2. **wiki lifecycle** — create wiki, add page, read HTML + markdown, update, delete
-3. **search** — full-text search via API
-4. **social** — star, fork, unstar across two users
-5. **zip upload** — create wiki via web form with zip file
-6. **agent surfaces** — all discovery endpoints respond (llms.txt, AGENTS.md, .well-known/*)
-7. **ACL permissions** — private pages not readable without auth
+- **agent account creation** — POST /api/v1/accounts, get key, authenticate
+- **wiki lifecycle** — create wiki, add page, read HTML + markdown, update, delete
+- **search + discovery** — search routes, agent surfaces, llms.txt, AGENTS.md, .well-known/*
+- **social + collaboration** — star, fork, share, invites, suggestions/proposals
+- **upload + git flows** — zip upload, git-backed pages, history/diff routes
+- **ACL permissions** — private/unlisted/public-edit pages and route-level leak checks
+- **UI regressions** — mobile nav/search, reader sidebars, mobile sticky reader chrome, QR/share affordances
 
 don't add unit tests for individual functions. if something breaks, add an e2e test that covers the broken flow. tests should run in <10 seconds.
 
