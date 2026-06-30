@@ -100,6 +100,12 @@ Not GitHub. Not Notion. This is a knowledge publishing tool for people who live 
 - Background: `--bg-base`, bottom border `--border-default`
 - Logo: `[[wikihub]]` in mono font
 - Height: 56px. Items centered vertically.
+- Header controls use centered touch targets (40px minimum, 44px for menu
+  toggles) with block-level SVG icons to avoid mobile Safari baseline drift.
+- Below tablet width (`max-width: 1024px`), secondary links move behind the
+  mobile menu; at very narrow phone width (`max-width: 520px`), the inline
+  Explore link may hide to preserve the logo, search, theme, and account
+  controls.
 - No glassmorphism/blur. Clean border separation.
 
 ### Cards (wiki cards, feature cards)
@@ -126,6 +132,10 @@ Not GitHub. Not Notion. This is a knowledge publishing tool for people who live 
 - Same bg as canvas (`--bg-base`), NOT different color
 - Right border `--border-default` for separation
 - Active page: left accent border `--border-accent`, bg `--accent-subtle`
+- Reader pages show the full sidebar only on desktop (`min-width: 1025px`).
+  Mobile/tablet reader pages use a compact sticky 48px reader bar below the
+  global nav, with a 44px sidebar toggle and one-line ellipsized wiki/page
+  context so navigation stays recoverable after scrolling.
 
 ### Visibility badges
 All icons are inline SVGs (Lucide-style, 14x14, stroke="currentColor"), never emoji.
