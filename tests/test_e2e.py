@@ -2091,6 +2091,119 @@ def test_reader_sidebar_collapse_controls(client, api_key):
     )
 
 
+def test_reader_mobile_sticky_navigation_chrome(client, api_key):
+    """wikihub-9ahx: mobile/tablet readers keep sidebar navigation recoverable.
+
+    This is a rendered-HTML/CSS regression guard, not a browser layout engine.
+    Browser verification still covers actual sticky behavior, but this test
+    fails if the sticky reader bar, truncated context, or sidebar toggle wiring
+    disappears from reader.html/base nav CSS.
+    """
+    import re
+
+    h = {"Authorization": f"Bearer {api_key}"}
+
+    r = client.post("/api/v1/wikis", json={"slug": "mobile-reader", "title": "Mobile Reader"}, headers=h)
+    assert r.status_code == 201
+
+    r = client.post(
+        "/api/v1/wikis/agent1/mobile-reader/pages",
+        json={
+            "path": "research/open-gestalts-outbox-requirements.md",
+            "content": (
+                "---\n"
+                "title: Open Gestalts Outbox Requirements\n"
+                "visibility: unlisted\n"
+                "---\n\n"
+                "# Open Gestalts Outbox Requirements\n\n"
+                "Long enough to exercise reader chrome."
+            ),
+            "visibility": "unlisted",
+        },
+        headers=h,
+    )
+    assert r.status_code == 201, f"page create failed: {r.status_code} {r.data[:200]}"
+
+    r = client.get("/@agent1/mobile-reader/research/open-gestalts-outbox-requirements")
+    assert r.status_code == 200, f"reader fetch failed: {r.status_code}"
+    html = r.get_data(as_text=True)
+
+    assert 'class="reader-mobile-chrome"' in html, (
+        "wikihub-9ahx REGRESSION: reader.html must render a compact mobile "
+        "reader bar so sidebar navigation remains recoverable after scrolling."
+    )
+    assert 'id="reader-mobile-sidebar-toggle"' in html, (
+        "wikihub-9ahx REGRESSION: mobile reader bar lost its sidebar toggle."
+    )
+    assert 'aria-controls="sidebar"' in html and "data-reader-sidebar-toggle" in html, (
+        "wikihub-9ahx REGRESSION: mobile reader sidebar toggle must stay wired "
+        "to #sidebar with shared ARIA expanded state."
+    )
+    assert "Open Gestalts Outbox Requirements" in html and "reader-mobile-current" in html, (
+        "wikihub-9ahx REGRESSION: compact reader context should include the "
+        "current page title/path."
+    )
+
+    sticky_rule = re.search(r"\.reader-mobile-chrome\s*\{([^}]*)\}", html, re.DOTALL)
+    assert sticky_rule, "reader.html missing .reader-mobile-chrome CSS rule"
+    sticky_css = sticky_rule.group(1)
+    assert "position: sticky" in sticky_css and "top: 56px" in sticky_css, (
+        "wikihub-9ahx REGRESSION: mobile reader chrome must be sticky below "
+        "the global 56px nav."
+    )
+    assert "height: 48px" in sticky_css, (
+        "wikihub-9ahx REGRESSION: mobile reader chrome should stay compact "
+        "instead of fixing a tall desktop header."
+    )
+
+    context_rule = re.search(r"\.reader-mobile-context\s*\{([^}]*)\}", html, re.DOTALL)
+    assert context_rule, "reader.html missing .reader-mobile-context CSS rule"
+    context_css = context_rule.group(1)
+    assert "white-space: nowrap" in context_css and "overflow: hidden" in context_css, (
+        "wikihub-9ahx REGRESSION: mobile reader context must remain one line."
+    )
+    assert "text-overflow: ellipsis" in html, (
+        "wikihub-9ahx REGRESSION: long wiki/page context must truncate with ellipsis."
+    )
+    assert re.search(
+        r"@media\s*\(\s*max-width:\s*1024px\s*\)\s*\{[^}]*\.reader-mobile-chrome\s*\{\s*display:\s*flex",
+        html,
+        re.DOTALL,
+    ), (
+        "wikihub-9ahx REGRESSION: iPad/tablet widths must display the compact "
+        "reader chrome."
+    )
+    assert re.search(
+        r"@media\s*\(\s*max-width:\s*1024px\s*\)\s*\{[^}]*\.breadcrumb\s*\{\s*display:\s*none",
+        html,
+        re.DOTALL,
+    ), (
+        "wikihub-9ahx REGRESSION: full breadcrumb should not wrap into a tall "
+        "mobile/tablet header."
+    )
+    assert "setAttribute('aria-expanded', String(expanded))" in html, (
+        "wikihub-9ahx REGRESSION: toggleSidebar must update the mobile menu's "
+        "expanded state for accessibility."
+    )
+
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(repo_root, "app", "templates", "base.html")) as f:
+        base = f.read()
+    with open(os.path.join(repo_root, "app", "templates", "_theme.html")) as f:
+        theme = f.read()
+    assert ".nav-menu-toggle svg { width: 20px; height: 20px; display: block; }" in base, (
+        "wikihub-9ahx REGRESSION: global nav hamburger SVG must be block-level "
+        "to avoid iPad Safari baseline drift."
+    )
+    assert ".search-trigger svg { display: block; flex-shrink: 0; }" in base, (
+        "wikihub-9ahx REGRESSION: search icon must be block-level for vertical alignment."
+    )
+    assert "width: 40px; height: 40px; min-width: 40px;" in theme, (
+        "wikihub-9ahx REGRESSION: theme toggle should share a centered touch target "
+        "with nearby header controls."
+    )
+
+
 def test_reader_qr_code_affordance(client, api_key):
     """Reader page exposes a subtle QR-code trigger + vendored client-side QR lib (wikihub-x622)."""
     h = {"Authorization": f"Bearer {api_key}"}
@@ -5226,6 +5339,7 @@ def run_all():
             ("people directory + profiles", lambda: test_people_directory_and_profiles(client, key)),
             ("new folder UI", lambda: test_new_folder_ui(client)),
             ("sidebar indentation (wikihub-58c regression guard)", lambda: test_sidebar_indentation(client, key)),
+            ("mobile sticky reader chrome (wikihub-9ahx)", lambda: test_reader_mobile_sticky_navigation_chrome(client, key)),
             ("QR code affordance on reader page (wikihub-x622)", lambda: test_reader_qr_code_affordance(client, key)),
             ("wikipedia-style URLs", lambda: test_wikipedia_urls(client, key)),
             ("sharing lifecycle", lambda: test_sharing_lifecycle(client, key)),

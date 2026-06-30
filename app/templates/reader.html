@@ -6,6 +6,9 @@
 
 {% block extra_css %}
 .reader-layout { display: flex; min-height: calc(100vh - 56px); }
+@media (max-width: 1024px) {
+  .reader-layout { min-height: calc(100vh - 104px); }
+}
 
 .thin-scroll { scrollbar-width: thin; scrollbar-color: transparent transparent; }
 .thin-scroll:hover { scrollbar-color: var(--border-emphasis) transparent; }
@@ -20,7 +23,7 @@
   padding: 16px 0; overflow-y: auto; overflow-x: hidden;
   display: none;
 }
-@media (min-width: 768px) { .sidebar { display: block; } }
+@media (min-width: 1025px) { .sidebar { display: block; } }
 .sidebar-header {
   display: flex; align-items: center; justify-content: space-between;
   gap: 8px; padding: 0 12px 4px;
@@ -39,7 +42,7 @@
 .sidebar-collapse-btn svg, .panel-collapse-btn svg, .desktop-panel-toggle svg {
   width: 14px; height: 14px;
 }
-@media (min-width: 768px) {
+@media (min-width: 1025px) {
   .sidebar-collapse-btn { display: inline-flex; }
 }
 
@@ -142,7 +145,7 @@
 .inline-toc, .inline-backlinks { display: block; }
 @media (min-width: 1100px) { .inline-toc, .inline-backlinks { display: none; } }
 
-@media (min-width: 768px) {
+@media (min-width: 1025px) {
   .reader-layout.left-collapsed .sidebar {
     width: 0; padding: 0; border-right: none; overflow: hidden;
   }
@@ -170,6 +173,9 @@
 }
 .breadcrumb a { color: var(--text-muted); }
 .breadcrumb a:hover { color: var(--accent); text-decoration: none; }
+@media (max-width: 1024px) {
+  .breadcrumb { display: none; }
+}
 
 .vis-badge {
   display: inline-flex; align-items: center; gap: 5px;
@@ -338,6 +344,9 @@
 #link-graph svg { width: 100%; height: 100%; }
 
 .article [id] { scroll-margin-top: 72px; }
+@media (max-width: 1024px) {
+  .article [id] { scroll-margin-top: 120px; }
+}
 
 .article { max-width: 720px; }
 .article h1 {
@@ -397,13 +406,68 @@
 .article strong { color: var(--text-primary); }
 
 .hamburger {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 32px; height: 32px; background: none; border: none;
+  display: none; align-items: center; justify-content: center;
+  width: 44px; height: 44px; background: none; border: none;
   color: var(--text-muted); cursor: pointer; border-radius: var(--radius-sm);
   margin-right: 4px; flex-shrink: 0;
 }
 .hamburger:hover { color: var(--text-secondary); background: var(--accent-subtle); }
-@media (min-width: 768px) { .hamburger { display: none; } }
+.hamburger svg { width: 20px; height: 20px; display: block; }
+
+.reader-mobile-chrome {
+  display: none;
+  position: sticky; top: 56px; z-index: 95;
+  height: 48px;
+  padding: 0 12px;
+  align-items: center; gap: 10px;
+  background: var(--bg-base);
+  border-bottom: 1px solid var(--border-default);
+}
+.reader-mobile-menu {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 44px; height: 44px; min-width: 44px;
+  padding: 0;
+  border: 1px solid transparent; border-radius: var(--radius-sm);
+  background: transparent; color: var(--text-secondary); cursor: pointer;
+}
+.reader-mobile-menu:hover,
+.reader-mobile-menu[aria-expanded="true"] {
+  color: var(--text-primary);
+  border-color: var(--border-default);
+  background: var(--accent-subtle);
+}
+.reader-mobile-menu svg { width: 20px; height: 20px; display: block; }
+.reader-mobile-context {
+  min-width: 0; flex: 1;
+  display: flex; align-items: center; gap: 6px;
+  font-family: var(--font-mono); font-size: 0.75rem; line-height: 1;
+  white-space: nowrap; overflow: hidden;
+}
+.reader-mobile-scope,
+.reader-mobile-current {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.reader-mobile-scope {
+  flex: 0 1 auto; max-width: 42%;
+  color: var(--text-muted);
+}
+.reader-mobile-current {
+  flex: 1 1 auto;
+  color: var(--text-secondary);
+}
+.reader-mobile-separator {
+  flex: 0 0 auto; color: var(--accent);
+}
+@media (max-width: 1024px) {
+  .reader-mobile-chrome { display: flex; }
+}
+@media (max-width: 520px) {
+  .reader-mobile-scope,
+  .reader-mobile-separator { display: none; }
+}
+@media (display-mode: standalone) {
+  .reader-mobile-chrome { top: calc(56px + env(safe-area-inset-top)); }
+}
 
 .sidebar-overlay {
   display: none; position: fixed; inset: 0; top: 56px;
@@ -411,6 +475,18 @@
 }
 .sidebar-overlay.open { display: block; }
 .sidebar.open { display: block; position: fixed; top: 56px; left: 0; bottom: 0; z-index: 51; background: var(--bg-base); width: 260px; }
+@media (max-width: 1024px) {
+  .sidebar-overlay { top: 104px; z-index: 90; }
+  .sidebar.open {
+    top: 104px; z-index: 91;
+    width: min(320px, 86vw);
+    border-right-color: var(--border-emphasis);
+  }
+}
+@media (display-mode: standalone) and (max-width: 1024px) {
+  .sidebar-overlay { top: calc(104px + env(safe-area-inset-top)); }
+  .sidebar.open { top: calc(104px + env(safe-area-inset-top)); }
+}
 
 .page-actions {
   display: flex; align-items: center; gap: 8px; margin-bottom: 20px; flex-wrap: wrap;
@@ -687,6 +763,29 @@
     {% endif %}
   {% endfor %}
 {% endmacro %}
+<nav class="reader-mobile-chrome" aria-label="Reader navigation">
+  <button
+    type="button"
+    class="reader-mobile-menu"
+    id="reader-mobile-sidebar-toggle"
+    onclick="toggleSidebar()"
+    aria-label="Open wiki navigation"
+    aria-controls="sidebar"
+    aria-expanded="false"
+    data-reader-sidebar-toggle
+  >
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <line x1="3" y1="6" x2="21" y2="6"/>
+      <line x1="3" y1="12" x2="21" y2="12"/>
+      <line x1="3" y1="18" x2="21" y2="18"/>
+    </svg>
+  </button>
+  <div class="reader-mobile-context" title="@{{ owner.username }}{% if wiki.slug != owner.username %}/{{ wiki.title or wiki.slug }}{% endif %} › {{ page.title or page.path.replace('.md', '') }}">
+    <span class="reader-mobile-scope">@{{ owner.username }}{% if wiki.slug != owner.username %}/{{ wiki.title or wiki.slug }}{% endif %}</span>
+    <span class="reader-mobile-separator">›</span>
+    <span class="reader-mobile-current">{{ page.title or page.path.replace('.md', '').split('/')[-1] }}</span>
+  </div>
+</nav>
 <div class="reader-layout">
   <aside class="sidebar thin-scroll" id="sidebar">
     <div class="sidebar-section">
@@ -760,7 +859,7 @@
 
   <main class="content-wrap">
     <div class="breadcrumb">
-      <button class="hamburger" onclick="toggleSidebar()" aria-label="Open sidebar">
+      <button class="hamburger" onclick="toggleSidebar()" aria-label="Open sidebar" aria-controls="sidebar" aria-expanded="false" data-reader-sidebar-toggle>
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </button>
       <button type="button" class="desktop-panel-toggle left-sidebar-reopen" id="left-sidebar-reopen" onclick="setDesktopPanelCollapsed('left', false)" aria-label="Show navigation" title="Show navigation">
@@ -1176,8 +1275,15 @@ const readerLayout = document.querySelector('.reader-layout');
 const currentSidebarPath = {{ page.path | tojson }};
 
 function toggleSidebar() {
-  document.getElementById('sidebar').classList.toggle('open');
-  document.getElementById('sidebar-overlay').classList.toggle('open');
+  var sidebar = document.getElementById('sidebar');
+  var overlay = document.getElementById('sidebar-overlay');
+  if (!sidebar || !overlay) return;
+  sidebar.classList.toggle('open');
+  overlay.classList.toggle('open');
+  var expanded = sidebar.classList.contains('open');
+  document.querySelectorAll('[data-reader-sidebar-toggle]').forEach(function(btn) {
+    btn.setAttribute('aria-expanded', String(expanded));
+  });
 }
 
 function syncDesktopPanelControls() {
@@ -1197,7 +1303,7 @@ function syncDesktopPanelControls() {
 function setDesktopPanelCollapsed(panel, collapsed) {
   if (!readerLayout) return;
   if (panel === 'left') {
-    if (!window.matchMedia('(min-width: 768px)').matches) return;
+    if (!window.matchMedia('(min-width: 1025px)').matches) return;
     readerLayout.classList.toggle('left-collapsed', collapsed);
     localStorage.setItem(leftSidebarCollapsedKey, collapsed ? '1' : '0');
     if (!collapsed) {
@@ -1221,7 +1327,7 @@ function hydrateDesktopPanels() {
   if (!readerLayout) return;
   const leftCollapsed = localStorage.getItem(leftSidebarCollapsedKey) === '1';
   const rightCollapsed = localStorage.getItem(rightPanelCollapsedKey) === '1';
-  readerLayout.classList.toggle('left-collapsed', window.matchMedia('(min-width: 768px)').matches && leftCollapsed);
+  readerLayout.classList.toggle('left-collapsed', window.matchMedia('(min-width: 1025px)').matches && leftCollapsed);
   readerLayout.classList.toggle('right-collapsed', window.matchMedia('(min-width: 1100px)').matches && rightCollapsed);
   syncDesktopPanelControls();
 }
