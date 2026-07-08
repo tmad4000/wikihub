@@ -22,6 +22,8 @@ from app.models import (
     ProposalComment,
     ProposalPagePatch,
     ProposalRevision,
+    Fork,
+    Star,
     User,
     UsernameRedirect,
     Wiki,
@@ -361,6 +363,7 @@ def _page_url(username, slug, page_path):
 _SIDEBAR_NON_CONTENT_ROOTS = {
     "-",
     "commit",
+    "activity",
     "graph",
     "graph.json",
     "history",
@@ -554,6 +557,116 @@ def _build_sidebar_tree(username, slug, wiki, public=False, current_path=None, a
         return sorted(items, key=lambda item: (item["kind"] != "folder", item["name"].lower(), item["path"]))
 
     return normalize(root["children"])
+
+
+def _activity_time(value):
+    if value is None:
+        return utcnow()
+    return value
+
+
+def _viewer_can_see_proposal(proposal, owner, wiki):
+    revision, patch = _latest_proposal_patch(proposal)
+    if not patch:
+        return False
+    page = Page.query.filter_by(wiki_id=wiki.id, path=patch.page_path).first()
+    return _proposal_participant_can_view(proposal, page, owner, wiki, patch)
+
+
+def _wiki_activity_items(owner, wiki, acl_rules, limit=60):
+    """Build a mixed recent-activity feed from existing durable rows.
+
+    This intentionally avoids a new event table. Page rows, proposals, stars,
+    and forks already capture the product events users care about, and each item
+    is filtered through the same ACL checks used by reader/history routes.
+    """
+    items = []
+    visible_pages = []
+    for page in Page.query.filter_by(wiki_id=wiki.id).order_by(Page.updated_at.desc()).limit(120).all():
+        if _viewer_can_read_page(wiki, page, acl_rules=acl_rules, owner=owner):
+            visible_pages.append(page)
+            verb = "created" if abs((_activity_time(page.updated_at) - _activity_time(page.created_at)).total_seconds()) < 2 else "updated"
+            items.append({
+                "kind": "page",
+                "label": f"Page {verb}",
+                "title": page.title or page.path.replace(".md", "").rsplit("/", 1)[-1],
+                "detail": page.path,
+                "url": _page_url(owner.username, wiki.slug, page.path),
+                "actor": page.author if not page.anonymous else "anonymous",
+                "timestamp": _activity_time(page.updated_at),
+                "visibility": page.visibility,
+            })
+
+    if _is_owner(wiki) or current_user.is_authenticated:
+        proposals = (
+            Proposal.query.filter_by(wiki_id=wiki.id)
+            .order_by(Proposal.updated_at.desc())
+            .limit(50)
+            .all()
+        )
+        for proposal in proposals:
+            if not _viewer_can_see_proposal(proposal, owner, wiki):
+                continue
+            items.append({
+                "kind": "proposal",
+                "label": f"Suggestion {proposal.status.replace('_', ' ')}",
+                "title": proposal.title,
+                "detail": proposal.page_path,
+                "url": url_for("wiki.proposal_detail", username=owner.username, slug=wiki.slug, proposal_id=proposal.id),
+                "actor": proposal.author_name or "anonymous",
+                "timestamp": _activity_time(proposal.updated_at),
+                "visibility": "private" if proposal.status != "accepted" else None,
+            })
+            comment = proposal.comments.order_by(None).order_by(ProposalComment.created_at.desc()).first()
+            if comment:
+                items.append({
+                    "kind": "comment",
+                    "label": comment.event.replace("_", " ").title(),
+                    "title": proposal.title,
+                    "detail": (comment.body or "")[:140],
+                    "url": url_for("wiki.proposal_detail", username=owner.username, slug=wiki.slug, proposal_id=proposal.id),
+                    "actor": comment.author_name or "anonymous",
+                    "timestamp": _activity_time(comment.created_at),
+                    "visibility": None,
+                })
+
+    if visible_pages:
+        user_ids = set()
+        stars = Star.query.filter_by(wiki_id=wiki.id).order_by(Star.created_at.desc()).limit(25).all()
+        forks = Fork.query.filter_by(source_wiki_id=wiki.id).order_by(Fork.created_at.desc()).limit(25).all()
+        user_ids.update(star.user_id for star in stars)
+        user_ids.update(fork.user_id for fork in forks)
+        users = {u.id: u for u in User.query.filter(User.id.in_(user_ids)).all()} if user_ids else {}
+
+        for star in stars:
+            actor = users.get(star.user_id)
+            items.append({
+                "kind": "star",
+                "label": "Wiki starred",
+                "title": wiki.title or wiki.slug,
+                "detail": f"@{actor.username}" if actor else "Someone",
+                "url": f"/@{owner.username}/{wiki.slug}",
+                "actor": actor.username if actor else None,
+                "timestamp": _activity_time(star.created_at),
+                "visibility": None,
+            })
+
+        for fork in forks:
+            actor = users.get(fork.user_id)
+            forked_wiki = db.session.get(Wiki, fork.forked_wiki_id)
+            fork_url = f"/@{actor.username}/{forked_wiki.slug}" if actor and forked_wiki else f"/@{owner.username}/{wiki.slug}"
+            items.append({
+                "kind": "fork",
+                "label": "Wiki forked",
+                "title": wiki.title or wiki.slug,
+                "detail": f"@{actor.username}/{forked_wiki.slug}" if actor and forked_wiki else "Fork created",
+                "url": fork_url,
+                "actor": actor.username if actor else None,
+                "timestamp": _activity_time(fork.created_at),
+                "visibility": None,
+            })
+
+    return sorted(items, key=lambda item: item["timestamp"], reverse=True)[:limit]
 
 
 def _folder_listing(username, slug, wiki, folder_path="", public=False, acl_filter_user=None):
@@ -1286,6 +1399,25 @@ def wiki_history(username, slug):
     # filter out internal event log commits (noise)
     commits = [c for c in raw_commits if not c["message"].startswith("Log ")]
     return render_template("folder.html", owner=owner, wiki=wiki, items=[], sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, public=use_public), folder_path="history", rendered_html=None, breadcrumb=[("History", None)], history_commits=commits)
+
+
+@wiki_bp.route("/@<username>/<slug>/activity")
+def wiki_activity(username, slug):
+    """Recent wiki activity, filtered to what the current viewer may know."""
+    owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
+    acl_rules = load_acl_rules(owner.username, wiki.slug)
+    if not _viewer_can_see_any_page(wiki, acl_rules=acl_rules, owner=owner):
+        return _render_permission_error(owner, wiki)
+    use_public, acl_filter_user = _repo_access(wiki, acl_rules)
+    return render_template(
+        "activity.html",
+        owner=owner,
+        wiki=wiki,
+        activity_items=_wiki_activity_items(owner, wiki, acl_rules),
+        sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, public=use_public, current_path="activity", acl_filter_user=acl_filter_user),
+        recently_updated=_recently_updated_pages(wiki, public_only=use_public and not acl_filter_user),
+        sibling_wikis=_sibling_wikis(owner, wiki),
+    )
 
 
 @wiki_bp.route("/@<username>/<slug>/<path:folder_path>/history")
