@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}Activity - {{ wiki.title or wiki.slug }} - wikihub{% endblock %}
+
+{% block extra_css %}
+.activity-shell { display: flex; min-height: calc(100vh - 56px); }
+.sidebar { width: 280px; flex-shrink: 0; border-right: 1px solid var(--border-default); padding: 16px 0; overflow-y: auto; overflow-x: hidden; display: none; }
+@media (min-width: 768px) { .sidebar { display: block; } }
+.sidebar-section { padding: 0 8px; margin-bottom: 16px; }
+.sidebar-heading { font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); padding: 6px 12px; margin-bottom: 2px; }
+.sidebar-item { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: var(--radius-sm); font-size: 0.8125rem; color: var(--text-tertiary); text-decoration: none; margin-bottom: 1px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar-item:hover, .sidebar-item.active { color: var(--text-primary); background: var(--accent-subtle); text-decoration: none; }
+.sidebar-item.active { border-left: 2px solid var(--accent); }
+.sidebar-icon { flex-shrink: 0; color: var(--text-muted); }
+.activity-main { flex: 1; min-width: 0; padding: 32px 16px 72px; }
+@media (min-width: 760px) { .activity-main { padding: 44px 48px 80px; } }
+.activity-inner { max-width: 880px; }
+.breadcrumb { font-size: 0.8125rem; color: var(--text-tertiary); margin-bottom: 20px; font-family: var(--font-mono); display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.breadcrumb a { color: var(--text-tertiary); }
+.activity-title { font-size: 1.75rem; line-height: 1.15; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 8px; }
+.activity-subtitle { color: var(--text-secondary); font-size: 0.9375rem; margin-bottom: 28px; max-width: 620px; }
+.activity-list { border: 1px solid var(--border-default); border-radius: var(--radius-md); overflow: hidden; background: var(--bg-surface); }
+.activity-row { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; gap: 14px; align-items: start; padding: 14px 16px; color: var(--text-primary); text-decoration: none; border-bottom: 1px solid var(--border-default); }
+.activity-row:last-child { border-bottom: none; }
+.activity-row:hover { background: var(--accent-subtle); text-decoration: none; }
+.activity-mark { width: 28px; height: 28px; border: 1px solid var(--border-emphasis); border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; color: var(--accent); background: var(--control-bg); font-family: var(--font-mono); font-size: 0.75rem; }
+.activity-copy { min-width: 0; }
+.activity-label { display: block; font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 2px; }
+.activity-name { display: block; font-weight: 600; color: var(--text-primary); overflow-wrap: anywhere; }
+.activity-detail { display: block; color: var(--text-secondary); font-size: 0.8125rem; margin-top: 2px; overflow-wrap: anywhere; }
+.activity-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; color: var(--text-muted); font-family: var(--font-mono); font-size: 0.75rem; white-space: nowrap; }
+.activity-vis { font-family: var(--font-body); font-size: 0.6875rem; padding: 2px 7px; border: 1px solid var(--border-emphasis); border-radius: var(--radius-sm); color: var(--text-tertiary); }
+.activity-vis.public, .activity-vis.public-view, .activity-vis.public-edit { color: var(--color-public); border-color: rgba(var(--rgb-public), 0.25); }
+.activity-vis.private { color: var(--color-private); border-color: rgba(var(--rgb-private), 0.25); }
+.activity-empty { border: 1px solid var(--border-default); border-radius: var(--radius-md); padding: 24px; color: var(--text-secondary); background: var(--bg-surface); }
+@media (max-width: 640px) {
+  .activity-row { grid-template-columns: 30px minmax(0, 1fr); }
+  .activity-meta { grid-column: 2; flex-direction: row; align-items: center; justify-content: flex-start; }
+}
+{% endblock %}
+
+{% block body %}
+<div class="activity-shell">
+  <aside class="sidebar">
+    <div class="sidebar-section">
+      <a href="/@{{ owner.username }}/{{ wiki.slug }}" class="sidebar-heading" style="text-decoration:none;display:block;">{{ wiki.title or wiki.slug }}</a>
+      <a href="/@{{ owner.username }}/{{ wiki.slug }}/activity" class="sidebar-item active">
+        <span class="sidebar-icon">+</span>
+        Activity
+      </a>
+      <a href="/@{{ owner.username }}/{{ wiki.slug }}/history" class="sidebar-item">
+        <span class="sidebar-icon">#</span>
+        History
+      </a>
+      {% if current_user.is_authenticated and current_user.id == wiki.owner_id %}
+      <a href="/@{{ owner.username }}/{{ wiki.slug }}/new" class="sidebar-item" style="color:var(--accent);margin-top:8px;">New page</a>
+      {% endif %}
+    </div>
+    {% if recently_updated %}
+    <div class="sidebar-section" style="border-top:1px solid var(--border-default);padding-top:12px;">
+      <div class="sidebar-heading">Recently updated</div>
+      {% for rp in recently_updated[:8] %}
+      <a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ rp.path | page_url }}" class="sidebar-item" title="{{ rp.path }}">
+        <span style="color:var(--text-muted);font-size:0.6875rem;font-family:var(--font-mono);min-width:38px;">{{ rp.updated_at.strftime('%m/%d') if rp.updated_at else '' }}</span>
+        {{ rp.title or rp.path.replace('.md', '').split('/')[-1] }}
+      </a>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% if sibling_wikis %}
+    <div class="sidebar-section" style="border-top:1px solid var(--border-default);padding-top:12px;">
+      <div class="sidebar-heading">{{ owner.display_name or owner.username }}'s Wikis</div>
+      {% for w in sibling_wikis %}
+      <a href="/@{{ owner.username }}/{{ w.slug }}" class="sidebar-item">{{ w.title or w.slug }}</a>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </aside>
+
+  <main class="activity-main">
+    <div class="activity-inner">
+      <div class="breadcrumb">
+        <a href="/@{{ owner.username }}">@{{ owner.username }}</a>
+        <span>/</span>
+        <a href="/@{{ owner.username }}/{{ wiki.slug }}">{{ wiki.title or wiki.slug }}</a>
+        <span>/ activity</span>
+      </div>
+      <h1 class="activity-title">Activity</h1>
+      <p class="activity-subtitle">Recent visible edits, suggestions, stars, and forks for this wiki.</p>
+
+      {% if activity_items %}
+      <div class="activity-list">
+        {% for item in activity_items %}
+        <a href="{{ item.url }}" class="activity-row">
+          <span class="activity-mark" aria-hidden="true">
+            {% if item.kind == "page" %}P{% elif item.kind == "proposal" %}S{% elif item.kind == "comment" %}C{% elif item.kind == "star" %}*{% elif item.kind == "fork" %}F{% else %}+{% endif %}
+          </span>
+          <span class="activity-copy">
+            <span class="activity-label">{{ item.label }}</span>
+            <span class="activity-name">{{ item.title }}</span>
+            {% if item.detail %}<span class="activity-detail">{{ item.detail }}</span>{% endif %}
+          </span>
+          <span class="activity-meta">
+            <time datetime="{{ item.timestamp.isoformat() }}">{{ item.timestamp.strftime('%Y-%m-%d') }}</time>
+            {% if item.visibility %}<span class="activity-vis {{ item.visibility }}">{{ item.visibility }}</span>{% endif %}
+          </span>
+        </a>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="activity-empty">No visible activity yet.</div>
+      {% endif %}
+    </div>
+  </main>
+</div>
+{% endblock %}

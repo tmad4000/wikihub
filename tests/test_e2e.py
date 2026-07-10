@@ -617,6 +617,95 @@ def test_social(client, api_key):
     assert r.status_code == 200
 
 
+def test_activity_feed_filters_private_and_shows_social_events(client, api_key):
+    """Wiki activity renders recent page/social events without leaking private pages."""
+    h = {"Authorization": f"Bearer {api_key}"}
+    r = client.post("/api/v1/wikis", json={"slug": "activity-check", "title": "Activity Check"}, headers=h)
+    assert r.status_code == 201
+
+    r = client.post("/api/v1/wikis/agent1/activity-check/pages", json={
+        "path": "wiki/public-activity.md",
+        "content": "---\ntitle: Public Activity\nvisibility: public\n---\n\n# Public Activity\n",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201
+    r = client.post("/api/v1/wikis/agent1/activity-check/pages", json={
+        "path": "secrets/private-activity.md",
+        "content": "# Private Activity\n\nSecret feed item.",
+        "visibility": "private",
+    }, headers=h)
+    assert r.status_code == 201
+
+    r = client.post("/api/v1/accounts", json={"username": "activityfan"})
+    assert r.status_code == 201
+    fan_key = r.get_json()["api_key"]
+    fan_h = {"Authorization": f"Bearer {fan_key}"}
+    r = client.post("/api/v1/wikis/agent1/activity-check/star", headers=fan_h)
+    assert r.status_code == 201
+    r = client.post("/api/v1/wikis/agent1/activity-check/fork", headers=fan_h)
+    assert r.status_code == 201
+
+    anon = client.application.test_client()
+    r = anon.get("/@agent1/activity-check/activity")
+    assert r.status_code == 200, f"activity feed should be public when public pages exist, got {r.status_code}"
+    html = r.get_data(as_text=True)
+    assert "Activity" in html
+    assert "Public Activity" in html
+    assert "Wiki starred" in html
+    assert "Wiki forked" in html
+    assert "Private Activity" not in html
+    assert "secrets/private-activity.md" not in html
+
+    owner_browser = client.application.test_client()
+    r = owner_browser.post("/auth/login", data={"api_key": api_key}, follow_redirects=False)
+    assert r.status_code == 302
+    r = owner_browser.get("/@agent1/activity-check/activity")
+    assert r.status_code == 200
+    owner_html = r.get_data(as_text=True)
+    assert "Private Activity" in owner_html
+    assert "secrets/private-activity.md" in owner_html
+
+    r = owner_browser.get("/@agent1/activity-check/wiki/public-activity")
+    assert r.status_code == 200
+    assert b"/@agent1/activity-check/activity" in r.data
+
+
+def test_curator_sidebar_only_renders_when_usable(app, client, api_key):
+    """Curator launcher should not appear for anon/disabled contexts."""
+    h = {"Authorization": f"Bearer {api_key}"}
+    r = client.post("/api/v1/wikis", json={"slug": "curator-ui", "title": "Curator UI"}, headers=h)
+    assert r.status_code == 201
+    r = client.post("/api/v1/wikis/agent1/curator-ui/pages", json={
+        "path": "wiki/page.md",
+        "content": "---\ntitle: Curator Page\nvisibility: public\n---\n\n# Curator Page\n",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201
+
+    original = app.config.get("CURATOR_ENABLED", True)
+    try:
+        app.config["CURATOR_ENABLED"] = True
+        anon = client.application.test_client()
+        r = anon.get("/@agent1/curator-ui/wiki/page")
+        assert r.status_code == 200
+        assert b"class=\"curator-toggle\"" not in r.data
+
+        browser = client.application.test_client()
+        r = browser.post("/auth/login", data={"api_key": api_key}, follow_redirects=False)
+        assert r.status_code == 302
+        r = browser.get("/@agent1/curator-ui/wiki/page")
+        assert r.status_code == 200
+        assert b"class=\"curator-toggle\"" in r.data
+        assert b"connect Claude or add an API key" in r.data
+
+        app.config["CURATOR_ENABLED"] = False
+        r = browser.get("/@agent1/curator-ui/wiki/page")
+        assert r.status_code == 200
+        assert b"class=\"curator-toggle\"" not in r.data
+    finally:
+        app.config["CURATOR_ENABLED"] = original
+
+
 def test_zip_upload(client, api_key):
     """create wiki via zip upload"""
     # login via web
@@ -5201,6 +5290,8 @@ def run_all():
             ("reader owner visibility control", lambda: test_reader_owner_visibility_control(client, key)),
             ("search respects ACL shares", lambda: test_search_respects_acl_shares(client, key)),
             ("social (star + fork)", lambda: test_social(client, key)),
+            ("activity feed filters private and shows social events", lambda: test_activity_feed_filters_private_and_shows_social_events(client, key)),
+            ("curator sidebar only renders when usable", lambda: test_curator_sidebar_only_renders_when_usable(app, client, key)),
             ("zip upload", lambda: test_zip_upload(client, key)),
             ("anonymous upload (wikihub-i2xm)", lambda: test_anonymous_upload(app)),
             ("agent surfaces", lambda: test_agent_surfaces(client)),
