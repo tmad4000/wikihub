@@ -116,8 +116,60 @@ def _safe_redirect_target(target, fallback=None):
     return fallback or url_for("main.index")
 
 
+def _wikihub_zone_host(value):
+    host = (value or "").strip().lower().split(":", 1)[0].strip(".")
+    if host == "wikihub.md" or host.endswith(".wikihub.md"):
+        return host
+    return ""
+
+
+def _auth_callback_url(endpoint):
+    """Build OAuth callback URLs on the apex host in production.
+
+    Login/signup routes are globally reachable from user/wiki subdomains, but
+    Google OAuth clients are registered against wikihub.md. When a flow starts
+    on a subdomain, using request.host would produce an unregistered callback.
+    """
+    configured = (current_app.config.get("BASE_URL") or "").rstrip("/")
+    if configured and not configured.startswith("http://localhost"):
+        base = configured
+    else:
+        host = (request.host or "").lower().split(":")[0]
+        if host == "wikihub.md" or host.endswith(".wikihub.md"):
+            base = "https://wikihub.md"
+        else:
+            base = request.url_root.rstrip("/")
+    return f"{base}{url_for(endpoint)}"
+
+
+def _google_userinfo_from_token(client, token):
+    userinfo = token.get("userinfo") or {}
+    if userinfo:
+        return userinfo
+
+    for getter in (
+        lambda: client.parse_id_token(token),
+        lambda: client.userinfo(token=token),
+        lambda: client.userinfo(),
+    ):
+        try:
+            value = getter()
+        except Exception:
+            continue
+        if not value:
+            continue
+        if hasattr(value, "json"):
+            value = value.json()
+        if value:
+            return value
+    return {}
+
+
 def _google_oauth_context_from_request():
     context = {"next": _safe_next_url()}
+    origin_host = _wikihub_zone_host(request.host)
+    if origin_host and origin_host != "wikihub.md":
+        context["origin_host"] = origin_host
     invite_email = request.args.get("email", "").strip().lower()
     invite_token = request.args.get("it", "").strip()
     if invite_email:
@@ -125,6 +177,20 @@ def _google_oauth_context_from_request():
     if invite_token:
         context["it"] = invite_token
     return context
+
+
+def _oauth_redirect_target(context):
+    target = _safe_redirect_target(context.get("next"))
+    origin_host = _wikihub_zone_host(context.get("origin_host"))
+    if origin_host and origin_host != "wikihub.md":
+        parsed = urlparse(target)
+        if (
+            target.startswith("/")
+            and not target.startswith("//")
+            and not parsed.path.startswith("/auth/")
+        ):
+            return f"https://{origin_host}{target}"
+    return target
 
 
 def _stash_google_oauth_context(state, context):
@@ -173,6 +239,18 @@ def _login_template_context():
 
 def _render_login():
     return render_template("auth/login.html", **_login_template_context())
+
+
+def _signup_template_context():
+    return {
+        "prefill_email": request.args.get("email", "").strip().lower(),
+        "prefill_token": request.values.get("it", "").strip(),
+        "next_value": _safe_next_url(fallback=""),
+    }
+
+
+def _render_signup(status=200):
+    return render_template("auth/signup.html", **_signup_template_context()), status
 
 
 def _render_forgot_password_success(email=""):
@@ -325,7 +403,7 @@ def signup():
         while attempts and now - attempts[0] > _SIGNUP_WINDOW_SECONDS:
             attempts.popleft()
         if len(attempts) >= _SIGNUP_MAX_PER_IP:
-            return render_template("auth/signup.html"), 429
+            return _render_signup(429)
 
         username = request.form.get("username", "").strip().lower()
         email = request.form.get("email", "").strip().lower() or None
@@ -333,28 +411,28 @@ def signup():
 
         if not username or not password:
             flash("Username and password required")
-            return render_template("auth/signup.html"), 400
+            return _render_signup(400)
 
         if not _USERNAME_RE.match(username) or len(username) < 2 or len(username) > 40:
             flash("Username must be 2-40 chars: lowercase letters, numbers, hyphens, or underscores")
-            return render_template("auth/signup.html"), 400
+            return _render_signup(400)
 
         if len(password) < 8:
             flash("Password must be at least 8 characters")
-            return render_template("auth/signup.html"), 400
+            return _render_signup(400)
 
         if User.query.filter_by(username=username).first():
             flash("Username already taken")
-            return render_template("auth/signup.html"), 409
+            return _render_signup(409)
 
         conflict = validate_username(username)
         if conflict:
             flash(conflict)
-            return render_template("auth/signup.html"), 409
+            return _render_signup(409)
 
         if email and User.query.filter_by(email=email).first():
             flash("Email already registered")
-            return render_template("auth/signup.html"), 409
+            return _render_signup(409)
 
         # Token-backed one-click verify (wikihub-yjsv): if the signup came
         # via an invite link with a valid ?it= matching a PendingInvite for
@@ -391,11 +469,12 @@ def signup():
         send_verification_if_needed(user)
 
         login_user(user)
-        return redirect(url_for("wiki.user_profile", username=user.username))
+        return redirect(_safe_next_url(fallback=url_for("wiki.user_profile", username=user.username)))
 
     # GET — prefill email + invite token from the invite-link query params
-    prefill_email = request.args.get("email", "").strip().lower()
-    prefill_token = request.args.get("it", "").strip()
+    context = _signup_template_context()
+    prefill_email = context["prefill_email"]
+    prefill_token = context["prefill_token"]
     # If they already have an account at that email, bounce them to login
     # with a message. Preserve the invite token so /auth/login can still
     # turn the click into a verification event (one-click verify on login).
@@ -403,15 +482,11 @@ def signup():
         existing = User.query.filter_by(email=prefill_email).first()
         if existing:
             flash("You already have an account — sign in to apply your invite.")
-            login_url = url_for("auth.login", email=prefill_email, next="/shared")
+            login_url = url_for("auth.login", email=prefill_email, next=context["next_value"] or "/shared")
             if prefill_token:
                 login_url += f"&it={quote(prefill_token, safe='')}"
             return redirect(login_url)
-    return render_template(
-        "auth/signup.html",
-        prefill_email=prefill_email,
-        prefill_token=prefill_token,
-    )
+    return render_template("auth/signup.html", **context)
 
 
 @auth_bp.route("/forgot", methods=["GET", "POST"])
@@ -577,7 +652,7 @@ def google_login():
     except AttributeError:
         flash("Google OAuth not configured")
         return redirect(url_for("auth.login"))
-    redirect_uri = url_for("auth.google_callback", _external=True)
+    redirect_uri = _auth_callback_url("auth.google_callback")
     response = client.authorize_redirect(redirect_uri)
     location = response.headers.get("Location", "")
     state = parse_qs(urlparse(location).query).get("state", [""])[0]
@@ -595,7 +670,7 @@ def google_callback():
 
     token = client.authorize_access_token()
     oauth_context = _pop_google_oauth_context()
-    userinfo = token.get("userinfo", {})
+    userinfo = _google_userinfo_from_token(client, token)
     google_id = userinfo.get("sub")
     email = userinfo.get("email")
     email_verified = bool(userinfo.get("email_verified"))
@@ -618,7 +693,7 @@ def google_callback():
         invite_email=oauth_context.get("email"),
         invite_token=oauth_context.get("it"),
     )
-    return redirect(_safe_redirect_target(oauth_context.get("next")))
+    return redirect(_oauth_redirect_target(oauth_context))
 
 
 def _resolve_or_create_google_user(*, google_id, email, email_verified, name):

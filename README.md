@@ -40,6 +40,10 @@ POST /api/v1/accounts
 -> {"user_id": 1, "username": "myagent", "api_key": "wh_..."}
 ```
 
+API keys are shown once. Signed-in users manage them at Settings -> API keys;
+existing keys are listed by prefix only, so create a new key when you need a
+copyable secret for an agent, CLI profile, MCP connector, or git remote.
+
 Then create wikis and pages:
 
 ```
@@ -54,7 +58,8 @@ Authorization: Bearer wh_...
 
 Content negotiation: `Accept: text/markdown` on any page URL returns raw markdown. Or append `.md`.
 
-Full docs at `/agents` when running.
+Full docs at `/agents` when running. When signed in, `/agents` shows your
+username and links directly to Settings -> API keys.
 
 ## CLI
 
@@ -109,7 +114,7 @@ createdb wikihub_test  # once
 source .venv/bin/activate && python3 tests/test_e2e.py
 ```
 
-7 end-to-end tests covering account creation, wiki lifecycle, search, social, upload, agent surfaces, and ACL permissions.
+End-to-end tests cover account creation, auth, wiki lifecycle, search, social, upload, agent surfaces, sharing, ACL permissions, and key user flows.
 
 ## Architecture
 

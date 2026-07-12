@@ -60,6 +60,11 @@ def _plain_excerpt(text, length=200):
     return t[:length]
 
 
+def _first_markdown_heading(text):
+    match = re.search(r"^#\s+(.+?)\s*#*\s*$", text or "", flags=re.MULTILINE)
+    return match.group(1).strip() if match else None
+
+
 def update_page_metadata(page, content, frontmatter=None):
     try:
         if frontmatter is None:
@@ -70,7 +75,7 @@ def update_page_metadata(page, content, frontmatter=None):
         frontmatter = frontmatter or {}
         body = content
 
-    page.title = frontmatter.get("title", os.path.splitext(os.path.basename(page.path))[0])
+    page.title = frontmatter.get("title") or _first_markdown_heading(body) or os.path.splitext(os.path.basename(page.path))[0]
     if isinstance(page.title, (date, datetime)):
         page.title = str(page.title)
     page.frontmatter_json = _sanitize_for_json(frontmatter)

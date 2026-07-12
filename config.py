@@ -1,4 +1,22 @@
 import os
+from urllib.parse import urlparse
+
+
+def _hostname(value):
+    if not value:
+        return ""
+    value = value.strip().lower()
+    if "://" in value:
+        return (urlparse(value).hostname or "").strip(".")
+    return value.split("/", 1)[0].split(":", 1)[0].strip(".")
+
+
+def _default_session_cookie_domain(base_url, server_name):
+    for value in (base_url, server_name):
+        host = _hostname(value)
+        if host == "wikihub.md" or host.endswith(".wikihub.md"):
+            return ".wikihub.md"
+    return None
 
 
 class Config:
@@ -39,4 +57,7 @@ class Config:
     # Scope session cookie to the whole wikihub.md zone so users stay logged in
     # when moving between apex and user/wiki subdomains. Leave unset locally
     # (Flask defaults to current host) unless SESSION_COOKIE_DOMAIN is provided.
-    SESSION_COOKIE_DOMAIN = os.environ.get("SESSION_COOKIE_DOMAIN") or None
+    SESSION_COOKIE_DOMAIN = (
+        os.environ.get("SESSION_COOKIE_DOMAIN")
+        or _default_session_cookie_domain(os.environ.get("BASE_URL"), os.environ.get("SERVER_NAME"))
+    )

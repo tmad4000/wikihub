@@ -71,6 +71,10 @@
           <span>Settings</span>
           <span class="menu-hint">account</span>
         </a>
+        <a href="/settings#api-keys" class="nav-account-item" role="menuitem">
+          <span>API keys</span>
+          <span class="menu-hint">agents</span>
+        </a>
         <a href="/auth/logout" class="nav-account-item logout" role="menuitem">
           <span>Logout</span>
           <span class="menu-hint">exit</span>
@@ -97,6 +101,7 @@
       <a href="/@{{ current_user.username }}" class="nav-mobile-item" role="menuitem">My Wiki</a>
       <a href="/shared" class="nav-mobile-item" role="menuitem">Shared</a>
       <a href="/settings" class="nav-mobile-item" role="menuitem">Settings</a>
+      <a href="/settings#api-keys" class="nav-mobile-item" role="menuitem">API keys</a>
       <a href="/auth/logout" class="nav-mobile-item nav-mobile-item-danger" role="menuitem">Logout</a>
     {% else %}
       <a href="/auth/login?next={{ request.path|urlencode }}" class="nav-mobile-item" role="menuitem">Sign in</a>

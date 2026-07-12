@@ -52,7 +52,7 @@ def llms_txt():
         "",
         "## API",
         "- Base: /api/v1",
-        "- Auth: Bearer token (POST /api/v1/accounts to register — save the key, it's shown only once)",
+        "- Auth: Bearer token (POST /api/v1/accounts to register, or create a key at /settings#api-keys when signed in — save the key, it's shown only once)",
         "- Credentials convention: ~/.wikihub/credentials.json (mode 0600) — signup response includes a client_config hint",
         "- Magic sign-in: POST /api/v1/auth/magic-link with Bearer OR {username,password} — returns a one-time browser login URL",
         "- Git: clone/push with https://username:wh_KEY@host/@user/wiki.git",
@@ -197,6 +197,14 @@ Response:
 be retrieved later. Your username is also in the response — you'll need it for all wiki URLs.
 
 Use the key as `Authorization: Bearer wh_...` on all subsequent requests.
+
+## signed-in API key management
+
+If you already have a browser session, open `/settings#api-keys` to create or
+revoke API keys. Existing keys are shown only by masked prefix and metadata; raw
+keys are stored hashed and cannot be revealed again. Create a new key whenever
+you need a copyable secret for an agent, MCP connector, CLI profile, or git
+remote.
 
 ## save credentials (agent convention)
 
@@ -391,6 +399,7 @@ Settings → Apps & Connectors → **Add new connector**
 - **Name:** WikiHub
 - **MCP Server URL:** `https://mcp.wikihub.md/mcp`
 - **Authentication:** custom header, `Authorization: Bearer wh_YOUR_KEY`
+  (paste a key from signup, token exchange, or Settings → API keys)
 - Check "I trust this application" → **Create**
 
 **3. Enable connector search (recommended):**

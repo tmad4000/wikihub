@@ -19,7 +19,7 @@
 source .venv/bin/activate && python3 tests/test_e2e.py
 ```
 
-all 12 e2e tests must pass. do not deploy with failing tests.
+all e2e tests must pass. do not deploy with failing tests.
 
 ### 2. commit everything that changed
 
@@ -75,6 +75,11 @@ after confirming the site is up (200), test the specific things you changed:
 | reverse proxy | nginx → gunicorn, Cloudflare in front (SSL) |
 | database | `postgresql://wikihub:wikihub_dev_2026@localhost/wikihub` |
 | git repos | `/opt/wikihub-app/repos/` |
+
+Production auth expects `BASE_URL=https://wikihub.md` so Google OAuth uses the
+apex callback (`/auth/google/callback`) even when login starts from a subdomain.
+Set `SERVER_NAME=wikihub.md` or `SESSION_COOKIE_DOMAIN=.wikihub.md` so browser
+sessions survive the subdomain-to-apex OAuth round trip.
 
 ## useful commands
 
