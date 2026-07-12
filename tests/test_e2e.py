@@ -619,6 +619,8 @@ def test_social(client, api_key):
 
 def test_activity_feed_filters_private_and_shows_social_events(client, api_key):
     """Wiki activity renders recent page/social events without leaking private pages."""
+    from flask import g
+
     h = {"Authorization": f"Bearer {api_key}"}
     r = client.post("/api/v1/wikis", json={"slug": "activity-check", "title": "Activity Check"}, headers=h)
     assert r.status_code == 201
@@ -645,6 +647,7 @@ def test_activity_feed_filters_private_and_shows_social_events(client, api_key):
     r = client.post("/api/v1/wikis/agent1/activity-check/fork", headers=fan_h)
     assert r.status_code == 201
 
+    g.pop("_login_user", None)
     anon = client.application.test_client()
     r = anon.get("/@agent1/activity-check/activity")
     assert r.status_code == 200, f"activity feed should be public when public pages exist, got {r.status_code}"
@@ -656,6 +659,7 @@ def test_activity_feed_filters_private_and_shows_social_events(client, api_key):
     assert "Private Activity" not in html
     assert "secrets/private-activity.md" not in html
 
+    g.pop("_login_user", None)
     owner_browser = client.application.test_client()
     r = owner_browser.post("/auth/login", data={"api_key": api_key}, follow_redirects=False)
     assert r.status_code == 302
@@ -672,6 +676,8 @@ def test_activity_feed_filters_private_and_shows_social_events(client, api_key):
 
 def test_curator_sidebar_only_renders_when_usable(app, client, api_key):
     """Curator launcher should not appear for anon/disabled contexts."""
+    from flask import g
+
     h = {"Authorization": f"Bearer {api_key}"}
     r = client.post("/api/v1/wikis", json={"slug": "curator-ui", "title": "Curator UI"}, headers=h)
     assert r.status_code == 201
@@ -685,11 +691,13 @@ def test_curator_sidebar_only_renders_when_usable(app, client, api_key):
     original = app.config.get("CURATOR_ENABLED", True)
     try:
         app.config["CURATOR_ENABLED"] = True
+        g.pop("_login_user", None)
         anon = client.application.test_client()
         r = anon.get("/@agent1/curator-ui/wiki/page")
         assert r.status_code == 200
         assert b"class=\"curator-toggle\"" not in r.data
 
+        g.pop("_login_user", None)
         browser = client.application.test_client()
         r = browser.post("/auth/login", data={"api_key": api_key}, follow_redirects=False)
         assert r.status_code == 302
@@ -857,6 +865,7 @@ def test_google_oauth_uses_apex_callback_and_fetches_userinfo(app):
     import app.routes.auth as auth_routes
     from flask import redirect
 
+    original_session_cookie_domain = app.config.get("SESSION_COOKIE_DOMAIN")
     app.config["SESSION_COOKIE_DOMAIN"] = ".wikihub.md"
 
     class FakeGoogleClient:
@@ -901,7 +910,7 @@ def test_google_oauth_uses_apex_callback_and_fetches_userinfo(app):
         qs = parse_qs(urlparse(r.headers["Location"]).query)
         assert qs["redirect_uri"][0] == "https://wikihub.md/auth/google/callback"
         assert fake_google.redirect_uri == "https://wikihub.md/auth/google/callback"
-        with browser.session_transaction() as sess:
+        with browser.session_transaction(base_url="https://subsignup.wikihub.md") as sess:
             pending_contexts = sess.get("google_oauth_contexts", {})
             assert pending_contexts["apex-callback-state"]["origin_host"] == "subsignup.wikihub.md"
 
@@ -917,6 +926,7 @@ def test_google_oauth_uses_apex_callback_and_fetches_userinfo(app):
         assert r.status_code == 200
         assert b"userinfo-fallback" in r.data
     finally:
+        app.config["SESSION_COOKIE_DOMAIN"] = original_session_cookie_domain
         if had_original:
             auth_routes.oauth.google = original_google
         else:
