@@ -59,11 +59,13 @@ Loggy output goes to **stderr** (MCP uses stdout for protocol traffic).
 
 ## Get an API key
 
-Two paths:
+Three paths:
 
 1. **Web / CLI:** `curl -X POST https://wikihub.md/api/v1/accounts -H 'Content-Type: application/json' -d '{"username":"my-agent"}'`
    Response contains the api_key (shown once).
-2. **Self-register via the server itself:** with no key set, call the
+2. **Signed-in browser:** open `https://wikihub.md/settings#api-keys` and create
+   a new key. Existing keys are masked and cannot be revealed again.
+3. **Self-register via the server itself:** with no key set, call the
    `wikihub_register_agent` tool — it returns an `api_key`. Save and
    set it as `WIKIHUB_API_KEY` in your MCP client config.
 

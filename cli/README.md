@@ -68,6 +68,11 @@ Credentials are read in this order (first wins):
    - the `_active` profile pointer (set by `auth switch` / `auth login`), else
    - `default`
 
+API keys are write-only secrets. WikiHub shows a raw key once when it is created
+by signup, password login/token exchange, or Settings -> API keys. Existing keys
+are listed by prefix only; create a new key in Settings when you need to copy one
+for this CLI, MCP, or git-over-HTTP.
+
 ### Multiple accounts (gh-style)
 
 Use `auth login` to add accounts without overwriting the one you're already logged in with:
