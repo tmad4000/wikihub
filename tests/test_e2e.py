@@ -844,6 +844,15 @@ def test_signup_preserves_next_from_subdomain_origin(app):
     assert r.headers["Location"].endswith("/agents"), r.headers["Location"]
 
 
+def test_session_cookie_domain_defaults_for_wikihub_hosts():
+    from config import _default_session_cookie_domain
+
+    assert _default_session_cookie_domain("https://wikihub.md/", None) == ".wikihub.md"
+    assert _default_session_cookie_domain("https://starter.wikihub.md", None) == ".wikihub.md"
+    assert _default_session_cookie_domain("http://localhost:5000", "wikihub.md") == ".wikihub.md"
+    assert _default_session_cookie_domain("http://localhost:5000", None) is None
+
+
 def test_google_oauth_uses_apex_callback_and_fetches_userinfo(app):
     import app.routes.auth as auth_routes
     from flask import redirect
@@ -892,6 +901,9 @@ def test_google_oauth_uses_apex_callback_and_fetches_userinfo(app):
         qs = parse_qs(urlparse(r.headers["Location"]).query)
         assert qs["redirect_uri"][0] == "https://wikihub.md/auth/google/callback"
         assert fake_google.redirect_uri == "https://wikihub.md/auth/google/callback"
+        with browser.session_transaction() as sess:
+            pending_contexts = sess.get("google_oauth_contexts", {})
+            assert pending_contexts["apex-callback-state"]["origin_host"] == "subsignup.wikihub.md"
 
         r = browser.get(
             "/auth/google/callback?state=apex-callback-state&code=fake",
@@ -899,9 +911,9 @@ def test_google_oauth_uses_apex_callback_and_fetches_userinfo(app):
             follow_redirects=False,
         )
         assert r.status_code == 302
-        assert r.headers["Location"].endswith("/settings")
+        assert r.headers["Location"] == "https://subsignup.wikihub.md/settings"
 
-        r = browser.get("/settings")
+        r = browser.get("/settings", base_url="https://subsignup.wikihub.md")
         assert r.status_code == 200
         assert b"userinfo-fallback" in r.data
     finally:
@@ -5408,6 +5420,7 @@ def run_all():
             ("client_config hint", lambda: test_client_config_hint(client)),
             ("magic link login", lambda: test_magic_link_login(client)),
             ("signup preserves next from subdomain origin", lambda: test_signup_preserves_next_from_subdomain_origin(app)),
+            ("session cookie domain defaults for wikihub hosts", test_session_cookie_domain_defaults_for_wikihub_hosts),
             ("Google OAuth apex callback + userinfo fallback", lambda: test_google_oauth_uses_apex_callback_and_fetches_userinfo(app)),
             ("sign-in flow redirects back to target (wikihub-kvwh)", lambda: test_signin_flow_redirects_back_to_target(app, client)),
             ("logout (wikihub-uq9)", lambda: test_logout(client)),

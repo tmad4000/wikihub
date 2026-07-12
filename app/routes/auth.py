@@ -116,6 +116,13 @@ def _safe_redirect_target(target, fallback=None):
     return fallback or url_for("main.index")
 
 
+def _wikihub_zone_host(value):
+    host = (value or "").strip().lower().split(":", 1)[0].strip(".")
+    if host == "wikihub.md" or host.endswith(".wikihub.md"):
+        return host
+    return ""
+
+
 def _auth_callback_url(endpoint):
     """Build OAuth callback URLs on the apex host in production.
 
@@ -160,6 +167,9 @@ def _google_userinfo_from_token(client, token):
 
 def _google_oauth_context_from_request():
     context = {"next": _safe_next_url()}
+    origin_host = _wikihub_zone_host(request.host)
+    if origin_host and origin_host != "wikihub.md":
+        context["origin_host"] = origin_host
     invite_email = request.args.get("email", "").strip().lower()
     invite_token = request.args.get("it", "").strip()
     if invite_email:
@@ -167,6 +177,20 @@ def _google_oauth_context_from_request():
     if invite_token:
         context["it"] = invite_token
     return context
+
+
+def _oauth_redirect_target(context):
+    target = _safe_redirect_target(context.get("next"))
+    origin_host = _wikihub_zone_host(context.get("origin_host"))
+    if origin_host and origin_host != "wikihub.md":
+        parsed = urlparse(target)
+        if (
+            target.startswith("/")
+            and not target.startswith("//")
+            and not parsed.path.startswith("/auth/")
+        ):
+            return f"https://{origin_host}{target}"
+    return target
 
 
 def _stash_google_oauth_context(state, context):
@@ -669,7 +693,7 @@ def google_callback():
         invite_email=oauth_context.get("email"),
         invite_token=oauth_context.get("it"),
     )
-    return redirect(_safe_redirect_target(oauth_context.get("next")))
+    return redirect(_oauth_redirect_target(oauth_context))
 
 
 def _resolve_or_create_google_user(*, google_id, email, email_verified, name):
