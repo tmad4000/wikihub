@@ -39,4 +39,7 @@ class Config:
     # Scope session cookie to the whole wikihub.md zone so users stay logged in
     # when moving between apex and user/wiki subdomains. Leave unset locally
     # (Flask defaults to current host) unless SESSION_COOKIE_DOMAIN is provided.
-    SESSION_COOKIE_DOMAIN = os.environ.get("SESSION_COOKIE_DOMAIN") or None
+    SESSION_COOKIE_DOMAIN = (
+        os.environ.get("SESSION_COOKIE_DOMAIN")
+        or (".wikihub.md" if os.environ.get("BASE_URL") == "https://wikihub.md" else None)
+    )

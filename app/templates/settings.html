@@ -140,6 +140,7 @@
   font-size: 0.8125rem;
   color: var(--text-tertiary);
 }
+.settings-link-card code { font-size: 0.75rem; }
 .settings-inline-form {
   display: grid;
   gap: 10px;
@@ -226,6 +227,12 @@
   font-size: 0.8125rem;
   font-weight: 700;
   margin-bottom: 8px;
+}
+.keys-explain {
+  padding: 16px 20px 0;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  line-height: 1.6;
 }
 .keys-banner-row {
   display: flex;
@@ -314,6 +321,7 @@
       </p>
     </div>
     <div class="settings-actions">
+      <a href="#api-keys" class="btn-linkish">Get API key</a>
       <a href="/@{{ current_user.username }}" class="btn-linkish">Open profile</a>
       {% if personal_wiki %}
       <a href="/@{{ current_user.username }}/{{ personal_wiki.slug }}" class="btn-linkish">Open personal wiki</a>
@@ -433,6 +441,10 @@
               <strong>Read the agent setup guide</strong>
               <span>API registration, MCP entry points, and one-click browser sign-in flow.</span>
             </a>
+            <a href="#api-keys" class="settings-link-card">
+              <strong>Create or revoke API keys</strong>
+              <span>Existing keys are listed by prefix and metadata only. Create a new key when you need a copyable secret.</span>
+            </a>
             <div class="settings-link-card" style="cursor: default;">
               <strong>Magic sign-in links</strong>
               <span>An authenticated agent can mint a single-use browser login URL with <code>POST /api/v1/auth/magic-link</code>. The link can land on any safe internal path, not just Settings.</span>
@@ -443,16 +455,21 @@
     </div>
   </div>
 
-  <section class="settings-card" style="margin-top: 16px;">
+  <section id="api-keys" class="settings-card" style="margin-top: 16px; scroll-margin-top: 72px;">
     <div class="settings-card-header">
       <div class="keys-toolbar">
         <div>
           <h2>API keys</h2>
-          <p>Generate long-lived keys for agents, integrations, and git-over-HTTP access.</p>
+          <p>This is where signed-in users create API keys for agents, MCP connectors, CLI auth, and git-over-HTTP.</p>
         </div>
-        <button id="generate-key-btn" class="btn-inline">Generate new key</button>
+        <button id="generate-key-btn" class="btn-inline">Create API key</button>
       </div>
     </div>
+
+    <p class="keys-explain">
+      For security, WikiHub stores only hashed API keys. Existing keys below are masked and cannot be revealed again.
+      Create a new key to copy the secret once, then store it in your agent or <code>~/.wikihub/credentials.json</code>.
+    </p>
 
     <div id="new-key-banner" class="keys-banner">
       <div class="keys-banner-title">New API key created. Copy it now.</div>
@@ -480,7 +497,7 @@
       </div>
       {% endfor %}
       {% if not api_keys %}
-      <div class="key-empty">No API keys yet. Generate one when an agent or integration actually needs durable access.</div>
+      <div class="key-empty">No API keys yet. Create one when an agent, connector, CLI, or git remote needs durable access.</div>
       {% endif %}
     </div>
   </section>
@@ -627,7 +644,7 @@ async function deleteKey(id, btn) {
   if (row) row.remove();
   if (!document.querySelector('[data-key-row]')) {
     document.getElementById('keys-list').innerHTML =
-      '<div class="key-empty">No API keys yet. Generate one when an agent or integration actually needs durable access.</div>';
+      '<div class="key-empty">No API keys yet. Create one when an agent, connector, CLI, or git remote needs durable access.</div>';
   }
 }
 

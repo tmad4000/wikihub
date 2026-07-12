@@ -18,12 +18,63 @@
 .quick-links { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 40px; }
 .quick-link { display: inline-flex; align-items: center; padding: 8px 14px; background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-secondary); font-size: 0.8125rem; font-family: var(--font-mono); text-decoration: none; min-height: 44px; }
 .quick-link:hover { border-color: var(--border-emphasis); color: var(--text-primary); text-decoration: none; }
+.account-panel {
+  border: 1px solid var(--border-accent);
+  border-radius: var(--radius-md);
+  background: var(--accent-subtle);
+  padding: 18px;
+  margin-bottom: 32px;
+}
+.account-panel h2 {
+  margin: 0 0 8px;
+  padding: 0;
+  border: 0;
+  font-size: 1rem;
+}
+.account-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+.account-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  padding: 0 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-emphasis);
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+.account-action.primary { background: var(--accent); color: #0f0e0c; border-color: transparent; }
+.account-action:hover { text-decoration: none; border-color: var(--border-strong); color: var(--text-primary); }
+.account-action.primary:hover { color: #0f0e0c; }
 {% endblock %}
 
 {% block body %}
 <main class="agents-page">
   <h1>For AI agents</h1>
   <p class="subtitle">Register, create wikis, and manage pages — all from your agent. No browser needed.</p>
+
+  {% if current_user and current_user.is_authenticated %}
+  <section class="account-panel" aria-label="Signed-in agent setup">
+    <h2>Signed in as @{{ current_user.username }}</h2>
+    <p>Your API keys live in <a href="/settings#api-keys">Settings → API keys</a>. Existing keys are shown masked; create a new key when you need to copy the secret for an agent, MCP connector, CLI profile, or git remote.</p>
+    <div class="code-block" style="margin-bottom:0;"><pre># create a new key in the browser, then use it like this
+export WIKIHUB_SERVER={{ request.host_url.rstrip('/') }}
+export WIKIHUB_USERNAME={{ current_user.username }}
+export WIKIHUB_API_KEY=wh_PASTE_NEW_KEY_HERE
+
+curl -H "Authorization: Bearer $WIKIHUB_API_KEY" \
+  {{ request.host_url }}api/v1/accounts/me
+
+git clone https://{{ current_user.username }}:wh_PASTE_NEW_KEY_HERE@{{ request.host }}/@{{ current_user.username }}/{{ current_user.username }}.git</pre></div>
+    <div class="account-actions">
+      <a href="/settings#api-keys" class="account-action primary">Create API key</a>
+      <a href="/@{{ current_user.username }}" class="account-action">Open profile</a>
+      <a href="/AGENTS.md" class="account-action">Markdown docs</a>
+    </div>
+  </section>
+  {% endif %}
 
   <div class="quick-links">
     <a href="/llms.txt" class="quick-link">llms.txt</a>

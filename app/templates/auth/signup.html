@@ -43,11 +43,12 @@
   {% endif %}
   {% endwith %}
 
-  <a href="{{ url_for('auth.google_login', next=request.args.get('next') or None, email=prefill_email or None, it=prefill_token or None) }}" class="btn btn-google">Sign up with Google</a>
+  <a href="{{ url_for('auth.google_login', next=next_value or None, email=prefill_email or None, it=prefill_token or None) }}" class="btn btn-google">Sign up with Google</a>
   <div class="divider">or</div>
 
   <form method="POST">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="next" value="{{ next_value }}">
     {% if prefill_token %}<input type="hidden" name="it" value="{{ prefill_token }}">{% endif %}
     <label for="email">Email{% if not prefill_email %} (recommended){% endif %}</label>
     <input type="email" id="email" name="email" autocomplete="username email" value="{{ prefill_email or '' }}"{% if prefill_email %} readonly{% endif %}>
@@ -61,7 +62,7 @@
     <button type="submit" class="btn btn-primary">Create account</button>
   </form>
 
-  <div class="footer">Already have an account? <a href="{{ url_for('auth.login') }}">Sign in</a></div>
+  <div class="footer">Already have an account? <a href="{{ url_for('auth.login', next=next_value or None, email=prefill_email or None, it=prefill_token or None) }}">Sign in</a></div>
 </div>
 <script>
 (function() {

@@ -11,7 +11,7 @@ import shutil
 import sys
 import zipfile
 from datetime import timedelta
-from urllib.parse import quote, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 from sqlalchemy import text
 
 # ensure app is importable
@@ -771,9 +771,24 @@ def test_token_and_settings(client):
     r = client.get("/settings")
     assert r.status_code == 200
     assert b"Account Control Room" in r.data
+    assert b'id="api-keys"' in r.data
+    assert b"Create API key" in r.data
+    assert b"Existing keys below are masked and cannot be revealed again" in r.data
     assert b"aria-label=\"Account menu\"" in r.data
+    assert b'href="/settings#api-keys"' in r.data
     assert b"Open profile" in r.data
     assert b"/auth/logout" in r.data
+
+    r = client.get("/agents")
+    assert r.status_code == 200
+    assert b"Signed in as @webuser" in r.data
+    assert b"WIKIHUB_USERNAME=webuser" in r.data
+    assert b"/settings#api-keys" in r.data
+
+    r = client.get("/@webuser")
+    assert r.status_code == 200
+    assert b'href="/settings#api-keys"' in r.data
+    assert b"Agent setup" in r.data
 
 
 def test_magic_link_login(client):
@@ -800,6 +815,100 @@ def test_magic_link_login(client):
     r = other_browser.get(magic_path, follow_redirects=False)
     assert r.status_code == 302
     assert "/auth/login" in r.headers["Location"]
+
+
+def test_signup_preserves_next_from_subdomain_origin(app):
+    browser = app.test_client()
+    r = browser.get(
+        "/auth/signup?next=/agents",
+        base_url="https://starter.wikihub.md",
+    )
+    assert r.status_code == 200
+    html = r.get_data(as_text=True)
+    assert 'name="next" value="/agents"' in html
+    assert "/auth/google?next=/agents" in html
+    assert "/auth/login?next=/agents" in html
+
+    r = browser.post(
+        "/auth/signup?next=/agents",
+        base_url="https://starter.wikihub.md",
+        data={
+            "username": "subsignup",
+            "email": "subsignup@example.com",
+            "password": "testpass12345",
+            "next": "/agents",
+        },
+        follow_redirects=False,
+    )
+    assert r.status_code == 302
+    assert r.headers["Location"].endswith("/agents"), r.headers["Location"]
+
+
+def test_google_oauth_uses_apex_callback_and_fetches_userinfo(app):
+    import app.routes.auth as auth_routes
+    from flask import redirect
+
+    app.config["SESSION_COOKIE_DOMAIN"] = ".wikihub.md"
+
+    class FakeGoogleClient:
+        def __init__(self):
+            self.redirect_uri = None
+
+        def authorize_redirect(self, redirect_uri):
+            self.redirect_uri = redirect_uri
+            return redirect(
+                f"https://accounts.google.test/o/oauth2/auth?state=apex-callback-state&redirect_uri={quote(redirect_uri, safe='')}"
+            )
+
+        def authorize_access_token(self):
+            return {"access_token": "fake-access-token"}
+
+        def userinfo(self, token=None):
+            assert token["access_token"] == "fake-access-token"
+            return {
+                "sub": "google-sub-userinfo-fallback",
+                "email": "userinfo-fallback@example.com",
+                "email_verified": True,
+                "name": "Userinfo Fallback",
+            }
+
+    try:
+        original_google = auth_routes.oauth.google
+        had_original = True
+    except AttributeError:
+        original_google = None
+        had_original = False
+
+    fake_google = FakeGoogleClient()
+    auth_routes.oauth.google = fake_google
+    try:
+        browser = app.test_client()
+        r = browser.get(
+            "/auth/google?next=/settings",
+            base_url="https://subsignup.wikihub.md",
+            follow_redirects=False,
+        )
+        assert r.status_code == 302
+        qs = parse_qs(urlparse(r.headers["Location"]).query)
+        assert qs["redirect_uri"][0] == "https://wikihub.md/auth/google/callback"
+        assert fake_google.redirect_uri == "https://wikihub.md/auth/google/callback"
+
+        r = browser.get(
+            "/auth/google/callback?state=apex-callback-state&code=fake",
+            base_url="https://wikihub.md",
+            follow_redirects=False,
+        )
+        assert r.status_code == 302
+        assert r.headers["Location"].endswith("/settings")
+
+        r = browser.get("/settings")
+        assert r.status_code == 200
+        assert b"userinfo-fallback" in r.data
+    finally:
+        if had_original:
+            auth_routes.oauth.google = original_google
+        else:
+            delattr(auth_routes.oauth, "google")
 
 
 def test_signin_flow_redirects_back_to_target(app, client):
@@ -5298,6 +5407,8 @@ def run_all():
             ("token + settings", lambda: test_token_and_settings(client)),
             ("client_config hint", lambda: test_client_config_hint(client)),
             ("magic link login", lambda: test_magic_link_login(client)),
+            ("signup preserves next from subdomain origin", lambda: test_signup_preserves_next_from_subdomain_origin(app)),
+            ("Google OAuth apex callback + userinfo fallback", lambda: test_google_oauth_uses_apex_callback_and_fetches_userinfo(app)),
             ("sign-in flow redirects back to target (wikihub-kvwh)", lambda: test_signin_flow_redirects_back_to_target(app, client)),
             ("logout (wikihub-uq9)", lambda: test_logout(client)),
             ("email verification flow (wikihub-ks5t.3)", lambda: test_email_verification_flow(client)),

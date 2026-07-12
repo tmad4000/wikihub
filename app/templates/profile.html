@@ -180,6 +180,7 @@
 }
 .action-btn.primary { background: var(--accent); color: #0f0e0c; }
 .action-btn.secondary { border: 1px solid var(--border-emphasis); color: var(--text-secondary); }
+.action-btn:hover { text-decoration: none; }
 .profile-empty {
   border: 1px dashed var(--border-emphasis); border-radius: var(--radius-md);
   padding: 16px 18px; color: var(--text-secondary); background: rgba(255,255,255,0.01);
@@ -271,6 +272,12 @@
           <span><strong>{{ visible_wiki_count }}</strong> {{ 'wiki' if visible_wiki_count == 1 else 'wikis' }}</span>
           {% if total_stars > 0 %}<span><strong>{{ total_stars }}</strong> {{ 'star' if total_stars == 1 else 'stars' }}</span>{% endif %}
         </div>
+        {% if is_owner %}
+        <div class="action-row" style="margin-top: 14px;">
+          <a href="/settings#api-keys" class="action-btn primary">API keys</a>
+          <a href="/agents" class="action-btn secondary">Agent setup</a>
+        </div>
+        {% endif %}
       </div>
     </div>
 
