@@ -242,8 +242,9 @@ def create_wiki():
         return {"error": "conflict", "message": f"Wiki '{slug}' already exists"}, 409
 
     wiki_count = Wiki.query.filter_by(owner_id=user.id).count()
-    if wiki_count >= current_app.config["MAX_WIKIS_PER_USER"]:
-        return {"error": "too_many", "message": f"You've reached the limit of {current_app.config['MAX_WIKIS_PER_USER']} wikis"}, 429
+    limit = user.effective_wiki_limit()
+    if wiki_count >= limit:
+        return {"error": "too_many", "message": f"You've reached the limit of {limit} wikis"}, 429
 
     template = data.get("template", "structured")
     if template not in ("freeform", "structured"):
@@ -419,6 +420,11 @@ def fork_wiki(owner, slug):
     user = request.current_user
     if Wiki.query.filter_by(owner_id=user.id, slug=slug).first():
         return {"error": "conflict", "message": f"You already have a wiki called '{slug}'"}, 409
+
+    wiki_count = Wiki.query.filter_by(owner_id=user.id).count()
+    limit = user.effective_wiki_limit()
+    if wiki_count >= limit:
+        return {"error": "too_many", "message": f"You've reached the limit of {limit} wikis"}, 429
 
     # clone the public mirror (or authoritative if owner)
     is_owner = user.id == source_wiki.owner_id

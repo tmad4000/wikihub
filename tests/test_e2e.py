@@ -8,6 +8,7 @@ not individual functions. run with: python3 tests/test_e2e.py
 import io
 import os
 import shutil
+import subprocess
 import sys
 import zipfile
 from datetime import timedelta
@@ -25,7 +26,7 @@ os.environ["SESSION_COOKIE_SECURE"] = "0"
 
 from app import create_app, db
 from app.auth_utils import _ip_write_timestamps, _write_timestamps
-from app.models import utcnow
+from app.models import User, utcnow
 
 
 def setup():
@@ -631,7 +632,7 @@ def test_activity_feed_filters_private_and_shows_social_events(client, api_key):
     assert r.status_code == 201
     r = client.post("/api/v1/wikis/agent1/activity-check/pages", json={
         "path": "secrets/private-activity.md",
-        "content": "# Private Activity\n\nSecret feed item.",
+        "content": "---\ntitle: Private Activity\nvisibility: private\n---\n\n# Private Activity\n\nSecret feed item.",
         "visibility": "private",
     }, headers=h)
     assert r.status_code == 201
@@ -646,6 +647,7 @@ def test_activity_feed_filters_private_and_shows_social_events(client, api_key):
     assert r.status_code == 201
 
     anon = client.application.test_client()
+    anon.get("/auth/logout")
     r = anon.get("/@agent1/activity-check/activity")
     assert r.status_code == 200, f"activity feed should be public when public pages exist, got {r.status_code}"
     html = r.get_data(as_text=True)
@@ -668,6 +670,7 @@ def test_activity_feed_filters_private_and_shows_social_events(client, api_key):
     r = owner_browser.get("/@agent1/activity-check/wiki/public-activity")
     assert r.status_code == 200
     assert b"/@agent1/activity-check/activity" in r.data
+    owner_browser.get("/auth/logout")
 
 
 def test_curator_sidebar_only_renders_when_usable(app, client, api_key):
@@ -686,6 +689,7 @@ def test_curator_sidebar_only_renders_when_usable(app, client, api_key):
     try:
         app.config["CURATOR_ENABLED"] = True
         anon = client.application.test_client()
+        anon.get("/auth/logout")
         r = anon.get("/@agent1/curator-ui/wiki/page")
         assert r.status_code == 200
         assert b"class=\"curator-toggle\"" not in r.data
@@ -2506,7 +2510,17 @@ def test_me_capabilities(client, api_key):
     assert rl["writes_per_minute"]["limit"] >= 1
     assert "reset_at" in rl["writes_per_minute"]
     assert data["features"]["git_push"] is True
-    assert "max_wikis_per_user" in data["quotas"]
+    assert data["quotas"]["max_wikis_per_user"] == client.application.config["MAX_WIKIS_PER_USER"]
+
+    user = User.query.filter_by(username="agent1").one()
+    user.wiki_limit = 321
+    db.session.commit()
+    r = client.get("/api/v1/me/capabilities", headers=h)
+    assert r.status_code == 200
+    data = r.get_json()
+    assert data["quotas"]["max_wikis_per_user"] == 321
+    user.wiki_limit = None
+    db.session.commit()
 
 
 def test_feedback_submission(client):
@@ -5260,6 +5274,81 @@ def test_page_lookup_consistent_across_endpoints_for_underscore_path(client, api
     assert r.status_code == 404
 
 
+def test_wiki_limit_effective_resolution_and_429(client, app):
+    """wikihub-20ct: per-user wiki cap.
+
+    - effective_wiki_limit() returns the config default when User.wiki_limit
+      is NULL, and the override when set.
+    - hitting the cap returns 429 too_many with the EFFECTIVE limit in the
+      message (not the raw constant).
+    - a per-user override lifts the cap for that user only.
+    """
+    from app.models import User
+
+    r = client.post("/api/v1/accounts", json={"username": "limituser"})
+    assert r.status_code == 201
+    key = r.get_json()["api_key"]
+    h = {"Authorization": f"Bearer {key}"}
+
+    # 1) resolution: NULL override -> config default; set override wins.
+    with app.app_context():
+        u = User.query.filter_by(username="limituser").first()
+        assert u.wiki_limit is None
+        assert u.effective_wiki_limit() == app.config["MAX_WIKIS_PER_USER"]
+        u.wiki_limit = 3
+        db.session.commit()
+        assert u.effective_wiki_limit() == 3
+
+    # limituser already has a personal wiki (count=1). With override=3, two
+    # more should succeed, the third create should 429.
+    r = client.post("/api/v1/wikis", json={"slug": "w-a"}, headers=h)
+    assert r.status_code == 201, r.get_data(as_text=True)
+    r = client.post("/api/v1/wikis", json={"slug": "w-b"}, headers=h)
+    assert r.status_code == 201, r.get_data(as_text=True)
+
+    r = client.post("/api/v1/wikis", json={"slug": "w-c"}, headers=h)
+    assert r.status_code == 429, f"expected 429 at cap: {r.get_data(as_text=True)}"
+    body = r.get_json()
+    assert body["error"] == "too_many"
+    # message shows the effective limit (3), not the config default.
+    assert "3" in body["message"]
+    assert str(app.config["MAX_WIKIS_PER_USER"]) not in body["message"] \
+        or app.config["MAX_WIKIS_PER_USER"] == 3
+
+    r = client.post("/api/v1/accounts", json={"username": "forksource"})
+    assert r.status_code == 201
+    r = client.post("/api/v1/wikis/forksource/forksource/fork", headers=h)
+    assert r.status_code == 429, f"fork should respect cap: {r.get_data(as_text=True)}"
+    body = r.get_json()
+    assert body["error"] == "too_many"
+    assert "3" in body["message"]
+
+    # 2) raising the override immediately unblocks creation for this user.
+    with app.app_context():
+        u = User.query.filter_by(username="limituser").first()
+        u.wiki_limit = 100000
+        db.session.commit()
+    r = client.post("/api/v1/wikis", json={"slug": "w-c"}, headers=h)
+    assert r.status_code == 201, f"override should unblock: {r.get_data(as_text=True)}"
+
+    r = client.post("/api/v1/wikis/forksource/forksource/fork", headers=h)
+    assert r.status_code == 201, f"override should unblock fork: {r.get_data(as_text=True)}"
+
+
+def test_set_wiki_limit_script_imports_from_repo_root():
+    """wikihub-20ct: documented helper invocation can import app."""
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    r = subprocess.run(
+        [sys.executable, "scripts/set_wiki_limit.py"],
+        cwd=repo_root,
+        text=True,
+        capture_output=True,
+    )
+    assert r.returncode == 2
+    assert "Usage (from the app root" in r.stdout
+    assert "ModuleNotFoundError" not in r.stderr
+
+
 def run_all():
     app = setup()
 
@@ -5370,6 +5459,8 @@ def run_all():
             ("visibility toggle resolves underscore filename (wikihub-vbug)", lambda: test_visibility_toggle_for_underscore_filename(client, key)),
             ("page lookup consistent across endpoints for underscore path (wikihub-wkmg+vbug)", lambda: test_page_lookup_consistent_across_endpoints_for_underscore_path(client, key)),
             ("CLI end-to-end", lambda: test_cli(client)),
+            ("per-user wiki limit + 429 (wikihub-20ct)", lambda: test_wiki_limit_effective_resolution_and_429(client, app)),
+            ("set_wiki_limit imports from app root (wikihub-20ct)", lambda: test_set_wiki_limit_script_imports_from_repo_root()),
         ]
 
         passed = 1  # account creation already passed

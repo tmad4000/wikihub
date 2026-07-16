@@ -43,10 +43,10 @@ def create_wiki_web():
             flash(f"Wiki '{slug}' already exists")
             return render_template("new_wiki.html"), 409
 
-        from flask import current_app
         wiki_count = Wiki.query.filter_by(owner_id=current_user.id).count()
-        if wiki_count >= current_app.config["MAX_WIKIS_PER_USER"]:
-            flash(f"You've reached the limit of {current_app.config['MAX_WIKIS_PER_USER']} wikis")
+        limit = current_user.effective_wiki_limit()
+        if wiki_count >= limit:
+            flash(f"You've reached the limit of {limit} wikis")
             return render_template("new_wiki.html"), 429
 
         wiki = create_wiki_for_user(current_user, slug=slug, title=title, description=description, scaffold=False)

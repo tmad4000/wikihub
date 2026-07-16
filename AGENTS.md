@@ -94,6 +94,7 @@ host (`ubuntu@54.145.123.7`) — that's historical. Production is GCP now.
 - **two repos per wiki:** `repos/<user>/<slug>.git` (authoritative) + `repos/<user>/<slug>-public.git` (derived mirror).
 - **frontmatter visibility wins over ACL file** (most specific wins).
 - **API keys start with `wh_`**, SHA-256 hashed in DB, shown once on creation.
+- **wiki caps resolve per user.** `User.wiki_limit` overrides `MAX_WIKIS_PER_USER`; enforcement and `/api/v1/me/capabilities` must use `User.effective_wiki_limit()`.
 
 ## core product principles
 

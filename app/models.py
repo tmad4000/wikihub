@@ -21,6 +21,12 @@ class User(UserMixin, db.Model):
     password_hash = db.Column(db.String(256), nullable=True)  # null for oauth-only users
     google_id = db.Column(db.String(256), unique=True, nullable=True)
     llm_api_key_encrypted = db.Column(db.Text, nullable=True)  # encrypted Anthropic API key for Curator
+    # Per-user override for the wiki cap (wikihub-20ct). NULL = use the config
+    # default (Config.MAX_WIKIS_PER_USER). When set, it wins — this is the
+    # mechanism for granting an effectively-unlimited cap to specific accounts
+    # (e.g. the owner) without hardcoding usernames anywhere. See
+    # effective_wiki_limit().
+    wiki_limit = db.Column(db.Integer, nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
 
     wikis = db.relationship("Wiki", backref="owner", lazy="dynamic")
@@ -35,6 +41,16 @@ class User(UserMixin, db.Model):
             postgresql_where=db.text("email_verified_at IS NOT NULL"),
         ),
     )
+
+    def effective_wiki_limit(self):
+        """Resolve this user's wiki cap: per-user override wins, else the
+        config default. Enforcement sites (api_wikis, upload) MUST use this
+        rather than reading MAX_WIKIS_PER_USER directly, so per-user grants
+        (wikihub-20ct) are honored everywhere."""
+        from flask import current_app
+        if self.wiki_limit is not None:
+            return self.wiki_limit
+        return current_app.config["MAX_WIKIS_PER_USER"]
 
 
 class Wiki(db.Model):
