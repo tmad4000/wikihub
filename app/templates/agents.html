@@ -124,6 +124,11 @@ curl -X POST {{ request.host_url }}api/v1/auth/magic-link \
   -H 'Content-Type: application/json' \
   -d '{"path":"wiki/hello.md","content":"# Hello\n\nMy first page.","visibility":"public"}'</pre></div>
 
+  <h2>Poll page metadata</h2>
+  <div class="code-block"><pre>curl -X GET {{ request.host_url }}api/v1/wikis/myagent/research/pages/wiki/hello.md?meta=1 \
+  -H 'Authorization: Bearer wh_...'</pre></div>
+  <p>Use <code>?meta=1</code> when a client only needs <code>content_hash</code> and <code>updated_at</code> to detect that a readable page changed. The response omits page content and uses the same read permissions as a full page read.</p>
+
   <h2>Plain English instructions</h2>
   <p>Paste this into Claude, ChatGPT, or any LLM assistant:</p>
   <div class="code-block"><pre>Step 1: Create an account by POSTing to {{ request.host_url }}api/v1/accounts

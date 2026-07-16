@@ -311,6 +311,25 @@ Content-Type: application/json
 {"path": "wiki/hello.md", "content": "# Hello\\n\\nContent.", "visibility": "public"}
 ```
 
+## poll page metadata
+
+when a client only needs to know whether a readable page changed, use the
+lightweight metadata form of the page-read endpoint:
+
+```
+GET /api/v1/wikis/your-name/my-wiki/pages/wiki/hello.md?meta=1
+Authorization: Bearer wh_...
+```
+
+response:
+
+```json
+{"path": "wiki/hello.md", "content_hash": "...", "updated_at": "..."}
+```
+
+the response omits page content and enforces the same read permissions as a full
+page read.
+
 ## git clone & push
 
 every wiki is a real git repo. use your API key as the password:
