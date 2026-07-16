@@ -20,6 +20,9 @@ Equivalent raw SQL:
     UPDATE users SET wiki_limit = 100000 WHERE username = 'jacobcole';
 """
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app import create_app, db
 from app.models import User

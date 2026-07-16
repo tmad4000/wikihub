@@ -8,6 +8,7 @@ not individual functions. run with: python3 tests/test_e2e.py
 import io
 import os
 import shutil
+import subprocess
 import sys
 import zipfile
 from datetime import timedelta
@@ -631,7 +632,7 @@ def test_activity_feed_filters_private_and_shows_social_events(client, api_key):
     assert r.status_code == 201
     r = client.post("/api/v1/wikis/agent1/activity-check/pages", json={
         "path": "secrets/private-activity.md",
-        "content": "# Private Activity\n\nSecret feed item.",
+        "content": "---\ntitle: Private Activity\nvisibility: private\n---\n\n# Private Activity\n\nSecret feed item.",
         "visibility": "private",
     }, headers=h)
     assert r.status_code == 201
@@ -646,6 +647,7 @@ def test_activity_feed_filters_private_and_shows_social_events(client, api_key):
     assert r.status_code == 201
 
     anon = client.application.test_client()
+    anon.get("/auth/logout")
     r = anon.get("/@agent1/activity-check/activity")
     assert r.status_code == 200, f"activity feed should be public when public pages exist, got {r.status_code}"
     html = r.get_data(as_text=True)
@@ -668,6 +670,7 @@ def test_activity_feed_filters_private_and_shows_social_events(client, api_key):
     r = owner_browser.get("/@agent1/activity-check/wiki/public-activity")
     assert r.status_code == 200
     assert b"/@agent1/activity-check/activity" in r.data
+    owner_browser.get("/auth/logout")
 
 
 def test_curator_sidebar_only_renders_when_usable(app, client, api_key):
@@ -686,6 +689,7 @@ def test_curator_sidebar_only_renders_when_usable(app, client, api_key):
     try:
         app.config["CURATOR_ENABLED"] = True
         anon = client.application.test_client()
+        anon.get("/auth/logout")
         r = anon.get("/@agent1/curator-ui/wiki/page")
         assert r.status_code == 200
         assert b"class=\"curator-toggle\"" not in r.data
@@ -5331,6 +5335,20 @@ def test_wiki_limit_effective_resolution_and_429(client, app):
     assert r.status_code == 201, f"override should unblock fork: {r.get_data(as_text=True)}"
 
 
+def test_set_wiki_limit_script_imports_from_repo_root():
+    """wikihub-20ct: documented helper invocation can import app."""
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    r = subprocess.run(
+        [sys.executable, "scripts/set_wiki_limit.py"],
+        cwd=repo_root,
+        text=True,
+        capture_output=True,
+    )
+    assert r.returncode == 2
+    assert "Usage (from the app root" in r.stdout
+    assert "ModuleNotFoundError" not in r.stderr
+
+
 def run_all():
     app = setup()
 
@@ -5442,6 +5460,7 @@ def run_all():
             ("page lookup consistent across endpoints for underscore path (wikihub-wkmg+vbug)", lambda: test_page_lookup_consistent_across_endpoints_for_underscore_path(client, key)),
             ("CLI end-to-end", lambda: test_cli(client)),
             ("per-user wiki limit + 429 (wikihub-20ct)", lambda: test_wiki_limit_effective_resolution_and_429(client, app)),
+            ("set_wiki_limit imports from app root (wikihub-20ct)", lambda: test_set_wiki_limit_script_imports_from_repo_root()),
         ]
 
         passed = 1  # account creation already passed
