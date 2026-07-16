@@ -28,6 +28,7 @@
 
   var overlay, panel, bodyEl, titleEl, openLink, copyBtn;
   var currentFullUrl = null;
+  var currentPeekPath = null;
 
   function build() {
     if (overlay) return;
@@ -110,6 +111,7 @@
         bodyEl.innerHTML = data.html || "";
         bodyEl.scrollTop = 0;
         currentFullUrl = new URL(data.url, location.href).href;
+        currentPeekPath = new URL(currentFullUrl).pathname;
         openLink.href = data.url;
         rehydrate(bodyEl);
         if (push) {
@@ -118,8 +120,7 @@
         }
         showDom();
         if (hash) {
-          var t = bodyEl.querySelector(hash.replace(/[^#\w\-:.]/g, ""));
-          if (t) t.scrollIntoView();
+          scrollPeekHash(hash);
         }
       })
       .catch(function () {
@@ -142,6 +143,30 @@
         });
       } catch (e) {}
     }
+  }
+
+  function findPeekHashTarget(hash) {
+    if (!hash || hash.charAt(0) !== "#") return null;
+    var id;
+    try {
+      id = decodeURIComponent(hash.slice(1));
+    } catch (e) {
+      id = hash.slice(1);
+    }
+    if (!id) return null;
+    if (window.CSS && typeof window.CSS.escape === "function") {
+      return bodyEl.querySelector("#" + window.CSS.escape(id));
+    }
+    var candidates = bodyEl.querySelectorAll("[id]");
+    for (var i = 0; i < candidates.length; i++) {
+      if (candidates[i].id === id) return candidates[i];
+    }
+    return null;
+  }
+
+  function scrollPeekHash(hash) {
+    var t = findPeekHashTarget(hash);
+    if (t) t.scrollIntoView();
   }
 
   function onCopy() {
@@ -198,9 +223,15 @@
     } catch (err) {
       return;
     }
+    var inPeek = !!a.closest(".peek-body");
     var currentPath = location.pathname;
-    if (a.closest(".peek-body") && currentFullUrl) {
-      currentPath = new URL(currentFullUrl, location.href).pathname;
+    if (inPeek && currentPeekPath) {
+      currentPath = currentPeekPath;
+    }
+    if (inPeek && currentPeekPath && url.pathname === currentPeekPath && url.hash) {
+      e.preventDefault();
+      scrollPeekHash(url.hash);
+      return;
     }
     if (url.pathname === currentPath) return;
     if (url.origin !== location.origin) return;

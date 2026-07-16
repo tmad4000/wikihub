@@ -5494,6 +5494,188 @@ dispatch("/@agent1/peek-wiki/wiki/source#toc");
     assert r.returncode == 0, r.stderr or r.stdout
 
 
+def test_side_peek_scrolls_peek_self_anchors():
+    """nsv-7ki: peek self-anchors scroll inside the panel with escaped IDs."""
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    script = r"""
+const fs = require("fs");
+const path = require("path");
+const vm = require("vm");
+
+(async () => {
+  const sidepeekPath = path.join(process.cwd(), "app/static/js/sidepeek.js");
+  const source = fs.readFileSync(sidepeekPath, "utf8");
+  let articleClickHandler = null;
+  let peekClickHandler = null;
+  let domReadyHandler = null;
+  let scrolledTo = [];
+
+  const article = {
+    addEventListener(type, fn) {
+      if (type === "click") articleClickHandler = fn;
+    }
+  };
+
+  const targets = {
+    "h.foo": { id: "h.foo", scrollIntoView() { scrolledTo.push("h.foo"); } },
+    "2026": { id: "2026", scrollIntoView() { scrolledTo.push("2026"); } }
+  };
+
+  const bodyEl = {
+    scrollTop: 0,
+    classList: { add() {}, remove() {} },
+    addEventListener(type, fn) {
+      if (type === "click") peekClickHandler = fn;
+    },
+    set innerHTML(_html) {},
+    querySelector(selector) {
+      if (selector === "#escaped:h.foo") return targets["h.foo"];
+      if (selector === "#escaped:2026") return targets["2026"];
+      if (selector === "#h.foo" || selector === "#2026") {
+        throw new Error("raw hash selector used: " + selector);
+      }
+      return null;
+    },
+    querySelectorAll() {
+      return Object.values(targets);
+    }
+  };
+
+  const noopEl = {
+    classList: { add() {}, remove() {} },
+    setAttribute() {},
+    removeAttribute() {},
+    addEventListener() {},
+    querySelector() { return noopEl; },
+    set href(_value) {}
+  };
+
+  const overlay = {
+    offsetWidth: 1,
+    classList: { add() {}, remove() {} },
+    setAttribute() {},
+    removeAttribute() {},
+    addEventListener() {},
+    querySelector(selector) {
+      if (selector === "#peek-body") return bodyEl;
+      return noopEl;
+    },
+    set innerHTML(_html) {}
+  };
+
+  const location = {
+    href: "http://example.test/@agent1/peek-wiki/wiki/source",
+    origin: "http://example.test",
+    pathname: "/@agent1/peek-wiki/wiki/source",
+    search: ""
+  };
+
+  const context = {
+    URL,
+    URLSearchParams,
+    location,
+    window: {
+      __wikihubPeek: { base: "/@agent1/peek-wiki" },
+      innerWidth: 1024,
+      addEventListener() {},
+      location,
+      CSS: { escape(value) { return "escaped:" + value; } }
+    },
+    document: {
+      body: {
+        appendChild() {},
+        classList: { add() {}, remove() {} }
+      },
+      createElement() { return overlay; },
+      querySelector(selector) {
+        return selector.indexOf(".article") >= 0 ? article : null;
+      },
+      addEventListener(type, fn) {
+        if (type === "DOMContentLoaded") domReadyHandler = fn;
+      }
+    },
+    history: { state: null, pushState() {}, replaceState() {}, back() {} },
+    navigator: {},
+    fetch() {
+      return Promise.resolve({
+        ok: true,
+        headers: { get() { return "application/json"; } },
+        json() {
+          return Promise.resolve({
+            title: "Target",
+            html: "<h2 id=\"h.foo\">H</h2><h2 id=\"2026\">Y</h2>",
+            url: "/@agent1/peek-wiki/wiki/target"
+          });
+        }
+      });
+    },
+    setTimeout() {}
+  };
+
+  vm.runInNewContext(source, context, { filename: sidepeekPath });
+  domReadyHandler();
+
+  function makeAnchor(rawHref, inPeek) {
+    return {
+      href: new URL(rawHref, location.href).href,
+      target: "",
+      classList: { contains() { return false; } },
+      hasAttribute() { return false; },
+      getAttribute(name) { return name === "href" ? rawHref : null; },
+      closest(selector) {
+        if (selector === "a") return this;
+        if (selector === ".article, .peek-body") return inPeek ? bodyEl : article;
+        if (selector === ".peek-body") return inPeek ? bodyEl : null;
+        return null;
+      }
+    };
+  }
+
+  function dispatch(handler, rawHref, inPeek) {
+    let prevented = false;
+    const anchor = makeAnchor(rawHref, inPeek);
+    handler({
+      defaultPrevented: false,
+      button: 0,
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      target: anchor,
+      preventDefault() { prevented = true; }
+    });
+    return prevented;
+  }
+
+  if (!dispatch(articleClickHandler, "/@agent1/peek-wiki/wiki/target#h.foo", false)) {
+    throw new Error("cross-page peek link was not intercepted");
+  }
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  if (scrolledTo.join(",") !== "h.foo") {
+    throw new Error("peek did not scroll escaped load hash; got " + scrolledTo.join(","));
+  }
+  if (!peekClickHandler) throw new Error("peek click handler was not registered");
+
+  if (!dispatch(peekClickHandler, "/@agent1/peek-wiki/wiki/target#2026", true)) {
+    throw new Error("peek self-anchor was not intercepted");
+  }
+  if (scrolledTo.join(",") !== "h.foo,2026") {
+    throw new Error("peek self-anchor did not scroll inside panel; got " + scrolledTo.join(","));
+  }
+})().catch((err) => {
+  console.error(err && err.stack ? err.stack : err);
+  process.exit(1);
+});
+"""
+    r = subprocess.run(
+        ["node", "-e", script],
+        cwd=repo_root,
+        text=True,
+        capture_output=True,
+    )
+    assert r.returncode == 0, r.stderr or r.stdout
+
+
 def run_all():
     app = setup()
 
@@ -5606,6 +5788,7 @@ def run_all():
             ("side peek fragment endpoint (wikihub-9k18)", lambda: test_side_peek_fragment_endpoint(client, key)),
             ("side peek fragment respects ACL for anon (wikihub-9k18)", lambda: test_side_peek_fragment_respects_acl_for_anon(client, key)),
             ("side peek preserves same-page anchors (nsv-7lr)", lambda: test_side_peek_preserves_same_page_anchor_clicks()),
+            ("side peek scrolls peek self anchors (nsv-7ki)", lambda: test_side_peek_scrolls_peek_self_anchors()),
             ("CLI end-to-end", lambda: test_cli(client)),
             ("per-user wiki limit + 429 (wikihub-20ct)", lambda: test_wiki_limit_effective_resolution_and_429(client, app)),
             ("set_wiki_limit imports from app root (wikihub-20ct)", lambda: test_set_wiki_limit_script_imports_from_repo_root()),
