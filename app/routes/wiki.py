@@ -1770,7 +1770,10 @@ def wiki_page(username, slug, page_path):
     # .md in URL: browsers get redirected to the clean HTML URL,
     # API clients requesting text/markdown get raw markdown.
     if page_path.endswith(".md") and not wants_markdown:
-        return redirect(f"/@{owner.username}/{wiki.slug}/{html_url_path}", code=302)
+        redirect_url = f"/@{owner.username}/{wiki.slug}/{html_url_path}"
+        if request.args.get("fragment"):
+            redirect_url += "?fragment=1"
+        return redirect(redirect_url, code=302)
     if wants_markdown:
         return Response(
             content,

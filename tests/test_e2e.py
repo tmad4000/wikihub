@@ -5374,6 +5374,30 @@ def test_side_peek_fragment_endpoint(client, api_key):
     assert data["url"] == "/@agent1/peek-wiki/wiki/target"
 
 
+def test_side_peek_fragment_endpoint_preserves_md_redirect(client, api_key):
+    """nsv-9wm: .md page links keep ?fragment=1 through the clean-URL redirect."""
+    h = {"Authorization": f"Bearer {api_key}"}
+    client.post("/api/v1/wikis", json={"slug": "peek-md", "title": "PeekMD"}, headers=h)
+    r = client.post("/api/v1/wikis/agent1/peek-md/pages", json={
+        "path": "wiki/target.md",
+        "content": "---\ntitle: Markdown Link Target\nvisibility: public\n---\n\n# Markdown Link Target\n\nBody **here**.",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201, r.get_json()
+
+    r = client.get("/@agent1/peek-md/wiki/target.md?fragment=1", follow_redirects=False)
+    assert r.status_code == 302
+    assert r.headers["Location"].endswith("/@agent1/peek-md/wiki/target?fragment=1")
+
+    r = client.get("/@agent1/peek-md/wiki/target.md?fragment=1", follow_redirects=True)
+    assert r.status_code == 200, r.get_data(as_text=True)[:200]
+    assert "application/json" in r.content_type
+    data = r.get_json()
+    assert data["title"] == "Markdown Link Target"
+    assert "<strong>here</strong>" in data["html"]
+    assert data["url"] == "/@agent1/peek-md/wiki/target"
+
+
 def test_side_peek_fragment_respects_acl_for_anon(client, api_key):
     """wikihub-9k18: the fragment endpoint reuses the full page-route ACL, so a
     private page must NOT be readable via ?fragment=1 by an anonymous viewer."""
@@ -6007,6 +6031,7 @@ def run_all():
             ("visibility toggle resolves underscore filename (wikihub-vbug)", lambda: test_visibility_toggle_for_underscore_filename(client, key)),
             ("page lookup consistent across endpoints for underscore path (wikihub-wkmg+vbug)", lambda: test_page_lookup_consistent_across_endpoints_for_underscore_path(client, key)),
             ("side peek fragment endpoint (wikihub-9k18)", lambda: test_side_peek_fragment_endpoint(client, key)),
+            ("side peek .md fragment redirect (nsv-9wm)", lambda: test_side_peek_fragment_endpoint_preserves_md_redirect(client, key)),
             ("side peek fragment respects ACL for anon (wikihub-9k18)", lambda: test_side_peek_fragment_respects_acl_for_anon(client, key)),
             ("side peek preserves same-page anchors (nsv-7lr)", lambda: test_side_peek_preserves_same_page_anchor_clicks()),
             ("side peek scrolls peek self anchors (nsv-7ki)", lambda: test_side_peek_scrolls_peek_self_anchors()),
