@@ -5495,7 +5495,7 @@ dispatch("/@agent1/peek-wiki/wiki/source#toc");
 
 
 def test_side_peek_scrolls_peek_self_anchors():
-    """nsv-7ki: peek self-anchors scroll inside the panel with escaped IDs."""
+    """nsv-7ki/nsv-oxc: peek links resolve and navigate inside the panel."""
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     script = r"""
 const fs = require("fs");
@@ -5509,6 +5509,9 @@ const vm = require("vm");
   let peekClickHandler = null;
   let domReadyHandler = null;
   let scrolledTo = [];
+  let fetchedUrls = [];
+  let pushedStates = [];
+  let replacedStates = [];
 
   const article = {
     addEventListener(type, fn) {
@@ -5594,9 +5597,21 @@ const vm = require("vm");
         if (type === "DOMContentLoaded") domReadyHandler = fn;
       }
     },
-    history: { state: null, pushState() {}, replaceState() {}, back() {} },
+    history: {
+      state: null,
+      pushState(state, _title, url) {
+        this.state = state;
+        pushedStates.push({ state, url });
+      },
+      replaceState(state, _title, url) {
+        this.state = state;
+        replacedStates.push({ state, url });
+      },
+      back() {}
+    },
     navigator: {},
     fetch() {
+      fetchedUrls.push(arguments[0]);
       return Promise.resolve({
         ok: true,
         headers: { get() { return "application/json"; } },
@@ -5604,12 +5619,12 @@ const vm = require("vm");
           return Promise.resolve({
             title: "Target",
             html: "<h2 id=\"h.foo\">H</h2><h2 id=\"2026\">Y</h2>",
-            url: "/@agent1/peek-wiki/wiki/target"
+            url: "/@agent1/peek-wiki/wiki/folder/target"
           });
         }
       });
     },
-    setTimeout() {}
+    setTimeout
   };
 
   vm.runInNewContext(source, context, { filename: sidepeekPath });
@@ -5647,7 +5662,7 @@ const vm = require("vm");
     return prevented;
   }
 
-  if (!dispatch(articleClickHandler, "/@agent1/peek-wiki/wiki/target#h.foo", false)) {
+  if (!dispatch(articleClickHandler, "/@agent1/peek-wiki/wiki/folder/target#h.foo", false)) {
     throw new Error("cross-page peek link was not intercepted");
   }
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -5655,12 +5670,29 @@ const vm = require("vm");
     throw new Error("peek did not scroll escaped load hash; got " + scrolledTo.join(","));
   }
   if (!peekClickHandler) throw new Error("peek click handler was not registered");
+  if (pushedStates.length !== 1) {
+    throw new Error("initial peek should push one history entry; got " + pushedStates.length);
+  }
 
-  if (!dispatch(peekClickHandler, "/@agent1/peek-wiki/wiki/target#2026", true)) {
+  if (!dispatch(peekClickHandler, "/@agent1/peek-wiki/wiki/folder/target#2026", true)) {
     throw new Error("peek self-anchor was not intercepted");
   }
   if (scrolledTo.join(",") !== "h.foo,2026") {
     throw new Error("peek self-anchor did not scroll inside panel; got " + scrolledTo.join(","));
+  }
+
+  if (!dispatch(peekClickHandler, "next", true)) {
+    throw new Error("peek relative link was not intercepted");
+  }
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  if (!fetchedUrls[1] || fetchedUrls[1].indexOf("/@agent1/peek-wiki/wiki/folder/next?fragment=1") < 0) {
+    throw new Error("peek relative link resolved to wrong fetch URL: " + fetchedUrls.join(","));
+  }
+  if (pushedStates.length !== 1) {
+    throw new Error("in-panel navigation pushed a new history entry");
+  }
+  if (replacedStates.length !== 1) {
+    throw new Error("in-panel navigation should replace history once; got " + replacedStates.length);
   }
 })().catch((err) => {
   console.error(err && err.stack ? err.stack : err);

@@ -85,9 +85,7 @@
     overlay.setAttribute("hidden", "");
   }
 
-  // Load `rest` (a page path relative to wikiBase, may include #hash) into the
-  // peek. When push is true, add a history entry so back/close pops it.
-  function loadPeek(rest, push) {
+  function loadPeek(rest, historyMode) {
     build();
     var hash = "";
     var hi = rest.indexOf("#");
@@ -114,9 +112,14 @@
         currentPeekPath = new URL(currentFullUrl).pathname;
         openLink.href = data.url;
         rehydrate(bodyEl);
-        if (push) {
+        if (historyMode) {
           var q = location.pathname + "?peek=" + encodeURIComponent(rest);
-          history.pushState({ peek: rest }, "", q);
+          var state = { peek: rest };
+          if (historyMode === "replace") {
+            history.replaceState(history.state && history.state.peek ? state : null, "", q);
+          } else {
+            history.pushState(state, "", q);
+          }
         }
         showDom();
         if (hash) {
@@ -217,13 +220,13 @@
     if (a.hasAttribute("download")) return;
     var href = a.getAttribute("href") || "";
     if (href.charAt(0) === "#") return;
+    var inPeek = !!a.closest(".peek-body");
     var url;
     try {
-      url = new URL(a.href, location.href);
+      url = new URL(href, inPeek && currentFullUrl ? currentFullUrl : location.href);
     } catch (err) {
       return;
     }
-    var inPeek = !!a.closest(".peek-body");
     var currentPath = location.pathname;
     if (inPeek && currentPeekPath) {
       currentPath = currentPeekPath;
@@ -240,7 +243,7 @@
     if (!rest || rest.indexOf("/-/") >= 0) return; // proposals / suggest etc.
     if (isMobile()) return; // small screens: normal navigation
     e.preventDefault();
-    loadPeek(rest + url.hash, true);
+    loadPeek(rest + url.hash, inPeek ? "replace" : "push");
   }
 
   window.addEventListener("popstate", function () {
