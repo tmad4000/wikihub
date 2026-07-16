@@ -421,6 +421,11 @@ def fork_wiki(owner, slug):
     if Wiki.query.filter_by(owner_id=user.id, slug=slug).first():
         return {"error": "conflict", "message": f"You already have a wiki called '{slug}'"}, 409
 
+    wiki_count = Wiki.query.filter_by(owner_id=user.id).count()
+    limit = user.effective_wiki_limit()
+    if wiki_count >= limit:
+        return {"error": "too_many", "message": f"You've reached the limit of {limit} wikis"}, 429
+
     # clone the public mirror (or authoritative if owner)
     is_owner = user.id == source_wiki.owner_id
     from app.git_backend import _repo_path

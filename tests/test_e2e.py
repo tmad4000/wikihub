@@ -5311,6 +5311,14 @@ def test_wiki_limit_effective_resolution_and_429(client, app):
     assert str(app.config["MAX_WIKIS_PER_USER"]) not in body["message"] \
         or app.config["MAX_WIKIS_PER_USER"] == 3
 
+    r = client.post("/api/v1/accounts", json={"username": "forksource"})
+    assert r.status_code == 201
+    r = client.post("/api/v1/wikis/forksource/forksource/fork", headers=h)
+    assert r.status_code == 429, f"fork should respect cap: {r.get_data(as_text=True)}"
+    body = r.get_json()
+    assert body["error"] == "too_many"
+    assert "3" in body["message"]
+
     # 2) raising the override immediately unblocks creation for this user.
     with app.app_context():
         u = User.query.filter_by(username="limituser").first()
@@ -5318,6 +5326,9 @@ def test_wiki_limit_effective_resolution_and_429(client, app):
         db.session.commit()
     r = client.post("/api/v1/wikis", json={"slug": "w-c"}, headers=h)
     assert r.status_code == 201, f"override should unblock: {r.get_data(as_text=True)}"
+
+    r = client.post("/api/v1/wikis/forksource/forksource/fork", headers=h)
+    assert r.status_code == 201, f"override should unblock fork: {r.get_data(as_text=True)}"
 
 
 def run_all():
