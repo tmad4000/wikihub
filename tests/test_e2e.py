@@ -5349,6 +5349,53 @@ def test_set_wiki_limit_script_imports_from_repo_root():
     assert "ModuleNotFoundError" not in r.stderr
 
 
+def test_side_peek_fragment_endpoint(client, api_key):
+    """wikihub-9k18: ?fragment=1 returns the rendered article body as JSON so
+    the side-peek panel can show a same-wiki link without navigating away."""
+    h = {"Authorization": f"Bearer {api_key}"}
+    client.post("/api/v1/wikis", json={"slug": "peek-wiki", "title": "Peek"}, headers=h)
+    r = client.post("/api/v1/wikis/agent1/peek-wiki/pages", json={
+        "path": "wiki/target.md",
+        "content": "---\ntitle: Peek Target\nvisibility: public\n---\n\n# Peek Target\n\nBody **here**.",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201, r.get_json()
+
+    r = client.get("/@agent1/peek-wiki/wiki/target?fragment=1")
+    assert r.status_code == 200, r.get_data(as_text=True)[:200]
+    assert "application/json" in r.content_type
+    data = r.get_json()
+    assert data["title"] == "Peek Target"
+    assert "Body" in data["html"] and "<strong>here</strong>" in data["html"]
+    # Fragment must be body-only: no full-page chrome (nav/sidebar/reader shell).
+    assert "reader-layout" not in data["html"]
+    assert "<html" not in data["html"].lower()
+    # Canonical full-page URL is provided for "open as full page" / copy-link.
+    assert data["url"] == "/@agent1/peek-wiki/wiki/target"
+
+
+def test_side_peek_fragment_respects_acl_for_anon(client, api_key):
+    """wikihub-9k18: the fragment endpoint reuses the full page-route ACL, so a
+    private page must NOT be readable via ?fragment=1 by an anonymous viewer."""
+    h = {"Authorization": f"Bearer {api_key}"}
+    client.post("/api/v1/wikis", json={"slug": "peek-acl", "title": "PeekACL"}, headers=h)
+    r = client.post("/api/v1/wikis/agent1/peek-acl/pages", json={
+        "path": "secret/plan.md",
+        "content": "---\ntitle: Secret Plan\nvisibility: private\n---\n\n# Secret Plan\n\ntop secret",
+        "visibility": "private",
+    }, headers=h)
+    assert r.status_code == 201, r.get_json()
+
+    anon = client.application.test_client()
+    anon.get("/auth/logout", follow_redirects=False)
+    r = anon.get("/@agent1/peek-acl/secret/plan?fragment=1")
+    assert r.status_code in (401, 403, 404), (
+        f"private page leaked via fragment endpoint (got {r.status_code})"
+    )
+    body = r.get_data(as_text=True)
+    assert "top secret" not in body, "fragment endpoint leaked private content to anon"
+
+
 def run_all():
     app = setup()
 
@@ -5458,6 +5505,8 @@ def run_all():
             ("500 page has reference + retry link", lambda: test_500_page_has_reference_and_retry(app, client)),
             ("visibility toggle resolves underscore filename (wikihub-vbug)", lambda: test_visibility_toggle_for_underscore_filename(client, key)),
             ("page lookup consistent across endpoints for underscore path (wikihub-wkmg+vbug)", lambda: test_page_lookup_consistent_across_endpoints_for_underscore_path(client, key)),
+            ("side peek fragment endpoint (wikihub-9k18)", lambda: test_side_peek_fragment_endpoint(client, key)),
+            ("side peek fragment respects ACL for anon (wikihub-9k18)", lambda: test_side_peek_fragment_respects_acl_for_anon(client, key)),
             ("CLI end-to-end", lambda: test_cli(client)),
             ("per-user wiki limit + 429 (wikihub-20ct)", lambda: test_wiki_limit_effective_resolution_and_429(client, app)),
             ("set_wiki_limit imports from app root (wikihub-20ct)", lambda: test_set_wiki_limit_script_imports_from_repo_root()),
