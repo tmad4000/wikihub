@@ -5921,6 +5921,78 @@ const vm = require("vm");
     assert r.returncode == 0, r.stderr or r.stdout
 
 
+def test_page_meta_liveness_endpoint(client, api_key):
+    """Live-reload indicator: GET ?meta=1 returns content_hash for cheap polling,
+    updates the hash when content changes, and enforces the same ACL as a full read
+    (no leak to anon on private pages)."""
+    from flask_login import logout_user
+    app = client.application
+    h = {"Authorization": f"Bearer {api_key}"}
+    r = client.post("/api/v1/wikis", json={"slug": "live-mix", "title": "Live"}, headers=h)
+    assert r.status_code == 201
+
+    # A public page + a private page.
+    r = client.post("/api/v1/wikis/agent1/live-mix/pages", json={
+        "path": "note.md",
+        "content": "# Note\n\nv1",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201
+    r = client.post("/api/v1/wikis/agent1/live-mix/pages", json={
+        "path": "secret.md",
+        "content": "# Secret\n\nhidden",
+        "visibility": "private",
+    }, headers=h)
+    assert r.status_code == 201
+
+    meta_url = "/api/v1/wikis/agent1/live-mix/pages/note.md?meta=1"
+
+    # meta=1 returns hash but NOT the body content.
+    r = client.get(meta_url, headers=h)
+    assert r.status_code == 200, f"meta poll got {r.status_code}"
+    data = r.get_json()
+    assert data.get("content_hash"), "meta response missing content_hash"
+    assert "content" not in data, "meta response must not include full content"
+    first_hash = data["content_hash"]
+    assert r.headers.get("ETag") == f'"{first_hash}"'
+
+    # After an edit, the hash changes — this is what the reader poll detects.
+    r = client.put("/api/v1/wikis/agent1/live-mix/pages/note.md", json={
+        "content": "# Note\n\nv2 updated",
+    }, headers=h)
+    assert r.status_code == 200
+    r = client.get(meta_url, headers=h)
+    assert r.status_code == 200
+    assert r.get_json()["content_hash"] != first_hash, "hash must change after edit"
+
+    # ACL: anon must NOT be able to poll a private page's hash.
+    with app.test_request_context():
+        logout_user()
+    anon = app.test_client()
+    r = anon.get("/api/v1/wikis/agent1/live-mix/pages/secret.md?meta=1")
+    assert r.status_code == 404, f"anon meta poll on private page leaked ({r.status_code})"
+    assert "content_hash" not in (r.get_json() or {}), "meta leaked private hash to anon"
+
+    # But anon CAN poll a public page (the KB / unlisted use case).
+    r = anon.get(meta_url)
+    assert r.status_code == 200, f"anon meta poll on public page got {r.status_code}"
+    assert r.get_json().get("content_hash"), "anon missing hash on public page"
+
+
+def test_reader_has_live_update_indicator(client, api_key):
+    """The reader page must ship the polling script + non-modal update pill."""
+    h = {"Authorization": f"Bearer {api_key}"}
+    client.post("/api/v1/wikis", json={"slug": "live-ui", "title": "Live UI"}, headers=h)
+    client.post("/api/v1/wikis/agent1/live-ui/pages", json={
+        "path": "watch.md", "content": "# Watch\n\nbody", "visibility": "public",
+    }, headers=h)
+    r = client.get("/@agent1/live-ui/watch")
+    assert r.status_code == 200
+    body = r.data.decode("utf-8", errors="replace")
+    assert 'id="page-update-pill"' in body, "reader missing update pill element"
+    assert "?meta=1" in body, "reader missing meta liveness poll"
+
+
 def run_all():
     app = setup()
 
@@ -6026,6 +6098,8 @@ def run_all():
             ("commit diff renders with async sidebar (wikihub-8vwd)", lambda: test_commit_diff_renders_when_sidebar_is_async(client, key)),
             ("graph filters private pages for anon (wikihub-8888.2)", lambda: test_graph_route_filters_private_pages_for_anon(client, key)),
             ("tag index filters private pages for anon (wikihub-8888.3)", lambda: test_tag_index_filters_private_pages_for_anon(client, key)),
+            ("page meta liveness endpoint (live-reload)", lambda: test_page_meta_liveness_endpoint(client, key)),
+            ("reader has live update indicator (live-reload)", lambda: test_reader_has_live_update_indicator(client, key)),
             ("owner renders deep nested page (proposals-grant regression)", lambda: test_owner_can_render_deep_nested_page_no_500(client, key)),
             ("500 page has reference + retry link", lambda: test_500_page_has_reference_and_retry(app, client)),
             ("visibility toggle resolves underscore filename (wikihub-vbug)", lambda: test_visibility_toggle_for_underscore_filename(client, key)),

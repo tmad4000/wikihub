@@ -2124,4 +2124,115 @@ document.addEventListener('keydown', function(e) { if (e.key === 'Escape') close
 
 <script>window.__wikihubPeek = { base: "/@{{ owner.username }}/{{ wiki.slug }}" };</script>
 <script src="{{ url_for('static', filename='js/sidepeek.js') }}"></script>
+
+{# Live "page updated" indicator (wikihub live-reload). Polls the lightweight
+   ?meta=1 endpoint while the tab is visible; shows a non-modal pill when the
+   page's content_hash changes so a viewer watching a bot-maintained page knows
+   fresh content exists. Polling only — no websockets/SSE. ACL is enforced
+   server-side, so anonymous viewers of unlisted/public pages work too. #}
+<style>
+#page-update-pill {
+  position: fixed;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%) translateY(12px);
+  z-index: 400;
+  display: none;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  background: var(--bg-elevated, #221f1b);
+  border: 1px solid var(--border-accent, rgba(212, 160, 74, 0.4));
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  color: var(--text-primary, #e8e2d8);
+  opacity: 0;
+  transition: opacity .2s ease, transform .2s ease;
+}
+#page-update-pill.open { display: flex; opacity: 1; transform: translateX(-50%) translateY(0); }
+#page-update-pill button {
+  cursor: pointer;
+  border: none;
+  border-radius: 999px;
+  padding: 4px 12px;
+  font: inherit;
+  font-weight: 600;
+  background: var(--accent, #d4a04a);
+  color: #1a1712;
+}
+#page-update-pill button:hover { background: var(--accent-hover, #e0b35a); }
+#page-update-pill .pill-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent, #d4a04a);
+  flex: none;
+}
+</style>
+<div id="page-update-pill" role="status" aria-live="polite">
+  <span class="pill-dot" aria-hidden="true"></span>
+  <span>Page updated</span>
+  <button type="button" onclick="location.reload()">Reload</button>
+</div>
+<script>
+(function () {
+  var baseHash = {{ (page.content_hash or '') | tojson }};
+  if (!baseHash) return; // nothing to compare against
+
+  var pathSegments = {{ page.path | tojson }}.split('/').map(encodeURIComponent).join('/');
+  var metaUrl = '/api/v1/wikis/' + encodeURIComponent({{ owner.username | tojson }})
+    + '/' + encodeURIComponent({{ wiki.slug | tojson }})
+    + '/pages/' + pathSegments + '?meta=1';
+
+  var pill = document.getElementById('page-update-pill');
+  var stopped = false;              // pill shown or hard-stopped: stop polling
+  var timer = null;
+  var lastInteraction = Date.now();
+  var IDLE_LIMIT_MS = 30 * 60 * 1000; // pause after ~30min of no interaction
+
+  function nextDelay() {
+    // 20–30s with jitter
+    return 20000 + Math.floor(Math.random() * 10000);
+  }
+
+  function schedule() {
+    if (stopped) return;
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(poll, nextDelay());
+  }
+
+  function showPill() {
+    stopped = true;
+    if (timer) clearTimeout(timer);
+    pill.classList.add('open');
+  }
+
+  function poll() {
+    if (stopped) return;
+    if (document.hidden) { schedule(); return; }              // pause while hidden
+    if (Date.now() - lastInteraction > IDLE_LIMIT_MS) { schedule(); return; } // pause when idle
+    fetch(metaUrl, { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (data) {
+        if (data && data.content_hash && data.content_hash !== baseHash) {
+          showPill();
+        } else {
+          schedule();
+        }
+      })
+      .catch(function () { schedule(); }); // network hiccup: never blocks, just retries
+  }
+
+  ['mousemove', 'keydown', 'scroll', 'touchstart'].forEach(function (evt) {
+    window.addEventListener(evt, function () { lastInteraction = Date.now(); }, { passive: true });
+  });
+
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden && !stopped) {
+      lastInteraction = Date.now();
+      poll(); // check immediately on returning to the tab
+    }
+  });
+
+  schedule();
+})();
+</script>
 {% endblock %}
