@@ -26,7 +26,16 @@ class Config:
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB max request size
     MAX_PAGE_SIZE = 2 * 1024 * 1024  # 2MB per page
     MAX_UPLOAD_FILES = 5000  # max files in a single upload/zip
-    MAX_WIKIS_PER_USER = 50
+    # Default cap on wikis per user (wikihub-20ct). Per-user overrides live in
+    # User.wiki_limit and win over this — see User.effective_wiki_limit().
+    # NOTE (abuse surface): account creation is unauthenticated and
+    # agent-native (POST /api/v1/accounts / wikihub_register_agent both mint a
+    # usable key with no email/verification gate), and there is currently NO
+    # distinction between self-registered agent accounts and human accounts.
+    # So this default applies to every account, including throwaway agents. If
+    # a lower cap for un-verified/agent accounts is ever needed, gate it here
+    # rather than raising this number further.
+    MAX_WIKIS_PER_USER = int(os.environ.get("MAX_WIKIS_PER_USER", "500"))
     WRITE_RATE_LIMIT_AUTHENTICATED_PER_MINUTE = int(os.environ.get("WRITE_RATE_LIMIT_AUTHENTICATED_PER_MINUTE", "180"))
     WRITE_RATE_LIMIT_AUTHENTICATED_IP_PER_MINUTE = int(os.environ.get("WRITE_RATE_LIMIT_AUTHENTICATED_IP_PER_MINUTE", "360"))
     WRITE_RATE_LIMIT_ANONYMOUS_IP_PER_MINUTE = int(os.environ.get("WRITE_RATE_LIMIT_ANONYMOUS_IP_PER_MINUTE", "10"))

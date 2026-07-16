@@ -5260,6 +5260,56 @@ def test_page_lookup_consistent_across_endpoints_for_underscore_path(client, api
     assert r.status_code == 404
 
 
+def test_wiki_limit_effective_resolution_and_429(client, app):
+    """wikihub-20ct: per-user wiki cap.
+
+    - effective_wiki_limit() returns the config default when User.wiki_limit
+      is NULL, and the override when set.
+    - hitting the cap returns 429 too_many with the EFFECTIVE limit in the
+      message (not the raw constant).
+    - a per-user override lifts the cap for that user only.
+    """
+    from app.models import User
+
+    r = client.post("/api/v1/accounts", json={"username": "limituser"})
+    assert r.status_code == 201
+    key = r.get_json()["api_key"]
+    h = {"Authorization": f"Bearer {key}"}
+
+    # 1) resolution: NULL override -> config default; set override wins.
+    with app.app_context():
+        u = User.query.filter_by(username="limituser").first()
+        assert u.wiki_limit is None
+        assert u.effective_wiki_limit() == app.config["MAX_WIKIS_PER_USER"]
+        u.wiki_limit = 3
+        db.session.commit()
+        assert u.effective_wiki_limit() == 3
+
+    # limituser already has a personal wiki (count=1). With override=3, two
+    # more should succeed, the third create should 429.
+    r = client.post("/api/v1/wikis", json={"slug": "w-a"}, headers=h)
+    assert r.status_code == 201, r.get_data(as_text=True)
+    r = client.post("/api/v1/wikis", json={"slug": "w-b"}, headers=h)
+    assert r.status_code == 201, r.get_data(as_text=True)
+
+    r = client.post("/api/v1/wikis", json={"slug": "w-c"}, headers=h)
+    assert r.status_code == 429, f"expected 429 at cap: {r.get_data(as_text=True)}"
+    body = r.get_json()
+    assert body["error"] == "too_many"
+    # message shows the effective limit (3), not the config default.
+    assert "3" in body["message"]
+    assert str(app.config["MAX_WIKIS_PER_USER"]) not in body["message"] \
+        or app.config["MAX_WIKIS_PER_USER"] == 3
+
+    # 2) raising the override immediately unblocks creation for this user.
+    with app.app_context():
+        u = User.query.filter_by(username="limituser").first()
+        u.wiki_limit = 100000
+        db.session.commit()
+    r = client.post("/api/v1/wikis", json={"slug": "w-c"}, headers=h)
+    assert r.status_code == 201, f"override should unblock: {r.get_data(as_text=True)}"
+
+
 def run_all():
     app = setup()
 
@@ -5370,6 +5420,7 @@ def run_all():
             ("visibility toggle resolves underscore filename (wikihub-vbug)", lambda: test_visibility_toggle_for_underscore_filename(client, key)),
             ("page lookup consistent across endpoints for underscore path (wikihub-wkmg+vbug)", lambda: test_page_lookup_consistent_across_endpoints_for_underscore_path(client, key)),
             ("CLI end-to-end", lambda: test_cli(client)),
+            ("per-user wiki limit + 429 (wikihub-20ct)", lambda: test_wiki_limit_effective_resolution_and_429(client, app)),
         ]
 
         passed = 1  # account creation already passed
