@@ -29,6 +29,7 @@
   var overlay, panel, bodyEl, titleEl, openLink, copyBtn;
   var currentFullUrl = null;
   var currentPeekPath = null;
+  var loadRequestSeq = 0;
 
   function build() {
     if (overlay) return;
@@ -79,6 +80,7 @@
   }
 
   function hideDom() {
+    loadRequestSeq++;
     if (!overlay) return;
     overlay.classList.remove("open");
     document.body.classList.remove("peek-open");
@@ -87,6 +89,7 @@
 
   function loadPeek(rest, historyMode) {
     build();
+    var requestId = ++loadRequestSeq;
     var hash = "";
     var hi = rest.indexOf("#");
     if (hi >= 0) {
@@ -98,6 +101,7 @@
 
     fetch(fragUrl, { headers: { Accept: "application/json" }, credentials: "same-origin" })
       .then(function (r) {
+        if (requestId !== loadRequestSeq) return null;
         var ct = r.headers.get("content-type") || "";
         if (!r.ok || ct.indexOf("application/json") < 0) {
           throw new Error("not a peekable page");
@@ -105,6 +109,7 @@
         return r.json();
       })
       .then(function (data) {
+        if (requestId !== loadRequestSeq || !data) return;
         titleEl.textContent = data.title || rest;
         bodyEl.innerHTML = data.html || "";
         bodyEl.scrollTop = 0;
@@ -127,6 +132,7 @@
         }
       })
       .catch(function () {
+        if (requestId !== loadRequestSeq) return;
         // Not a peekable target (missing, private, non-markdown, network) —
         // fall back to a normal full-page navigation.
         window.location.href = pageUrl + hash;

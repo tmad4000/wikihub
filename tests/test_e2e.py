@@ -5708,6 +5708,195 @@ const vm = require("vm");
     assert r.returncode == 0, r.stderr or r.stdout
 
 
+def test_side_peek_ignores_stale_fetch_responses():
+    """nsv-7nv: older side-peek fetches must not overwrite newer clicks."""
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    script = r"""
+const fs = require("fs");
+const path = require("path");
+const vm = require("vm");
+
+(async () => {
+  const sidepeekPath = path.join(process.cwd(), "app/static/js/sidepeek.js");
+  const source = fs.readFileSync(sidepeekPath, "utf8");
+  let articleClickHandler = null;
+  let domReadyHandler = null;
+  let renderedHtml = "";
+  const requests = [];
+  const pushedUrls = [];
+
+  const article = {
+    addEventListener(type, fn) {
+      if (type === "click") articleClickHandler = fn;
+    }
+  };
+
+  const bodyEl = {
+    scrollTop: 0,
+    classList: { add() {}, remove() {} },
+    addEventListener() {},
+    set innerHTML(value) { renderedHtml = value; },
+    querySelector() { return null; },
+    querySelectorAll() { return []; }
+  };
+
+  const titleEl = { textContent: "" };
+  const noopEl = {
+    classList: { add() {}, remove() {} },
+    setAttribute() {},
+    removeAttribute() {},
+    addEventListener() {},
+    querySelector() { return noopEl; },
+    set href(_value) {}
+  };
+
+  const overlay = {
+    offsetWidth: 1,
+    classList: { add() {}, remove() {} },
+    setAttribute() {},
+    removeAttribute() {},
+    addEventListener() {},
+    querySelector(selector) {
+      if (selector === "#peek-body") return bodyEl;
+      if (selector === "#peek-title") return titleEl;
+      return noopEl;
+    },
+    set innerHTML(_html) {}
+  };
+
+  const location = {
+    href: "http://example.test/@agent1/peek-wiki/wiki/source",
+    origin: "http://example.test",
+    pathname: "/@agent1/peek-wiki/wiki/source",
+    search: ""
+  };
+
+  const context = {
+    URL,
+    URLSearchParams,
+    location,
+    window: {
+      __wikihubPeek: { base: "/@agent1/peek-wiki" },
+      innerWidth: 1024,
+      addEventListener() {},
+      location
+    },
+    document: {
+      body: {
+        appendChild() {},
+        classList: { add() {}, remove() {} }
+      },
+      createElement() { return overlay; },
+      querySelector(selector) {
+        return selector.indexOf(".article") >= 0 ? article : null;
+      },
+      addEventListener(type, fn) {
+        if (type === "DOMContentLoaded") domReadyHandler = fn;
+      }
+    },
+    history: {
+      state: null,
+      pushState(state, _title, url) {
+        this.state = state;
+        pushedUrls.push(url);
+      },
+      replaceState() {},
+      back() {}
+    },
+    navigator: {},
+    fetch(url) {
+      let resolveResponse;
+      const promise = new Promise((resolve) => { resolveResponse = resolve; });
+      requests.push({
+        url,
+        resolve(data) {
+          resolveResponse({
+            ok: true,
+            headers: { get() { return "application/json"; } },
+            json() { return Promise.resolve(data); }
+          });
+        }
+      });
+      return promise;
+    },
+    setTimeout
+  };
+
+  vm.runInNewContext(source, context, { filename: sidepeekPath });
+  domReadyHandler();
+
+  function makeAnchor(rawHref) {
+    return {
+      href: new URL(rawHref, location.href).href,
+      target: "",
+      classList: { contains() { return false; } },
+      hasAttribute() { return false; },
+      getAttribute(name) { return name === "href" ? rawHref : null; },
+      closest(selector) {
+        if (selector === "a") return this;
+        if (selector === ".article, .peek-body") return article;
+        if (selector === ".peek-body") return null;
+        return null;
+      }
+    };
+  }
+
+  function dispatch(rawHref) {
+    const anchor = makeAnchor(rawHref);
+    articleClickHandler({
+      defaultPrevented: false,
+      button: 0,
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      target: anchor,
+      preventDefault() {}
+    });
+  }
+
+  dispatch("/@agent1/peek-wiki/wiki/slow");
+  dispatch("/@agent1/peek-wiki/wiki/fast");
+  if (requests.length !== 2) {
+    throw new Error("expected two side-peek fetches, got " + requests.length);
+  }
+
+  requests[1].resolve({
+    title: "Fast",
+    html: "<p>fast</p>",
+    url: "/@agent1/peek-wiki/wiki/fast"
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  requests[0].resolve({
+    title: "Slow",
+    html: "<p>slow</p>",
+    url: "/@agent1/peek-wiki/wiki/slow"
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  if (renderedHtml !== "<p>fast</p>") {
+    throw new Error("stale fetch overwrote latest render: " + renderedHtml);
+  }
+  if (titleEl.textContent !== "Fast") {
+    throw new Error("stale fetch overwrote latest title: " + titleEl.textContent);
+  }
+  if (pushedUrls.length !== 1 || pushedUrls[0] !== "/@agent1/peek-wiki/wiki/source?peek=wiki%2Ffast") {
+    throw new Error("history was not updated only for latest fetch: " + pushedUrls.join(","));
+  }
+})().catch((err) => {
+  console.error(err && err.stack ? err.stack : err);
+  process.exit(1);
+});
+"""
+    r = subprocess.run(
+        ["node", "-e", script],
+        cwd=repo_root,
+        text=True,
+        capture_output=True,
+    )
+    assert r.returncode == 0, r.stderr or r.stdout
+
+
 def run_all():
     app = setup()
 
@@ -5821,6 +6010,7 @@ def run_all():
             ("side peek fragment respects ACL for anon (wikihub-9k18)", lambda: test_side_peek_fragment_respects_acl_for_anon(client, key)),
             ("side peek preserves same-page anchors (nsv-7lr)", lambda: test_side_peek_preserves_same_page_anchor_clicks()),
             ("side peek scrolls peek self anchors (nsv-7ki)", lambda: test_side_peek_scrolls_peek_self_anchors()),
+            ("side peek ignores stale fetch responses (nsv-7nv)", lambda: test_side_peek_ignores_stale_fetch_responses()),
             ("CLI end-to-end", lambda: test_cli(client)),
             ("per-user wiki limit + 429 (wikihub-20ct)", lambda: test_wiki_limit_effective_resolution_and_429(client, app)),
             ("set_wiki_limit imports from app root (wikihub-20ct)", lambda: test_set_wiki_limit_script_imports_from_repo_root()),
