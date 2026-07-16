@@ -5396,6 +5396,104 @@ def test_side_peek_fragment_respects_acl_for_anon(client, api_key):
     assert "top secret" not in body, "fragment endpoint leaked private content to anon"
 
 
+def test_side_peek_preserves_same_page_anchor_clicks():
+    """nsv-7lr: in-page anchors should keep the browser's native scroll behavior."""
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    script = r"""
+const fs = require("fs");
+const path = require("path");
+const vm = require("vm");
+
+const sidepeekPath = path.join(process.cwd(), "app/static/js/sidepeek.js");
+const source = fs.readFileSync(sidepeekPath, "utf8");
+let articleClickHandler = null;
+let domReadyHandler = null;
+
+const article = {
+  addEventListener(type, fn) {
+    if (type === "click") articleClickHandler = fn;
+  }
+};
+
+const location = {
+  href: "http://example.test/@agent1/peek-wiki/wiki/source",
+  origin: "http://example.test",
+  pathname: "/@agent1/peek-wiki/wiki/source",
+  search: ""
+};
+
+const context = {
+  URL,
+  URLSearchParams,
+  location,
+  window: {
+    __wikihubPeek: { base: "/@agent1/peek-wiki" },
+    innerWidth: 1024,
+    addEventListener() {},
+    location
+  },
+  document: {
+    body: { appendChild() {}, classList: { add() {}, remove() {} } },
+    querySelector(selector) {
+      return selector.indexOf(".article") >= 0 ? article : null;
+    },
+    addEventListener(type, fn) {
+      if (type === "DOMContentLoaded") domReadyHandler = fn;
+    }
+  },
+  history: { state: null, pushState() {}, replaceState() {}, back() {} },
+  navigator: {},
+  setTimeout() {}
+};
+
+vm.runInNewContext(source, context, { filename: sidepeekPath });
+if (!domReadyHandler) throw new Error("DOMContentLoaded handler was not registered");
+domReadyHandler();
+if (!articleClickHandler) throw new Error("article click handler was not registered");
+
+function makeAnchor(rawHref) {
+  return {
+    href: new URL(rawHref, location.href).href,
+    target: "",
+    classList: { contains() { return false; } },
+    hasAttribute() { return false; },
+    getAttribute(name) { return name === "href" ? rawHref : null; },
+    closest(selector) {
+      if (selector === "a") return this;
+      if (selector === ".article, .peek-body") return article;
+      return null;
+    }
+  };
+}
+
+function dispatch(rawHref) {
+  let prevented = false;
+  const anchor = makeAnchor(rawHref);
+  articleClickHandler({
+    defaultPrevented: false,
+    button: 0,
+    metaKey: false,
+    ctrlKey: false,
+    shiftKey: false,
+    altKey: false,
+    target: anchor,
+    preventDefault() { prevented = true; }
+  });
+  if (prevented) throw new Error(rawHref + " was intercepted");
+}
+
+dispatch("#footnote-1");
+dispatch("/@agent1/peek-wiki/wiki/source#toc");
+"""
+    r = subprocess.run(
+        ["node", "-e", script],
+        cwd=repo_root,
+        text=True,
+        capture_output=True,
+    )
+    assert r.returncode == 0, r.stderr or r.stdout
+
+
 def run_all():
     app = setup()
 
@@ -5507,6 +5605,7 @@ def run_all():
             ("page lookup consistent across endpoints for underscore path (wikihub-wkmg+vbug)", lambda: test_page_lookup_consistent_across_endpoints_for_underscore_path(client, key)),
             ("side peek fragment endpoint (wikihub-9k18)", lambda: test_side_peek_fragment_endpoint(client, key)),
             ("side peek fragment respects ACL for anon (wikihub-9k18)", lambda: test_side_peek_fragment_respects_acl_for_anon(client, key)),
+            ("side peek preserves same-page anchors (nsv-7lr)", lambda: test_side_peek_preserves_same_page_anchor_clicks()),
             ("CLI end-to-end", lambda: test_cli(client)),
             ("per-user wiki limit + 429 (wikihub-20ct)", lambda: test_wiki_limit_effective_resolution_and_429(client, app)),
             ("set_wiki_limit imports from app root (wikihub-20ct)", lambda: test_set_wiki_limit_script_imports_from_repo_root()),

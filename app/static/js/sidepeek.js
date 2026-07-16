@@ -190,12 +190,19 @@
     if (a.target && a.target !== "" && a.target !== "_self") return;
     if (a.classList.contains("external-link") || a.classList.contains("wikilink-broken")) return;
     if (a.hasAttribute("download")) return;
+    var href = a.getAttribute("href") || "";
+    if (href.charAt(0) === "#") return;
     var url;
     try {
       url = new URL(a.href, location.href);
     } catch (err) {
       return;
     }
+    var currentPath = location.pathname;
+    if (a.closest(".peek-body") && currentFullUrl) {
+      currentPath = new URL(currentFullUrl, location.href).pathname;
+    }
+    if (url.pathname === currentPath) return;
     if (url.origin !== location.origin) return;
     if (!url.pathname.startsWith(wikiBase + "/")) return;
     var rest = url.pathname.slice(wikiBase.length + 1);
