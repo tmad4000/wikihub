@@ -4,6 +4,9 @@ authenticated caller can do, for agents that want to introspect the API
 before attempting operations.
 
 Auth: same as /accounts/me (Bearer API key or session).
+
+Quota values are caller-specific. In particular, max_wikis_per_user is the
+user's effective cap: User.wiki_limit when set, otherwise MAX_WIKIS_PER_USER.
 """
 
 import time

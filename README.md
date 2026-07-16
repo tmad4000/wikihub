@@ -43,6 +43,11 @@ POST /api/v1/accounts
 Then create wikis and pages:
 
 ```
+GET /api/v1/me/capabilities
+Authorization: Bearer wh_...
+
+-> {"quotas": {"max_wikis_per_user": 500, ...}, ...}
+
 POST /api/v1/wikis
 Authorization: Bearer wh_...
 {"slug": "research", "title": "My Research"}
@@ -55,6 +60,10 @@ Authorization: Bearer wh_...
 Content negotiation: `Accept: text/markdown` on any page URL returns raw markdown. Or append `.md`.
 
 Full docs at `/agents` when running.
+
+`max_wikis_per_user` is the authenticated account's effective wiki cap: the
+server default unless a per-user override is set. Wiki create and fork requests
+return `429 too_many` when that effective cap is reached.
 
 ## CLI
 

@@ -6,9 +6,9 @@
 -- the config default". Set a large value to make a specific account
 -- effectively unlimited without hardcoding a username anywhere.
 --
--- To grant the owner an effectively-unlimited cap on prod (user_id=4):
+-- To grant the owner an effectively-unlimited cap on prod:
 --   UPDATE users SET wiki_limit = 100000 WHERE username = 'jacobcole';
--- (see scripts/set_wiki_limit.py for a flask-shell helper.)
+-- (see scripts/set_wiki_limit.py for the equivalent app helper.)
 --
 -- Apply on prod (GCP):
 --   gcloud compute scp migrations/2026-07-16_user_wiki_limit.sql \
