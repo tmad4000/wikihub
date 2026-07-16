@@ -210,6 +210,7 @@ wikihub mcp-config                # prints mcpServers JSON pre-filled</pre></div
 
   <h2>Content negotiation</h2>
   <p><code>Accept: text/markdown</code> on any page URL returns raw markdown. Or append <code>.md</code>.</p>
+  <p>For rendered HTML without the full reader chrome, append <code>?fragment=1</code> to a page URL. The response is JSON with <code>title</code>, <code>html</code>, <code>url</code>, and <code>path</code>, and it uses the same ACL checks as the full page route.</p>
 
   <h2>Discovery</h2>
   <ul>

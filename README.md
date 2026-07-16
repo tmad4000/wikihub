@@ -9,6 +9,7 @@ GitHub for LLM wikis. A hosting platform for markdown knowledge bases with per-f
 - Agent-native: REST API, MCP server, content negotiation, `llms.txt`
 - Social: fork, star, explore, profiles
 - Rendering: KaTeX math, syntax highlighting, wikilinks, footnotes, Obsidian embeds
+- Reader side peek: same-wiki page links open in a right-side preview panel on desktop
 - Every wiki is a real git repo — clone, push, blame, bisect
 
 ## Quick start
@@ -58,6 +59,8 @@ Authorization: Bearer wh_...
 ```
 
 Content negotiation: `Accept: text/markdown` on any page URL returns raw markdown. Or append `.md`.
+For the desktop reader side peek, append `?fragment=1` to a rendered page URL to get JSON
+`{title, html, url, path}` for the article body only; the route uses the same page ACL checks.
 
 Full docs at `/agents` when running.
 
@@ -118,7 +121,8 @@ createdb wikihub_test  # once
 source .venv/bin/activate && python3 tests/test_e2e.py
 ```
 
-7 end-to-end tests covering account creation, wiki lifecycle, search, social, upload, agent surfaces, and ACL permissions.
+End-to-end tests cover account creation, wiki lifecycle, search, social, upload,
+agent surfaces, ACL permissions, reader behavior, and regression cases.
 
 ## Architecture
 
