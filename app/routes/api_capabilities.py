@@ -28,9 +28,6 @@ _WRITE_LIMIT_PER_MIN = 10
 # auth-only.
 _FEEDBACK_LIMIT_PER_MIN = 60
 
-# Platform-wide quotas. Kept as constants here so agents get a stable
-# answer. TODO(quotas): source these from config once we have real limits.
-_MAX_WIKIS_PER_USER = 100
 _MAX_PAGES_PER_WIKI = None  # unlimited for now
 _MAX_PAGE_SIZE_BYTES = 1_048_576  # 1 MiB — matches renderer/page practical limits
 
@@ -102,7 +99,7 @@ def get_capabilities():
             "git_push": True,
         },
         "quotas": {
-            "max_wikis_per_user": _MAX_WIKIS_PER_USER,
+            "max_wikis_per_user": user.effective_wiki_limit(),
             "max_pages_per_wiki": _MAX_PAGES_PER_WIKI,
             "max_page_size_bytes": _MAX_PAGE_SIZE_BYTES,
         },

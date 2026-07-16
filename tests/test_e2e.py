@@ -25,7 +25,7 @@ os.environ["SESSION_COOKIE_SECURE"] = "0"
 
 from app import create_app, db
 from app.auth_utils import _ip_write_timestamps, _write_timestamps
-from app.models import utcnow
+from app.models import User, utcnow
 
 
 def setup():
@@ -2506,7 +2506,17 @@ def test_me_capabilities(client, api_key):
     assert rl["writes_per_minute"]["limit"] >= 1
     assert "reset_at" in rl["writes_per_minute"]
     assert data["features"]["git_push"] is True
-    assert "max_wikis_per_user" in data["quotas"]
+    assert data["quotas"]["max_wikis_per_user"] == client.application.config["MAX_WIKIS_PER_USER"]
+
+    user = User.query.filter_by(username="agent1").one()
+    user.wiki_limit = 321
+    db.session.commit()
+    r = client.get("/api/v1/me/capabilities", headers=h)
+    assert r.status_code == 200
+    data = r.get_json()
+    assert data["quotas"]["max_wikis_per_user"] == 321
+    user.wiki_limit = None
+    db.session.commit()
 
 
 def test_feedback_submission(client):
