@@ -1770,7 +1770,10 @@ def wiki_page(username, slug, page_path):
     # .md in URL: browsers get redirected to the clean HTML URL,
     # API clients requesting text/markdown get raw markdown.
     if page_path.endswith(".md") and not wants_markdown:
-        return redirect(f"/@{owner.username}/{wiki.slug}/{html_url_path}", code=302)
+        redirect_url = f"/@{owner.username}/{wiki.slug}/{html_url_path}"
+        if request.args.get("fragment"):
+            redirect_url += "?fragment=1"
+        return redirect(redirect_url, code=302)
     if wants_markdown:
         return Response(
             content,
@@ -1785,6 +1788,25 @@ def wiki_page(username, slug, page_path):
         page = type("Page", (), {"path": file_path, "title": os.path.basename(file_path).replace(".md", ""), "visibility": resolve_visibility(file_path, acl_rules), "updated_at": wiki.updated_at})()
 
     rendered_html = render_page(content, owner.username, wiki.slug, current_page_path=file_path)
+
+    # Side peek (wikihub-9k18): ?fragment=1 returns the rendered article body
+    # only (no chrome) so a reader can open a same-wiki link in a slide-over
+    # panel without navigating away. This flows through the SAME ACL checks
+    # above (private pages already abort 404 before reaching here), so the
+    # fragment endpoint never leaks private content the full page wouldn't.
+    if request.args.get("fragment"):
+        from flask import jsonify
+        page_title = getattr(page, "title", None) or os.path.basename(file_path).replace(".md", "")
+        canonical = f"/@{owner.username}/{wiki.slug}/{html_url_path}"
+        resp = jsonify({
+            "title": page_title,
+            "html": rendered_html,
+            "url": canonical,
+            "path": html_url_path,
+        })
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+
     page_grants = resolve_grants(file_path, acl_rules) if is_owner else []
     user_can_edit = is_owner or can_write(file_path, acl_rules, user_name, page.visibility if page else None)
     pending_proposals_count = 0

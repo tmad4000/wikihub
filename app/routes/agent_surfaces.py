@@ -496,6 +496,10 @@ Auth order: `--api-key` flag → `WIKIHUB_*` env vars → `~/.wikihub/credential
 `Accept: text/markdown` on any page URL returns raw markdown.
 Or append `.md` to the URL.
 
+For rendered HTML without the full reader chrome, append `?fragment=1` to a
+page URL. The response is JSON `{title, html, url, path}` for the article body
+only and uses the same ACL checks as the full page route.
+
 ## hosting non-markdown files
 
 You can store any file (images, PDFs, CSV, HTML, etc.) in a wiki and it is

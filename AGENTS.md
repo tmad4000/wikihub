@@ -21,7 +21,7 @@ source .venv/bin/activate && python3 tests/test_e2e.py
 
 tests use a separate `wikihub_test` database. create it once: `/opt/homebrew/opt/postgresql@16/bin/createdb wikihub_test`.
 
-tests are minimal and intentional — each one verifies a real user flow end-to-end, not individual functions:
+tests are intentional — each one verifies a real user flow end-to-end or a browser-facing regression, not isolated helper internals. Core flows include:
 
 1. **agent account creation** — POST /api/v1/accounts, get key, authenticate
 2. **wiki lifecycle** — create wiki, add page, read HTML + markdown, update, delete
@@ -30,6 +30,7 @@ tests are minimal and intentional — each one verifies a real user flow end-to-
 5. **zip upload** — create wiki via web form with zip file
 6. **agent surfaces** — all discovery endpoints respond (llms.txt, AGENTS.md, .well-known/*)
 7. **ACL permissions** — private pages not readable without auth
+8. **reader behavior** — sidebar, page controls, side peek, and other browser-facing regressions
 
 don't add unit tests for individual functions. if something breaks, add an e2e test that covers the broken flow. tests should run in <10 seconds.
 
@@ -82,6 +83,7 @@ host (`ubuntu@54.145.123.7`) — that's historical. Production is GCP now.
 - `app/git_backend.py` — git Smart HTTP (clone/push), ported from listhub
 - `app/git_sync.py` — DB→git plumbing (does NOT fire hooks), public mirror regeneration
 - `app/renderer.py` — markdown-it-py with wikilinks, KaTeX, footnotes, Obsidian embeds
+- `app/static/js/sidepeek.js` — desktop reader slide-over for same-wiki page links; fetches rendered body JSON via `?fragment=1`
 - `app/auth_utils.py` — password hashing, API key gen/verify, Bearer auth decorators
 - `app/routes/` — blueprints: main, auth, api, api_wikis, wiki, agent_surfaces, upload
 - `hooks/post-receive` — git→DB sync (installed into each wiki's bare repo)

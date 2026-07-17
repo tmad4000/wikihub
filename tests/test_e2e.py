@@ -5349,6 +5349,578 @@ def test_set_wiki_limit_script_imports_from_repo_root():
     assert "ModuleNotFoundError" not in r.stderr
 
 
+def test_side_peek_fragment_endpoint(client, api_key):
+    """wikihub-9k18: ?fragment=1 returns the rendered article body as JSON so
+    the side-peek panel can show a same-wiki link without navigating away."""
+    h = {"Authorization": f"Bearer {api_key}"}
+    client.post("/api/v1/wikis", json={"slug": "peek-wiki", "title": "Peek"}, headers=h)
+    r = client.post("/api/v1/wikis/agent1/peek-wiki/pages", json={
+        "path": "wiki/target.md",
+        "content": "---\ntitle: Peek Target\nvisibility: public\n---\n\n# Peek Target\n\nBody **here**.",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201, r.get_json()
+
+    r = client.get("/@agent1/peek-wiki/wiki/target?fragment=1")
+    assert r.status_code == 200, r.get_data(as_text=True)[:200]
+    assert "application/json" in r.content_type
+    data = r.get_json()
+    assert data["title"] == "Peek Target"
+    assert "Body" in data["html"] and "<strong>here</strong>" in data["html"]
+    # Fragment must be body-only: no full-page chrome (nav/sidebar/reader shell).
+    assert "reader-layout" not in data["html"]
+    assert "<html" not in data["html"].lower()
+    # Canonical full-page URL is provided for "open as full page" / copy-link.
+    assert data["url"] == "/@agent1/peek-wiki/wiki/target"
+
+
+def test_side_peek_fragment_endpoint_preserves_md_redirect(client, api_key):
+    """nsv-9wm: .md page links keep ?fragment=1 through the clean-URL redirect."""
+    h = {"Authorization": f"Bearer {api_key}"}
+    client.post("/api/v1/wikis", json={"slug": "peek-md", "title": "PeekMD"}, headers=h)
+    r = client.post("/api/v1/wikis/agent1/peek-md/pages", json={
+        "path": "wiki/target.md",
+        "content": "---\ntitle: Markdown Link Target\nvisibility: public\n---\n\n# Markdown Link Target\n\nBody **here**.",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201, r.get_json()
+
+    r = client.get("/@agent1/peek-md/wiki/target.md?fragment=1", follow_redirects=False)
+    assert r.status_code == 302
+    assert r.headers["Location"].endswith("/@agent1/peek-md/wiki/target?fragment=1")
+
+    r = client.get("/@agent1/peek-md/wiki/target.md?fragment=1", follow_redirects=True)
+    assert r.status_code == 200, r.get_data(as_text=True)[:200]
+    assert "application/json" in r.content_type
+    data = r.get_json()
+    assert data["title"] == "Markdown Link Target"
+    assert "<strong>here</strong>" in data["html"]
+    assert data["url"] == "/@agent1/peek-md/wiki/target"
+
+
+def test_side_peek_fragment_respects_acl_for_anon(client, api_key):
+    """wikihub-9k18: the fragment endpoint reuses the full page-route ACL, so a
+    private page must NOT be readable via ?fragment=1 by an anonymous viewer."""
+    h = {"Authorization": f"Bearer {api_key}"}
+    client.post("/api/v1/wikis", json={"slug": "peek-acl", "title": "PeekACL"}, headers=h)
+    r = client.post("/api/v1/wikis/agent1/peek-acl/pages", json={
+        "path": "secret/plan.md",
+        "content": "---\ntitle: Secret Plan\nvisibility: private\n---\n\n# Secret Plan\n\ntop secret",
+        "visibility": "private",
+    }, headers=h)
+    assert r.status_code == 201, r.get_json()
+
+    anon = client.application.test_client()
+    anon.get("/auth/logout", follow_redirects=False)
+    r = anon.get("/@agent1/peek-acl/secret/plan?fragment=1")
+    assert r.status_code in (401, 403, 404), (
+        f"private page leaked via fragment endpoint (got {r.status_code})"
+    )
+    body = r.get_data(as_text=True)
+    assert "top secret" not in body, "fragment endpoint leaked private content to anon"
+
+
+def test_side_peek_preserves_same_page_anchor_clicks():
+    """nsv-7lr: in-page anchors should keep the browser's native scroll behavior."""
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    script = r"""
+const fs = require("fs");
+const path = require("path");
+const vm = require("vm");
+
+const sidepeekPath = path.join(process.cwd(), "app/static/js/sidepeek.js");
+const source = fs.readFileSync(sidepeekPath, "utf8");
+let articleClickHandler = null;
+let domReadyHandler = null;
+
+const article = {
+  addEventListener(type, fn) {
+    if (type === "click") articleClickHandler = fn;
+  }
+};
+
+const location = {
+  href: "http://example.test/@agent1/peek-wiki/wiki/source",
+  origin: "http://example.test",
+  pathname: "/@agent1/peek-wiki/wiki/source",
+  search: ""
+};
+
+const context = {
+  URL,
+  URLSearchParams,
+  location,
+  window: {
+    __wikihubPeek: { base: "/@agent1/peek-wiki" },
+    innerWidth: 1024,
+    addEventListener() {},
+    location
+  },
+  document: {
+    body: { appendChild() {}, classList: { add() {}, remove() {} } },
+    querySelector(selector) {
+      return selector.indexOf(".article") >= 0 ? article : null;
+    },
+    addEventListener(type, fn) {
+      if (type === "DOMContentLoaded") domReadyHandler = fn;
+    }
+  },
+  history: { state: null, pushState() {}, replaceState() {}, back() {} },
+  navigator: {},
+  setTimeout() {}
+};
+
+vm.runInNewContext(source, context, { filename: sidepeekPath });
+if (!domReadyHandler) throw new Error("DOMContentLoaded handler was not registered");
+domReadyHandler();
+if (!articleClickHandler) throw new Error("article click handler was not registered");
+
+function makeAnchor(rawHref) {
+  return {
+    href: new URL(rawHref, location.href).href,
+    target: "",
+    classList: { contains() { return false; } },
+    hasAttribute() { return false; },
+    getAttribute(name) { return name === "href" ? rawHref : null; },
+    closest(selector) {
+      if (selector === "a") return this;
+      if (selector === ".article, .peek-body") return article;
+      return null;
+    }
+  };
+}
+
+function dispatch(rawHref) {
+  let prevented = false;
+  const anchor = makeAnchor(rawHref);
+  articleClickHandler({
+    defaultPrevented: false,
+    button: 0,
+    metaKey: false,
+    ctrlKey: false,
+    shiftKey: false,
+    altKey: false,
+    target: anchor,
+    preventDefault() { prevented = true; }
+  });
+  if (prevented) throw new Error(rawHref + " was intercepted");
+}
+
+dispatch("#footnote-1");
+dispatch("/@agent1/peek-wiki/wiki/source#toc");
+"""
+    r = subprocess.run(
+        ["node", "-e", script],
+        cwd=repo_root,
+        text=True,
+        capture_output=True,
+    )
+    assert r.returncode == 0, r.stderr or r.stdout
+
+
+def test_side_peek_scrolls_peek_self_anchors():
+    """nsv-7ki/nsv-oxc: peek links resolve and navigate inside the panel."""
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    script = r"""
+const fs = require("fs");
+const path = require("path");
+const vm = require("vm");
+
+(async () => {
+  const sidepeekPath = path.join(process.cwd(), "app/static/js/sidepeek.js");
+  const source = fs.readFileSync(sidepeekPath, "utf8");
+  let articleClickHandler = null;
+  let peekClickHandler = null;
+  let domReadyHandler = null;
+  let scrolledTo = [];
+  let fetchedUrls = [];
+  let pushedStates = [];
+  let replacedStates = [];
+
+  const article = {
+    addEventListener(type, fn) {
+      if (type === "click") articleClickHandler = fn;
+    }
+  };
+
+  const targets = {
+    "h.foo": { id: "h.foo", scrollIntoView() { scrolledTo.push("h.foo"); } },
+    "2026": { id: "2026", scrollIntoView() { scrolledTo.push("2026"); } }
+  };
+
+  const bodyEl = {
+    scrollTop: 0,
+    classList: { add() {}, remove() {} },
+    addEventListener(type, fn) {
+      if (type === "click") peekClickHandler = fn;
+    },
+    set innerHTML(_html) {},
+    querySelector(selector) {
+      if (selector === "#escaped:h.foo") return targets["h.foo"];
+      if (selector === "#escaped:2026") return targets["2026"];
+      if (selector === "#h.foo" || selector === "#2026") {
+        throw new Error("raw hash selector used: " + selector);
+      }
+      return null;
+    },
+    querySelectorAll() {
+      return Object.values(targets);
+    }
+  };
+
+  const noopEl = {
+    classList: { add() {}, remove() {} },
+    setAttribute() {},
+    removeAttribute() {},
+    addEventListener() {},
+    querySelector() { return noopEl; },
+    set href(_value) {}
+  };
+
+  const overlay = {
+    offsetWidth: 1,
+    classList: { add() {}, remove() {} },
+    setAttribute() {},
+    removeAttribute() {},
+    addEventListener() {},
+    querySelector(selector) {
+      if (selector === "#peek-body") return bodyEl;
+      return noopEl;
+    },
+    set innerHTML(_html) {}
+  };
+
+  const location = {
+    href: "http://example.test/@agent1/peek-wiki/wiki/source",
+    origin: "http://example.test",
+    pathname: "/@agent1/peek-wiki/wiki/source",
+    search: ""
+  };
+
+  const context = {
+    URL,
+    URLSearchParams,
+    location,
+    window: {
+      __wikihubPeek: { base: "/@agent1/peek-wiki" },
+      innerWidth: 1024,
+      addEventListener() {},
+      location,
+      CSS: { escape(value) { return "escaped:" + value; } }
+    },
+    document: {
+      body: {
+        appendChild() {},
+        classList: { add() {}, remove() {} }
+      },
+      createElement() { return overlay; },
+      querySelector(selector) {
+        return selector.indexOf(".article") >= 0 ? article : null;
+      },
+      addEventListener(type, fn) {
+        if (type === "DOMContentLoaded") domReadyHandler = fn;
+      }
+    },
+    history: {
+      state: null,
+      pushState(state, _title, url) {
+        this.state = state;
+        pushedStates.push({ state, url });
+      },
+      replaceState(state, _title, url) {
+        this.state = state;
+        replacedStates.push({ state, url });
+      },
+      back() {}
+    },
+    navigator: {},
+    fetch() {
+      fetchedUrls.push(arguments[0]);
+      return Promise.resolve({
+        ok: true,
+        headers: { get() { return "application/json"; } },
+        json() {
+          return Promise.resolve({
+            title: "Target",
+            html: "<h2 id=\"h.foo\">H</h2><h2 id=\"2026\">Y</h2>",
+            url: "/@agent1/peek-wiki/wiki/folder/target"
+          });
+        }
+      });
+    },
+    setTimeout
+  };
+
+  vm.runInNewContext(source, context, { filename: sidepeekPath });
+  domReadyHandler();
+
+  function makeAnchor(rawHref, inPeek) {
+    return {
+      href: new URL(rawHref, location.href).href,
+      target: "",
+      classList: { contains() { return false; } },
+      hasAttribute() { return false; },
+      getAttribute(name) { return name === "href" ? rawHref : null; },
+      closest(selector) {
+        if (selector === "a") return this;
+        if (selector === ".article, .peek-body") return inPeek ? bodyEl : article;
+        if (selector === ".peek-body") return inPeek ? bodyEl : null;
+        return null;
+      }
+    };
+  }
+
+  function dispatch(handler, rawHref, inPeek) {
+    let prevented = false;
+    const anchor = makeAnchor(rawHref, inPeek);
+    handler({
+      defaultPrevented: false,
+      button: 0,
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      target: anchor,
+      preventDefault() { prevented = true; }
+    });
+    return prevented;
+  }
+
+  if (!dispatch(articleClickHandler, "/@agent1/peek-wiki/wiki/folder/target#h.foo", false)) {
+    throw new Error("cross-page peek link was not intercepted");
+  }
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  if (scrolledTo.join(",") !== "h.foo") {
+    throw new Error("peek did not scroll escaped load hash; got " + scrolledTo.join(","));
+  }
+  if (!peekClickHandler) throw new Error("peek click handler was not registered");
+  if (pushedStates.length !== 1) {
+    throw new Error("initial peek should push one history entry; got " + pushedStates.length);
+  }
+
+  if (!dispatch(peekClickHandler, "/@agent1/peek-wiki/wiki/folder/target#2026", true)) {
+    throw new Error("peek self-anchor was not intercepted");
+  }
+  if (scrolledTo.join(",") !== "h.foo,2026") {
+    throw new Error("peek self-anchor did not scroll inside panel; got " + scrolledTo.join(","));
+  }
+
+  if (!dispatch(peekClickHandler, "next", true)) {
+    throw new Error("peek relative link was not intercepted");
+  }
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  if (!fetchedUrls[1] || fetchedUrls[1].indexOf("/@agent1/peek-wiki/wiki/folder/next?fragment=1") < 0) {
+    throw new Error("peek relative link resolved to wrong fetch URL: " + fetchedUrls.join(","));
+  }
+  if (pushedStates.length !== 1) {
+    throw new Error("in-panel navigation pushed a new history entry");
+  }
+  if (replacedStates.length !== 1) {
+    throw new Error("in-panel navigation should replace history once; got " + replacedStates.length);
+  }
+})().catch((err) => {
+  console.error(err && err.stack ? err.stack : err);
+  process.exit(1);
+});
+"""
+    r = subprocess.run(
+        ["node", "-e", script],
+        cwd=repo_root,
+        text=True,
+        capture_output=True,
+    )
+    assert r.returncode == 0, r.stderr or r.stdout
+
+
+def test_side_peek_ignores_stale_fetch_responses():
+    """nsv-7nv: older side-peek fetches must not overwrite newer clicks."""
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    script = r"""
+const fs = require("fs");
+const path = require("path");
+const vm = require("vm");
+
+(async () => {
+  const sidepeekPath = path.join(process.cwd(), "app/static/js/sidepeek.js");
+  const source = fs.readFileSync(sidepeekPath, "utf8");
+  let articleClickHandler = null;
+  let domReadyHandler = null;
+  let renderedHtml = "";
+  const requests = [];
+  const pushedUrls = [];
+
+  const article = {
+    addEventListener(type, fn) {
+      if (type === "click") articleClickHandler = fn;
+    }
+  };
+
+  const bodyEl = {
+    scrollTop: 0,
+    classList: { add() {}, remove() {} },
+    addEventListener() {},
+    set innerHTML(value) { renderedHtml = value; },
+    querySelector() { return null; },
+    querySelectorAll() { return []; }
+  };
+
+  const titleEl = { textContent: "" };
+  const noopEl = {
+    classList: { add() {}, remove() {} },
+    setAttribute() {},
+    removeAttribute() {},
+    addEventListener() {},
+    querySelector() { return noopEl; },
+    set href(_value) {}
+  };
+
+  const overlay = {
+    offsetWidth: 1,
+    classList: { add() {}, remove() {} },
+    setAttribute() {},
+    removeAttribute() {},
+    addEventListener() {},
+    querySelector(selector) {
+      if (selector === "#peek-body") return bodyEl;
+      if (selector === "#peek-title") return titleEl;
+      return noopEl;
+    },
+    set innerHTML(_html) {}
+  };
+
+  const location = {
+    href: "http://example.test/@agent1/peek-wiki/wiki/source",
+    origin: "http://example.test",
+    pathname: "/@agent1/peek-wiki/wiki/source",
+    search: ""
+  };
+
+  const context = {
+    URL,
+    URLSearchParams,
+    location,
+    window: {
+      __wikihubPeek: { base: "/@agent1/peek-wiki" },
+      innerWidth: 1024,
+      addEventListener() {},
+      location
+    },
+    document: {
+      body: {
+        appendChild() {},
+        classList: { add() {}, remove() {} }
+      },
+      createElement() { return overlay; },
+      querySelector(selector) {
+        return selector.indexOf(".article") >= 0 ? article : null;
+      },
+      addEventListener(type, fn) {
+        if (type === "DOMContentLoaded") domReadyHandler = fn;
+      }
+    },
+    history: {
+      state: null,
+      pushState(state, _title, url) {
+        this.state = state;
+        pushedUrls.push(url);
+      },
+      replaceState() {},
+      back() {}
+    },
+    navigator: {},
+    fetch(url) {
+      let resolveResponse;
+      const promise = new Promise((resolve) => { resolveResponse = resolve; });
+      requests.push({
+        url,
+        resolve(data) {
+          resolveResponse({
+            ok: true,
+            headers: { get() { return "application/json"; } },
+            json() { return Promise.resolve(data); }
+          });
+        }
+      });
+      return promise;
+    },
+    setTimeout
+  };
+
+  vm.runInNewContext(source, context, { filename: sidepeekPath });
+  domReadyHandler();
+
+  function makeAnchor(rawHref) {
+    return {
+      href: new URL(rawHref, location.href).href,
+      target: "",
+      classList: { contains() { return false; } },
+      hasAttribute() { return false; },
+      getAttribute(name) { return name === "href" ? rawHref : null; },
+      closest(selector) {
+        if (selector === "a") return this;
+        if (selector === ".article, .peek-body") return article;
+        if (selector === ".peek-body") return null;
+        return null;
+      }
+    };
+  }
+
+  function dispatch(rawHref) {
+    const anchor = makeAnchor(rawHref);
+    articleClickHandler({
+      defaultPrevented: false,
+      button: 0,
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      target: anchor,
+      preventDefault() {}
+    });
+  }
+
+  dispatch("/@agent1/peek-wiki/wiki/slow");
+  dispatch("/@agent1/peek-wiki/wiki/fast");
+  if (requests.length !== 2) {
+    throw new Error("expected two side-peek fetches, got " + requests.length);
+  }
+
+  requests[1].resolve({
+    title: "Fast",
+    html: "<p>fast</p>",
+    url: "/@agent1/peek-wiki/wiki/fast"
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  requests[0].resolve({
+    title: "Slow",
+    html: "<p>slow</p>",
+    url: "/@agent1/peek-wiki/wiki/slow"
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  if (renderedHtml !== "<p>fast</p>") {
+    throw new Error("stale fetch overwrote latest render: " + renderedHtml);
+  }
+  if (titleEl.textContent !== "Fast") {
+    throw new Error("stale fetch overwrote latest title: " + titleEl.textContent);
+  }
+  if (pushedUrls.length !== 1 || pushedUrls[0] !== "/@agent1/peek-wiki/wiki/source?peek=wiki%2Ffast") {
+    throw new Error("history was not updated only for latest fetch: " + pushedUrls.join(","));
+  }
+})().catch((err) => {
+  console.error(err && err.stack ? err.stack : err);
+  process.exit(1);
+});
+"""
+    r = subprocess.run(
+        ["node", "-e", script],
+        cwd=repo_root,
+        text=True,
+        capture_output=True,
+    )
+    assert r.returncode == 0, r.stderr or r.stdout
+
+
 def run_all():
     app = setup()
 
@@ -5458,6 +6030,12 @@ def run_all():
             ("500 page has reference + retry link", lambda: test_500_page_has_reference_and_retry(app, client)),
             ("visibility toggle resolves underscore filename (wikihub-vbug)", lambda: test_visibility_toggle_for_underscore_filename(client, key)),
             ("page lookup consistent across endpoints for underscore path (wikihub-wkmg+vbug)", lambda: test_page_lookup_consistent_across_endpoints_for_underscore_path(client, key)),
+            ("side peek fragment endpoint (wikihub-9k18)", lambda: test_side_peek_fragment_endpoint(client, key)),
+            ("side peek .md fragment redirect (nsv-9wm)", lambda: test_side_peek_fragment_endpoint_preserves_md_redirect(client, key)),
+            ("side peek fragment respects ACL for anon (wikihub-9k18)", lambda: test_side_peek_fragment_respects_acl_for_anon(client, key)),
+            ("side peek preserves same-page anchors (nsv-7lr)", lambda: test_side_peek_preserves_same_page_anchor_clicks()),
+            ("side peek scrolls peek self anchors (nsv-7ki)", lambda: test_side_peek_scrolls_peek_self_anchors()),
+            ("side peek ignores stale fetch responses (nsv-7nv)", lambda: test_side_peek_ignores_stale_fetch_responses()),
             ("CLI end-to-end", lambda: test_cli(client)),
             ("per-user wiki limit + 429 (wikihub-20ct)", lambda: test_wiki_limit_effective_resolution_and_429(client, app)),
             ("set_wiki_limit imports from app root (wikihub-20ct)", lambda: test_set_wiki_limit_script_imports_from_repo_root()),
