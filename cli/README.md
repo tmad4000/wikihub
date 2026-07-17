@@ -57,6 +57,11 @@ wikihub search "hello" --wiki you/notes
 | `mcp-config` | Print `mcpServers` JSON to wire WikiHub's MCP endpoint into an agent. |
 | `version` | Print CLI version. |
 
+`write` and `publish` accept `--visibility public|public-edit|private|unlisted|unlisted-edit`.
+When omitted, page visibility inherits from `.wikihub/acl`; ACL-only
+`public-view` and `unlisted-view` directives are returned as page-level
+`public` and `unlisted`.
+
 ## Auth
 
 Credentials are read in this order (first wins):

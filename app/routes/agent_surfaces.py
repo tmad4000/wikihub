@@ -311,6 +311,11 @@ Content-Type: application/json
 {"path": "wiki/hello.md", "content": "# Hello\\n\\nContent.", "visibility": "public"}
 ```
 
+Page `visibility` values are `public`, `public-edit`, `private`, `unlisted`,
+and `unlisted-edit`. If omitted, the page inherits from `.wikihub/acl`; ACL-only
+`public-view` and `unlisted-view` directives are stored and reported as
+`public` and `unlisted` page visibility.
+
 ## poll page metadata
 
 when a client only needs to know whether a readable page changed, use the

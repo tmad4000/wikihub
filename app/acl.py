@@ -3,6 +3,14 @@
 
 glob rules, most-specific wins, private by default.
 
+ACL files accept canonical directive tokens:
+  private, public-view, public-edit, unlisted-view, unlisted-edit
+and legacy shorthand:
+  public -> public-view, unlisted -> unlisted-view
+
+Page rows and page frontmatter store the page-level enum:
+  public, public-edit, private, unlisted, unlisted-edit
+
 precedence (most specific wins):
   1. frontmatter on the file
   2. ACL file rule matching the path (most-specific pattern first)
