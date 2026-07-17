@@ -4,7 +4,7 @@ from collections.abc import Iterable
 import frontmatter
 from markdown_it import MarkdownIt
 
-from app.acl import VALID_VISIBILITIES, normalize_visibility
+from app.acl import normalize_page_visibility
 
 
 PRIVATE_OPEN_RE = re.compile(r"<!--\s*private\s*-->", re.IGNORECASE)
@@ -71,9 +71,17 @@ def upsert_frontmatter_value(content, key, value):
 
 
 def set_visibility_in_content(content, visibility):
-    normalized = (visibility or "").strip().lower() or None
-    if normalized and normalized not in VALID_VISIBILITIES:
-        raise ValueError(f"Invalid visibility '{visibility}'")
+    # Frontmatter carries page-level visibility only. Coerce ACL-file tokens and
+    # old aliases (e.g. `unlisted-view`, `public`) down to the page enum so they
+    # never leak into page frontmatter, and reject genuinely unknown values
+    # (wikihub issue #15).
+    raw = (visibility or "").strip().lower() or None
+    if raw is None:
+        normalized = None
+    else:
+        normalized = normalize_page_visibility(raw)
+        if normalized is None:
+            raise ValueError(f"Invalid visibility '{visibility}'")
     return upsert_frontmatter_value(content, "visibility", normalized)
 
 
