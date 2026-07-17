@@ -1300,6 +1300,64 @@ def test_sidebar_json_preserves_current_path_and_acl_shares(app, client, api_key
     assert secret["current"] is True, "current shared page should be marked current in async sidebar JSON"
 
 
+def test_unlisted_page_in_sidebar_but_not_discovery(app, client, api_key):
+    """wikihub #17: 'unlisted' governs DISCOVERY surfaces (search/explore/profile),
+    NOT in-wiki navigation. An anonymous viewer who possesses the wiki link and can
+    read a page (unlisted is readable-by-URL) must see it in the wiki's own sidebar
+    page tree. Both directions are asserted:
+
+      (A) fix     — anon sidebar of the wiki LISTS the unlisted page.
+      (B) guard   — search still EXCLUDES the unlisted page (discovery surface).
+
+    Regression: before the fix, _visible_files filtered the public-mirror sidebar
+    by is_discoverable (public/public-edit only), so unlisted pages rendered by
+    direct link but never appeared in nav.
+    """
+    h = {"Authorization": f"Bearer {api_key}"}
+
+    # wiki creation auto-provisions a public index.md, so the wiki is reachable.
+    r = client.post("/api/v1/wikis", json={"slug": "unlisted-nav", "title": "Unlisted Nav"}, headers=h)
+    assert r.status_code == 201, f"setup wiki create failed: {r.status_code} {r.data[:200]}"
+
+    # an unlisted page carrying a unique token
+    r = client.post("/api/v1/wikis/agent1/unlisted-nav/pages", json={
+        "path": "rules.md",
+        "content": "---\ntitle: Rules\nvisibility: unlisted\n---\n\n# Rules\n\nZorptangle marker.",
+        "visibility": "unlisted",
+    }, headers=h)
+    assert r.status_code == 201, f"setup page create failed: {r.status_code} {r.data[:200]}"
+
+    anon = app.test_client()  # logged-out viewer
+
+    # unlisted page is readable by URL (the can_read premise the sidebar must honor)
+    r = anon.get("/@agent1/unlisted-nav/rules")
+    assert r.status_code == 200, f"unlisted page must be readable by direct link, got {r.status_code}"
+
+    # (A) unlisted page appears in the anonymous sidebar page tree
+    r = anon.get("/@agent1/unlisted-nav/sidebar.json")
+    assert r.status_code == 200, f"sidebar.json fetch failed: {r.status_code} {r.data[:200]}"
+
+    def find_item(items, path):
+        for item in items:
+            if item.get("path") == path:
+                return item
+            found = find_item(item.get("children") or [], path)
+            if found:
+                return found
+        return None
+
+    tree = r.get_json()
+    assert find_item(tree, "rules.md") is not None, \
+        "unlisted page must appear in the anon sidebar of its own wiki (wikihub #17)"
+
+    # (B) but the unlisted page stays out of discovery: anonymous search excludes it
+    r = anon.get("/api/v1/search?q=Zorptangle")
+    assert r.status_code == 200, f"search failed: {r.status_code} {r.data[:200]}"
+    hits = r.get_json()["results"]
+    assert all("rules.md" not in (hit.get("path") or "") for hit in hits), \
+        "unlisted page must NOT appear in search (discovery surface stays excluded)"
+
+
 def test_email_verification_flow(client):
     """wikihub-ks5t.3: signup with email is non-blocking — account works
     immediately, and a verification link is emailed. Clicking the link sets
@@ -6107,6 +6165,7 @@ def run_all():
             ("magic link login", lambda: test_magic_link_login(client)),
             ("sign-in flow redirects back to target (wikihub-kvwh)", lambda: test_signin_flow_redirects_back_to_target(app, client)),
             ("logout (wikihub-uq9)", lambda: test_logout(client)),
+            ("unlisted page in sidebar but not discovery (wikihub #17)", lambda: test_unlisted_page_in_sidebar_but_not_discovery(app, client, key)),
             ("email verification flow (wikihub-ks5t.3)", lambda: test_email_verification_flow(client)),
             ("password reset flow (wikihub-ks5t.5)", lambda: test_password_reset_lifecycle(client)),
             ("Google auto-link security (wikihub-ks5t.4)", lambda: test_google_auto_link_security(app)),
