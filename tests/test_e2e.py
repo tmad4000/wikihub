@@ -477,8 +477,11 @@ def test_binary_file_serving(client, api_key):
         "visibility": "private",
     }, headers=h)
     assert r.status_code == 201
+    # wikihub-dkp8: a private non-md Page row EXISTS, so anon gets a "restricted"
+    # signal (403/401), not a bare 404. Content must still not leak.
     r = anon_client.get("/@agent1/media-wiki/outside/private-via-page.txt")
-    assert r.status_code == 404, f"Page.visibility=private should block anon access, got {r.status_code}"
+    assert r.status_code in (401, 403), f"Page.visibility=private should block anon access with restricted status, got {r.status_code}"
+    assert b"secret" not in r.data, "restricted response must not leak file content"
 
     # Non-md Page rows must survive an index_repo_pages reset (regression: wikihub-0idv).
     # Previously index_repo_pages filtered out non-md, so any operation that triggered
@@ -919,8 +922,10 @@ def test_signin_flow_redirects_back_to_target(app, client):
     _g.pop("_login_user", None)
     anon = app.test_client()
     r = anon.get(target_path)
-    assert r.status_code == 404
-    assert b"This page is private or doesn't exist" in r.data
+    # wikihub-dkp8: existing-but-private page → restricted (403); the sign-in CTA
+    # must still round-trip back to the requested target.
+    assert r.status_code == 403
+    assert b"This page is restricted" in r.data
     assert f'/auth/login?next={encoded_target}'.encode() in r.data
 
     r = anon.get("/@signinowner/private-wiki/settings")
@@ -3590,9 +3595,11 @@ def test_permission_error_offers_request_access(client, api_key):
     }, headers=h)
     assert r.status_code == 201
 
+    # wikihub-dkp8: existing-but-private page → restricted (403), and the
+    # restricted screen still offers the request-access affordance.
     r = client.get("/@agent1/private-cta/team/secret")
-    assert r.status_code == 404
-    assert b"This page is private or doesn't exist" in r.data
+    assert r.status_code == 403
+    assert b"This page is restricted" in r.data
     assert b"Request access" in r.data
     assert b"/api/v1/access-requests" in r.data
 
@@ -4747,21 +4754,119 @@ def test_unauth_private_page_renders_permission_error_with_sign_in(client):
     anon = client.application.test_client()
     anon.get("/auth/logout", follow_redirects=False)
     r = anon.get("/@ffqtowner/ffqt-wiki/secret/summary")
-    # Must not be 200 (would leak existence + drop user on welcome page).
-    assert r.status_code in (401, 403, 404), (
-        f"unauth private page returned {r.status_code} (expected 401/403/404). "
+    # wikihub-dkp8: the page EXISTS but is private → distinct "restricted"
+    # screen with 403 (existence acknowledged), NOT the ambiguous 404.
+    assert r.status_code == 403, (
+        f"unauth private page returned {r.status_code} (expected 403 restricted). "
         "If 200, the app is leaking private content to anonymous users."
     )
     body = r.data.decode("utf-8", errors="replace")
-    # Must render the permission_error template (recognizable heading).
-    assert "This page is private or doesn't exist" in body, (
-        "expected permission_error.html template, got something else. "
+    # Must render the restricted variant of permission_error (recognizable heading).
+    assert "This page is restricted" in body, (
+        "expected restricted permission_error.html template, got something else. "
         "If welcome.html is returned, the nginx intercept or a Flask routing "
         "bug is hiding the real error template."
     )
+    # Must NOT leak page content/title.
+    assert "Secret" not in body and "Private." not in body, "restricted screen leaked page content/title"
     # Must contain a Sign in link with next= pointing back at the requested path.
     assert "/auth/login" in body, "permission_error.html missing /auth/login link"
     assert "Sign in" in body, "permission_error.html missing 'Sign in' CTA text"
+
+
+def test_restricted_vs_not_found_distinction(client):
+    """wikihub-dkp8: an existing-but-private page must read as "restricted"
+    (403 / 401), distinct from a genuinely-missing path (404), across the web
+    route, the API, and the owner-subdomain routing form. Truly-missing stays
+    404; unlisted and granted access stay 200. Content is never leaked.
+    """
+    # Owner sets up a private page, an unlisted page, and a public page.
+    r = client.post("/api/v1/accounts", json={"username": "dkp8owner"})
+    assert r.status_code == 201
+    key = r.get_json()["api_key"]
+    h = {"Authorization": f"Bearer {key}"}
+
+    r = client.post("/api/v1/wikis", json={"slug": "dkp8-wiki", "title": "DKP8"}, headers=h)
+    assert r.status_code == 201
+
+    # Give the wiki a user-subdomain-reachable owner + a page under a folder.
+    r = client.post("/api/v1/wikis/dkp8owner/dkp8-wiki/pages", json={
+        "path": "vault/secret.md",
+        "content": "# TopSecret\n\nZZSECRETMARKER body.",
+        "visibility": "private",
+    }, headers=h)
+    assert r.status_code == 201
+
+    r = client.post("/api/v1/wikis/dkp8owner/dkp8-wiki/pages", json={
+        "path": "unlisted-note.md",
+        "content": "# Unlisted\n\nReachable by link.",
+        "visibility": "unlisted",
+    }, headers=h)
+    assert r.status_code == 201
+
+    anon = client.application.test_client()
+    anon.get("/auth/logout")
+
+    # --- Case 1: anon on an existing private page → 403 restricted screen ---
+    r = anon.get("/@dkp8owner/dkp8-wiki/vault/secret")
+    assert r.status_code == 403, f"anon private page expected 403 restricted, got {r.status_code}"
+    body = r.data.decode("utf-8", errors="replace")
+    assert "This page is restricted" in body, "expected the restricted screen heading"
+    assert "ZZSECRETMARKER" not in body and "TopSecret" not in body, "restricted screen leaked content/title"
+
+    # --- Case 2: anon on a truly-missing path → 404 (not restricted) ---
+    r = anon.get("/@dkp8owner/dkp8-wiki/no/such/page")
+    assert r.status_code == 404, f"missing page expected 404, got {r.status_code}"
+    body = r.data.decode("utf-8", errors="replace")
+    assert "This page is restricted" not in body, "missing page must NOT show the restricted screen"
+
+    # --- Case 4: unlisted page stays readable by direct link (200) ---
+    r = anon.get("/@dkp8owner/dkp8-wiki/unlisted-note")
+    assert r.status_code == 200, f"unlisted page expected 200, got {r.status_code}"
+    assert b"Reachable by link" in r.data
+
+    # --- Case 6a (subdomain form): anon on the private page via owner subdomain → 403 ---
+    # A user subdomain (dkp8owner.wikihub.md) rewrites /<slug>/<path> → /@dkp8owner/<slug>/<path>.
+    r = anon.get("/dkp8-wiki/vault/secret", headers={"Host": "dkp8owner.wikihub.md"})
+    assert r.status_code == 403, f"subdomain-form private page expected 403, got {r.status_code}"
+    assert "This page is restricted" in r.data.decode("utf-8", errors="replace")
+    # subdomain-form missing path still 404
+    r = anon.get("/dkp8-wiki/vault/does-not-exist", headers={"Host": "dkp8owner.wikihub.md"})
+    assert r.status_code == 404, f"subdomain-form missing page expected 404, got {r.status_code}"
+
+    # --- Case 5 (API surface, mirrors wikihub_get_page): 403 vs 401 vs 404 ---
+    # Authenticated non-grantee → 403 forbidden (page exists, no access).
+    r = client.post("/api/v1/accounts", json={"username": "dkp8stranger"})
+    stranger_key = r.get_json()["api_key"]
+    hs = {"Authorization": f"Bearer {stranger_key}"}
+    r = client.get("/api/v1/wikis/dkp8owner/dkp8-wiki/pages/vault/secret.md", headers=hs)
+    assert r.status_code == 403, f"authed non-grantee API read expected 403, got {r.status_code}"
+    jb = r.get_json()
+    assert jb.get("error") == "forbidden"
+    assert "ZZSECRETMARKER" not in (jb.get("content") or ""), "API restricted response leaked content"
+
+    # Anonymous API read of the existing private page → 401 + WWW-Authenticate.
+    anon_api = client.application.test_client()
+    r = anon_api.get("/api/v1/wikis/dkp8owner/dkp8-wiki/pages/vault/secret.md")
+    assert r.status_code == 401, f"anon API read of private page expected 401, got {r.status_code}"
+    assert "WWW-Authenticate" in r.headers
+    assert r.get_json().get("error") == "authentication_required"
+
+    # API read of a truly-missing page → 404 not_found.
+    r = client.get("/api/v1/wikis/dkp8owner/dkp8-wiki/pages/nope/missing.md", headers=hs)
+    assert r.status_code == 404, f"missing page API read expected 404, got {r.status_code}"
+    assert r.get_json().get("error") == "not_found"
+
+    # --- Case 3: a granted user reads it (200) via both API and web session ---
+    r = client.post("/api/v1/wikis/dkp8owner/dkp8-wiki/share", json={
+        "pattern": "vault/secret.md",
+        "username": "dkp8stranger",
+        "role": "read",
+    }, headers=h)
+    assert r.status_code == 200
+    r = client.get("/api/v1/wikis/dkp8owner/dkp8-wiki/pages/vault/secret.md", headers=hs)
+    assert r.status_code == 200, f"granted user API read expected 200, got {r.status_code}"
+    assert "ZZSECRETMARKER" in r.get_json()["content"]
 
 
 def test_mobile_hamburger_exposes_hidden_nav_links():
@@ -6222,6 +6327,7 @@ def run_all():
             ("search modal mobile UX fixes (wikihub-zlgt)", lambda: test_search_modal_mobile_ux_fixes_wikihub_zlgt()),
             ("search detectScope subdomain URL form (wikihub-zlgt)", lambda: test_search_detect_scope_matches_subdomain_url_form_wikihub_zlgt()),
             ("unauth private page renders permission_error with Sign in (wikihub-ffqt)", lambda: test_unauth_private_page_renders_permission_error_with_sign_in(client)),
+            ("restricted (403) vs not-found (404) distinction (wikihub-dkp8)", lambda: test_restricted_vs_not_found_distinction(client)),
             ("mobile hamburger exposes hidden nav (wikihub-pz27)", lambda: test_mobile_hamburger_exposes_hidden_nav_links()),
             ("error pages iPad alignment fix (wikihub-dw8u)", lambda: test_error_page_ipad_alignment_fix()),
             ("md request for private page returns 4xx (wikihub-3rjt)", lambda: test_md_request_for_private_page_returns_json_4xx_not_landing(client)),

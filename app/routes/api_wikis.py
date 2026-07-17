@@ -646,7 +646,25 @@ def read_page(owner, slug, page_path):
     acl_rules = load_acl_rules(owner_user.username, wiki.slug)
     if not is_owner:
         if not can_read(page.path, acl_rules, user.username if user else None, page.visibility):
-            return {"error": "not_found", "message": "Page not found"}, 404
+            # wikihub-dkp8: the page EXISTS but the caller lacks read access.
+            # Return 403 (authed) / 401 (anon) so agents — including
+            # wikihub_get_page — can tell "restricted" apart from a 404
+            # "does not exist". Never leak title/content/frontmatter here.
+            if user:
+                return {
+                    "error": "forbidden",
+                    "message": "This page is restricted — it exists but you don't have access.",
+                    "sign_in_url": "https://wikihub.md/auth/login",
+                }, 403
+            resp = jsonify({
+                "error": "authentication_required",
+                "message": "This page is restricted — sign in to check your access.",
+                "sign_in_url": "https://wikihub.md/auth/login",
+            })
+            resp.status_code = 401
+            resp.headers["WWW-Authenticate"] = 'Bearer realm="wikihub"'
+            resp.headers["Cache-Control"] = "no-store"
+            return resp
 
     # Lightweight liveness poll (reader "page updated" indicator, wikihub live-reload).
     # Returns only the content_hash + updated_at without reading the file from the
