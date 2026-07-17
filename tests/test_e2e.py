@@ -6201,12 +6201,14 @@ def test_page_meta_liveness_endpoint(client, api_key):
     assert r.status_code == 200
     assert r.get_json()["content_hash"] != first_hash, "hash must change after edit"
 
-    # ACL: anon must NOT be able to poll a private page's hash.
+    # ACL: anon must NOT be able to poll a private page's hash. wikihub-dkp8
+    # intentionally distinguishes existing-but-restricted API reads from
+    # missing pages, so this is 401/403 instead of the old ambiguous 404.
     with app.test_request_context():
         logout_user()
     anon = app.test_client()
     r = anon.get("/api/v1/wikis/agent1/live-mix/pages/secret.md?meta=1")
-    assert r.status_code == 404, f"anon meta poll on private page leaked ({r.status_code})"
+    assert r.status_code in (401, 403), f"anon meta poll on private page expected restricted status, got {r.status_code}"
     assert "content_hash" not in (r.get_json() or {}), "meta leaked private hash to anon"
 
     # But anon CAN poll a public page (the KB / unlisted use case).

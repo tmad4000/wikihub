@@ -37,6 +37,12 @@ structure, same per-request auth isolation, adapted to WikiHub's REST API
 † Creating pages on `public-edit` wikis is allowed anonymously — pass
 `anonymous: true`. Otherwise an api key is required.
 
+`wikihub_get_page` preserves WikiHub's restricted-vs-missing distinction from
+the REST API: missing pages are `404 not_found`; existing pages outside the
+caller's read access are `403 forbidden` with a key or `401
+authentication_required` without one. Restricted errors confirm the page exists
+but never include title, content, or frontmatter.
+
 ---
 
 ## Install

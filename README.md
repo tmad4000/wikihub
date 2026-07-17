@@ -69,6 +69,12 @@ For the desktop reader side peek, append `?fragment=1` to a rendered page URL to
 Use `?meta=1` on the page-read API when a client only needs the latest
 `content_hash` and `updated_at` for lightweight change polling; it enforces the
 same read permissions as a full page read and does not return page content.
+Read failures distinguish missing from restricted content: a truly missing page
+returns `404 not_found`; an existing page the caller cannot read returns
+`403 forbidden` for authenticated callers, or `401 authentication_required`
+with `WWW-Authenticate` for anonymous API/markdown callers. The restricted
+response intentionally confirms existence without returning title, content, or
+frontmatter.
 
 Full docs at `/agents` when running.
 
