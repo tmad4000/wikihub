@@ -75,7 +75,9 @@ Full docs at `/agents` when running.
 Page `visibility` values are `public`, `public-edit`, `private`, `unlisted`,
 and `unlisted-edit`. When visibility is inherited from `.wikihub/acl`,
 ACL-only `public-view` and `unlisted-view` directives are reported as
-`public` and `unlisted` on the page.
+`public` and `unlisted` on the page. Unlisted pages are readable by direct
+URL and appear in that wiki's own navigation/sidebar for viewers who can read
+them, but stay out of discovery surfaces such as search, explore, and profiles.
 
 `max_wikis_per_user` is the authenticated account's effective wiki cap: the
 server default unless a per-user override is set. Wiki create and fork requests
@@ -112,7 +114,9 @@ ACL visibility directives are `private`, `public-view`, `public-edit`,
 `unlisted-view`, and `unlisted-edit`; the shorter `public` and `unlisted`
 forms are accepted as aliases. Frontmatter `visibility:` on individual files
 overrides the ACL and is stored as the page-level enum: `public`, `public-edit`,
-`private`, `unlisted`, or `unlisted-edit`.
+`private`, `unlisted`, or `unlisted-edit`. Unlisted governs discovery, not
+in-wiki navigation: a link-holder who can read the page sees it in the wiki
+sidebar, while search/explore/profile listings still exclude it.
 
 ## Feedback
 

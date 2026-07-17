@@ -60,7 +60,9 @@ wikihub search "hello" --wiki you/notes
 `write` and `publish` accept `--visibility public|public-edit|private|unlisted|unlisted-edit`.
 When omitted, page visibility inherits from `.wikihub/acl`; ACL-only
 `public-view` and `unlisted-view` directives are returned as page-level
-`public` and `unlisted`.
+`public` and `unlisted`. Unlisted pages are readable by direct URL and appear
+in that wiki's own navigation/sidebar for viewers who can read them, but remain
+excluded from discovery surfaces such as search, explore, and profiles.
 
 ## Auth
 

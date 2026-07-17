@@ -223,7 +223,11 @@ def can_write(path, rules, user=None, frontmatter_visibility=None):
 
 
 def is_discoverable(path, rules, frontmatter_visibility=None):
-    """check if a file appears in listings/search."""
+    """check if a file appears in discovery surfaces such as listings/search.
+
+    Unlisted pages intentionally return False here even though can_read() allows
+    anonymous direct-link access; in-wiki navigation should use can_read().
+    """
     vis = normalize_visibility(resolve_visibility(path, rules, frontmatter_visibility))
     return vis in ("public-view", "public-edit")
 

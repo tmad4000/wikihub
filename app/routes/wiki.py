@@ -333,19 +333,21 @@ def _visible_files(username, slug, wiki, public=False, acl_filter_user=None, pag
             and can_read(path, acl_rules, acl_filter_user, (pages_by_path[path].visibility if path in pages_by_path else None))
         ]
 
+    # Anonymous / public-mirror viewer. The sidebar is in-wiki navigation, not a
+    # discovery surface: 'unlisted' governs search/explore/profile listings, but a
+    # viewer who already possesses the wiki link and can_read a page must see it in
+    # the wiki's own page tree (wikihub #17). Gate on can_read (which admits public,
+    # public-edit, and unlisted), NOT is_discoverable. The public mirror already
+    # excludes private pages, so files here are readable-by-URL by construction.
+    acl_rules = load_acl_rules(username, slug)
     if pages_by_path is None:
         pages_by_path = {p.path: p for p in Page.query.filter_by(wiki_id=wiki.id).all()}
-    discoverable = {
-        path
-        for path, page in pages_by_path.items()
-        if page.visibility in ("public", "public-view", "public-edit")
-    }
     return [
         path
         for path in files
         if not path.startswith(".wikihub/")
         and not path.endswith(".gitkeep")
-        and path in discoverable
+        and can_read(path, acl_rules, None, (pages_by_path[path].visibility if path in pages_by_path else None))
     ]
 
 

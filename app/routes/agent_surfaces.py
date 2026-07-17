@@ -314,7 +314,9 @@ Content-Type: application/json
 Page `visibility` values are `public`, `public-edit`, `private`, `unlisted`,
 and `unlisted-edit`. If omitted, the page inherits from `.wikihub/acl`; ACL-only
 `public-view` and `unlisted-view` directives are stored and reported as
-`public` and `unlisted` page visibility.
+`public` and `unlisted` page visibility. Unlisted pages are readable by direct
+URL and appear in that wiki's own navigation/sidebar for viewers who can read
+them, but stay out of discovery surfaces such as search, explore, and profiles.
 
 ## poll page metadata
 
