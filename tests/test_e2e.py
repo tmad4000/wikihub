@@ -506,7 +506,7 @@ def test_unlisted_view_acl_default_readable_by_anon(client, api_key):
     - the create path wrote resolve_visibility()'s `unlisted-view` straight into
       page frontmatter/DB, leaking an ACL token as a page visibility.
     """
-    from app.acl import can_read, normalize_page_visibility
+    from app.acl import can_read, can_write, normalize_page_visibility
     from app.git_sync import sync_page_to_repo
     from app.models import Page
 
@@ -517,8 +517,11 @@ def test_unlisted_view_acl_default_readable_by_anon(client, api_key):
     # rejects/normalizes the ACL token.
     assert can_read("deals.md", [("*", "unlisted-view")], user=None) is True
     assert can_read("deals.md", [("*", "private")], user=None) is False
+    assert can_write("deals.md", [], user=None, frontmatter_visibility="unlisted-edit") is True
     assert normalize_page_visibility("unlisted-view") == "unlisted"
+    assert normalize_page_visibility("unlisted-edit") == "unlisted-edit"
     assert normalize_page_visibility("public-view") == "public"
+    assert normalize_page_visibility("public-edit") == "public-edit"
     assert normalize_page_visibility("bogus") is None
 
     # wiki with an ACL default of unlisted-view (accessible by URL, not listed)

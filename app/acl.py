@@ -30,7 +30,7 @@ def normalize_visibility(vis):
 # aliases; those must be collapsed to this enum before being stored on a page or
 # written into frontmatter (otherwise ACL tokens like `unlisted-view` leak into
 # page frontmatter — see wikihub issue #15).
-PAGE_VISIBILITIES = {"public", "public-edit", "private", "unlisted"}
+PAGE_VISIBILITIES = {"public", "public-edit", "private", "unlisted", "unlisted-edit"}
 
 _PAGE_VISIBILITY_MAP = {
     "public": "public",
@@ -39,13 +39,13 @@ _PAGE_VISIBILITY_MAP = {
     "private": "private",
     "unlisted": "unlisted",
     "unlisted-view": "unlisted",
-    "unlisted-edit": "unlisted",
+    "unlisted-edit": "unlisted-edit",
 }
 
 
 def normalize_page_visibility(vis):
     """Coerce any visibility token (ACL directive, old alias, or frontmatter
-    value) to the page-level enum {public, public-edit, private, unlisted}.
+    value) to the page-level enum.
 
     Returns None for unrecognized values so callers can ignore them and fall
     back to the ACL default. Used to validate/normalize frontmatter visibility
