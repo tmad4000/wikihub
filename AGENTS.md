@@ -95,6 +95,7 @@ host (`ubuntu@54.145.123.7`) — that's historical. Production is GCP now.
 - **DB→git sync does NOT fire hooks.** this prevents infinite sync loops.
 - **two repos per wiki:** `repos/<user>/<slug>.git` (authoritative) + `repos/<user>/<slug>-public.git` (derived mirror).
 - **frontmatter visibility wins over ACL file** (most specific wins).
+- **unlisted is readable-by-URL but not discoverable.** Link-holders who can read an unlisted page see it inside the wiki's own sidebar/page tree; search, explore, and profile listings still exclude it.
 - **API keys start with `wh_`**, SHA-256 hashed in DB, shown once on creation.
 - **wiki caps resolve per user.** `User.wiki_limit` overrides `MAX_WIKIS_PER_USER`; enforcement and `/api/v1/me/capabilities` must use `User.effective_wiki_limit()`.
 
