@@ -30,7 +30,7 @@ tests are intentional — each one verifies a real user flow end-to-end or a bro
 5. **zip upload** — create wiki via web form with zip file
 6. **agent surfaces** — all discovery endpoints respond (llms.txt, AGENTS.md, .well-known/*)
 7. **ACL permissions** — private pages not readable without auth
-8. **reader behavior** — sidebar, page controls, side peek, and other browser-facing regressions
+8. **reader behavior** — sidebar, page controls, side peek, live updates, and other browser-facing regressions
 
 don't add unit tests for individual functions. if something breaks, add an e2e test that covers the broken flow. tests should run in <10 seconds.
 

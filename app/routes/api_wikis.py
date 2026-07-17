@@ -640,6 +640,23 @@ def read_page(owner, slug, page_path):
         if not can_read(page.path, acl_rules, user.username if user else None, page.visibility):
             return {"error": "not_found", "message": "Page not found"}, 404
 
+    # Lightweight liveness poll (reader "page updated" indicator, wikihub live-reload).
+    # Returns only the content_hash + updated_at without reading the file from the
+    # repo — the cheapest surface that lets a viewer detect fresh content. ACL has
+    # already been enforced above, so this leaks nothing a full read wouldn't.
+    # Distinct param name from the sidepeek `?fragment=1` JSON endpoint to avoid
+    # conflicting once that branch lands.
+    if request.args.get("meta") == "1":
+        resp = jsonify({
+            "path": page.path,
+            "content_hash": page.content_hash,
+            "updated_at": page.updated_at.isoformat(),
+        })
+        if page.content_hash:
+            resp.headers["ETag"] = f'"{page.content_hash}"'
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+
     use_public_repo = not is_owner and page.visibility != "private"
     content = read_file_from_repo(owner_user.username, wiki.slug, page.path, public=use_public_repo)
     if content is None and page.visibility == "private" and user:

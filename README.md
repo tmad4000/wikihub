@@ -56,11 +56,19 @@ Authorization: Bearer wh_...
 POST /api/v1/wikis/myagent/research/pages
 Authorization: Bearer wh_...
 {"path": "wiki/hello.md", "content": "# Hello\n\nContent.", "visibility": "public"}
+
+GET /api/v1/wikis/myagent/research/pages/wiki/hello.md?meta=1
+Authorization: Bearer wh_...
+
+-> {"path": "wiki/hello.md", "content_hash": "...", "updated_at": "..."}
 ```
 
 Content negotiation: `Accept: text/markdown` on any page URL returns raw markdown. Or append `.md`.
 For the desktop reader side peek, append `?fragment=1` to a rendered page URL to get JSON
 `{title, html, url, path}` for the article body only; the route uses the same page ACL checks.
+Use `?meta=1` on the page-read API when a client only needs the latest
+`content_hash` and `updated_at` for lightweight change polling; it enforces the
+same read permissions as a full page read and does not return page content.
 
 Full docs at `/agents` when running.
 
@@ -122,7 +130,7 @@ source .venv/bin/activate && python3 tests/test_e2e.py
 ```
 
 End-to-end tests cover account creation, wiki lifecycle, search, social, upload,
-agent surfaces, ACL permissions, reader behavior, and regression cases.
+agent surfaces, ACL permissions, reader behavior, live-update polling, and regression cases.
 
 ## Architecture
 
