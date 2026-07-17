@@ -495,6 +495,79 @@ def test_binary_file_serving(client, api_key):
     assert png_page is not None, "non-md Page row was wiped by index_repo_pages(reset=True)"
 
 
+def test_unlisted_view_acl_default_readable_by_anon(client, api_key):
+    """Issue #15: a wiki whose ACL default is `unlisted-view` must be viewable
+    by anonymous link-holders on the web reader, and page creation must never
+    persist the ACL-only token `unlisted-view` on a page (frontmatter or DB).
+
+    Before the fix:
+    - can_read() only recognized the old `unlisted` name, so pages resolving to
+      the canonical `unlisted-view` grant 404'd for anon on the web view.
+    - the create path wrote resolve_visibility()'s `unlisted-view` straight into
+      page frontmatter/DB, leaking an ACL token as a page visibility.
+    """
+    from app.acl import can_read, can_write, normalize_page_visibility
+    from app.git_sync import sync_page_to_repo
+    from app.models import Page
+
+    h = {"Authorization": f"Bearer {api_key}"}
+    anon = client.application.test_client()
+
+    # unit: canonical `unlisted-view` grant is anon-readable; the page enum
+    # rejects/normalizes the ACL token.
+    assert can_read("deals.md", [("*", "unlisted-view")], user=None) is True
+    assert can_read("deals.md", [("*", "private")], user=None) is False
+    assert can_write("deals.md", [], user=None, frontmatter_visibility="unlisted-edit") is True
+    assert normalize_page_visibility("unlisted-view") == "unlisted"
+    assert normalize_page_visibility("unlisted-edit") == "unlisted-edit"
+    assert normalize_page_visibility("public-view") == "public"
+    assert normalize_page_visibility("public-edit") == "public-edit"
+    assert normalize_page_visibility("bogus") is None
+
+    # wiki with an ACL default of unlisted-view (accessible by URL, not listed)
+    r = client.post("/api/v1/wikis", json={"slug": "kb15", "title": "KB15"}, headers=h)
+    assert r.status_code == 201
+    sync_page_to_repo("agent1", "kb15", ".wikihub/acl", "* unlisted-view\n")
+
+    # page created without frontmatter visibility inherits the wiki default
+    r = client.post("/api/v1/wikis/agent1/kb15/pages", json={
+        "path": "deals.md",
+        "content": "# Deals\n\nlink-holders should see this.",
+    }, headers=h)
+    assert r.status_code == 201
+
+    # stored visibility is the page enum, never the ACL token; no frontmatter leak
+    r = client.get("/api/v1/wikis/agent1/kb15/pages/deals.md", headers=h)
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["visibility"] == "unlisted", body["visibility"]
+    assert "unlisted-view" not in (body.get("content") or "")
+
+    r = client.post("/api/v1/wikis/agent1/kb15/pages", json={
+        "path": "bogus.md",
+        "content": "---\nvisibility: bogus\n---\n\n# Bogus\n\nfalls back to ACL.",
+    }, headers=h)
+    assert r.status_code == 201
+    r = client.get("/api/v1/wikis/agent1/kb15/pages/bogus.md", headers=h)
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["visibility"] == "unlisted", body["visibility"]
+
+    # anonymous link-holder can view the page on the web reader
+    r = anon.get("/@agent1/kb15/deals")
+    assert r.status_code == 200, f"anon reader should be 200, got {r.status_code}"
+    r = anon.get("/@agent1/kb15/bogus")
+    assert r.status_code == 200, f"invalid frontmatter should fall back to ACL, got {r.status_code}"
+
+    # legacy rows persisted with the raw ACL token must also read 200 for anon
+    # (exercises the can_read normalization directly)
+    page = Page.query.filter_by(path="deals.md").first()
+    page.visibility = "unlisted-view"
+    db.session.commit()
+    r = anon.get("/@agent1/kb15/deals")
+    assert r.status_code == 200, f"legacy unlisted-view row should be 200 for anon, got {r.status_code}"
+
+
 def test_search(client, api_key):
     """full-text search returns results"""
     h = {"Authorization": f"Bearer {api_key}"}
@@ -6019,6 +6092,7 @@ def run_all():
             ("page ETag conflict", lambda: test_page_etag_conflict(client, key)),
             ("authenticated bulk write rate limits", lambda: test_authenticated_bulk_writes_rate_limit(client, key, app)),
             ("binary file serving", lambda: test_binary_file_serving(client, key)),
+            ("unlisted-view ACL default readable by anon (issue #15)", lambda: test_unlisted_view_acl_default_readable_by_anon(client, key)),
             ("search", lambda: test_search(client, key)),
             ("reader owner visibility control", lambda: test_reader_owner_visibility_control(client, key)),
             ("search respects ACL shares", lambda: test_search_respects_acl_shares(client, key)),

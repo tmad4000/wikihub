@@ -13,7 +13,7 @@
 **Data model** (verified in `app/models.py`):
 - `User` owns `Wiki` (slug-keyed, unique per owner)
 - `Page` lives inside a `Wiki` (path-keyed, e.g. `wiki/hello.md`)
-- Page fields: `path`, `title`, `visibility` (public / public-edit / private), `frontmatter_json`, `excerpt`, `content_hash`, `anonymous`, `claimable`, `search_vector` (FTS tsvector)
+- Page fields: `path`, `title`, `visibility` (page enum: public / public-edit / private / unlisted / unlisted-edit; ACL-only `public-view` and `unlisted-view` normalize to public/unlisted before storage), `frontmatter_json`, `excerpt`, `content_hash`, `anonymous`, `claimable`, `search_vector` (FTS tsvector)
 - `Wikilink` tracks `[[wikilink]]` back-references between pages
 - `ApiKey`: `key_hash`, `key_prefix` (`wh_` + 8 chars), **`agent_name`, `agent_version`** already present (useful for provenance — no schema migration needed)
 

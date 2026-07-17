@@ -72,6 +72,11 @@ same read permissions as a full page read and does not return page content.
 
 Full docs at `/agents` when running.
 
+Page `visibility` values are `public`, `public-edit`, `private`, `unlisted`,
+and `unlisted-edit`. When visibility is inherited from `.wikihub/acl`,
+ACL-only `public-view` and `unlisted-view` directives are reported as
+`public` and `unlisted` on the page.
+
 `max_wikis_per_user` is the authenticated account's effective wiki cap: the
 server default unless a per-user override is set. Wiki create and fork requests
 return `429 too_many` when that effective cap is reached.
@@ -97,13 +102,17 @@ Subcommands: `signup | login | logout | whoami | new | ls | read | write | publi
 
 ```
 * private
-wiki/**                   public
+wiki/**                   public-view
 wiki/secret.md            private
 wiki/collab.md            public-edit
-drafts/**                 unlisted
+drafts/**                 unlisted-view
 ```
 
-Frontmatter `visibility:` on individual files overrides the ACL.
+ACL visibility directives are `private`, `public-view`, `public-edit`,
+`unlisted-view`, and `unlisted-edit`; the shorter `public` and `unlisted`
+forms are accepted as aliases. Frontmatter `visibility:` on individual files
+overrides the ACL and is stored as the page-level enum: `public`, `public-edit`,
+`private`, `unlisted`, or `unlisted-edit`.
 
 ## Feedback
 

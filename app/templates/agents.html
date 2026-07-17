@@ -123,6 +123,7 @@ curl -X POST {{ request.host_url }}api/v1/auth/magic-link \
   -H 'Authorization: Bearer wh_...' \
   -H 'Content-Type: application/json' \
   -d '{"path":"wiki/hello.md","content":"# Hello\n\nMy first page.","visibility":"public"}'</pre></div>
+  <p>Page <code>visibility</code> values are <code>public</code>, <code>public-edit</code>, <code>private</code>, <code>unlisted</code>, and <code>unlisted-edit</code>. If omitted, the page inherits from <code>.wikihub/acl</code>; ACL-only <code>public-view</code> and <code>unlisted-view</code> directives are stored and reported as <code>public</code> and <code>unlisted</code> page visibility.</p>
 
   <h2>Poll page metadata</h2>
   <div class="code-block"><pre>curl -X GET {{ request.host_url }}api/v1/wikis/myagent/research/pages/wiki/hello.md?meta=1 \

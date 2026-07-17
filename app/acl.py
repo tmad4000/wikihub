@@ -3,6 +3,14 @@
 
 glob rules, most-specific wins, private by default.
 
+ACL files accept canonical directive tokens:
+  private, public-view, public-edit, unlisted-view, unlisted-edit
+and legacy shorthand:
+  public -> public-view, unlisted -> unlisted-view
+
+Page rows and page frontmatter store the page-level enum:
+  public, public-edit, private, unlisted, unlisted-edit
+
 precedence (most specific wins):
   1. frontmatter on the file
   2. ACL file rule matching the path (most-specific pattern first)
@@ -23,6 +31,38 @@ def normalize_visibility(vis):
     if not vis:
         return vis
     return VISIBILITY_ALIASES.get(vis, vis)
+
+
+# page-level visibility enum — the values a Page row / page frontmatter may hold.
+# ACL-file directives additionally include the `-view`/`-edit` split and old
+# aliases; those must be collapsed to this enum before being stored on a page or
+# written into frontmatter (otherwise ACL tokens like `unlisted-view` leak into
+# page frontmatter — see wikihub issue #15).
+PAGE_VISIBILITIES = {"public", "public-edit", "private", "unlisted", "unlisted-edit"}
+
+_PAGE_VISIBILITY_MAP = {
+    "public": "public",
+    "public-view": "public",
+    "public-edit": "public-edit",
+    "private": "private",
+    "unlisted": "unlisted",
+    "unlisted-view": "unlisted",
+    "unlisted-edit": "unlisted-edit",
+}
+
+
+def normalize_page_visibility(vis):
+    """Coerce any visibility token (ACL directive, old alias, or frontmatter
+    value) to the page-level enum.
+
+    Returns None for unrecognized values so callers can ignore them and fall
+    back to the ACL default. Used to validate/normalize frontmatter visibility
+    so ACL-only tokens (e.g. `unlisted-view`) never get persisted on a page."""
+    if not vis:
+        return None
+    return _PAGE_VISIBILITY_MAP.get(str(vis).strip().lower())
+
+
 GRANT_RE = re.compile(r"^@([\w-]+):(read|edit)$")
 
 
@@ -144,11 +184,15 @@ def resolve_grants(path, rules):
 
 def can_read(path, rules, user=None, frontmatter_visibility=None):
     """check if a user can read a file."""
-    vis = resolve_visibility(path, rules, frontmatter_visibility)
+    # resolve_visibility may return either old (`unlisted`) or canonical
+    # (`unlisted-view`) forms depending on whether the value came from an ACL
+    # file, frontmatter, or a stored Page row. Normalize so both are honored —
+    # otherwise anonymous link-holders 404 on ACL-defaulted pages (issue #15).
+    vis = normalize_visibility(resolve_visibility(path, rules, frontmatter_visibility))
 
-    if vis in ("public", "public-edit"):
+    if vis in ("public-view", "public-edit"):
         return True
-    if vis in ("unlisted", "unlisted-edit"):
+    if vis in ("unlisted-view", "unlisted-edit"):
         return True  # accessible by URL
 
     # private — check grants
@@ -163,7 +207,7 @@ def can_read(path, rules, user=None, frontmatter_visibility=None):
 
 def can_write(path, rules, user=None, frontmatter_visibility=None):
     """check if a user can write to a file."""
-    vis = resolve_visibility(path, rules, frontmatter_visibility)
+    vis = normalize_visibility(resolve_visibility(path, rules, frontmatter_visibility))
 
     if vis in ("public-edit", "unlisted-edit"):
         return True  # anonymous writes allowed
@@ -180,8 +224,8 @@ def can_write(path, rules, user=None, frontmatter_visibility=None):
 
 def is_discoverable(path, rules, frontmatter_visibility=None):
     """check if a file appears in listings/search."""
-    vis = resolve_visibility(path, rules, frontmatter_visibility)
-    return vis in ("public", "public-edit")
+    vis = normalize_visibility(resolve_visibility(path, rules, frontmatter_visibility))
+    return vis in ("public-view", "public-edit")
 
 
 def list_all_grants(rules):

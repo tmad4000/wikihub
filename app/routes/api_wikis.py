@@ -26,7 +26,7 @@ from app.git_sync import (
     sync_page_to_repo,
     update_mirror_page,
 )
-from app.acl import can_read, can_write, list_all_grants, remove_grant, resolve_grants, resolve_visibility
+from app.acl import can_read, can_write, list_all_grants, normalize_page_visibility, remove_grant, resolve_grants, resolve_visibility
 from app.email_service import send_share_invite_existing_user, send_share_invite_pending
 from app.credentials_hint import resolve_server_url
 from app.content_utils import (
@@ -563,6 +563,14 @@ def create_page(owner, slug):
     if not is_owner and visibility != resolve_visibility(path, acl_rules):
         visibility = resolve_visibility(path, acl_rules)
         content = set_visibility_in_content(content, visibility)
+
+    # Store the page-level enum, not an ACL-file token. resolve_visibility() can
+    # return `unlisted-view`/`public-view`; persist `unlisted`/`public` so the DB
+    # column and list_pages report valid page visibilities (wikihub issue #15).
+    normalized_visibility = normalize_page_visibility(visibility)
+    if not normalized_visibility:
+        normalized_visibility = normalize_page_visibility(resolve_visibility(path, acl_rules)) or "private"
+    visibility = normalized_visibility
 
     page = Page(
         wiki_id=wiki.id,
