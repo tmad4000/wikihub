@@ -21,7 +21,7 @@ from app.url_utils import url_path_from_page_path
 MCP_TOOLS = [
     {"name": "whoami", "description": "Check auth status"},
     {"name": "search", "description": "Full-text search across wikis"},
-    {"name": "read_page", "description": "Read a page's content"},
+    {"name": "read_page", "description": "Read a page's content; 404 means missing, 403/401 means restricted"},
     {"name": "list_pages", "description": "List pages in a wiki"},
     {"name": "create_page", "description": "Create a page"},
     {"name": "update_page", "description": "Replace or patch a page"},
@@ -337,6 +337,12 @@ response:
 the response omits page content and enforces the same read permissions as a full
 page read.
 
+Read failures distinguish missing from restricted content. A truly missing page
+returns `404 not_found`; an existing page the caller cannot read returns
+`403 forbidden` for authenticated callers, or `401 authentication_required`
+with `WWW-Authenticate` for anonymous API/markdown callers. Restricted responses
+intentionally confirm existence but never include title, content, or frontmatter.
+
 ## git clone & push
 
 every wiki is a real git repo. use your API key as the password:
@@ -525,6 +531,9 @@ Or append `.md` to the URL.
 For rendered HTML without the full reader chrome, append `?fragment=1` to a
 page URL. The response is JSON `{title, html, url, path}` for the article body
 only and uses the same ACL checks as the full page route.
+For markdown, fragment, and full-page reads, a genuinely missing path stays 404;
+an existing path outside your access returns the restricted 403/401 signal
+without page fields.
 
 ## hosting non-markdown files
 

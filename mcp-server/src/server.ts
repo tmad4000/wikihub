@@ -198,7 +198,7 @@ export function buildServer(
     {
       title: 'Read a WikiHub page',
       description:
-        'Fetch a single page\'s content and metadata. Respects ACL: private pages require an api key that can read them.',
+        'Fetch a single page\'s content and metadata. Respects ACL: 404 means missing; 403/401 means the page exists but this key cannot read it.',
       inputSchema: {
         owner: z.string().describe('Username of the wiki owner (no leading @)'),
         slug: z.string().describe('Wiki slug (e.g. "notes")'),
@@ -723,7 +723,7 @@ export function buildServer(
     {
       title: 'Fetch (ChatGPT DR shape)',
       description:
-        'Alias of wikihub_get_page with the shape ChatGPT Deep Research expects: returns {id, title, text, url, metadata}. `id` is the composite id returned by `search` (format: "owner/slug:path").',
+        'Alias of wikihub_get_page with the shape ChatGPT Deep Research expects: returns {id, title, text, url, metadata}. `id` is the composite id returned by `search` (format: "owner/slug:path"); 404 means missing, 403/401 means restricted.',
       inputSchema: { id: z.string().min(1) },
     },
     async ({ id }) => {

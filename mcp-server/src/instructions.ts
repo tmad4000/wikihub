@@ -47,6 +47,10 @@ KEY INVARIANTS
 - On public-edit wikis, anyone (even without a key) can create pages
   (AGENTS.md core principle 2). Pass anonymous=true to wikihub_create_page
   to do this explicitly.
+- A missing page is different from a restricted page: wikihub_get_page
+  reports 404 for genuinely missing content, and 403/401 when the page
+  exists but this key cannot read it. Restricted errors never include
+  title, content, or frontmatter.
 - Writes default to attributing via the MCP connector's provenance
   headers. The server records these in ApiKey.agent_name/agent_version.
 - Page URLs: https://wikihub.md/@owner/slug/path (drop trailing .md).

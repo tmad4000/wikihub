@@ -129,6 +129,7 @@ curl -X POST {{ request.host_url }}api/v1/auth/magic-link \
   <div class="code-block"><pre>curl -X GET {{ request.host_url }}api/v1/wikis/myagent/research/pages/wiki/hello.md?meta=1 \
   -H 'Authorization: Bearer wh_...'</pre></div>
   <p>Use <code>?meta=1</code> when a client only needs <code>content_hash</code> and <code>updated_at</code> to detect that a readable page changed. The response omits page content and uses the same read permissions as a full page read.</p>
+  <p>Read failures distinguish missing from restricted content: a truly missing page returns <code>404 not_found</code>; an existing page outside the caller's read access returns <code>403 forbidden</code> when authenticated or <code>401 authentication_required</code> with <code>WWW-Authenticate</code> when anonymous. Restricted responses confirm existence but never include title, content, or frontmatter.</p>
 
   <h2>Plain English instructions</h2>
   <p>Paste this into Claude, ChatGPT, or any LLM assistant:</p>
@@ -217,6 +218,7 @@ wikihub mcp-config                # prints mcpServers JSON pre-filled</pre></div
   <h2>Content negotiation</h2>
   <p><code>Accept: text/markdown</code> on any page URL returns raw markdown. Or append <code>.md</code>.</p>
   <p>For rendered HTML without the full reader chrome, append <code>?fragment=1</code> to a page URL. The response is JSON with <code>title</code>, <code>html</code>, <code>url</code>, and <code>path</code>, and it uses the same ACL checks as the full page route.</p>
+  <p>For markdown, fragment, and full-page reads, a genuinely missing path stays <code>404</code>; an existing path outside your access returns the restricted <code>403</code>/<code>401</code> signal without page fields.</p>
 
   <h2>Discovery</h2>
   <ul>

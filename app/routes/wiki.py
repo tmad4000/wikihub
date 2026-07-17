@@ -297,6 +297,36 @@ def _render_permission_error(owner, wiki, status_code=None):
     return render_template("permission_error.html", owner=owner, wiki=wiki), status_code
 
 
+def _render_restricted(owner, wiki):
+    """wikihub-dkp8: the resource EXISTS but the viewer can't read it.
+
+    Renders the distinct "This page is restricted" screen with 403 semantics
+    (existence acknowledged, no content/title/frontmatter leaked). Contrast with
+    a genuinely-missing path, which stays a plain 404 (`error.html`).
+    """
+    return render_template("permission_error.html", owner=owner, wiki=wiki, restricted=True), 403
+
+
+def _restricted_json():
+    """wikihub-dkp8: agent/markdown-facing counterpart to `_render_restricted`.
+
+    Existence acknowledged with 403 (authed) / 401 (anon) so agents can tell
+    "restricted" apart from a 404 "does not exist". Never leaks page fields.
+    """
+    from flask import jsonify, make_response
+    status = 401 if not current_user.is_authenticated else 403
+    body = {
+        "error": "authentication_required" if status == 401 else "forbidden",
+        "message": "This page is restricted — it exists but you don't have access.",
+        "sign_in_url": "https://wikihub.md/auth/login",
+    }
+    resp = make_response(jsonify(body), status)
+    resp.headers["Cache-Control"] = "no-store"
+    if status == 401:
+        resp.headers["WWW-Authenticate"] = 'Bearer realm="wikihub"'
+    return resp
+
+
 def _normalize_folder_path(raw_path):
     clean = (raw_path or "").replace("\\", "/").strip().strip("/")
     clean = clean.removesuffix("/index.md").removesuffix("/index").removesuffix(".md")
@@ -1004,6 +1034,11 @@ def wiki_index(username, slug):
     if content is None:
         items = _folder_listing(owner.username, wiki.slug, wiki, "", public=use_public, acl_filter_user=acl_filter_user)
         if use_public and not items:
+            # wikihub-dkp8: the wiki row EXISTS. If it has any pages this viewer
+            # simply can't see → restricted (403). Only a genuinely empty wiki
+            # (no pages at all) falls back to the ambiguous 404.
+            if Page.query.filter_by(wiki_id=wiki.id).count() > 0:
+                return _render_restricted(owner, wiki)
             return render_template("permission_error.html", owner=owner, wiki=wiki), 404
         return render_template(
             "folder.html",
@@ -1562,6 +1597,13 @@ def wiki_page(username, slug, page_path):
         page = Page.query.filter_by(wiki_id=wiki.id, path=page_path).first()
         file_vis = page.visibility if page else resolve_visibility(page_path, acl_rules)
         if not is_owner and not can_read(page_path, acl_rules, user_name, file_vis):
+            # wikihub-dkp8: a non-markdown file with an explicit Page row EXISTS
+            # but is restricted → 403 restricted screen (agents get JSON). Only a
+            # bare path with no Page row (unknown file) falls through to 404.
+            if page is not None:
+                if "text/html" not in request.headers.get("Accept", ""):
+                    return _restricted_json()
+                return _render_restricted(owner, wiki)
             abort(404)
         use_public = _use_public_repo(wiki, acl_rules)
         data = read_file_bytes_from_repo(owner.username, wiki.slug, page_path, public=use_public)
@@ -1668,6 +1710,15 @@ def wiki_page(username, slug, page_path):
         content_path, content = _folder_index_content(owner.username, wiki.slug, page_path, public=use_public)
         items = _folder_listing(owner.username, wiki.slug, wiki, page_path, public=use_public, acl_filter_user=acl_filter_user)
         if use_public and not content and not items:
+            # wikihub-dkp8: distinguish "folder exists but its pages are
+            # restricted" (403) from "no such folder" (404). A folder exists iff
+            # any page's path lives under it.
+            folder_prefix = page_path.strip("/") + "/"
+            has_hidden = Page.query.filter_by(wiki_id=wiki.id).filter(
+                Page.path.like(folder_prefix.replace("%", r"\%").replace("_", r"\_") + "%", escape="\\")
+            ).first() is not None
+            if has_hidden:
+                return _render_restricted(owner, wiki)
             return render_template("permission_error.html", owner=owner, wiki=wiki), 404
         breadcrumb = []
         running = []
@@ -1707,6 +1758,9 @@ def wiki_page(username, slug, page_path):
     is_owner = _is_owner(wiki)
 
     if page and not is_owner and not can_read(page.path, acl_rules, user_name, page.visibility):
+        # wikihub-dkp8: the page EXISTS but this viewer can't read it. Return a
+        # distinct "restricted" signal (403/401) instead of the ambiguous 404 —
+        # existence-but-no-access reads very differently from "never created".
         # wikihub-3rjt: agent requests (Accept: text/markdown, or .md suffix
         # with markdown Accept) must NOT receive HTML permission_error — that
         # would be parsed as the page's content. Return JSON 4xx with
@@ -1714,19 +1768,8 @@ def wiki_page(username, slug, page_path):
         wants_markdown_now = "text/markdown" in request.headers.get("Accept", "")
         is_md_url = raw_page_path.endswith(".md") or page_path.endswith(".md")
         if wants_markdown_now or (is_md_url and not request.headers.get("Accept", "").startswith("text/html")):
-            from flask import jsonify, make_response
-            status = 401 if not current_user.is_authenticated else 403
-            body = {
-                "error": "authentication_required" if status == 401 else "forbidden",
-                "message": "This page is private or doesn't exist",
-                "sign_in_url": "https://wikihub.md/auth/login",
-            }
-            resp = make_response(jsonify(body), status)
-            resp.headers["Cache-Control"] = "no-store"
-            if status == 401:
-                resp.headers["WWW-Authenticate"] = 'Bearer realm="wikihub"'
-            return resp
-        return render_template("permission_error.html", owner=owner, wiki=wiki), 404
+            return _restricted_json()
+        return _render_restricted(owner, wiki)
 
     use_public, acl_filter_user = _repo_access(wiki, acl_rules)
     # For individual pages: if the page is private, always read from authoritative repo

@@ -64,6 +64,12 @@ When omitted, page visibility inherits from `.wikihub/acl`; ACL-only
 in that wiki's own navigation/sidebar for viewers who can read them, but remain
 excluded from discovery surfaces such as search, explore, and profiles.
 
+`read` uses the REST page-read endpoint's access semantics: a missing page is
+`404 not_found`, while an existing page outside the active profile's read access
+is `403 forbidden` for authenticated callers or `401 authentication_required`
+for anonymous reads. Restricted responses confirm existence but never include
+the page title, content, or frontmatter.
+
 ## Auth
 
 Credentials are read in this order (first wins):

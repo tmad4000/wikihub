@@ -119,6 +119,10 @@ Anonymous pages are marked `anonymous=True, claimable=True` by default. Any logg
 
 Pending invites (share-by-email-before-signup, wikihub-skp7) materialize when the user's email is verified — either via an invite-link token click (yjsv), Google OAuth auto-verify, or the standard verify-email flow. Basic wiki reading/writing on your own content works regardless.
 
+### 3.5 Restricted (403) is deliberately distinct from not-found (404) (wikihub-dkp8)
+
+A page/wiki that EXISTS but the caller can't read returns a **"This page is restricted"** screen (HTTP 403, or 401 for anonymous agent/markdown requests), NOT a 404. A truly-missing path stays 404. This intentionally leaks the *fact of existence* (never title/content/frontmatter) — the captain accepted that tradeoff for clarity, because private pages reading as 404 made users think the page was never created. The distinction lives in the read paths: `wiki_page` / `wiki_index` / folder handler in `app/routes/wiki.py` (helpers `_render_restricted` / `_restricted_json`) and `read_page` in `app/routes/api_wikis.py`; the MCP `wikihub_get_page` inherits it via the API status code. If a security-review tool flags "existence leak", that's the tool misunderstanding the product. Regression: `test_restricted_vs_not_found_distinction`.
+
 ### 4. Collaboration roadmap — phases
 
 Explicit phase ordering (Jacob 2026-04-22):

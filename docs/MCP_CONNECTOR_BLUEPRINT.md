@@ -32,7 +32,7 @@
 | DELETE | `/api/v1/wikis/<owner>/<slug>` | Required (owner) |
 | POST | `/api/v1/wikis/<owner>/<slug>/pages` | Required |
 | GET | `/api/v1/wikis/<owner>/<slug>/pages` | Optional |
-| GET | `/api/v1/wikis/<owner>/<slug>/pages/<path>` | Optional; `?meta=1` returns only `path`, `content_hash`, and `updated_at` for lightweight change polling after the same read ACL check |
+| GET | `/api/v1/wikis/<owner>/<slug>/pages/<path>` | Optional; `?meta=1` returns only `path`, `content_hash`, and `updated_at` for lightweight change polling after the same read ACL check. Missing pages return `404 not_found`; existing pages outside the caller's read access return `403 forbidden` when authenticated or `401 authentication_required` when anonymous, without title/content/frontmatter. |
 | PATCH | `/api/v1/wikis/<owner>/<slug>/pages/<path>` | Required |
 | DELETE | `/api/v1/wikis/<owner>/<slug>/pages/<path>` | Required |
 | POST | `/api/v1/wikis/<owner>/<slug>/pages/<path>/append-section` | Required |
