@@ -1354,7 +1354,7 @@ def test_unlisted_page_in_sidebar_but_not_discovery(app, client, api_key):
     r = anon.get("/api/v1/search?q=Zorptangle")
     assert r.status_code == 200, f"search failed: {r.status_code} {r.data[:200]}"
     hits = r.get_json()["results"]
-    assert all("rules.md" not in (hit.get("path") or "") for hit in hits), \
+    assert all(hit.get("page") != "rules.md" for hit in hits), \
         "unlisted page must NOT appear in search (discovery surface stays excluded)"
 
 
