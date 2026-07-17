@@ -543,9 +543,21 @@ def test_unlisted_view_acl_default_readable_by_anon(client, api_key):
     assert body["visibility"] == "unlisted", body["visibility"]
     assert "unlisted-view" not in (body.get("content") or "")
 
+    r = client.post("/api/v1/wikis/agent1/kb15/pages", json={
+        "path": "bogus.md",
+        "content": "---\nvisibility: bogus\n---\n\n# Bogus\n\nfalls back to ACL.",
+    }, headers=h)
+    assert r.status_code == 201
+    r = client.get("/api/v1/wikis/agent1/kb15/pages/bogus.md", headers=h)
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["visibility"] == "unlisted", body["visibility"]
+
     # anonymous link-holder can view the page on the web reader
     r = anon.get("/@agent1/kb15/deals")
     assert r.status_code == 200, f"anon reader should be 200, got {r.status_code}"
+    r = anon.get("/@agent1/kb15/bogus")
+    assert r.status_code == 200, f"invalid frontmatter should fall back to ACL, got {r.status_code}"
 
     # legacy rows persisted with the raw ACL token must also read 200 for anon
     # (exercises the can_read normalization directly)

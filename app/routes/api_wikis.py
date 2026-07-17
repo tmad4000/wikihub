@@ -567,7 +567,10 @@ def create_page(owner, slug):
     # Store the page-level enum, not an ACL-file token. resolve_visibility() can
     # return `unlisted-view`/`public-view`; persist `unlisted`/`public` so the DB
     # column and list_pages report valid page visibilities (wikihub issue #15).
-    visibility = normalize_page_visibility(visibility) or "private"
+    normalized_visibility = normalize_page_visibility(visibility)
+    if not normalized_visibility:
+        normalized_visibility = normalize_page_visibility(resolve_visibility(path, acl_rules)) or "private"
+    visibility = normalized_visibility
 
     page = Page(
         wiki_id=wiki.id,
