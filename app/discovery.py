@@ -1,6 +1,6 @@
 from app import db
 from app.models import Page, Wiki
-from app.page_utils import is_content_page_path
+from app.page_utils import content_page_path_filter, is_content_page_path
 
 
 DISCOVERABLE_VISIBILITIES = ("public", "public-view", "public-edit")
@@ -12,12 +12,11 @@ def _is_self_viewer(viewer, owner):
 
 def discoverable_wiki_ids(visibilities=DISCOVERABLE_VISIBILITIES):
     return {
-        wiki_id
-        for wiki_id, path in db.session.query(Page.wiki_id, Page.path)
+        wiki_id for (wiki_id,) in db.session.query(Page.wiki_id)
         .filter(Page.visibility.in_(visibilities))
+        .filter(content_page_path_filter(Page.path))
         .distinct()
         .all()
-        if is_content_page_path(path)
     }
 
 

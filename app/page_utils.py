@@ -1,5 +1,7 @@
 import posixpath
 
+from sqlalchemy import and_
+
 
 def normalize_repo_path(path):
     normalized = (path or "").strip().replace("\\", "/")
@@ -18,3 +20,12 @@ def is_wikihub_plumbing_path(path):
 
 def is_content_page_path(path):
     return not is_wikihub_plumbing_path(path)
+
+
+def content_page_path_filter(path_column):
+    return and_(
+        path_column != ".wikihub",
+        ~path_column.startswith(".wikihub/"),
+        path_column != "./.wikihub",
+        ~path_column.startswith("./.wikihub/"),
+    )

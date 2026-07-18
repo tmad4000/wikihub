@@ -1827,6 +1827,10 @@ def test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(a
     assert r.status_code == 200
     graph = r.get_json()
     assert all(".wikihub/" not in node.get("url", "") and node.get("title") != stale_marker for node in graph.get("nodes", []))
+    r = owner_browser.get(f"/@agent1/{slug}/log/graph.json")
+    assert r.status_code == 200
+    graph = r.get_json()
+    assert all(".wikihub/" not in node.get("url", "") and node.get("title") != stale_marker for node in graph.get("nodes", []))
     r = anon.get(f"/@agent1/{slug}/tag/plumbing-leak")
     assert r.status_code == 200
     assert stale_marker not in r.data.decode("utf-8", errors="replace")
@@ -7490,6 +7494,8 @@ def _seed_activity_fixtures(client, key):
     }, headers=h)
     owner = User.query.filter_by(username="agent1").first()
     public_wiki = Wiki.query.filter_by(owner_id=owner.id, slug="pubwiki").first()
+    client.post("/api/v1/wikis", json={"slug": "plumbingonly", "title": "Plumbing Only"}, headers=h)
+    plumbing_only_wiki = Wiki.query.filter_by(owner_id=owner.id, slug="plumbingonly").first()
     db.session.add(Page(
         wiki_id=public_wiki.id,
         path=".wikihub/activity-log.md",
@@ -7503,6 +7509,13 @@ def _seed_activity_fixtures(client, key):
         title="Dot Plumbing Activity",
         visibility="public",
         excerpt="Dot Plumbing Activity",
+    ))
+    db.session.add(Page(
+        wiki_id=plumbing_only_wiki.id,
+        path="./.wikihub/discovery-log.md",
+        title="Dot Plumbing Discovery",
+        visibility="public",
+        excerpt="Dot Plumbing Discovery",
     ))
     db.session.commit()
     return h
@@ -7522,6 +7535,13 @@ def test_global_activity_excludes_non_public(client, key):
     assert "Private Note" not in body, "private page must NOT appear in global activity"
     assert "Public Plumbing Activity" not in body, "stale plumbing page must NOT appear in global activity"
     assert "Dot Plumbing Activity" not in body, "dot-segment plumbing page must NOT appear in global activity"
+    assert "Plumbing Only" not in body, "wiki with only stale plumbing rows must NOT appear in global activity"
+
+    from app.discovery import discoverable_wiki_ids
+    owner = User.query.filter_by(username="agent1").first()
+    plumbing_only_wiki = Wiki.query.filter_by(owner_id=owner.id, slug="plumbingonly").first()
+    assert plumbing_only_wiki.id not in discoverable_wiki_ids(), \
+        "wiki with only dot-segment plumbing rows must not be discoverable"
 
     # RSS feed (anonymous request)
     r = client.get("/activity.rss")

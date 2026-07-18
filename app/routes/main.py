@@ -9,7 +9,7 @@ from app.acl import grants_for_user, list_all_grants, parse_acl
 from app.discovery import discoverable_page_for_wiki, discoverable_wiki_ids, visible_wikis_for_owner
 from app.git_sync import read_file_from_repo
 from app.models import Wiki, Page, ApiKey, User, Star, Fork, MagicLoginToken, UsernameRedirect, utcnow
-from app.page_utils import is_content_page_path
+from app.page_utils import content_page_path_filter, is_content_page_path
 from app.routes import main_bp
 import os
 import shutil
@@ -103,6 +103,7 @@ def _global_activity_query():
         .join(Wiki, Page.wiki_id == Wiki.id)
         .join(User, Wiki.owner_id == User.id)
         .filter(Page.visibility.in_(DISCOVERABLE_VISIBILITIES))
+        .filter(content_page_path_filter(Page.path))
         .order_by(Page.updated_at.desc(), Page.id.desc())
     )
 
@@ -122,12 +123,13 @@ def activity():
         page_num = 1
     per_page = 40
 
-    rows = _content_activity_rows(_global_activity_query().all())
-    total = len(rows)
+    query = _global_activity_query()
+    total = query.count()
     pages = ceil(total / per_page) if total else 0
     start = (page_num - 1) * per_page
+    rows = _content_activity_rows(query.offset(start).limit(per_page * 2).all())[:per_page]
     pagination = SimpleNamespace(
-        items=rows[start:start + per_page],
+        items=rows,
         page=page_num,
         pages=pages,
         has_prev=page_num > 1,
@@ -152,7 +154,7 @@ def activity_rss():
     """RSS 2.0 feed for the global public activity feed."""
     from app.feeds import activity_entry, render_rss
 
-    rows = _content_activity_rows(_global_activity_query().all())[:50]
+    rows = _content_activity_rows(_global_activity_query().limit(100).all())[:50]
     entries = [
         activity_entry(page, wiki, user.username, request.host_url)
         for (page, wiki, user) in rows

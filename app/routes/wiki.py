@@ -16,7 +16,7 @@ from app.content_utils import has_private_bands, parse_markdown_document, set_vi
 from app.discovery import discoverable_page_for_wiki, visible_wikis_for_owner
 from app.git_backend import _repo_path
 from app.git_sync import read_file_from_repo, read_file_bytes_from_repo, list_files_in_repo, regenerate_public_mirror, remove_page_from_repo, sync_page_to_repo, update_mirror_page
-from app.page_utils import is_content_page_path, is_wikihub_plumbing_path
+from app.page_utils import content_page_path_filter, is_content_page_path, is_wikihub_plumbing_path
 from app.models import (
     Page,
     Proposal,
@@ -50,7 +50,7 @@ def _is_wikihub_plumbing_path(path):
 
 
 def _content_pages_query(wiki):
-    return Page.query.filter_by(wiki_id=wiki.id).filter(~Page.path.startswith(".wikihub/"), Page.path != ".wikihub")
+    return Page.query.filter_by(wiki_id=wiki.id).filter(content_page_path_filter(Page.path))
 
 
 def _content_pages(query):
@@ -103,6 +103,8 @@ def _get_link_graph(page, wiki, viewer_filter=True):
         acl_rules = load_acl_rules(owner_obj.username, wiki.slug)
 
     def _neighbor_visible(neighbor_page):
+        if not is_content_page_path(neighbor_page.path):
+            return False
         if not apply_filter:
             return True
         return _viewer_can_read_page(wiki, neighbor_page, acl_rules=acl_rules, owner=owner_obj)
