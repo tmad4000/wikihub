@@ -13,6 +13,7 @@ pipeline: markdown-it-py with plugins for:
 """
 
 import re
+from urllib.parse import unquote
 
 from markdown_it import MarkdownIt
 from mdit_py_plugins.footnote import footnote_plugin
@@ -533,6 +534,8 @@ def render_page(content, wiki_owner=None, wiki_slug=None, current_page_path=None
             if not path_part:
                 # pure query/fragment (e.g. "?x=1", "#sec") — leave alone
                 return match.group(0)
+            path_part = unquote(path_part)
+            directory_link = path_part.endswith("/")
             # resolve ../path relative to the current page's directory
             resolved = posixpath.normpath(posixpath.join(page_dir, path_part))
             # a link that escapes the wiki root (../../x) has no sane wiki URL
@@ -547,6 +550,8 @@ def render_page(content, wiki_owner=None, wiki_slug=None, current_page_path=None
             else:
                 # already URL-form (no .md); just anchor it to the wiki root.
                 url = f"/@{wiki_owner}/{wiki_slug}/{url_path_from_page_path(resolved, strip_md=False)}"
+            if directory_link and not url.endswith("/"):
+                url += "/"
             return f'{prefix}{url}{tail}{suffix}'
 
         html = re.sub(r'(href=")([^"]+)(")', resolve_relative_link, html)
