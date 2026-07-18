@@ -3865,6 +3865,32 @@ def test_subdomain_routing(client):
     if r.status_code == 301:
         assert "recipes.wikihub.md/intro" in r.headers["Location"]
 
+    r = client.get("/@subowner/cookbook/activity",
+                   headers={"Host": "recipes.wikihub.md"}, follow_redirects=False)
+    assert r.status_code == 200, f"per-wiki activity on wiki subdomain should not redirect: {r.status_code}"
+    assert b"Recent visible edits" in r.data
+    assert b"Recent page creations and updates across public wikis" not in r.data
+
+    r = client.get("/@subowner/cookbook/activity",
+                   headers={"Host": "wikihub.md"}, follow_redirects=False)
+    assert r.status_code == 200, f"per-wiki activity on apex should not canonicalize to global activity: {r.status_code}"
+    assert b"Recent visible edits" in r.data
+    assert b"Recent page creations and updates across public wikis" not in r.data
+
+    r = client.get("/@subowner/cookbook/activity.rss",
+                   headers={"Host": "recipes.wikihub.md"}, follow_redirects=False)
+    assert r.status_code == 200, f"per-wiki RSS on wiki subdomain should not redirect: {r.status_code}"
+    assert r.mimetype == "application/rss+xml"
+    assert b"cookbook" in r.data
+    assert b"WikiHub" not in r.data
+
+    r = client.get("/@subowner/cookbook/activity.rss",
+                   headers={"Host": "wikihub.md"}, follow_redirects=False)
+    assert r.status_code == 200, f"per-wiki RSS on apex should not canonicalize to global RSS: {r.status_code}"
+    assert r.mimetype == "application/rss+xml"
+    assert b"cookbook" in r.data
+    assert b"WikiHub" not in r.data
+
     # Same regression check for user subdomain
     r = client.get("/@subowner/cookbook/intro",
                    headers={"Host": "subowner.wikihub.md"}, follow_redirects=False)

@@ -33,6 +33,7 @@ _SKIP_SUFFIXES = (
     "/llms.txt", "/llms-full.txt",
     "/graph.json", "/sidebar.json", "/graph",
     "/history", "/commit",
+    "/activity", "/activity.rss",
     "/settings",
     "/reindex",
     "/preview",
