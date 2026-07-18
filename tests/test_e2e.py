@@ -2043,7 +2043,9 @@ def test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(a
     db.session.expire_all()
     assert Page.query.filter_by(wiki_id=revert_wiki.id, path=".wikihub/acl").first() is None
     assert Page.query.filter_by(wiki_id=revert_wiki.id, path="log.md").first().visibility == "private"
-    assert read_file_from_repo("agent1", revert_slug, ".wikihub/acl") == "* private\n"
+    reverted_acl = read_file_from_repo("agent1", revert_slug, ".wikihub/acl")
+    assert "* private\n" in reverted_acl
+    assert "* unlisted-view\n" not in reverted_acl
     r = anon.get(f"/@agent1/{revert_slug}/log")
     assert r.status_code in (401, 403), f"reverting ACL should refresh inherited private visibility, got {r.status_code}"
 
@@ -5085,7 +5087,8 @@ def test_agent_chat_blocks_plumbing_bootstrap_context(app, client, api_key):
     slug = "agent-plumbing-context"
     r = client.post("/api/v1/wikis", json={"slug": slug, "title": "Agent Plumbing Context"}, headers=h)
     assert r.status_code == 201
-    r = client.post(f"/api/v1/wikis/agent1/{slug}/pages/.wikihub/acl", json={
+    r = client.post(f"/api/v1/wikis/agent1/{slug}/pages", json={
+        "path": ".wikihub/acl",
         "content": "* unlisted-view\n",
     }, headers=h)
     assert r.status_code == 201

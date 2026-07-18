@@ -1284,10 +1284,9 @@ def accept_proposal(username, slug, proposal_id):
         return render_template("permission_error.html", owner=owner, wiki=wiki), 403
 
     proposal = Proposal.query.filter_by(id=proposal_id, wiki_id=wiki.id).first_or_404()
+    _, patch = _proposal_patch_or_404(proposal)
     if proposal.status != "pending":
         return redirect(url_for("wiki.proposal_detail", username=owner.username, slug=wiki.slug, proposal_id=proposal.id))
-
-    _, patch = _proposal_patch_or_404(proposal)
 
     page = Page.query.filter_by(wiki_id=wiki.id, path=patch.page_path).first()
     if not page:

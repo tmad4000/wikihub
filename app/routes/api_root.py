@@ -107,7 +107,14 @@ def api_wikis_compat(owner, slug):
         rules = []
     root_vis = resolve_visibility("", rules)
     is_owner = bool(user and user.id == owner_user.id)
-    is_anon_readable = root_vis in ("public", "public-edit", "unlisted", "unlisted-edit")
+    is_anon_readable = root_vis in (
+        "public",
+        "public-view",
+        "public-edit",
+        "unlisted",
+        "unlisted-view",
+        "unlisted-edit",
+    )
 
     if not is_owner and not is_anon_readable and not user:
         return _unauthorized_json(request.path)
