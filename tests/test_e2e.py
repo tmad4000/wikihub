@@ -2413,6 +2413,92 @@ def test_folder_async_sidebar_passes_current_context(client, api_key):
     )
 
 
+def test_relative_links_resolve_inside_wiki_on_subdomain(client, api_key):
+    """wikihub-qmx6 REGRESSION: in-content relative links must resolve inside the
+    wiki even on the canonical subdomain root (no trailing slash).
+
+    Markdown like [Topics](topics) renders as a host-relative href="topics". On
+    the subdomain form (agent1.wikihub.md/rel-links — NO trailing slash) a bare
+    "topics" resolves against the host root -> /topics -> 404. The renderer must
+    absolute-ize every relative in-content link to /@owner/slug/... so it works
+    regardless of which host form (apex or subdomain) served the page.
+    """
+    import re as _re
+    from html.parser import HTMLParser
+
+    h = {"Authorization": f"Bearer {api_key}"}
+
+    r = client.post("/api/v1/wikis", json={"slug": "rel-links", "title": "Rel Links"}, headers=h)
+    assert r.status_code == 201
+
+    # index page with several relative in-content links: a bare slug, a nested
+    # relative path, and a relative .md link. All must become absolute.
+    # (a fresh wiki auto-creates index.md, so PUT rather than POST.)
+    r = client.put("/api/v1/wikis/agent1/rel-links/pages/index.md", json={
+        "content": (
+            "---\ntitle: Home\nvisibility: public\n---\n\n"
+            "# Home\n\n"
+            "- [Topics](topics)\n"
+            "- [Deals](deals)\n"
+            "- [Notes](notes/scratch.md)\n"
+            "- [External](https://example.com/topics)\n"
+            "- [Anchor](#home)\n"
+        ),
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 200, f"index update failed: {r.status_code} {r.data[:200]}"
+    for p in ("topics.md", "deals.md", "notes/scratch.md"):
+        r = client.post("/api/v1/wikis/agent1/rel-links/pages", json={
+            "path": p,
+            "content": f"---\ntitle: {p}\nvisibility: public\n---\n\n# {p}",
+            "visibility": "public",
+        }, headers=h)
+        assert r.status_code == 201
+
+    # Fetch the wiki ROOT via the subdomain host, no trailing slash — exactly the
+    # live repro. The subdomain middleware rewrites it to /@agent1/rel-links.
+    r = client.get("/rel-links", base_url="http://agent1.wikihub.md")
+    assert r.status_code == 200, (
+        f"subdomain wiki root should render, got {r.status_code} "
+        "(subdomain middleware may not be rewriting the host)"
+    )
+    html = r.data.decode()
+
+    # Extract ONLY the in-content article region — chrome links are separate.
+    m = _re.search(r'<article class="article">(.*?)</article>', html, _re.DOTALL)
+    assert m, "reader page missing <article class=\"article\"> content region"
+    article = m.group(1)
+
+    # Collect every href in the article body.
+    hrefs = []
+
+    class _Collect(HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            if tag == "a":
+                for k, v in attrs:
+                    if k == "href" and v is not None:
+                        hrefs.append(v)
+
+    _Collect().feed(article)
+
+    # The relative page links must have been rewritten to absolute wiki paths.
+    assert "/@agent1/rel-links/topics" in hrefs, f"expected absolute topics link, got {hrefs}"
+    assert "/@agent1/rel-links/deals" in hrefs, f"expected absolute deals link, got {hrefs}"
+    assert "/@agent1/rel-links/notes/scratch" in hrefs, f"expected absolute nested link, got {hrefs}"
+
+    # Every in-content link must resolve inside the wiki: no bare host-relative
+    # link (one that the browser would resolve against the host root) may survive.
+    for href in hrefs:
+        if href.startswith(("http://", "https://", "//", "mailto:", "tel:")):
+            continue  # external — fine
+        if href.startswith("#"):
+            continue  # in-page anchor — fine
+        assert href.startswith("/@agent1/rel-links/"), (
+            f"in-content link {href!r} is not absolute inside the wiki — it would "
+            "resolve against the subdomain host root and 404 (wikihub-qmx6)."
+        )
+
+
 def test_wikipedia_urls(client, api_key):
     """Wikipedia-style URLs: underscores instead of %20, redirect %20 to underscore"""
     h = {"Authorization": f"Bearer {api_key}"}
@@ -6291,6 +6377,7 @@ def run_all():
             ("new folder UI", lambda: test_new_folder_ui(client)),
             ("sidebar indentation (wikihub-58c regression guard)", lambda: test_sidebar_indentation(client, key)),
             ("QR code affordance on reader page (wikihub-x622)", lambda: test_reader_qr_code_affordance(client, key)),
+            ("relative links resolve inside wiki on subdomain (wikihub-qmx6)", lambda: test_relative_links_resolve_inside_wiki_on_subdomain(client, key)),
             ("wikipedia-style URLs", lambda: test_wikipedia_urls(client, key)),
             ("sharing lifecycle", lambda: test_sharing_lifecycle(client, key)),
             ("wiki-level sharing", lambda: test_wiki_level_sharing(client, key)),
