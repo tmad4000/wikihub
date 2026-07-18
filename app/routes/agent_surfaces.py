@@ -332,6 +332,12 @@ Set frontmatter `pinned: true` to float a readable page to the top of the wiki
 sidebar; pinning never overrides read permissions and there is no dedicated
 pinning API or MCP tool.
 
+`.wikihub/*` paths are wiki plumbing, not normal pages. Owners may write, patch,
+delete, or revert `.wikihub/acl` through the page API; ACL changes reindex
+inherited visibility and refresh the public mirror. Other `.wikihub/*` paths are
+rejected by generic page writes and hidden from page lists, search/discovery,
+backlinks, history, zip exports, agent context, and public git mirrors.
+
 ## poll page metadata
 
 when a client only needs to know whether a readable page changed, use the
@@ -370,7 +376,9 @@ git remote add wikihub https://your-name:wh_YOUR_KEY@wikihub.md/@your-name/my-wi
 git push wikihub main
 ```
 
-push markdown files and they go live instantly.
+push markdown files and they go live instantly. Pushing `.wikihub/acl` refreshes
+inherited page visibility and the public mirror; other `.wikihub/*` files remain
+internal plumbing and are not exposed as pages.
 
 ## MCP endpoint — Claude Connector
 
