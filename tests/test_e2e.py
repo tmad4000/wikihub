@@ -29,7 +29,7 @@ os.environ["SESSION_COOKIE_SECURE"] = "0"
 
 from app import create_app, db
 from app.auth_utils import _ip_write_timestamps, _write_timestamps
-from app.models import User, utcnow
+from app.models import Page, User, Wiki, utcnow
 
 
 def setup():
@@ -3828,6 +3828,11 @@ def test_subdomain_routing(client):
     r = client.get("/intro", headers={"Host": "recipes.wikihub.md"})
     assert r.status_code == 200, f"wiki subdomain page failed: {r.status_code}"
 
+    r = client.post("/api/v1/wikis/subowner/cookbook/pages",
+                    json={"path": "activity/menu.md", "content": "# Activity Menu\nWeekly prep.",
+                          "visibility": "public", "message": "add activity page"}, headers=h)
+    assert r.status_code in (200, 201)
+
     # Apex /@user/<slug> 301s to wiki subdomain
     r = client.get("/@subowner/cookbook",
                    headers={"Host": "wikihub.md"}, follow_redirects=False)
@@ -3846,6 +3851,21 @@ def test_subdomain_routing(client):
     # rewritten into /@subowner/api/v1/ping (which would 404 differently)
     assert r.status_code in (404, 200)
 
+    for host in ("subowner.wikihub.md", "recipes.wikihub.md"):
+        r = client.get("/activity", headers={"Host": host})
+        assert r.status_code == 200, f"/activity should stay global on {host}: {r.status_code}"
+        assert b"Recent page creations and updates across public wikis" in r.data
+        r = client.get("/activity.rss", headers={"Host": host})
+        assert r.status_code == 200, f"/activity.rss should stay global on {host}: {r.status_code}"
+        assert r.mimetype == "application/rss+xml"
+        assert b"WikiHub" in r.data
+        assert b"recent activity" in r.data
+
+    r = client.get("/activity/menu", headers={"Host": "recipes.wikihub.md"})
+    assert r.status_code == 200, f"/activity/<page> should rewrite to wiki page on wiki subdomain: {r.status_code}"
+    assert b"Activity Menu" in r.data
+    assert b"Recent page creations and updates across public wikis" not in r.data
+
     # Internal url_for()-generated links use the full /@user/slug/page form.
     # On a wiki subdomain, those must resolve — either directly or 301 to the
     # short form on the same host. Regression test for the double-prefix bug.
@@ -3854,6 +3874,37 @@ def test_subdomain_routing(client):
     assert r.status_code in (200, 301), f"/@user/slug/page on wiki subdomain: {r.status_code}"
     if r.status_code == 301:
         assert "recipes.wikihub.md/intro" in r.headers["Location"]
+
+    r = client.get("/@subowner/cookbook/activity",
+                   headers={"Host": "recipes.wikihub.md"}, follow_redirects=False)
+    assert r.status_code == 200, f"per-wiki activity on wiki subdomain should not redirect: {r.status_code}"
+    assert b"Recent visible edits" in r.data
+    assert b"Recent page creations and updates across public wikis" not in r.data
+
+    r = client.get("/@subowner/cookbook/activity",
+                   headers={"Host": "wikihub.md"}, follow_redirects=False)
+    assert r.status_code == 200, f"per-wiki activity on apex should not canonicalize to global activity: {r.status_code}"
+    assert b"Recent visible edits" in r.data
+    assert b"Recent page creations and updates across public wikis" not in r.data
+
+    r = client.get("/@subowner/cookbook/activity.rss",
+                   headers={"Host": "recipes.wikihub.md"}, follow_redirects=False)
+    assert r.status_code == 200, f"per-wiki RSS on wiki subdomain should not redirect: {r.status_code}"
+    assert r.mimetype == "application/rss+xml"
+    assert b"cookbook" in r.data
+    assert b"WikiHub" not in r.data
+
+    r = client.get("/@subowner/cookbook/activity.rss",
+                   headers={"Host": "wikihub.md"}, follow_redirects=False)
+    assert r.status_code == 200, f"per-wiki RSS on apex should not canonicalize to global RSS: {r.status_code}"
+    assert r.mimetype == "application/rss+xml"
+    assert b"cookbook" in r.data
+    assert b"WikiHub" not in r.data
+
+    r = client.get("/@subowner/cookbook/activity/menu",
+                   headers={"Host": "wikihub.md"}, follow_redirects=False)
+    assert r.status_code == 301, f"activity folder page on apex should canonicalize to wiki subdomain: {r.status_code}"
+    assert "recipes.wikihub.md/activity/menu" in r.headers["Location"]
 
     # Same regression check for user subdomain
     r = client.get("/@subowner/cookbook/intro",
@@ -6622,6 +6673,12 @@ def run_all():
             ("nav header nowrap at narrow widths (wikihub-gnat)", lambda: test_nav_header_nowrap(client)),
             ("per-user wiki limit + 429 (wikihub-20ct)", lambda: test_wiki_limit_effective_resolution_and_429(client, app)),
             ("set_wiki_limit imports from app root (wikihub-20ct)", lambda: test_set_wiki_limit_script_imports_from_repo_root()),
+            ("global activity excludes non-public content", lambda: test_global_activity_excludes_non_public(client, key)),
+            ("activity RSS well-formed + correct links (both hosts)", lambda: test_activity_rss_is_well_formed_with_correct_links(client, key)),
+            ("private-only wiki RSS does not leak metadata", lambda: test_wiki_activity_rss_private_only_wiki_does_not_leak_metadata(client, key)),
+            ("per-wiki RSS finds older unlisted pages after private pages", lambda: test_wiki_activity_rss_keeps_older_unlisted_after_private_pages(client, key)),
+            ("global activity rows avoid nested anchors", lambda: test_global_activity_rows_do_not_nest_anchors(client, key)),
+            ("global activity pagination", lambda: test_activity_pagination(client, key)),
         ]
 
         passed = 1  # account creation already passed
@@ -6647,6 +6704,244 @@ def run_all():
 
     teardown()
     return 1 if failed else 0
+
+
+def _seed_activity_fixtures(client, key):
+    """Create a public wiki + an unlisted wiki that also holds a private page.
+
+    Returns the header dict. Used by the activity-feed tests below.
+    """
+    h = {"Authorization": f"Bearer {key}"}
+    # public wiki with a public page
+    client.post("/api/v1/wikis", json={"slug": "pubwiki", "title": "Public Wiki"}, headers=h)
+    client.post("/api/v1/wikis/agent1/pubwiki/pages", json={
+        "path": "wiki/public-note.md",
+        "content": "---\ntitle: Public Note\nvisibility: public\n---\n\n# Public Note\n",
+        "visibility": "public",
+    }, headers=h)
+    # unlisted wiki: one unlisted page (reachable by link) + one private page (secret)
+    client.post("/api/v1/wikis", json={"slug": "secretwiki", "title": "Secret Wiki"}, headers=h)
+    client.post("/api/v1/wikis/agent1/secretwiki/pages", json={
+        "path": "wiki/unlisted-note.md",
+        "content": "---\ntitle: Unlisted Note\nvisibility: unlisted\n---\n\n# Unlisted Note\n",
+        "visibility": "unlisted",
+    }, headers=h)
+    client.post("/api/v1/wikis/agent1/secretwiki/pages", json={
+        "path": "wiki/private-note.md",
+        "content": "---\ntitle: Private Note\nvisibility: private\n---\n\n# Private Note\n",
+        "visibility": "private",
+    }, headers=h)
+    return h
+
+
+def test_global_activity_excludes_non_public(client, key):
+    """Global /activity page + /activity.rss show public pages only; unlisted and
+    private never leak into the site-wide surface."""
+    _seed_activity_fixtures(client, key)
+
+    # HTML page (anonymous request)
+    r = client.get("/activity")
+    assert r.status_code == 200, f"/activity should render, got {r.status_code}"
+    body = r.get_data(as_text=True)
+    assert "Public Note" in body, "public page must appear in global activity"
+    assert "Unlisted Note" not in body, "unlisted page must NOT appear in global activity"
+    assert "Private Note" not in body, "private page must NOT appear in global activity"
+
+    # RSS feed (anonymous request)
+    r = client.get("/activity.rss")
+    assert r.status_code == 200
+    assert r.mimetype == "application/rss+xml", f"unexpected mimetype {r.mimetype}"
+    rss = r.get_data(as_text=True)
+    assert "Public Note" in rss
+    assert "Unlisted Note" not in rss
+    assert "Private Note" not in rss
+
+
+def test_activity_rss_is_well_formed_with_correct_links(client, key):
+    """Both the global and per-wiki RSS feeds parse as XML and carry absolute
+    links matching the request host (tested for two host forms)."""
+    from xml.etree import ElementTree
+
+    _seed_activity_fixtures(client, key)
+    # flask_login caches current_user on `g`, which persists across requests
+    # inside this harness's wrapping app_context(). Clear it AND use a fresh
+    # cookieless client so "anonymous" surfaces are checked as a true anon
+    # request (else the owner would see their own private pages). Same idiom as
+    # test_me_capabilities.
+    from flask import g as _flask_g
+    _flask_g.pop("_login_user", None)
+    anon = client.application.test_client()
+
+    # two host forms to prove absolute links track the request host. Avoid the
+    # production apex (wikihub.md), which triggers canonical-redirect middleware
+    # on /@owner/slug paths — irrelevant to feed-link correctness.
+    for host in ("localhost", "example.test"):
+        # global feed
+        r = anon.get("/activity.rss", headers={"Host": host})
+        assert r.status_code == 200
+        root = ElementTree.fromstring(r.get_data())  # raises on malformed XML
+        assert root.tag == "rss"
+        channel = root.find("channel")
+        assert channel is not None
+        items = channel.findall("item")
+        assert items, "global RSS should have at least one item"
+        # global feed carries only public pages; the private note never leaks
+        all_links = " ".join(it.find("link").text for it in items)
+        assert "/@agent1/pubwiki/" in all_links, f"public page missing from global RSS: {all_links[:200]}"
+        assert "secretwiki" not in all_links, "unlisted/private wiki must not leak into global RSS"
+        self_link = channel.find("{http://www.w3.org/2005/Atom}link")
+        assert self_link is not None and host in self_link.get("href")
+
+        # per-wiki feed for the unlisted wiki (anonymous request)
+        r = anon.get("/@agent1/secretwiki/activity.rss", headers={"Host": host})
+        assert r.status_code == 200
+        assert r.mimetype == "application/rss+xml"
+        root = ElementTree.fromstring(r.get_data())
+        titles = [it.find("title").text for it in root.find("channel").findall("item")]
+        joined = " ".join(titles)
+        # unlisted pages are reachable-by-link, so they belong in the wiki feed…
+        assert "Unlisted Note" in joined, "unlisted page should appear in per-wiki RSS"
+        # …but private pages must never appear for an anonymous request
+        assert "Private Note" not in joined, f"private page must NOT appear in anon per-wiki RSS; got titles={titles!r}"
+        for it in root.find("channel").findall("item"):
+            assert it.find("link").text.startswith(f"http://{host}/@agent1/secretwiki/")
+
+
+def test_wiki_activity_rss_private_only_wiki_does_not_leak_metadata(client, key):
+    h = {"Authorization": f"Bearer {key}"}
+    client.post("/api/v1/wikis", json={"slug": "private-rss", "title": "Private RSS"}, headers=h)
+    client.post("/api/v1/wikis/agent1/private-rss/pages", json={
+        "path": "wiki/private-only.md",
+        "content": "---\ntitle: Private Only\nvisibility: private\n---\n\n# Private Only\n",
+        "visibility": "private",
+    }, headers=h)
+
+    from flask import g as _flask_g
+    _flask_g.pop("_login_user", None)
+    anon = client.application.test_client()
+
+    r = anon.get("/@agent1/private-rss/activity.rss")
+    assert r.status_code == 401
+    body = r.get_data(as_text=True)
+    assert "Private RSS" not in body
+    assert "Private Only" not in body
+    assert r.mimetype != "application/rss+xml"
+
+
+def test_wiki_activity_rss_keeps_older_unlisted_after_private_pages(client, key):
+    """Anonymous per-wiki RSS keeps reachable unlisted pages even when newer
+    private pages would otherwise fill the candidate window."""
+    from datetime import timedelta
+    from flask import g as _flask_g
+    from xml.etree import ElementTree
+
+    h = {"Authorization": f"Bearer {key}"}
+    client.post("/api/v1/wikis", json={"slug": "rss-sparse", "title": "RSS Sparse"}, headers=h)
+    client.post("/api/v1/wikis/agent1/rss-sparse/pages", json={
+        "path": "wiki/older-unlisted.md",
+        "content": "---\ntitle: Older Unlisted\nvisibility: unlisted\n---\n\n# Older Unlisted\n",
+        "visibility": "unlisted",
+    }, headers=h)
+
+    owner = User.query.filter_by(username="agent1").first()
+    wiki = Wiki.query.filter_by(owner_id=owner.id, slug="rss-sparse").first()
+    base = utcnow()
+    visible_page = Page.query.filter_by(wiki_id=wiki.id, path="wiki/older-unlisted.md").first()
+    visible_page.updated_at = base
+    visible_page.created_at = base
+    for i in range(305):
+        db.session.add(Page(
+            wiki_id=wiki.id,
+            path=f"secrets/private-{i:03d}.md",
+            title=f"Private {i:03d}",
+            visibility="private",
+            created_at=base + timedelta(seconds=i + 1),
+            updated_at=base + timedelta(seconds=i + 1),
+        ))
+    db.session.commit()
+
+    _flask_g.pop("_login_user", None)
+    anon = client.application.test_client()
+    r = anon.get("/@agent1/rss-sparse/activity.rss")
+    assert r.status_code == 200
+    titles = [
+        it.find("title").text
+        for it in ElementTree.fromstring(r.get_data()).find("channel").findall("item")
+    ]
+    joined = " ".join(titles)
+    assert "Older Unlisted" in joined, f"older readable page missing from RSS: {titles!r}"
+    assert "Private 304" not in joined, "anonymous RSS must not expose private pages"
+
+
+def test_global_activity_rows_do_not_nest_anchors(client, key):
+    """Global activity rows render page and wiki links as sibling anchors."""
+    from html.parser import HTMLParser
+
+    _seed_activity_fixtures(client, key)
+    r = client.get("/activity")
+    assert r.status_code == 200
+
+    class AnchorNestingParser(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.anchor_depth = 0
+            self.nested = False
+            self.row_count = 0
+            self.page_links = 0
+            self.wiki_links = 0
+
+        def handle_starttag(self, tag, attrs):
+            attrs = dict(attrs)
+            classes = attrs.get("class", "").split()
+            href = attrs.get("href", "")
+            if "gactivity-row" in classes:
+                self.row_count += 1
+                assert tag != "a", "global activity row must not be an anchor"
+            if tag == "a":
+                if self.anchor_depth:
+                    self.nested = True
+                self.anchor_depth += 1
+                if "gactivity-title" in classes:
+                    self.page_links += 1
+                if href.startswith("/@agent1/pubwiki"):
+                    self.wiki_links += 1
+
+        def handle_endtag(self, tag):
+            if tag == "a":
+                self.anchor_depth -= 1
+
+    parser = AnchorNestingParser()
+    parser.feed(r.get_data(as_text=True))
+    assert parser.row_count > 0, "expected global activity rows"
+    assert parser.page_links > 0, "page title should remain a primary link"
+    assert parser.wiki_links > 0, "wiki link should remain present"
+    assert not parser.nested, "global activity must not contain nested anchors"
+
+
+def test_activity_pagination(client, key):
+    """Global activity paginates; page 2 shows different entries than page 1."""
+    h = {"Authorization": f"Bearer {key}"}
+    client.post("/api/v1/wikis", json={"slug": "pagewiki", "title": "Page Wiki"}, headers=h)
+    # create > one page of activity (per_page=40)
+    for i in range(45):
+        client.post("/api/v1/wikis/agent1/pagewiki/pages", json={
+            "path": f"wiki/note-{i:03d}.md",
+            "content": f"---\ntitle: Note {i:03d}\nvisibility: public\n---\n\n# Note {i:03d}\n",
+            "visibility": "public",
+        }, headers=h)
+
+    r1 = client.get("/activity?page=1")
+    assert r1.status_code == 200
+    b1 = r1.get_data(as_text=True)
+    assert "Page 1 of" in b1
+    assert "Older" in b1  # has_next → link present
+
+    r2 = client.get("/activity?page=2")
+    assert r2.status_code == 200
+    b2 = r2.get_data(as_text=True)
+    assert "Page 2 of" in b2
+    # the two pages should not be identical (different slice of entries)
+    assert b1 != b2, "page 2 should differ from page 1"
 
 
 if __name__ == "__main__":

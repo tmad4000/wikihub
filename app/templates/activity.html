@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Activity - {{ wiki.title or wiki.slug }} - wikihub{% endblock %}
+{% block title %}{% if wiki is defined %}Activity - {{ wiki.title or wiki.slug }} - wikihub{% else %}Activity - wikihub{% endif %}{% endblock %}
 
 {% block extra_css %}
 .activity-shell { display: flex; min-height: calc(100vh - 56px); }
@@ -36,9 +36,45 @@
   .activity-row { grid-template-columns: 30px minmax(0, 1fr); }
   .activity-meta { grid-column: 2; flex-direction: row; align-items: center; justify-content: flex-start; }
 }
+.gactivity-page { max-width: 780px; margin: 0 auto; padding: 32px 16px 64px; }
+@media (min-width: 640px) { .gactivity-page { padding: 48px 24px 64px; } }
+.gactivity-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+.gactivity-page h1 { font-size: 1.75rem; font-weight: 700; letter-spacing: -0.02em; }
+.gactivity-page .subtitle { color: var(--text-secondary); margin-bottom: 28px; font-size: 0.9375rem; }
+.rss-link { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); text-decoration: none; font-size: 0.8125rem; }
+.rss-link:hover { color: var(--accent); }
+.gactivity-list { display: flex; flex-direction: column; gap: 2px; }
+.gactivity-row {
+  display: block; padding: 12px 14px; border: 1px solid var(--border-default);
+  border-radius: var(--radius-md); background: var(--bg-surface);
+  transition: border-color 0.15s ease;
+}
+.gactivity-row:hover { border-color: var(--border-emphasis); }
+.gactivity-line { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.gactivity-verb {
+  font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;
+  padding: 1px 6px; border-radius: 3px; flex-shrink: 0;
+}
+.gactivity-verb.created { color: var(--color-success, #4a9d5a); border: 1px solid var(--color-success, #4a9d5a); }
+.gactivity-verb.updated { color: var(--accent); border: 1px solid var(--accent); }
+.gactivity-title { font-weight: 600; color: var(--text-primary); text-decoration: none; }
+.gactivity-title:hover { color: var(--accent); text-decoration: none; }
+.gactivity-meta { margin-top: 4px; font-size: 0.8125rem; color: var(--text-muted); font-family: var(--font-mono); }
+.gactivity-meta a { color: var(--text-secondary); text-decoration: none; }
+.gactivity-meta a:hover { color: var(--accent); }
+.gactivity-empty { color: var(--text-muted); padding: 40px 0; text-align: center; }
+.pager { display: flex; justify-content: space-between; align-items: center; margin-top: 28px; gap: 12px; }
+.pager a, .pager span {
+  font-size: 0.8125rem; padding: 6px 14px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border-default); text-decoration: none; color: var(--text-secondary);
+}
+.pager a:hover { border-color: var(--border-emphasis); color: var(--accent); }
+.pager .disabled { opacity: 0.35; }
+.pager .page-num { border: none; color: var(--text-muted); }
 {% endblock %}
 
 {% block body %}
+{% if wiki is defined %}
 <div class="activity-shell">
   <aside class="sidebar">
     <div class="sidebar-section">
@@ -112,4 +148,49 @@
     </div>
   </main>
 </div>
+{% else %}
+<div class="gactivity-page">
+  <div class="gactivity-head">
+    <h1>Activity</h1>
+    <a href="{{ rss_url }}" class="rss-link" title="RSS feed">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg>
+      RSS
+    </a>
+  </div>
+  <div class="subtitle">Recent page creations and updates across public wikis.</div>
+
+  {% if entries %}
+  <div class="gactivity-list">
+    {% for e in entries %}
+    <div class="gactivity-row">
+      <div class="gactivity-line">
+        <span class="gactivity-verb {{ e.event }}">{{ e.event }}</span>
+        <a href="{{ e.rel_url }}" class="gactivity-title">{{ e.page_title }}</a>
+      </div>
+      <div class="gactivity-meta">
+        in <a href="/@{{ e.owner }}/{{ e.wiki_slug }}">{{ e.wiki_title }}</a>
+        &middot; {{ e.relative }}{% if e.author %} &middot; by {{ e.author }}{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="pager">
+    {% if pagination.has_prev %}
+      <a href="/activity?page={{ pagination.prev_num }}">&larr; Newer</a>
+    {% else %}
+      <span class="disabled">&larr; Newer</span>
+    {% endif %}
+    <span class="page-num">Page {{ pagination.page }} of {{ pagination.pages or 1 }}</span>
+    {% if pagination.has_next %}
+      <a href="/activity?page={{ pagination.next_num }}">Older &rarr;</a>
+    {% else %}
+      <span class="disabled">Older &rarr;</span>
+    {% endif %}
+  </div>
+  {% else %}
+  <div class="gactivity-empty">No public activity yet.</div>
+  {% endif %}
+</div>
+{% endif %}
 {% endblock %}

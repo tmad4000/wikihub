@@ -49,6 +49,11 @@ _GLOBAL_PREFIXES = (
     "/upload",
 )
 
+_GLOBAL_EXACT_PATHS = {
+    "/activity",
+    "/activity.rss",
+}
+
 
 def _should_rewrite(path: str) -> bool:
     if not path.startswith("/"):
@@ -56,6 +61,8 @@ def _should_rewrite(path: str) -> bool:
     # /@<user>/... paths are already canonical — never rewrite, regardless of host.
     # (this lets internal url_for() links keep working on subdomain hosts.)
     if path.startswith("/@"):
+        return False
+    if path in _GLOBAL_EXACT_PATHS:
         return False
     for prefix in _GLOBAL_PREFIXES:
         p = prefix.rstrip("/")

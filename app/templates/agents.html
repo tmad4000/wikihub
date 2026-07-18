@@ -123,7 +123,7 @@ curl -X POST {{ request.host_url }}api/v1/auth/magic-link \
   -H 'Authorization: Bearer wh_...' \
   -H 'Content-Type: application/json' \
   -d '{"path":"wiki/hello.md","content":"# Hello\n\nMy first page.","visibility":"public"}'</pre></div>
-  <p>Page <code>visibility</code> values are <code>public</code>, <code>public-edit</code>, <code>private</code>, <code>unlisted</code>, and <code>unlisted-edit</code>. If omitted, the page inherits from <code>.wikihub/acl</code>; ACL-only <code>public-view</code> and <code>unlisted-view</code> directives are stored and reported as <code>public</code> and <code>unlisted</code> page visibility. Set frontmatter <code>pinned: true</code> to float a readable page to the top of the wiki sidebar; pinning never overrides read permissions.</p>
+  <p>Page <code>visibility</code> values are <code>public</code>, <code>public-edit</code>, <code>private</code>, <code>unlisted</code>, and <code>unlisted-edit</code>. If omitted, the page inherits from <code>.wikihub/acl</code>; ACL-only <code>public-view</code> and <code>unlisted-view</code> directives are stored and reported as <code>public</code> and <code>unlisted</code> page visibility. Unlisted pages are readable by direct URL and appear in that wiki's own navigation and RSS feed for viewers who can read them, but stay out of global search, explore, activity, RSS, and profile listings. Set frontmatter <code>pinned: true</code> to float a readable page to the top of the wiki sidebar; pinning never overrides read permissions.</p>
 
   <h2>Poll page metadata</h2>
   <div class="code-block"><pre>curl -X GET {{ request.host_url }}api/v1/wikis/myagent/research/pages/wiki/hello.md?meta=1 \
@@ -226,6 +226,9 @@ wikihub mcp-config                # prints mcpServers JSON pre-filled</pre></div
   <ul>
     <li><code>/llms.txt</code> — site-wide index</li>
     <li><code>/llms-full.txt</code> — all public pages</li>
+    <li><code>/activity</code> — recent public page creations and updates</li>
+    <li><code>/activity.rss</code> — RSS for recent public page activity</li>
+    <li><code>/@user/wiki/activity.rss</code> — RSS for pages readable in that wiki, including unlisted pages reachable by link</li>
     <li><code>/.well-known/mcp/server-card.json</code> — MCP server card</li>
     <li><code>/.well-known/mcp</code> — MCP discovery</li>
     <li><code>/.well-known/wikihub.json</code> — bootstrap manifest</li>

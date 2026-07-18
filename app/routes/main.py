@@ -90,6 +90,72 @@ def explore():
     )
 
 
+def _global_activity_query():
+    """Pages across PUBLIC wikis only, newest activity first.
+
+    Strict no-leak: filtered at the query level to DISCOVERABLE_VISIBILITIES
+    (public / public-view / public-edit). Unlisted, private, and
+    public-edit-private-page content never appears here. Joined to Wiki + User
+    so callers get owner/wiki without N+1 lookups.
+    """
+    from app.discovery import DISCOVERABLE_VISIBILITIES
+
+    return (
+        db.session.query(Page, Wiki, User)
+        .join(Wiki, Page.wiki_id == Wiki.id)
+        .join(User, Wiki.owner_id == User.id)
+        .filter(Page.visibility.in_(DISCOVERABLE_VISIBILITIES))
+        .order_by(Page.updated_at.desc(), Page.id.desc())
+    )
+
+
+@main_bp.route("/activity")
+def activity():
+    """Site-wide activity feed across public wikis. Paginated."""
+    from app.feeds import activity_entry
+
+    try:
+        page_num = max(1, int(request.args.get("page", 1)))
+    except (TypeError, ValueError):
+        page_num = 1
+    per_page = 40
+
+    pagination = _global_activity_query().paginate(
+        page=page_num, per_page=per_page, error_out=False
+    )
+    entries = [
+        activity_entry(page, wiki, user.username, request.host_url)
+        for (page, wiki, user) in pagination.items
+    ]
+    return render_template(
+        "activity.html",
+        entries=entries,
+        pagination=pagination,
+        rss_url="/activity.rss",
+    )
+
+
+@main_bp.route("/activity.rss")
+def activity_rss():
+    """RSS 2.0 feed for the global public activity feed."""
+    from app.feeds import activity_entry, render_rss
+
+    rows = _global_activity_query().limit(50).all()
+    entries = [
+        activity_entry(page, wiki, user.username, request.host_url)
+        for (page, wiki, user) in rows
+    ]
+    site = request.host_url.rstrip("/")
+    xml = render_rss(
+        feed_title="WikiHub — recent activity",
+        feed_link=f"{site}/activity",
+        self_url=f"{site}/activity.rss",
+        description="Recent page creations and updates across public WikiHub wikis.",
+        entries=entries,
+    )
+    return current_app.response_class(xml, mimetype="application/rss+xml")
+
+
 @main_bp.route("/people")
 def people_index():
     return render_template("people.html", people=_people_directory())

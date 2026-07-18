@@ -59,6 +59,11 @@ def llms_txt():
         "- MCP: /mcp (add to your agent's mcpServers config)",
         "- CLI: `pipx install wikihub-cli` then `wikihub signup`, `wikihub write`, `wikihub read`, `wikihub search` (see /AGENTS.md)",
         "",
+        "## Discovery feeds",
+        "- [Recent activity](/activity): public page creations and updates",
+        "- [Recent activity RSS](/activity.rss): RSS for public page activity",
+        "- Per-wiki RSS: /@user/wiki/activity.rss includes pages readable in that wiki, including unlisted pages reachable by link",
+        "",
         "## Optional",
     ]
 
@@ -315,8 +320,9 @@ Page `visibility` values are `public`, `public-edit`, `private`, `unlisted`,
 and `unlisted-edit`. If omitted, the page inherits from `.wikihub/acl`; ACL-only
 `public-view` and `unlisted-view` directives are stored and reported as
 `public` and `unlisted` page visibility. Unlisted pages are readable by direct
-URL and appear in that wiki's own navigation/sidebar for viewers who can read
-them, but stay out of discovery surfaces such as search, explore, and profiles.
+URL and appear in that wiki's own navigation/sidebar and per-wiki RSS feed for
+viewers who can read them, but stay out of global discovery surfaces such as
+search, explore, global activity, global RSS, and profiles.
 Set frontmatter `pinned: true` to float a readable page to the top of the wiki
 sidebar; pinning never overrides read permissions and there is no dedicated
 pinning API or MCP tool.
@@ -566,6 +572,9 @@ and `X-Content-Type-Options: nosniff`.
 
 - `/llms.txt` — site-wide index
 - `/llms-full.txt` — all public pages
+- `/activity` — recent public page creations and updates
+- `/activity.rss` — RSS for recent public page activity
+- `/@user/wiki/activity.rss` — RSS for pages readable in that wiki, including unlisted pages reachable by link
 - `/.well-known/mcp/server-card.json` — MCP server card
 - `/.well-known/wikihub.json` — bootstrap manifest
 """
