@@ -2442,6 +2442,9 @@ def test_relative_links_resolve_inside_wiki_on_subdomain(client, api_key):
             "- [Deals](deals)\n"
             "- [Notes](notes/scratch.md)\n"
             "- [External](https://example.com/topics)\n"
+            "- [Upper External](HTTPS://example.com/upper)\n"
+            "- [FTP](ftp://example.com/file)\n"
+            "- [SMS](sms:+15551234567)\n"
             "- [Anchor](#home)\n"
         ),
         "visibility": "public",
@@ -2485,11 +2488,14 @@ def test_relative_links_resolve_inside_wiki_on_subdomain(client, api_key):
     assert "/@agent1/rel-links/topics" in hrefs, f"expected absolute topics link, got {hrefs}"
     assert "/@agent1/rel-links/deals" in hrefs, f"expected absolute deals link, got {hrefs}"
     assert "/@agent1/rel-links/notes/scratch" in hrefs, f"expected absolute nested link, got {hrefs}"
+    assert "HTTPS://example.com/upper" in hrefs, f"expected explicit scheme link untouched, got {hrefs}"
+    assert "ftp://example.com/file" in hrefs, f"expected explicit scheme link untouched, got {hrefs}"
+    assert "sms:+15551234567" in hrefs, f"expected explicit scheme link untouched, got {hrefs}"
 
     # Every in-content link must resolve inside the wiki: no bare host-relative
     # link (one that the browser would resolve against the host root) may survive.
     for href in hrefs:
-        if href.startswith(("http://", "https://", "//", "mailto:", "tel:")):
+        if _re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", href) or href.startswith("//"):
             continue  # external — fine
         if href.startswith("#"):
             continue  # in-page anchor — fine

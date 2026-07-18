@@ -48,6 +48,7 @@ _GDOC_TOC_ANCHOR_RE = re.compile(r'<a href="#(h\.[a-z0-9]+)">(.*?)</a>', re.IGNO
 _HEADING_ID_RE = re.compile(r'<h[1-6]\s+id="([^"]+)"', re.IGNORECASE)
 # TOC entries end with a tab/spaces + a page number, e.g. "Feeds        3".
 _TRAILING_PAGENUM_RE = re.compile(r'[\s ]+\d+\s*$')
+_URI_SCHEME_RE = re.compile(r'^[A-Za-z][A-Za-z0-9+.-]*:')
 
 
 def _rewrite_gdoc_toc_anchors(html):
@@ -523,10 +524,7 @@ def render_page(content, wiki_owner=None, wiki_slug=None, current_page_path=None
             prefix = match.group(1)
             href = match.group(2)
             suffix = match.group(3)
-            # leave external URLs, protocol-relative, already-absolute paths,
-            # pure anchors, and non-navigational schemes untouched.
-            if href.startswith(("http://", "https://", "//", "/", "#",
-                                "mailto:", "tel:", "javascript:")):
+            if _URI_SCHEME_RE.match(href) or href.startswith(("//", "/", "#")):
                 return match.group(0)
             # split off ?query / #fragment so we resolve only the path part
             m = re.match(r'^([^?#]*)([?#].*)?$', href)
