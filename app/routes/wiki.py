@@ -554,6 +554,10 @@ def _build_sidebar_tree(username, slug, wiki, public=False, current_path=None, a
 
         page = pages_by_path.get(path)
         updated = page.updated_at.isoformat() if page and page.updated_at else None
+        # Pinned pages (frontmatter `pinned: true`) float to a top section of the
+        # sidebar. Frontmatter-wins mirrors the visibility precedent. Integrators
+        # (e.g. GroupBrain) can pin rules / chat-history pages the same way.
+        page_pinned = bool(page and (page.frontmatter_json or {}).get("pinned")) if page else False
         page_is_current = current_path == path
         # HTML decks open in the embedded viewer (deck inside reader chrome) rather
         # than replacing the wiki page with the bare standalone deck. The viewer is
@@ -571,6 +575,7 @@ def _build_sidebar_tree(username, slug, wiki, public=False, current_path=None, a
             "current": page_is_current,
             "ancestor_of_current": False,
             "visibility": page.visibility if page else "private",
+            "pinned": page_pinned,
             "updated_at": updated,
             "children": {},
         }
@@ -586,7 +591,16 @@ def _build_sidebar_tree(username, slug, wiki, public=False, current_path=None, a
                 item["updated_at"] = max(child_dates) if child_dates else None
             else:
                 item.setdefault("updated_at", None)
-        return sorted(items, key=lambda item: (item["kind"] != "folder", item["name"].lower(), item["path"]))
+        # Pinned pages first (top section), then folders, then alphabetical pages.
+        return sorted(
+            items,
+            key=lambda item: (
+                not item.get("pinned", False),
+                item["kind"] != "folder",
+                item["name"].lower(),
+                item["path"],
+            ),
+        )
 
     return normalize(root["children"])
 

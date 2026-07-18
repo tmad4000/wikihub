@@ -93,6 +93,16 @@
 .sidebar-item:hover .sidebar-icon { color: var(--text-tertiary); }
 .sidebar-vis { margin-left: auto; flex-shrink: 0; color: var(--text-muted); opacity: 0.6; display: inline-flex; }
 .sidebar-item.active .sidebar-icon { color: var(--accent); }
+/* Pinned pages: subtle amber icon at the top of the tree, with a divider
+   between the pinned group and the rest. Pinned items are kept contiguous at
+   the top by both the server sort and the client re-sort, so an adjacent-
+   sibling rule reliably marks the boundary. */
+.sidebar-pinned .sidebar-icon { color: var(--accent); opacity: 0.85; }
+#sidebar-tree > .sidebar-pinned + :not(.sidebar-pinned),
+#async-sidebar > .sidebar-pinned + :not(.sidebar-pinned) {
+  border-top: 1px solid var(--border-default);
+  margin-top: 6px; padding-top: 7px;
+}
 
 .content-wrap { flex: 1; min-width: 0; padding: 32px 20px 80px; }
 @media (min-width: 768px) { .content-wrap { padding: 40px 48px 80px; } }
@@ -718,9 +728,9 @@
       </div>
     </div>
     {% else %}
-    <a href="{{ item.url }}" class="sidebar-item {{ 'active' if item.active else '' }}" data-name="{{ item.name }}" data-kind="page" data-updated="{{ item.updated_at or '' }}" data-path="{{ item.path }}" data-level="{{ level }}" style="padding-left: {{ 28 + (level * 16) }}px;">
+    <a href="{{ item.url }}" class="sidebar-item {{ 'sidebar-pinned' if item.pinned else '' }} {{ 'active' if item.active else '' }}" data-name="{{ item.name }}" data-kind="page" data-pinned="{{ '1' if item.pinned else '0' }}" data-updated="{{ item.updated_at or '' }}" data-path="{{ item.path }}" data-level="{{ level }}" style="padding-left: {{ 28 + (level * 16) }}px;">
       <span class="sidebar-icon">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        {% if item.pinned %}<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>{% else %}<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>{% endif %}
       </span>
       {{ item.name }}
       {% if item.visibility is defined and item.visibility == 'private' %}
@@ -755,6 +765,8 @@
       <div id="sidebar-tree">
       {% if sidebar_items %}
       {{ render_sidebar(sidebar_items) }}
+      {% elif sidebar_items is not none %}
+      <div class="sidebar-empty" style="padding:8px 12px;color:var(--text-muted);font-size:0.8125rem;">No listed pages visible to you.</div>
       {% else %}
       <div id="async-sidebar" data-url="/@{{ owner.username }}/{{ wiki.slug }}/sidebar.json" data-current="{{ page.path }}">
         <div style="padding:8px 12px;color:var(--text-muted);font-size:0.8125rem;">Loading...</div>
@@ -1358,6 +1370,11 @@ function sortSidebarChildren(container, mode) {
     var aPath = a.dataset.path || a.dataset.folderPath || '';
     var bPath = b.dataset.path || b.dataset.folderPath || '';
 
+    // Pinned pages always float to the top, in every sort mode.
+    var aPinned = a.dataset.pinned === '1';
+    var bPinned = b.dataset.pinned === '1';
+    if (aPinned !== bPinned) return aPinned ? -1 : 1;
+
     // Folders always first
     if (aKind !== bKind) return aKind === 'folder' ? -1 : 1;
 
@@ -1608,8 +1625,12 @@ applyFolderState();
       return h;
     } else {
       var cls = item.path === currentPath ? ' active' : '';
+      var pin = item.pinned ? ' sidebar-pinned' : '';
+      var pinIcon = item.pinned
+        ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>'
+        : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
       var upd = item.updated_at ? esc(item.updated_at) : '';
-      return '<a href="' + esc(item.url) + '" class="sidebar-item' + cls + '" data-name="' + esc(item.name) + '" data-kind="page" data-updated="' + upd + '" data-path="' + esc(item.path) + '" data-level="' + level + '" style="padding-left:' + (28 + (level * 16)) + 'px;"><span class="sidebar-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>' + esc(item.name) + '</a>';
+      return '<a href="' + esc(item.url) + '" class="sidebar-item' + pin + cls + '" data-name="' + esc(item.name) + '" data-kind="page" data-pinned="' + (item.pinned ? '1' : '0') + '" data-updated="' + upd + '" data-path="' + esc(item.path) + '" data-level="' + level + '" style="padding-left:' + (28 + (level * 16)) + 'px;"><span class="sidebar-icon">' + pinIcon + '</span>' + esc(item.name) + '</a>';
     }
   }
 
@@ -1617,6 +1638,10 @@ applyFolderState();
     .then(function(r) { return r.json(); })
     .then(function(items) {
       el.textContent = '';
+      if (!Array.isArray(items) || items.length === 0) {
+        el.insertAdjacentHTML('beforeend', '<div class="sidebar-empty" style="padding:8px 12px;color:var(--text-muted);font-size:0.8125rem;">No listed pages visible to you.</div>');
+        return;
+      }
       el.insertAdjacentHTML('beforeend', items.map(function(item) { return renderItem(item, 0); }).join(''));
       applyFolderState();
     })

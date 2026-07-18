@@ -317,6 +317,9 @@ and `unlisted-edit`. If omitted, the page inherits from `.wikihub/acl`; ACL-only
 `public` and `unlisted` page visibility. Unlisted pages are readable by direct
 URL and appear in that wiki's own navigation/sidebar for viewers who can read
 them, but stay out of discovery surfaces such as search, explore, and profiles.
+Set frontmatter `pinned: true` to float a readable page to the top of the wiki
+sidebar; pinning never overrides read permissions and there is no dedicated
+pinning API or MCP tool.
 
 ## poll page metadata
 

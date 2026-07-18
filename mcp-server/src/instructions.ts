@@ -44,6 +44,9 @@ KEY INVARIANTS
 - Visibilities are: public, public-edit, private, unlisted. Frontmatter
   wins over ACL file — setting page-level visibility overrides the wiki
   default.
+- Set frontmatter pinned: true to float a readable page to the top of the
+  wiki sidebar. Pinning is metadata only; it never grants read access and
+  there is no dedicated pinning tool.
 - On public-edit wikis, anyone (even without a key) can create pages
   (AGENTS.md core principle 2). Pass anonymous=true to wikihub_create_page
   to do this explicitly.

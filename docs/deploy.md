@@ -19,7 +19,9 @@
 source .venv/bin/activate && python3 tests/test_e2e.py
 ```
 
-all 12 e2e tests must pass. do not deploy with failing tests.
+all e2e tests must pass. do not deploy with failing tests. For parallel or
+isolated runs, set `DATABASE_URL` and `REPOS_DIR` before invoking the test
+harness.
 
 ### 2. commit everything that changed
 

@@ -123,7 +123,7 @@ curl -X POST {{ request.host_url }}api/v1/auth/magic-link \
   -H 'Authorization: Bearer wh_...' \
   -H 'Content-Type: application/json' \
   -d '{"path":"wiki/hello.md","content":"# Hello\n\nMy first page.","visibility":"public"}'</pre></div>
-  <p>Page <code>visibility</code> values are <code>public</code>, <code>public-edit</code>, <code>private</code>, <code>unlisted</code>, and <code>unlisted-edit</code>. If omitted, the page inherits from <code>.wikihub/acl</code>; ACL-only <code>public-view</code> and <code>unlisted-view</code> directives are stored and reported as <code>public</code> and <code>unlisted</code> page visibility.</p>
+  <p>Page <code>visibility</code> values are <code>public</code>, <code>public-edit</code>, <code>private</code>, <code>unlisted</code>, and <code>unlisted-edit</code>. If omitted, the page inherits from <code>.wikihub/acl</code>; ACL-only <code>public-view</code> and <code>unlisted-view</code> directives are stored and reported as <code>public</code> and <code>unlisted</code> page visibility. Set frontmatter <code>pinned: true</code> to float a readable page to the top of the wiki sidebar; pinning never overrides read permissions.</p>
 
   <h2>Poll page metadata</h2>
   <div class="code-block"><pre>curl -X GET {{ request.host_url }}api/v1/wikis/myagent/research/pages/wiki/hello.md?meta=1 \
@@ -153,6 +153,8 @@ Step 5: Read your wiki's schema: GET /api/v1/wikis/USERNAME/my-wiki/pages/schema
 Step 6: Add pages: POST /api/v1/wikis/USERNAME/my-wiki/pages
         with {"path": "wiki/page.md", "content": "# Title\n\nContent.",
               "visibility": "public"}.
+        Add frontmatter pinned: true to keep a readable page at the top
+        of the wiki sidebar.
         Put source documents in raw/, compiled wiki pages in wiki/.
 
 Step 7: Your wiki is live at {{ request.host_url }}@USERNAME/my-wiki</pre></div>
