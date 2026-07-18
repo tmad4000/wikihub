@@ -4818,6 +4818,77 @@ def test_agent_chat_disabled_returns_503(app, client):
         app.config["CURATOR_ENABLED"] = orig
 
 
+def test_agent_chat_blocks_plumbing_bootstrap_context(app, client, api_key):
+    h = {"Authorization": f"Bearer {api_key}"}
+    slug = "agent-plumbing-context"
+    r = client.post("/api/v1/wikis", json={"slug": slug, "title": "Agent Plumbing Context"}, headers=h)
+    assert r.status_code == 201
+    r = client.post(f"/api/v1/wikis/agent1/{slug}/pages/.wikihub/acl", json={
+        "content": "* unlisted-view\n",
+    }, headers=h)
+    assert r.status_code == 201
+
+    from app.git_sync import sync_page_to_repo
+    sync_page_to_repo("agent1", slug, ".wikihub/serve-inline.md", "# Serve Inline Secret\n")
+
+    other = client.post("/api/v1/accounts", json={"username": "plumbingviewer"}).get_json()
+    other_h = {"Authorization": f"Bearer {other['api_key']}"}
+
+    from app.routes.agent_chat import _sessions, _sessions_lock
+    with _sessions_lock:
+        _sessions.clear()
+
+    original_enabled = app.config.get("CURATOR_ENABLED", True)
+    original_api_key = os.environ.pop("ANTHROPIC_API_KEY", None)
+    app.config["CURATOR_ENABLED"] = True
+    try:
+        r = client.post("/api/v1/agent/chat", json={
+            "message": "read current page",
+            "context": {"owner": "agent1", "wiki": slug, "page_path": ".wikihub/serve-inline.md"},
+        }, headers=other_h)
+        assert r.status_code == 404, f"non-owner plumbing context must be rejected, got {r.status_code}"
+
+        r = client.post("/api/v1/agent/chat", json={
+            "message": "show files",
+            "context": {"owner": "agent1", "wiki": slug, "page_path": "log.md"},
+        }, headers=h)
+        assert r.status_code == 400
+        with _sessions_lock:
+            prompts = [session["system_prompt"] for session in _sessions.values()]
+        assert prompts, "owner request should create a session before LLM config validation"
+        prompt = prompts[-1]
+        assert ".wikihub/" not in prompt
+        assert "Serve Inline Secret" not in prompt
+
+        import tempfile, shutil as _sh
+        from app.models import User
+        from app.routes.agent_chat import _execute_tool
+        owner = User.query.filter_by(username="agent1").first()
+        work_dir = tempfile.mkdtemp(prefix="curator-test-")
+        try:
+            sess = _make_curator_session(
+                client.application, work_dir,
+                owner="agent1", wiki_slug=slug,
+                username="agent1", user_id=owner.id,
+            )
+            out = _execute_tool("read_file", {"path": f"agent1/{slug}/.wikihub/serve-inline.md"}, sess)
+            assert "Serve Inline Secret" not in out
+            assert "no access" in out or "not found" in out, out
+            out = _execute_tool("write_file", {
+                "path": f"agent1/{slug}/.wikihub/events.jsonl",
+                "content": "{}\n",
+            }, sess)
+            assert "no access" in out or "not found" in out, out
+        finally:
+            _sh.rmtree(work_dir, ignore_errors=True)
+    finally:
+        app.config["CURATOR_ENABLED"] = original_enabled
+        if original_api_key is not None:
+            os.environ["ANTHROPIC_API_KEY"] = original_api_key
+        with _sessions_lock:
+            _sessions.clear()
+
+
 def test_backlinks_api(client, api_key):
     """wikihub-yqe6: backlinks API + ?include=backlinks + forward-ref fallback.
 
@@ -7054,6 +7125,7 @@ def run_all():
             ("agent chat search filters private pages (wikihub-7w40)", lambda: test_agent_chat_search_filters_private_pages(client, key)),
             ("agent chat resists prompt-injection ACL bypass (wikihub-7w40)", lambda: test_agent_chat_resists_prompt_injection_for_acl_bypass(client, key)),
             ("agent chat disabled returns 503 (wikihub-7w40)", lambda: test_agent_chat_disabled_returns_503(app, client)),
+            ("agent chat blocks plumbing bootstrap context (nsv-w43k)", lambda: test_agent_chat_blocks_plumbing_bootstrap_context(app, client, key)),
             ("backlinks API + forward-ref fallback (wikihub-yqe6)", lambda: test_backlinks_api(client, key)),
             ("highlight.js script URL is canonical (wikihub-1rx9)", lambda: test_highlight_js_script_url_is_canonical()),
             ("nginx serves Service-Worker-Allowed header (wikihub-o1ib)", lambda: test_nginx_serves_service_worker_allowed_header()),

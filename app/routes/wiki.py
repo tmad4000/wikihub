@@ -1638,7 +1638,7 @@ def wiki_page(username, slug, page_path):
     # WikiHub plumbing is owner-authored control data, not wiki content. It is
     # skipped by indexing and mirrors; direct web routes must not serve it from
     # the authoritative repo just because a broad ACL default is readable.
-    if page_path == ".wikihub" or page_path.startswith(".wikihub/"):
+    if _is_wikihub_plumbing_path(page_path):
         abort(404)
 
     # root index/README should be served by wiki_index, not as a standalone page

@@ -179,12 +179,12 @@ def _check_path_access(session, path, write=False):
     if not wiki:
         return False, _ACL_DENIED
 
+    if page_path and is_wikihub_plumbing_path(page_path):
+        return False, _ACL_DENIED
+
     is_owner = bool(username and username == sess_owner)
     if is_owner:
         return True, None
-
-    if page_path and is_wikihub_plumbing_path(page_path):
-        return False, _ACL_DENIED
 
     acl_rules = load_acl_rules(sess_owner, sess_slug)
 
@@ -607,6 +607,8 @@ def agent_chat():
             )
             if not owner_user or not wiki_obj:
                 return {"error": "not_found", "message": "Wiki not found"}, 404
+            if page_path and is_wikihub_plumbing_path(page_path):
+                return {"error": "not_found", "message": "Wiki not found"}, 404
             is_owner = (user.id == wiki_obj.owner_id)
             if not is_owner:
                 acl_rules = load_acl_rules(owner, wiki_slug)
@@ -650,7 +652,9 @@ def agent_chat():
                     page_vis[p.path] = p.visibility
 
             # current page content
-            if is_owner or (wiki_obj and can_read(
+            if page_path and is_wikihub_plumbing_path(page_path):
+                page_content = ""
+            elif is_owner or (wiki_obj and can_read(
                 page_path, acl_rules, user.username,
                 page_vis.get(page_path) or page_vis.get(page_path + ".md"),
             )):
@@ -658,6 +662,8 @@ def agent_chat():
 
             # filtered file list
             for f in list_files_in_repo(owner, wiki_slug):
+                if is_wikihub_plumbing_path(f):
+                    continue
                 if is_owner:
                     page_list.append(f)
                 else:
