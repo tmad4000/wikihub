@@ -6624,6 +6624,7 @@ def run_all():
             ("set_wiki_limit imports from app root (wikihub-20ct)", lambda: test_set_wiki_limit_script_imports_from_repo_root()),
             ("global activity excludes non-public content", lambda: test_global_activity_excludes_non_public(client, key)),
             ("activity RSS well-formed + correct links (both hosts)", lambda: test_activity_rss_is_well_formed_with_correct_links(client, key)),
+            ("private-only wiki RSS does not leak metadata", lambda: test_wiki_activity_rss_private_only_wiki_does_not_leak_metadata(client, key)),
             ("per-wiki RSS finds older unlisted pages after private pages", lambda: test_wiki_activity_rss_keeps_older_unlisted_after_private_pages(client, key)),
             ("global activity rows avoid nested anchors", lambda: test_global_activity_rows_do_not_nest_anchors(client, key)),
             ("global activity pagination", lambda: test_activity_pagination(client, key)),
@@ -6753,6 +6754,27 @@ def test_activity_rss_is_well_formed_with_correct_links(client, key):
         assert "Private Note" not in joined, f"private page must NOT appear in anon per-wiki RSS; got titles={titles!r}"
         for it in root.find("channel").findall("item"):
             assert it.find("link").text.startswith(f"http://{host}/@agent1/secretwiki/")
+
+
+def test_wiki_activity_rss_private_only_wiki_does_not_leak_metadata(client, key):
+    h = {"Authorization": f"Bearer {key}"}
+    client.post("/api/v1/wikis", json={"slug": "private-rss", "title": "Private RSS"}, headers=h)
+    client.post("/api/v1/wikis/agent1/private-rss/pages", json={
+        "path": "wiki/private-only.md",
+        "content": "---\ntitle: Private Only\nvisibility: private\n---\n\n# Private Only\n",
+        "visibility": "private",
+    }, headers=h)
+
+    from flask import g as _flask_g
+    _flask_g.pop("_login_user", None)
+    anon = client.application.test_client()
+
+    r = anon.get("/@agent1/private-rss/activity.rss")
+    assert r.status_code == 401
+    body = r.get_data(as_text=True)
+    assert "Private RSS" not in body
+    assert "Private Only" not in body
+    assert r.mimetype != "application/rss+xml"
 
 
 def test_wiki_activity_rss_keeps_older_unlisted_after_private_pages(client, key):

@@ -1484,6 +1484,8 @@ def wiki_activity_rss(username, slug):
 
     owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
     acl_rules = load_acl_rules(owner.username, wiki.slug)
+    if not _viewer_can_see_any_page(wiki, acl_rules=acl_rules, owner=owner):
+        return _render_permission_error(owner, wiki)
     query = Page.query.filter_by(wiki_id=wiki.id)
     has_acl_grants = (
         current_user.is_authenticated
