@@ -1635,6 +1635,21 @@ def test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(a
     refresh_wikilinks_for_page(stale_page, stale_content)
     db.session.commit()
     assert Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/serve-inline.md").first() is not None
+    content_page_count = (
+        Page.query.filter_by(wiki_id=wiki_id)
+        .filter(~Page.path.startswith(".wikihub/"), Page.path != ".wikihub")
+        .count()
+    )
+    assert Page.query.filter_by(wiki_id=wiki_id).count() == content_page_count + 1
+
+    r = anon.get(f"/api/v1/wikis/agent1/{slug}")
+    assert r.status_code == 200
+    assert r.get_json()["page_count"] == content_page_count, \
+        "canonical wiki detail page_count must exclude stale plumbing rows"
+    r = anon.get(f"/api/wikis/agent1/{slug}")
+    assert r.status_code == 200
+    assert r.get_json()["page_count"] == content_page_count, \
+        "compat wiki detail page_count must exclude stale plumbing rows"
 
     r = owner_browser.get(f"/@agent1/{slug}/.wikihub/serve-inline/edit")
     assert r.status_code == 400, f"stale plumbing edit route must be rejected, got {r.status_code}"

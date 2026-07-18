@@ -142,6 +142,14 @@ def _reject_wikihub_plumbing_path():
     return {"error": "bad_request", "message": ".wikihub/* paths are wiki plumbing"}, 400
 
 
+def _content_page_count(wiki):
+    return (
+        Page.query.filter_by(wiki_id=wiki.id)
+        .filter(~Page.path.startswith(".wikihub/"), Page.path != ".wikihub")
+        .count()
+    )
+
+
 def _current_user_is_owner(wiki):
     user = getattr(request, "current_user", None)
     return bool(user and user.id == wiki.owner_id)
@@ -333,7 +341,7 @@ def get_wiki(owner, slug):
         "subdomain": wiki.subdomain,
         "star_count": wiki.star_count,
         "fork_count": wiki.fork_count,
-        "page_count": wiki.pages.count(),
+        "page_count": _content_page_count(wiki),
         "created_at": wiki.created_at.isoformat(),
         "updated_at": wiki.updated_at.isoformat(),
     })

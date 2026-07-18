@@ -80,7 +80,7 @@ def api_wikis_compat(owner, slug):
         of private wikis on a real account; but 401 wins over 404 for
         agents needing the auth hint)
     """
-    from app.models import User, Wiki
+    from app.models import User, Wiki, Page
     from app.auth_utils import get_current_user_from_request
     from app.acl import resolve_visibility
     from app.wiki_ops import load_acl_rules, sync_wiki_counters
@@ -121,7 +121,11 @@ def api_wikis_compat(owner, slug):
         "subdomain": wiki.subdomain,
         "star_count": wiki.star_count,
         "fork_count": wiki.fork_count,
-        "page_count": wiki.pages.count(),
+        "page_count": (
+            Page.query.filter_by(wiki_id=wiki.id)
+            .filter(~Page.path.startswith(".wikihub/"), Page.path != ".wikihub")
+            .count()
+        ),
         "created_at": wiki.created_at.isoformat(),
         "updated_at": wiki.updated_at.isoformat(),
         "canonical_api": f"/api/v1/wikis/{owner_user.username}/{wiki.slug}",
