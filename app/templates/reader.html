@@ -98,7 +98,8 @@
    the top by both the server sort and the client re-sort, so an adjacent-
    sibling rule reliably marks the boundary. */
 .sidebar-pinned .sidebar-icon { color: var(--accent); opacity: 0.85; }
-#sidebar-tree > .sidebar-pinned + :not(.sidebar-pinned) {
+#sidebar-tree > .sidebar-pinned + :not(.sidebar-pinned),
+#async-sidebar > .sidebar-pinned + :not(.sidebar-pinned) {
   border-top: 1px solid var(--border-default);
   margin-top: 6px; padding-top: 7px;
 }

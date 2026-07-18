@@ -17,7 +17,8 @@
 .sidebar-item:hover { color: var(--text-primary); background: var(--accent-subtle); text-decoration: none; }
 .sidebar-vis { margin-left: auto; flex-shrink: 0; color: var(--text-muted); opacity: 0.6; display: inline-flex; }
 .sidebar-pinned .sidebar-icon { color: var(--accent); opacity: 0.85; }
-#sidebar-tree > .sidebar-pinned + :not(.sidebar-pinned) { border-top: 1px solid var(--border-default); margin-top: 6px; padding-top: 7px; }
+#sidebar-tree > .sidebar-pinned + :not(.sidebar-pinned),
+#async-sidebar > .sidebar-pinned + :not(.sidebar-pinned) { border-top: 1px solid var(--border-default); margin-top: 6px; padding-top: 7px; }
 .sidebar-item.active { color: var(--text-primary); background: var(--accent-subtle); }
 .sidebar-folder-row .sidebar-item { flex: 1; min-width: 0; }
 .hamburger {

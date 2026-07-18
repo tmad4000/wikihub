@@ -6390,6 +6390,12 @@ def test_pinned_pages_sort_to_top(app, client, api_key):
     assert r.status_code == 200
     body = r.data.decode("utf-8", errors="replace")
     assert "sidebar-pinned" in body, "reader sidebar should mark pinned pages"
+    assert "#async-sidebar > .sidebar-pinned + :not(.sidebar-pinned)" in body, "reader async sidebar keeps pinned divider"
+
+    r = client.get("/@agent1/pins")
+    assert r.status_code == 200
+    body = r.data.decode("utf-8", errors="replace")
+    assert "#async-sidebar > .sidebar-pinned + :not(.sidebar-pinned)" in body, "folder async sidebar keeps pinned divider"
 
 
 def test_pinned_unreadable_hidden(app, client, api_key):
