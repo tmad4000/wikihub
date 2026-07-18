@@ -1614,6 +1614,12 @@ def wiki_page(username, slug, page_path):
     # Normalize: underscores in URL → spaces for filesystem lookup
     page_path = page_path_from_url_path(raw_page_path)
 
+    # WikiHub plumbing is owner-authored control data, not wiki content. It is
+    # skipped by indexing and mirrors; direct web routes must not serve it from
+    # the authoritative repo just because a broad ACL default is readable.
+    if page_path == ".wikihub" or page_path.startswith(".wikihub/"):
+        abort(404)
+
     # root index/README should be served by wiki_index, not as a standalone page
     if page_path.rstrip("/") in ("index", "index.md", "README", "README.md"):
         return redirect(url_for("wiki.wiki_index", username=username, slug=slug), code=302)

@@ -41,11 +41,15 @@ from app.wiki_ops import (
     delete_wiki_repos,
     index_repo_pages,
     load_acl_rules,
+    reindex_wiki_pages_and_mirror,
     refresh_wikilinks_for_page,
     sync_wiki_counters,
     update_page_metadata,
 )
 from app.url_utils import page_path_from_url_path, url_path_from_page_path
+
+
+ACL_FILE_PATH = ".wikihub/acl"
 
 
 def _resolve_owner_username(username):
@@ -123,6 +127,29 @@ def _lookup_page(wiki_id, raw_page_path):
         if page:
             return page
     return None
+
+
+def _is_acl_file_path(path):
+    return (path or "").strip().replace("\\", "/") == ACL_FILE_PATH
+
+
+def _current_user_is_owner(wiki):
+    user = getattr(request, "current_user", None)
+    return bool(user and user.id == wiki.owner_id)
+
+
+def _write_acl_file_and_reindex(owner_user, wiki, content, message):
+    author_name, author_email = _current_author()
+    sync_page_to_repo(
+        owner_user.username,
+        wiki.slug,
+        ACL_FILE_PATH,
+        content,
+        message=message,
+        author_name=author_name,
+        author_email=author_email,
+    )
+    reindex_wiki_pages_and_mirror(owner_user.username, wiki.slug, wiki)
 
 
 def _load_page_content(owner, slug, page_path, public=False):
@@ -544,6 +571,13 @@ def create_page(owner, slug):
     if len(content.encode("utf-8")) > max_page:
         return {"error": "too_large", "message": f"Page content exceeds {max_page // (1024*1024)}MB limit"}, 413
 
+    if _is_acl_file_path(path):
+        if not _current_user_is_owner(wiki):
+            return {"error": "forbidden", "message": "Only the owner can update wiki ACL"}, 403
+        _write_acl_file_and_reindex(owner_user, wiki, content, "Update .wikihub/acl")
+        db.session.commit()
+        return jsonify({"path": ACL_FILE_PATH, "reindexed": True}), 201
+
     if Page.query.filter_by(wiki_id=wiki.id, path=path).first():
         return {"error": "conflict", "message": f"Page '{path}' already exists"}, 409
 
@@ -779,6 +813,16 @@ def replace_page(owner, slug, page_path):
     if err:
         return err
 
+    normalized_page_path = _normalize_page_path_param(page_path)
+    if _is_acl_file_path(normalized_page_path):
+        if not _current_user_is_owner(wiki):
+            return {"error": "forbidden", "message": "Only the owner can update wiki ACL"}, 403
+        data = request.get_json(silent=True) or {}
+        content = data.get("content", "")
+        _write_acl_file_and_reindex(owner_user, wiki, content, "Update .wikihub/acl")
+        db.session.commit()
+        return jsonify({"path": ACL_FILE_PATH, "reindexed": True})
+
     page = _lookup_page(wiki.id, page_path)
     if not page:
         return {"error": "not_found", "message": "Page not found"}, 404
@@ -828,6 +872,22 @@ def patch_page(owner, slug, page_path):
     owner_user, wiki, err = _get_wiki_or_404(owner, slug)
     if err:
         return err
+
+    normalized_page_path = _normalize_page_path_param(page_path)
+    if _is_acl_file_path(normalized_page_path):
+        if not _current_user_is_owner(wiki):
+            return {"error": "forbidden", "message": "Only the owner can update wiki ACL"}, 403
+        data = request.get_json(silent=True) or {}
+        if data.get("new_path"):
+            return {"error": "bad_request", "message": ".wikihub/acl cannot be renamed"}, 400
+        if data.get("append_section"):
+            return {"error": "bad_request", "message": "append_section is not supported for .wikihub/acl"}, 400
+        content = data.get("content")
+        if content is None:
+            content = read_file_from_repo(owner_user.username, wiki.slug, ACL_FILE_PATH, public=False) or ""
+        _write_acl_file_and_reindex(owner_user, wiki, content, "Update .wikihub/acl")
+        db.session.commit()
+        return jsonify({"path": ACL_FILE_PATH, "reindexed": True})
 
     page = _lookup_page(wiki.id, page_path)
     if not page:
@@ -944,6 +1004,15 @@ def delete_page(owner, slug, page_path):
     owner_user, wiki, err = _get_wiki_or_404(owner, slug)
     if err:
         return err
+
+    normalized_page_path = _normalize_page_path_param(page_path)
+    if _is_acl_file_path(normalized_page_path):
+        if not _current_user_is_owner(wiki):
+            return {"error": "forbidden", "message": "Only the owner can delete wiki ACL"}, 403
+        remove_page_from_repo(owner_user.username, wiki.slug, ACL_FILE_PATH)
+        reindex_wiki_pages_and_mirror(owner_user.username, wiki.slug, wiki)
+        db.session.commit()
+        return "", 204
 
     page = _lookup_page(wiki.id, page_path)
     if not page:
@@ -1834,6 +1903,17 @@ def admin_regenerate_mirror():
     username = data["username"]
     slug = data["slug"]
 
+    if data.get("reindex"):
+        owner = User.query.filter_by(username=username).first()
+        if not owner:
+            return {"error": "not_found", "message": "User not found"}, 404
+        wiki = Wiki.query.filter_by(owner_id=owner.id, slug=slug).first()
+        if not wiki:
+            return {"error": "not_found", "message": "Wiki not found"}, 404
+        reindex_wiki_pages_and_mirror(username, slug, wiki)
+        db.session.commit()
+        return jsonify({"status": "ok", "reindexed": True})
+
     acl_rules = load_acl_rules(username, slug)
     regenerate_public_mirror(username, slug, acl_rules)
-    return jsonify({"status": "ok"})
+    return jsonify({"status": "ok", "reindexed": False})

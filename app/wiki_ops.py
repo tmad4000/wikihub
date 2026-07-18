@@ -37,8 +37,8 @@ def load_serve_inline_patterns(username, slug):
     Read from the AUTHORITATIVE repo only (never the public mirror), exactly like
     load_acl_rules reads .wikihub/acl. .wikihub/* are owner-authored plumbing
     files: they're skipped during page indexing and stripped from the public
-    mirror (regenerate_public_mirror defaults non-md files to private), so the
-    mirror has no copy. Reading the mirror always returned [] — the opt-in
+    mirror (regenerate_public_mirror skips .wikihub/ paths), so the mirror has
+    no copy. Reading the mirror always returned [] — the opt-in
     silently never applied for anonymous/public readers (wikihub-6ag bug)."""
     content = read_file_from_repo(username, slug, ".wikihub/serve-inline")
     return parse_serve_inline(content) if content else []
@@ -165,6 +165,12 @@ def ensure_official_wiki():
 
 def replace_acl_file(username, slug, content, message="Update ACL"):
     sync_page_to_repo(username, slug, ".wikihub/acl", content, message=message)
+
+
+def reindex_wiki_pages_and_mirror(username, slug, wiki):
+    """Rebuild DB page metadata and the public mirror from the current repo ACL."""
+    index_repo_pages(username, slug, wiki, reset=True)
+    regenerate_public_mirror(username, slug, load_acl_rules(username, slug))
 
 
 def materialize_pending_invites_for(user):

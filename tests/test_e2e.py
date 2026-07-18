@@ -1380,6 +1380,176 @@ def test_unlisted_page_in_sidebar_but_not_discovery(app, client, api_key):
         "unlisted page must NOT appear in search (discovery surface stays excluded)"
 
 
+def test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(app, client, api_key):
+    """GroupBrain regression: scaffolded index/log rows started private, then a
+    generic `.wikihub/acl` write changed the repo default to unlisted without
+    re-indexing Page.visibility. Direct-link readers saw a restricted page even
+    though the ACL and public mirror allowed it.
+    """
+    from app.git_sync import read_file_from_repo, sync_page_to_repo
+    from app.models import Page, Wiki
+
+    h = {"Authorization": f"Bearer {api_key}"}
+    anon = app.test_client()
+    slug = "groupbrain-acl-regression"
+    title = "GroupBrain Visibility Regression"
+
+    r = client.post("/api/v1/wikis", json={"slug": slug, "title": title}, headers=h)
+    assert r.status_code == 201, f"setup wiki create failed: {r.status_code} {r.data[:200]}"
+
+    wiki = Wiki.query.join(User, Wiki.owner_id == User.id).filter(User.username == "agent1", Wiki.slug == slug).first()
+    assert wiki is not None
+    wiki_id = wiki.id
+
+    def visibility_for(path):
+        db.session.expire_all()
+        page = Page.query.filter_by(wiki_id=wiki_id, path=path).first()
+        return page.visibility if page else None
+
+    assert visibility_for("index.md") == "private"
+    assert visibility_for("log.md") == "private"
+    assert Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/acl").first() is None
+
+    r = client.post(f"/api/v1/wikis/agent1/{slug}/pages", json={
+        "path": ".wikihub/acl",
+        "content": "* unlisted\n",
+    }, headers=h)
+    assert r.status_code == 201, f"generic ACL write failed: {r.status_code} {r.data[:200]}"
+    assert r.get_json()["reindexed"] is True
+    assert read_file_from_repo("agent1", slug, ".wikihub/acl") == "* unlisted\n"
+    assert Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/acl").first() is None, \
+        ".wikihub/acl must stay plumbing, not an indexed page"
+    assert visibility_for("index.md") == "unlisted"
+    assert visibility_for("log.md") == "unlisted"
+
+    log_title = "GBVisibility Log Marker"
+    r = client.put(f"/api/v1/wikis/agent1/{slug}/pages/log.md", json={
+        "content": f"---\ntitle: {log_title}\n---\n\n# Log\n\ncontent-only update after ACL reindex.",
+    }, headers=h)
+    assert r.status_code == 200, f"log content update failed: {r.status_code} {r.data[:200]}"
+    assert r.get_json()["visibility"] == "unlisted", "content-only PUT must preserve inherited unlisted visibility"
+
+    topics_title = "GBVisibility Topics Marker"
+    r = client.post(f"/api/v1/wikis/agent1/{slug}/pages", json={
+        "path": "topics.md",
+        "content": f"---\ntitle: {topics_title}\n---\n\n# Topics\n\ncomparison page.",
+    }, headers=h)
+    assert r.status_code == 201, f"topics create failed: {r.status_code} {r.data[:200]}"
+    assert r.get_json()["visibility"] == "unlisted"
+
+    private_title = "GBVisibility Owner Private Marker"
+    r = client.post(f"/api/v1/wikis/agent1/{slug}/pages", json={
+        "path": "owner-control.md",
+        "content": (
+            f"---\ntitle: {private_title}\nvisibility: private\n---\n\n"
+            "# Owner control\n\nexplicit private frontmatter remains private."
+        ),
+    }, headers=h)
+    assert r.status_code == 201, f"private page create failed: {r.status_code} {r.data[:200]}"
+    assert r.get_json()["visibility"] == "private"
+
+    r = client.put(f"/api/v1/wikis/agent1/{slug}/pages/.wikihub/acl", json={
+        "content": "* unlisted\n",
+    }, headers=h)
+    assert r.status_code == 200, f"generic ACL replace failed: {r.status_code} {r.data[:200]}"
+    assert visibility_for("log.md") == "unlisted"
+    assert visibility_for("topics.md") == "unlisted"
+    assert visibility_for("owner-control.md") == "private", "explicit private frontmatter must win over ACL"
+    assert read_file_from_repo("agent1", slug, ".wikihub/acl", public=True) is None
+    assert read_file_from_repo("agent1", slug, ".wikihub/events.jsonl", public=True) is None
+
+    r = anon.get(f"/@agent1/{slug}/.wikihub/acl")
+    assert r.status_code == 404, f"direct ACL route must not serve plumbing, got {r.status_code}"
+    r = anon.get(f"/@agent1/{slug}/.wikihub/events.jsonl")
+    assert r.status_code == 404, f"direct event-log route must not serve plumbing, got {r.status_code}"
+
+    r = anon.get(f"/@agent1/{slug}/log")
+    assert r.status_code == 200, f"anonymous /log direct link should be 200, got {r.status_code}"
+    assert log_title.encode() in r.data
+    r = anon.get(f"/@agent1/{slug}/topics")
+    assert r.status_code == 200, f"anonymous /topics direct link should be 200, got {r.status_code}"
+    assert topics_title.encode() in r.data
+
+    r = anon.get(f"/@agent1/{slug}/owner-control")
+    assert r.status_code in (401, 403), f"private page should be restricted, got {r.status_code}"
+    assert private_title.encode() not in r.data
+
+    for query, leaked_page in ((log_title, "log.md"), (topics_title, "topics.md"), (private_title, "owner-control.md")):
+        r = anon.get(f"/api/v1/search?q={query}")
+        assert r.status_code == 200, f"search failed: {r.status_code} {r.data[:200]}"
+        assert all(hit.get("wiki") != f"agent1/{slug}" or hit.get("page") != leaked_page for hit in r.get_json()["results"]), \
+            f"{leaked_page} must not appear in anonymous search"
+
+    for path in ("/@agent1", "/explore"):
+        r = anon.get(path)
+        assert r.status_code == 200, f"{path} failed: {r.status_code}"
+        body = r.data.decode("utf-8", errors="replace")
+        assert title not in body, f"{path} must not list an unlisted-only wiki"
+        assert log_title not in body and topics_title not in body and private_title not in body
+
+    r = anon.get(f"/api/v1/wikis?owner=agent1&q={title}")
+    assert r.status_code == 200
+    assert r.get_json()["total"] == 0, "public wiki listing API must exclude unlisted-only wiki"
+
+    other_account = client.post("/api/v1/accounts", json={"username": "aclother"}).get_json()
+    other_h = {"Authorization": f"Bearer {other_account['api_key']}"}
+    other_title = "GBVisibility Other Private Marker"
+    r = client.post("/api/v1/wikis", json={"slug": "private-silo", "title": "Private Silo"}, headers=other_h)
+    assert r.status_code == 201
+    r = client.post("/api/v1/wikis/aclother/private-silo/pages", json={
+        "path": "secret.md",
+        "content": f"---\ntitle: {other_title}\n---\n\n# Secret\n\nprivate across another wiki.",
+    }, headers=other_h)
+    assert r.status_code == 201
+
+    r = anon.get("/@aclother/private-silo/secret")
+    assert r.status_code in (401, 403), f"other user's private page should be restricted, got {r.status_code}"
+    assert other_title.encode() not in r.data
+    r = anon.get(f"/api/v1/search?q={other_title}")
+    assert r.status_code == 200
+    assert r.get_json()["results"] == [], "reindexing one wiki must not leak another wiki's private page"
+
+    hook_slug = "groupbrain-hook-acl"
+    r = client.post("/api/v1/wikis", json={"slug": hook_slug, "title": "GroupBrain Hook ACL"}, headers=h)
+    assert r.status_code == 201
+    hook_wiki = Wiki.query.join(User, Wiki.owner_id == User.id).filter(User.username == "agent1", Wiki.slug == hook_slug).first()
+    assert hook_wiki is not None
+    assert Page.query.filter_by(wiki_id=hook_wiki.id, path="log.md").first().visibility == "private"
+
+    sync_page_to_repo("agent1", hook_slug, ".wikihub/acl", "* unlisted\n")
+    r = client.post("/api/v1/admin/regenerate-mirror", json={
+        "username": "agent1",
+        "slug": hook_slug,
+        "reindex": True,
+    }, headers={"Authorization": "Bearer test-admin-token"})
+    assert r.status_code == 200, f"admin reindex failed: {r.status_code} {r.data[:200]}"
+    assert r.get_json()["reindexed"] is True
+    db.session.expire_all()
+    assert Page.query.filter_by(wiki_id=hook_wiki.id, path="log.md").first().visibility == "unlisted"
+    r = anon.get(f"/@agent1/{hook_slug}/log")
+    assert r.status_code == 200, f"hook/admin ACL reindex should make /log anonymously readable, got {r.status_code}"
+
+    delete_slug = "groupbrain-acl-delete"
+    r = client.post("/api/v1/wikis", json={"slug": delete_slug, "title": "GroupBrain ACL Delete"}, headers=h)
+    assert r.status_code == 201
+    delete_wiki = Wiki.query.join(User, Wiki.owner_id == User.id).filter(User.username == "agent1", Wiki.slug == delete_slug).first()
+    assert delete_wiki is not None
+    r = client.post(f"/api/v1/wikis/agent1/{delete_slug}/pages", json={
+        "path": ".wikihub/acl",
+        "content": "* unlisted\n",
+    }, headers=h)
+    assert r.status_code == 201
+    db.session.expire_all()
+    assert Page.query.filter_by(wiki_id=delete_wiki.id, path="log.md").first().visibility == "unlisted"
+    r = client.delete(f"/api/v1/wikis/agent1/{delete_slug}/pages/.wikihub/acl", headers=h)
+    assert r.status_code == 204
+    db.session.expire_all()
+    assert read_file_from_repo("agent1", delete_slug, ".wikihub/acl") is None
+    assert Page.query.filter_by(wiki_id=delete_wiki.id, path="log.md").first().visibility == "private"
+    r = anon.get(f"/@agent1/{delete_slug}/log")
+    assert r.status_code in (401, 403), f"deleting ACL should restore private default, got {r.status_code}"
+
+
 def test_email_verification_flow(client):
     """wikihub-ks5t.3: signup with email is non-blocking — account works
     immediately, and a verification link is emailed. Clicking the link sets
@@ -6586,6 +6756,7 @@ def run_all():
             ("sign-in flow redirects back to target (wikihub-kvwh)", lambda: test_signin_flow_redirects_back_to_target(app, client)),
             ("logout (wikihub-uq9)", lambda: test_logout(client)),
             ("unlisted page in sidebar but not discovery (wikihub #17)", lambda: test_unlisted_page_in_sidebar_but_not_discovery(app, client, key)),
+            ("ACL file changes reindex inherited visibility without discovery leaks", lambda: test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(app, client, key)),
             ("email verification flow (wikihub-ks5t.3)", lambda: test_email_verification_flow(client)),
             ("password reset flow (wikihub-ks5t.5)", lambda: test_password_reset_lifecycle(client)),
             ("Google auto-link security (wikihub-ks5t.4)", lambda: test_google_auto_link_security(app)),
