@@ -8,6 +8,7 @@ pipeline: markdown-it-py with plugins for:
   - \\qty command expansion (physics package compat)
   - code highlighting (via highlight.js on client)
   - external links in new tab
+  - wiki-relative link rewriting for in-content markdown links
   - obsidian image embeds ![[image.png]] and ![[image.png|300]]
   - private band stripping (<!-- private -->...<!-- /private -->)
 """
