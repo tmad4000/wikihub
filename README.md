@@ -8,7 +8,7 @@ GitHub for LLM wikis. A hosting platform for markdown knowledge bases with per-f
 - Per-file access control via `.wikihub/acl` (CODEOWNERS-pattern globs)
 - Agent-native: REST API, MCP server, content negotiation, `llms.txt`
 - Social: fork, star, explore, profiles
-- Rendering: KaTeX math, syntax highlighting, wikilinks, footnotes, Obsidian embeds
+- Rendering: KaTeX math, syntax highlighting, wikilinks, footnotes, Obsidian embeds, wiki-relative links
 - Reader side peek: same-wiki page links open in a right-side preview panel on desktop
 - Every wiki is a real git repo — clone, push, blame, bisect
 
@@ -159,7 +159,7 @@ app/
   acl.py             .wikihub/acl parser
   git_backend.py     git Smart HTTP (clone/push)
   git_sync.py        DB->git plumbing, public mirror regen
-  renderer.py        markdown-it pipeline
+  renderer.py        markdown-it pipeline, wikilinks, wiki-relative link rewriting
   auth_utils.py      password hashing, API keys, Bearer auth
   routes/            Flask blueprints
 cli/                 wikihub-cli Python package (REST wrapper)

@@ -8,11 +8,13 @@ pipeline: markdown-it-py with plugins for:
   - \\qty command expansion (physics package compat)
   - code highlighting (via highlight.js on client)
   - external links in new tab
+  - wiki-relative link rewriting for in-content markdown links
   - obsidian image embeds ![[image.png]] and ![[image.png|300]]
   - private band stripping (<!-- private -->...<!-- /private -->)
 """
 
 import re
+from urllib.parse import unquote
 
 from markdown_it import MarkdownIt
 from mdit_py_plugins.footnote import footnote_plugin
@@ -48,6 +50,7 @@ _GDOC_TOC_ANCHOR_RE = re.compile(r'<a href="#(h\.[a-z0-9]+)">(.*?)</a>', re.IGNO
 _HEADING_ID_RE = re.compile(r'<h[1-6]\s+id="([^"]+)"', re.IGNORECASE)
 # TOC entries end with a tab/spaces + a page number, e.g. "Feeds        3".
 _TRAILING_PAGENUM_RE = re.compile(r'[\s ]+\d+\s*$')
+_URI_SCHEME_RE = re.compile(r'^[A-Za-z][A-Za-z0-9+.-]*:')
 
 
 def _rewrite_gdoc_toc_anchors(html):
@@ -505,7 +508,15 @@ def render_page(content, wiki_owner=None, wiki_slug=None, current_page_path=None
 
     html = render_markdown(content, resolve_wikilinks=resolver if wiki_owner else None)
 
-    # resolve relative markdown links (e.g. ../raw/foo.md) against current page path
+    # Absolute-ize relative in-content links (wikihub-qmx6).
+    #
+    # Markdown like [topics](topics) or [notes](../raw/foo.md) renders as a
+    # host-relative href ("topics", "../raw/foo.md"). On the apex form
+    # (/@owner/slug/page) the browser resolves those against the page URL, but on
+    # the canonical *subdomain* form (sub.wikihub.md/slug — NO trailing slash) a
+    # bare "topics" resolves against the host root -> sub.wikihub.md/topics -> 404.
+    # Rewrite every relative link to an absolute /@owner/slug/... path so it
+    # resolves inside the wiki regardless of which host form served the page.
     if wiki_owner and wiki_slug and current_page_path:
         import posixpath
         from app.url_utils import url_path_from_page_path
@@ -515,19 +526,34 @@ def render_page(content, wiki_owner=None, wiki_slug=None, current_page_path=None
             prefix = match.group(1)
             href = match.group(2)
             suffix = match.group(3)
-            # only resolve relative .md links (not external URLs, anchors, or absolute paths)
-            if href.startswith(("http://", "https://", "/", "#", "mailto:")):
+            if _URI_SCHEME_RE.match(href) or href.startswith(("//", "/", "#")):
                 return match.group(0)
-            if not href.endswith(".md"):
+            # split off ?query / #fragment so we resolve only the path part
+            m = re.match(r'^([^?#]*)([?#].*)?$', href)
+            path_part = m.group(1)
+            tail = m.group(2) or ""
+            if not path_part:
+                # pure query/fragment (e.g. "?x=1", "#sec") — leave alone
                 return match.group(0)
-            # resolve ../path relative to current page's directory
-            resolved = posixpath.normpath(posixpath.join(page_dir, href))
-            # check if this resolves to a known page
-            page = known_pages.get(resolved)
-            if page:
-                url = f"/@{wiki_owner}/{wiki_slug}/{url_path_from_page_path(page.path, strip_md=True)}"
-                return f'{prefix}{url}{suffix}'
-            return match.group(0)
+            path_part = unquote(path_part)
+            directory_link = path_part.endswith("/")
+            # resolve ../path relative to the current page's directory
+            resolved = posixpath.normpath(posixpath.join(page_dir, path_part))
+            # a link that escapes the wiki root (../../x) has no sane wiki URL
+            if resolved == ".." or resolved.startswith("../") or resolved == ".":
+                return match.group(0)
+            if resolved.endswith(".md"):
+                # prefer the canonical URL of a known page; otherwise still
+                # absolute-ize so the link is host-independent.
+                page = known_pages.get(resolved)
+                target = page.path if page else resolved
+                url = f"/@{wiki_owner}/{wiki_slug}/{url_path_from_page_path(target, strip_md=True)}"
+            else:
+                # already URL-form (no .md); just anchor it to the wiki root.
+                url = f"/@{wiki_owner}/{wiki_slug}/{url_path_from_page_path(resolved, strip_md=False)}"
+            if directory_link and not url.endswith("/"):
+                url += "/"
+            return f'{prefix}{url}{tail}{suffix}'
 
         html = re.sub(r'(href=")([^"]+)(")', resolve_relative_link, html)
 

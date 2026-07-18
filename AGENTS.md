@@ -82,7 +82,7 @@ host (`ubuntu@54.145.123.7`) — that's historical. Production is GCP now.
 - `app/acl.py` — CODEOWNERS-pattern ACL parser for `.wikihub/acl`
 - `app/git_backend.py` — git Smart HTTP (clone/push), ported from listhub
 - `app/git_sync.py` — DB→git plumbing (does NOT fire hooks), public mirror regeneration
-- `app/renderer.py` — markdown-it-py with wikilinks, KaTeX, footnotes, Obsidian embeds
+- `app/renderer.py` — markdown-it-py with wikilinks, KaTeX, footnotes, Obsidian embeds, wiki-relative link rewriting
 - `app/static/js/sidepeek.js` — desktop reader slide-over for same-wiki page links; fetches rendered body JSON via `?fragment=1`
 - `app/auth_utils.py` — password hashing, API key gen/verify, Bearer auth decorators
 - `app/routes/` — blueprints: main, auth, api, api_wikis, wiki, agent_surfaces, upload
