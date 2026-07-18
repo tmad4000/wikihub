@@ -184,6 +184,7 @@ app/
   acl.py             .wikihub/acl parser
   git_backend.py     git Smart HTTP (clone/push)
   git_sync.py        DB->git plumbing, public mirror regen
+  page_utils.py      repo path normalization and .wikihub plumbing checks
   feeds.py           Activity entry + RSS formatting helpers
   renderer.py        markdown-it pipeline, wikilinks, wiki-relative link rewriting
   auth_utils.py      password hashing, API keys, Bearer auth

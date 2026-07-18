@@ -47,6 +47,11 @@ KEY INVARIANTS
 - Set frontmatter pinned: true to float a readable page to the top of the
   wiki sidebar. Pinning is metadata only; it never grants read access and
   there is no dedicated pinning tool.
+- .wikihub/* paths are wiki plumbing, not normal pages. Owners may write,
+  patch, delete, or revert .wikihub/acl through page tools; ACL changes
+  reindex inherited visibility and refresh the public mirror. Other
+  .wikihub/* paths are rejected or hidden from page lists, reads, search,
+  history, backlinks, agent context, zip exports, and public git mirrors.
 - On public-edit wikis, anyone (even without a key) can create pages
   (AGENTS.md core principle 2). Pass anonymous=true to wikihub_create_page
   to do this explicitly.

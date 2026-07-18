@@ -7535,27 +7535,30 @@ def _seed_activity_fixtures(client, key):
     public_wiki = Wiki.query.filter_by(owner_id=owner.id, slug="pubwiki").first()
     client.post("/api/v1/wikis", json={"slug": "plumbingonly", "title": "Plumbing Only"}, headers=h)
     plumbing_only_wiki = Wiki.query.filter_by(owner_id=owner.id, slug="plumbingonly").first()
-    db.session.add(Page(
-        wiki_id=public_wiki.id,
-        path=".wikihub/activity-log.md",
-        title="Public Plumbing Activity",
-        visibility="public",
-        excerpt="Public Plumbing Activity",
-    ))
-    db.session.add(Page(
-        wiki_id=public_wiki.id,
-        path="./.wikihub/dot-activity-log.md",
-        title="Dot Plumbing Activity",
-        visibility="public",
-        excerpt="Dot Plumbing Activity",
-    ))
-    db.session.add(Page(
-        wiki_id=plumbing_only_wiki.id,
-        path="wiki/../.wikihub/discovery-log.md",
-        title="Normalized Plumbing Discovery",
-        visibility="public",
-        excerpt="Normalized Plumbing Discovery",
-    ))
+    if not Page.query.filter_by(wiki_id=public_wiki.id, path=".wikihub/activity-log.md").first():
+        db.session.add(Page(
+            wiki_id=public_wiki.id,
+            path=".wikihub/activity-log.md",
+            title="Public Plumbing Activity",
+            visibility="public",
+            excerpt="Public Plumbing Activity",
+        ))
+    if not Page.query.filter_by(wiki_id=public_wiki.id, path="./.wikihub/dot-activity-log.md").first():
+        db.session.add(Page(
+            wiki_id=public_wiki.id,
+            path="./.wikihub/dot-activity-log.md",
+            title="Dot Plumbing Activity",
+            visibility="public",
+            excerpt="Dot Plumbing Activity",
+        ))
+    if not Page.query.filter_by(wiki_id=plumbing_only_wiki.id, path="wiki/../.wikihub/discovery-log.md").first():
+        db.session.add(Page(
+            wiki_id=plumbing_only_wiki.id,
+            path="wiki/../.wikihub/discovery-log.md",
+            title="Normalized Plumbing Discovery",
+            visibility="public",
+            excerpt="Normalized Plumbing Discovery",
+        ))
     db.session.commit()
     return h
 

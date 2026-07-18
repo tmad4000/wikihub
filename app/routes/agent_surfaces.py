@@ -21,21 +21,21 @@ from app.url_utils import url_path_from_page_path
 
 MCP_TOOLS = [
     {"name": "whoami", "description": "Check auth status"},
-    {"name": "search", "description": "Full-text search across wikis"},
-    {"name": "read_page", "description": "Read a page's content; 404 means missing, 403/401 means restricted"},
-    {"name": "list_pages", "description": "List pages in a wiki"},
-    {"name": "create_page", "description": "Create a page"},
-    {"name": "update_page", "description": "Replace or patch a page"},
-    {"name": "append_section", "description": "Append a section to a page"},
-    {"name": "delete_page", "description": "Delete a page"},
-    {"name": "set_visibility", "description": "Set page visibility"},
+    {"name": "search", "description": "Full-text search across content pages"},
+    {"name": "read_page", "description": "Read a content page; 404 means missing, 403/401 means restricted"},
+    {"name": "list_pages", "description": "List readable content pages in a wiki"},
+    {"name": "create_page", "description": "Create a page; owner may create .wikihub/acl"},
+    {"name": "update_page", "description": "Replace or patch a page; owner may update .wikihub/acl"},
+    {"name": "append_section", "description": "Append a section to a content page"},
+    {"name": "delete_page", "description": "Delete a page; owner may delete .wikihub/acl"},
+    {"name": "set_visibility", "description": "Set content page visibility"},
     {"name": "share", "description": "Grant page/folder/wiki read/edit access"},
     {"name": "unshare", "description": "Revoke page/folder/wiki read/edit access"},
     {"name": "list_grants", "description": "List all sharing grants for a wiki"},
     {"name": "shared_with_me", "description": "List wikis/pages shared with the current user"},
     {"name": "create_wiki", "description": "Create a wiki"},
     {"name": "fork_wiki", "description": "Fork a wiki"},
-    {"name": "commit_log", "description": "Read wiki history"},
+    {"name": "commit_log", "description": "Read content-page wiki history"},
 ]
 
 
