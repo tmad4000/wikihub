@@ -3901,6 +3901,11 @@ def test_subdomain_routing(client):
     assert b"cookbook" in r.data
     assert b"WikiHub" not in r.data
 
+    r = client.get("/@subowner/cookbook/activity/menu",
+                   headers={"Host": "wikihub.md"}, follow_redirects=False)
+    assert r.status_code == 301, f"activity folder page on apex should canonicalize to wiki subdomain: {r.status_code}"
+    assert "recipes.wikihub.md/activity/menu" in r.headers["Location"]
+
     # Same regression check for user subdomain
     r = client.get("/@subowner/cookbook/intro",
                    headers={"Host": "subowner.wikihub.md"}, follow_redirects=False)

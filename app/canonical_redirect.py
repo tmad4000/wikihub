@@ -33,15 +33,18 @@ _SKIP_SUFFIXES = (
     "/llms.txt", "/llms-full.txt",
     "/graph.json", "/sidebar.json", "/graph",
     "/history", "/commit",
-    "/activity", "/activity.rss",
     "/settings",
     "/reindex",
     "/preview",
     "/new", "/new-folder",
 )
 
+_EXACT_SKIP_RE = re.compile(r"^/@[^/]+/[^/]+/(?:activity|activity\.rss)$")
+
 
 def _is_skipped(path: str) -> bool:
+    if _EXACT_SKIP_RE.match(path):
+        return True
     for s in _SKIP_SUFFIXES:
         if path.endswith(s) or s + "/" in path or path.endswith(s + "/"):
             return True
