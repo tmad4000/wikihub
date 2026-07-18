@@ -133,6 +133,15 @@ def _is_acl_file_path(path):
     return (path or "").strip().replace("\\", "/") == ACL_FILE_PATH
 
 
+def _is_wikihub_plumbing_path(path):
+    normalized = (path or "").strip().replace("\\", "/")
+    return normalized == ".wikihub" or normalized.startswith(".wikihub/")
+
+
+def _reject_wikihub_plumbing_path():
+    return {"error": "bad_request", "message": ".wikihub/* paths are wiki plumbing"}, 400
+
+
 def _current_user_is_owner(wiki):
     user = getattr(request, "current_user", None)
     return bool(user and user.id == wiki.owner_id)
@@ -577,6 +586,8 @@ def create_page(owner, slug):
         _write_acl_file_and_reindex(owner_user, wiki, content, "Update .wikihub/acl")
         db.session.commit()
         return jsonify({"path": ACL_FILE_PATH, "reindexed": True}), 201
+    if _is_wikihub_plumbing_path(path):
+        return _reject_wikihub_plumbing_path()
 
     if Page.query.filter_by(wiki_id=wiki.id, path=path).first():
         return {"error": "conflict", "message": f"Page '{path}' already exists"}, 409
@@ -653,6 +664,8 @@ def list_pages(owner, slug):
 
     pages = []
     for page in Page.query.filter_by(wiki_id=wiki.id).order_by(Page.path.asc()).all():
+        if _is_wikihub_plumbing_path(page.path):
+            continue
         if is_owner or can_read(page.path, acl_rules, username, page.visibility):
             pages.append({
                 "path": page.path,
@@ -669,6 +682,10 @@ def read_page(owner, slug, page_path):
     owner_user, wiki, err = _get_wiki_or_404(owner, slug)
     if err:
         return err
+
+    normalized_page_path = _normalize_page_path_param(page_path)
+    if _is_wikihub_plumbing_path(normalized_page_path):
+        return {"error": "not_found", "message": "Page not found"}, 404
 
     page = _lookup_page(wiki.id, page_path)
     if not page:
@@ -822,6 +839,8 @@ def replace_page(owner, slug, page_path):
         _write_acl_file_and_reindex(owner_user, wiki, content, "Update .wikihub/acl")
         db.session.commit()
         return jsonify({"path": ACL_FILE_PATH, "reindexed": True})
+    if _is_wikihub_plumbing_path(normalized_page_path):
+        return _reject_wikihub_plumbing_path()
 
     page = _lookup_page(wiki.id, page_path)
     if not page:
@@ -888,6 +907,8 @@ def patch_page(owner, slug, page_path):
         _write_acl_file_and_reindex(owner_user, wiki, content, "Update .wikihub/acl")
         db.session.commit()
         return jsonify({"path": ACL_FILE_PATH, "reindexed": True})
+    if _is_wikihub_plumbing_path(normalized_page_path):
+        return _reject_wikihub_plumbing_path()
 
     page = _lookup_page(wiki.id, page_path)
     if not page:
@@ -936,6 +957,8 @@ def patch_page(owner, slug, page_path):
     author_name, author_email = _current_author()
 
     if new_path:
+        if _is_wikihub_plumbing_path(new_path):
+            return _reject_wikihub_plumbing_path()
         if Page.query.filter_by(wiki_id=wiki.id, path=new_path).first():
             return {"error": "conflict", "message": f"Path '{new_path}' already exists"}, 409
 
@@ -1013,6 +1036,8 @@ def delete_page(owner, slug, page_path):
         reindex_wiki_pages_and_mirror(owner_user.username, wiki.slug, wiki)
         db.session.commit()
         return "", 204
+    if _is_wikihub_plumbing_path(normalized_page_path):
+        return _reject_wikihub_plumbing_path()
 
     page = _lookup_page(wiki.id, page_path)
     if not page:
@@ -1042,6 +1067,10 @@ def set_page_visibility(owner, slug, page_path):
         return err
     if request.current_user.id != wiki.owner_id:
         return {"error": "forbidden", "message": "Only the owner can change visibility"}, 403
+
+    normalized_page_path = _normalize_page_path_param(page_path)
+    if _is_wikihub_plumbing_path(normalized_page_path):
+        return _reject_wikihub_plumbing_path()
 
     page = _lookup_page(wiki.id, page_path)
     if not page:
@@ -1086,9 +1115,12 @@ def bulk_visibility(owner, slug):
     # expand folder prefixes into page paths
     expanded = set()
     for p in paths:
+        if _is_wikihub_plumbing_path(p):
+            continue
         if p.endswith("/"):
             for page in Page.query.filter_by(wiki_id=wiki.id).filter(Page.path.startswith(p)).all():
-                expanded.add(page.path)
+                if not _is_wikihub_plumbing_path(page.path):
+                    expanded.add(page.path)
         else:
             expanded.add(p)
 
@@ -1140,9 +1172,12 @@ def bulk_delete(owner, slug):
     # expand folder prefixes into page paths
     expanded = set()
     for p in paths:
+        if _is_wikihub_plumbing_path(p):
+            continue
         if p.endswith("/"):
             for page in Page.query.filter_by(wiki_id=wiki.id).filter(Page.path.startswith(p)).all():
-                expanded.add(page.path)
+                if not _is_wikihub_plumbing_path(page.path):
+                    expanded.add(page.path)
         else:
             expanded.add(p)
 
@@ -1631,6 +1666,7 @@ def search_pages():
     offset = int(request.args.get("offset", 0))
 
     query = Page.query.join(Wiki).join(User, Wiki.owner_id == User.id)
+    query = query.filter(~Page.path.startswith(".wikihub/"), Page.path != ".wikihub")
     public_search_visibilities = ("public", "public-view", "public-edit")
 
     # scope to specific wiki
@@ -1785,6 +1821,9 @@ def revert_page(owner, slug):
     path = data.get("path", "").strip()
     if not sha or not path:
         return {"error": "invalid", "message": "sha and path are required"}, 400
+    normalized_path = _normalize_page_path_param(path)
+    if _is_wikihub_plumbing_path(normalized_path) and not _is_acl_file_path(normalized_path):
+        return _reject_wikihub_plumbing_path()
 
     from app.git_backend import _repo_path
 
@@ -1801,6 +1840,11 @@ def revert_page(owner, slug):
         return {"error": "not_found", "message": f"File '{path}' not found at commit {sha[:12]}"}, 404
 
     content = result.stdout.decode("utf-8", errors="replace")
+
+    if _is_acl_file_path(normalized_path):
+        _write_acl_file_and_reindex(owner_user, wiki, content, f"Revert .wikihub/acl to {sha[:12]}")
+        db.session.commit()
+        return jsonify({"path": ACL_FILE_PATH, "reindexed": True})
 
     # write as new commit
     sync_page_to_repo(

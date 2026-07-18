@@ -1503,6 +1503,39 @@ def test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(a
     r = anon.get(f"/@agent1/{slug}/.wikihub/events.jsonl")
     assert r.status_code == 404, f"direct event-log route must not serve plumbing, got {r.status_code}"
 
+    plumbing_marker = "GBVisibility Plumbing Leak Marker"
+    r = client.post(f"/api/v1/wikis/agent1/{slug}/pages", json={
+        "path": ".wikihub/events.jsonl",
+        "content": plumbing_marker,
+    }, headers=h)
+    assert r.status_code == 400, f"generic plumbing create must be rejected, got {r.status_code}"
+    r = client.put(f"/api/v1/wikis/agent1/{slug}/pages/.wikihub/serve-inline", json={
+        "content": "log.md\n",
+    }, headers=h)
+    assert r.status_code == 400, f"generic plumbing replace must be rejected, got {r.status_code}"
+    r = client.patch(f"/api/v1/wikis/agent1/{slug}/pages/.wikihub/serve-inline", json={
+        "content": "topics.md\n",
+    }, headers=h)
+    assert r.status_code == 400, f"generic plumbing patch must be rejected, got {r.status_code}"
+    r = client.patch(f"/api/v1/wikis/agent1/{slug}/pages/log.md", json={
+        "new_path": ".wikihub/serve-inline",
+    }, headers=h)
+    assert r.status_code == 400, f"renaming a page into plumbing must be rejected, got {r.status_code}"
+    r = client.post(f"/api/v1/wikis/agent1/{slug}/pages/.wikihub/serve-inline/visibility", json={
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 400, f"generic plumbing visibility update must be rejected, got {r.status_code}"
+    r = client.delete(f"/api/v1/wikis/agent1/{slug}/pages/.wikihub/serve-inline", headers=h)
+    assert r.status_code == 400, f"generic plumbing delete must be rejected, got {r.status_code}"
+    assert Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/events.jsonl").first() is None
+    assert Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/serve-inline").first() is None
+    r = client.get(f"/api/v1/wikis/agent1/{slug}/pages", headers=h)
+    assert r.status_code == 200
+    assert all(not page["path"].startswith(".wikihub/") for page in r.get_json()["pages"])
+    r = anon.get(f"/api/v1/search?q={plumbing_marker}")
+    assert r.status_code == 200
+    assert r.get_json()["results"] == [], "rejected plumbing writes must not become searchable"
+
     r = anon.get(f"/@agent1/{slug}/log")
     assert r.status_code == 200, f"anonymous /log direct link should be 200, got {r.status_code}"
     assert log_title.encode() in r.data
@@ -1588,6 +1621,41 @@ def test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(a
     assert Page.query.filter_by(wiki_id=delete_wiki.id, path="log.md").first().visibility == "private"
     r = anon.get(f"/@agent1/{delete_slug}/log")
     assert r.status_code in (401, 403), f"deleting ACL should restore private default, got {r.status_code}"
+
+    revert_slug = "groupbrain-acl-revert"
+    r = client.post("/api/v1/wikis", json={"slug": revert_slug, "title": "GroupBrain ACL Revert"}, headers=h)
+    assert r.status_code == 201
+    revert_wiki = Wiki.query.join(User, Wiki.owner_id == User.id).filter(User.username == "agent1", Wiki.slug == revert_slug).first()
+    assert revert_wiki is not None
+
+    from app.git_backend import _repo_path
+    import subprocess
+    repo_path = _repo_path("agent1", revert_slug)
+    private_acl_sha = subprocess.check_output([
+        "git", "-C", repo_path, "log", "--format=%H", "--", ".wikihub/acl"
+    ], text=True).splitlines()[-1]
+
+    r = client.put(f"/api/v1/wikis/agent1/{revert_slug}/pages/.wikihub/acl", json={
+        "content": "* unlisted-view\n",
+    }, headers=h)
+    assert r.status_code == 200
+    db.session.expire_all()
+    assert Page.query.filter_by(wiki_id=revert_wiki.id, path="log.md").first().visibility == "unlisted"
+    r = anon.get(f"/@agent1/{revert_slug}/log")
+    assert r.status_code == 200
+
+    r = client.post(f"/api/v1/wikis/agent1/{revert_slug}/revert", json={
+        "sha": private_acl_sha,
+        "path": ".wikihub/acl",
+    }, headers=h)
+    assert r.status_code == 200, f"ACL revert failed: {r.status_code} {r.data[:200]}"
+    assert r.get_json()["reindexed"] is True
+    db.session.expire_all()
+    assert Page.query.filter_by(wiki_id=revert_wiki.id, path=".wikihub/acl").first() is None
+    assert Page.query.filter_by(wiki_id=revert_wiki.id, path="log.md").first().visibility == "private"
+    assert read_file_from_repo("agent1", revert_slug, ".wikihub/acl") == "* private\n"
+    r = anon.get(f"/@agent1/{revert_slug}/log")
+    assert r.status_code in (401, 403), f"reverting ACL should refresh inherited private visibility, got {r.status_code}"
 
 
 def test_email_verification_flow(client):
