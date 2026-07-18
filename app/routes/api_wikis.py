@@ -1779,6 +1779,8 @@ def wiki_history(owner, slug):
     limit = min(int(request.args.get("limit", 20)), 100)
     offset = max(int(request.args.get("offset", 0)), 0)
     path = request.args.get("path")
+    if _is_wikihub_plumbing_path(path):
+        return {"error": "not_found", "message": "Path not found"}, 404
 
     cmd = [
         "git",
@@ -1792,6 +1794,8 @@ def wiki_history(owner, slug):
     ]
     if path:
         cmd += ["--", path]
+    else:
+        cmd += ["--", ".", ":(exclude).wikihub", ":(exclude).wikihub/**"]
     result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         return {"error": "git_error", "message": result.stderr.strip() or "Unable to read history"}, 500
@@ -1818,10 +1822,12 @@ def wiki_history(owner, slug):
                 "files_changed": [],
             }
         elif current is not None:
-            current["files_changed"].append(line)
+            if not _is_wikihub_plumbing_path(line):
+                current["files_changed"].append(line)
     if current:
         commits.append(current)
 
+    commits = [commit for commit in commits if commit["files_changed"]]
     return jsonify({"commits": commits, "total": len(commits)})
 
 

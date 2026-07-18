@@ -1658,6 +1658,8 @@ def test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(a
     assert r.status_code == 200
     assert r.get_json()["results"] == [], "admin plumbing sync must not become searchable"
 
+    sync_page_to_repo("agent1", slug, ".wikihub/serve-inline.md", "# Serve Inline\n\nhistory plumbing secret")
+
     from app.wiki_ops import refresh_wikilinks_for_page, update_page_metadata
     stale_marker = "GBVisibility Stale Plumbing Marker"
     stale_page = Page(
@@ -1732,6 +1734,32 @@ def test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(a
     r = anon.get(f"/api/v1/search?q={stale_marker}")
     assert r.status_code == 200
     assert r.get_json()["results"] == [], "stale plumbing row must not become searchable"
+
+    from app.git_backend import _repo_path
+    import subprocess
+    repo_path = _repo_path("agent1", slug)
+    acl_sha = subprocess.check_output([
+        "git", "-C", repo_path, "log", "-1", "--format=%H", "--", ".wikihub/acl"
+    ], text=True).strip()
+
+    grantee_browser = app.test_client()
+    r = grantee_browser.get(f"/auth/login?api_key={share_user['api_key']}&next=/", follow_redirects=False)
+    assert r.status_code == 302
+    r = grantee_browser.get(f"/@agent1/{slug}/history")
+    assert r.status_code == 200, f"grantee history failed: {r.status_code}"
+    history_body = r.data.decode("utf-8", errors="replace")
+    assert ".wikihub/acl" not in history_body
+    assert ".wikihub/serve-inline" not in history_body
+    assert "history plumbing secret" not in history_body
+    r = grantee_browser.get(f"/@agent1/{slug}/commit/{acl_sha}")
+    assert r.status_code == 404, f"plumbing-only commit should be hidden from grantee, got {r.status_code}"
+    assert ".wikihub/acl" not in r.data.decode("utf-8", errors="replace")
+
+    r = client.get(f"/api/v1/wikis/agent1/{slug}/history", headers=h)
+    assert r.status_code == 200
+    assert ".wikihub/" not in json.dumps(r.get_json())
+    r = client.get(f"/api/v1/wikis/agent1/{slug}/history?path=.wikihub/acl", headers=h)
+    assert r.status_code == 404, f"plumbing-scoped JSON history should 404, got {r.status_code}"
 
     r = anon.get(f"/@agent1/{slug}/log")
     assert r.status_code == 200, f"anonymous /log direct link should be 200, got {r.status_code}"

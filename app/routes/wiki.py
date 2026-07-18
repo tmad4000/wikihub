@@ -821,6 +821,9 @@ def _folder_index_content(username, slug, folder_path, public=False):
 def _git_history(username, slug, public=False, path=None, limit=50):
     from app.git_backend import _repo_path
 
+    if _is_wikihub_plumbing_path(path):
+        return []
+
     repo = _repo_path(username, slug, public=public)
     if not os.path.isdir(repo):
         return []
@@ -834,6 +837,8 @@ def _git_history(username, slug, public=False, path=None, limit=50):
     ]
     if path:
         cmd += ["--", path]
+    else:
+        cmd += ["--", ".", ":(exclude).wikihub", ":(exclude).wikihub/**"]
 
     result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if result.returncode != 0:
@@ -862,16 +867,20 @@ def _git_history(username, slug, public=False, path=None, limit=50):
             }
         elif current:
             # this is a filename belonging to the current commit
-            current["files_changed"].append(line)
+            if not _is_wikihub_plumbing_path(line):
+                current["files_changed"].append(line)
     if current:
         commits.append(current)
 
-    return commits
+    return [commit for commit in commits if commit["files_changed"]]
 
 
 def _git_diff(username, slug, sha, public=False, path=None):
     """get the diff for a specific commit."""
     from app.git_backend import _repo_path
+
+    if _is_wikihub_plumbing_path(path):
+        return None
 
     repo = _repo_path(username, slug, public=public)
     if not os.path.isdir(repo):
@@ -895,15 +904,23 @@ def _git_diff(username, slug, sha, public=False, path=None):
         cmd = ["git", "-C", repo, "diff", f"{sha}~1", sha, "--no-color"]
         if path:
             cmd += ["--", path]
+        else:
+            cmd += ["--", ".", ":(exclude).wikihub", ":(exclude).wikihub/**"]
         result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        return result.stdout if result.returncode == 0 else None
+        if result.returncode != 0:
+            return None
+        return result.stdout or None
 
     # first commit / no parent — use diff-tree --root which works in bare repos
     cmd = ["git", "-C", repo, "diff-tree", "-p", "--no-color", "--root", sha]
     if path:
         cmd += ["--", path]
+    else:
+        cmd += ["--", ".", ":(exclude).wikihub", ":(exclude).wikihub/**"]
     result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    return result.stdout if result.returncode == 0 else None
+    if result.returncode != 0:
+        return None
+    return result.stdout or None
 
 
 @wiki_bp.route("/@<username>", strict_slashes=False)
@@ -1554,6 +1571,8 @@ def page_history(username, slug, folder_path):
     folder_path = page_path_from_url_path(folder_path)
     owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
     path = raw_folder_path if raw_folder_path.endswith(".md") else f"{raw_folder_path}.md"
+    if _is_wikihub_plumbing_path(path):
+        abort(404)
     acl_rules = load_acl_rules(owner.username, wiki.slug)
     # If there's a Page row at this exact path, gate on it. If not (folder
     # history, deleted page), fall back to the wiki-level "any visible page"
