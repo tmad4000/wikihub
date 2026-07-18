@@ -19,8 +19,11 @@ from sqlalchemy import text
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 os.environ["SECRET_KEY"] = "test-secret"
-os.environ["DATABASE_URL"] = "postgresql://localhost/wikihub_test"
-os.environ["REPOS_DIR"] = "/tmp/wikihub-test-repos"
+# DATABASE_URL / REPOS_DIR default to the shared test fixtures but may be
+# overridden via env so parallel test lanes can run on isolated DB + repos dirs
+# without colliding (duplicate accounts, git index races, cross-run truncation).
+os.environ.setdefault("DATABASE_URL", "postgresql://localhost/wikihub_test")
+os.environ.setdefault("REPOS_DIR", "/tmp/wikihub-test-repos")
 os.environ["ADMIN_TOKEN"] = "test-admin-token"
 os.environ["SESSION_COOKIE_SECURE"] = "0"
 
@@ -30,7 +33,7 @@ from app.models import User, utcnow
 
 
 def setup():
-    shutil.rmtree("/tmp/wikihub-test-repos", ignore_errors=True)
+    shutil.rmtree(os.environ["REPOS_DIR"], ignore_errors=True)
     app = create_app()
     app.config["TESTING"] = True
     app.config["WTF_CSRF_ENABLED"] = False
@@ -41,7 +44,7 @@ def setup():
 
 
 def teardown():
-    shutil.rmtree("/tmp/wikihub-test-repos", ignore_errors=True)
+    shutil.rmtree(os.environ["REPOS_DIR"], ignore_errors=True)
 
 
 def reset_database():
@@ -6345,6 +6348,144 @@ def test_reader_has_live_update_indicator(client, api_key):
     assert "?meta=1" in body, "reader missing meta liveness poll"
 
 
+def test_pinned_pages_sort_to_top(app, client, api_key):
+    """wikihub-o9fh: a page with frontmatter `pinned: true` floats to the top of
+    the wiki sidebar, above alphabetically-earlier non-pinned pages, and carries a
+    `pinned` flag in the sidebar tree/JSON.
+    """
+    import app.routes.wiki as wiki_routes
+
+    h = {"Authorization": f"Bearer {api_key}"}
+    r = client.post("/api/v1/wikis", json={"slug": "pins", "title": "Pins"}, headers=h)
+    assert r.status_code == 201
+    # alphabetically-first page, NOT pinned
+    r = client.post("/api/v1/wikis/agent1/pins/pages", json={
+        "path": "aaa.md",
+        "content": "---\ntitle: Aaa\nvisibility: public\n---\n\n# Aaa",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201
+    # alphabetically-last page, PINNED — must still sort first
+    r = client.post("/api/v1/wikis/agent1/pins/pages", json={
+        "path": "zzz.md",
+        "content": "---\ntitle: Zzz\npinned: true\nvisibility: public\n---\n\n# Zzz",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201
+
+    # exercise the sidebar tree (same builder feeds reader.html + sidebar.json)
+    r = client.get("/@agent1/pins/sidebar.json")
+    assert r.status_code == 200, f"sidebar.json: {r.status_code} {r.data[:200]}"
+    tree = r.get_json()
+    paths = [item.get("path") for item in tree]
+    assert paths[0] == "zzz.md", f"pinned page must sort first, got order {paths}"
+    assert tree[0].get("pinned") is True, "pinned page must carry pinned=True"
+    assert "aaa.md" in paths, "non-pinned page still listed"
+    zzz_idx = paths.index("zzz.md")
+    aaa_idx = paths.index("aaa.md")
+    assert zzz_idx < aaa_idx, "pinned page must precede non-pinned"
+
+    # reader HTML marks the pinned page for the top-section divider styling
+    r = client.get("/@agent1/pins/zzz")
+    assert r.status_code == 200
+    body = r.data.decode("utf-8", errors="replace")
+    assert "sidebar-pinned" in body, "reader sidebar should mark pinned pages"
+
+
+def test_pinned_unreadable_hidden(app, client, api_key):
+    """wikihub-o9fh: a pinned page the viewer can't read simply doesn't appear —
+    pinning never overrides read permissions.
+    """
+    h = {"Authorization": f"Bearer {api_key}"}
+    r = client.post("/api/v1/wikis", json={"slug": "pinsec", "title": "PinSec"}, headers=h)
+    assert r.status_code == 201
+    r = client.post("/api/v1/wikis/agent1/pinsec/pages", json={
+        "path": "public.md",
+        "content": "---\ntitle: Public\nvisibility: public\n---\n\n# Public",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201
+    # pinned BUT private — an anonymous viewer must not see it
+    r = client.post("/api/v1/wikis/agent1/pinsec/pages", json={
+        "path": "secret.md",
+        "content": "---\ntitle: Secret\npinned: true\nvisibility: private\n---\n\n# Secret",
+        "visibility": "private",
+    }, headers=h)
+    assert r.status_code == 201
+
+    anon = app.test_client()
+    r = anon.get("/@agent1/pinsec/sidebar.json")
+    assert r.status_code == 200
+    paths = [item.get("path") for item in r.get_json()]
+    assert "public.md" in paths, "public page visible to anon"
+    assert "secret.md" not in paths, "pinned-but-private page must be hidden from anon"
+
+
+def test_empty_sidebar_copy(app, client, api_key):
+    """wikihub-l3z2: a wiki with no visible pages shows explicit copy, not blankness."""
+    # fresh owner with a password so we can drive a logged-in browser session
+    r = client.post("/api/v1/accounts", json={"username": "hollowowner", "password": "testpass12345"})
+    assert r.status_code == 201
+    oh = {"Authorization": f"Bearer {r.get_json()['api_key']}"}
+    r = client.post("/api/v1/wikis", json={"slug": "hollow", "title": "Hollow"}, headers=oh)
+    assert r.status_code == 201
+
+    browser = app.test_client()
+    login = browser.post("/auth/login", data={"username": "hollowowner", "password": "testpass12345"}, follow_redirects=False)
+    assert login.status_code == 302
+    # owner views the brand-new empty wiki (folder.html render, empty sidebar)
+    r = browser.get("/@hollowowner/hollow")
+    assert r.status_code == 200, f"owner empty-wiki view: {r.status_code}"
+    body = r.data.decode("utf-8", errors="replace")
+    assert "No listed pages visible to you." in body, "empty sidebar must show explicit copy"
+
+
+def test_empty_profile_copy_no_leak(app, client, api_key):
+    """wikihub-l3z2: an anonymous view of a profile with no visible content shows
+    unconditional copy, and that copy is IDENTICAL whether or not the account has
+    unlisted content (no information leak). Zero-case wiki count reads 'No public wikis'.
+    """
+    # fresh account: personal wiki auto-created, no pages
+    r = client.post("/api/v1/accounts", json={"username": "hushacct", "password": "testpass12345"})
+    assert r.status_code == 201
+    owner_key = r.get_json()["api_key"]
+
+    anon = app.test_client()
+    before = anon.get("/@hushacct")
+    assert before.status_code == 200
+    before_body = before.data.decode("utf-8", errors="replace")
+    assert "No public pages here" in before_body, "empty profile must show explicit copy"
+    assert "No public wikis" in before_body, "zero-case count reads 'No public wikis'"
+
+    # add UNLISTED content — must NOT change the anonymous profile surface
+    oh = {"Authorization": f"Bearer {owner_key}"}
+    r = client.post("/api/v1/wikis/hushacct/hushacct/pages", json={
+        "path": "hidden.md",
+        "content": "---\ntitle: Hidden\nvisibility: unlisted\n---\n\n# Hidden secret plans",
+        "visibility": "unlisted",
+    }, headers=oh)
+    assert r.status_code == 201
+
+    after = anon.get("/@hushacct")
+    assert after.status_code == 200
+    after_body = after.data.decode("utf-8", errors="replace")
+    assert "No public pages here" in after_body, "copy unchanged with unlisted content (no leak)"
+    assert "No public wikis" in after_body, "count wording unchanged with unlisted content"
+    assert "Hidden" not in after_body, "unlisted page title must not leak on profile"
+    assert "/hushacct/hidden" not in after_body, "unlisted page path must not leak on profile"
+
+
+def test_nav_header_nowrap(client):
+    """wikihub-gnat: top-bar nav labels must not wrap at phone widths. Assert the
+    responsive guards (nowrap on nav links + narrow breakpoint) are served.
+    """
+    r = client.get("/")
+    assert r.status_code == 200
+    body = r.data.decode("utf-8", errors="replace")
+    assert ".nav-link {" in body and "white-space: nowrap" in body, "nav links must be nowrap"
+    assert "@media (max-width: 480px)" in body, "narrow-width nav breakpoint must exist"
+
+
 def run_all():
     app = setup()
 
@@ -6468,6 +6609,11 @@ def run_all():
             ("side peek scrolls peek self anchors (nsv-7ki)", lambda: test_side_peek_scrolls_peek_self_anchors()),
             ("side peek ignores stale fetch responses (nsv-7nv)", lambda: test_side_peek_ignores_stale_fetch_responses()),
             ("CLI end-to-end", lambda: test_cli(client)),
+            ("pinned pages sort to top (wikihub-o9fh)", lambda: test_pinned_pages_sort_to_top(app, client, key)),
+            ("pinned-but-unreadable hidden (wikihub-o9fh)", lambda: test_pinned_unreadable_hidden(app, client, key)),
+            ("empty sidebar copy (wikihub-l3z2)", lambda: test_empty_sidebar_copy(app, client, key)),
+            ("empty profile copy + no leak (wikihub-l3z2)", lambda: test_empty_profile_copy_no_leak(app, client, key)),
+            ("nav header nowrap at narrow widths (wikihub-gnat)", lambda: test_nav_header_nowrap(client)),
             ("per-user wiki limit + 429 (wikihub-20ct)", lambda: test_wiki_limit_effective_resolution_and_429(client, app)),
             ("set_wiki_limit imports from app root (wikihub-20ct)", lambda: test_set_wiki_limit_script_imports_from_repo_root()),
         ]

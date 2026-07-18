@@ -268,7 +268,11 @@
         <div class="profile-summary">{{ personal_excerpt }}</div>
         {% endif %}
         <div class="profile-stats">
+          {% if visible_wiki_count == 0 %}
+          <span>No public wikis</span>
+          {% else %}
           <span><strong>{{ visible_wiki_count }}</strong> {{ 'wiki' if visible_wiki_count == 1 else 'wikis' }}</span>
+          {% endif %}
           {% if total_stars > 0 %}<span><strong>{{ total_stars }}</strong> {{ 'star' if total_stars == 1 else 'stars' }}</span>{% endif %}
         </div>
       </div>
@@ -294,6 +298,14 @@
     <div class="profile-wiki">
       <div class="profile-empty">
         Your profile page is empty. Add an <code>index.md</code> to your <a href="/@{{ owner.username }}/{{ personal_wiki.slug }}" style="color:var(--accent);">personal wiki</a> to publish it here.
+      </div>
+    </div>
+    {% elif not sidebar_items and not wikis %}
+    {# Non-owner viewing an account with nothing visible. Unconditional copy —
+       identical whether or not unlisted content exists (no information leak). #}
+    <div class="profile-wiki">
+      <div class="profile-empty">
+        No public pages here — this account may have unlisted content reachable by direct link.
       </div>
     </div>
     {% endif %}

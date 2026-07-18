@@ -70,16 +70,24 @@
       border-bottom: 1px solid var(--border-default);
       padding: 0 16px; height: 56px;
       display: flex; align-items: center; gap: 16px;
+      flex-wrap: nowrap;
     }
     .nav-logo {
       font-family: var(--font-mono); font-weight: 500;
       font-size: 1.0625rem; text-decoration: none; line-height: 1;
+      white-space: nowrap; flex-shrink: 0;
     }
     .nav-logo .bracket { color: var(--text-tertiary); }
     .nav-logo .wordmark { color: var(--text-primary); }
-    .nav-spacer { flex: 1; }
-    .nav-link { color: var(--text-tertiary); font-size: 0.875rem; text-decoration: none; }
+    .nav-spacer { flex: 1; min-width: 0; }
+    .nav-link { color: var(--text-tertiary); font-size: 0.875rem; text-decoration: none; white-space: nowrap; flex-shrink: 0; }
     .nav-link:hover { color: var(--text-primary); text-decoration: none; }
+    /* wikihub-gnat: keep the top bar on one aligned row at phone widths. */
+    @media (max-width: 480px) {
+      .nav { gap: 10px; padding: 0 12px; }
+      .nav-link { font-size: 0.8125rem; }
+      .nav-hide-narrow { display: none; }
+    }
     .nav-agents { color: var(--accent); font-weight: 500; font-family: var(--font-mono); font-size: 0.8125rem; }
     .nav-agents:hover { color: var(--accent-hover); }
     /* wikihub-pz27: hide secondary nav <= 1024px (covers iPad portrait); use hamburger fallback */
