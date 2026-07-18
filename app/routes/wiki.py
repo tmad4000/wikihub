@@ -1471,6 +1471,46 @@ def wiki_activity(username, slug):
     )
 
 
+@wiki_bp.route("/@<username>/<slug>/activity.rss")
+def wiki_activity_rss(username, slug):
+    """Per-wiki RSS feed.
+
+    Visibility mirrors the pages themselves: an anonymous request sees any page
+    it could reach by direct link (public AND unlisted), but never private
+    pages. Owners/grantees additionally see private pages (via can_read). We
+    reuse _viewer_can_read_page so ACL and frontmatter rules stay canonical.
+    """
+    from app.feeds import activity_entry, render_rss
+
+    owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
+    acl_rules = load_acl_rules(owner.username, wiki.slug)
+    # Candidate pool bounded so a huge private wiki can't force a full scan;
+    # 300 newest is far more than the 50 we emit even after ACL filtering.
+    candidates = (
+        Page.query.filter_by(wiki_id=wiki.id)
+        .order_by(Page.updated_at.desc(), Page.id.desc())
+        .limit(300)
+        .all()
+    )
+    visible = [
+        p for p in candidates
+        if _viewer_can_read_page(wiki, p, acl_rules=acl_rules, owner=owner)
+    ][:50]
+    entries = [
+        activity_entry(p, wiki, owner.username, request.host_url) for p in visible
+    ]
+    site = request.host_url.rstrip("/")
+    wiki_url = f"{site}/@{owner.username}/{wiki.slug}"
+    xml = render_rss(
+        feed_title=f"{wiki.title or wiki.slug} — activity",
+        feed_link=wiki_url,
+        self_url=f"{wiki_url}/activity.rss",
+        description=f"Recent page activity in {wiki.title or wiki.slug}.",
+        entries=entries,
+    )
+    return Response(xml, mimetype="application/rss+xml")
+
+
 @wiki_bp.route("/@<username>/<slug>/<path:folder_path>/history")
 def page_history(username, slug, folder_path):
     """Page/folder history. wikihub-8888.1: ACL-gate against the specific page when one exists."""

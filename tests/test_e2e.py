@@ -6622,6 +6622,9 @@ def run_all():
             ("nav header nowrap at narrow widths (wikihub-gnat)", lambda: test_nav_header_nowrap(client)),
             ("per-user wiki limit + 429 (wikihub-20ct)", lambda: test_wiki_limit_effective_resolution_and_429(client, app)),
             ("set_wiki_limit imports from app root (wikihub-20ct)", lambda: test_set_wiki_limit_script_imports_from_repo_root()),
+            ("global activity excludes non-public content", lambda: test_global_activity_excludes_non_public(client, key)),
+            ("activity RSS well-formed + correct links (both hosts)", lambda: test_activity_rss_is_well_formed_with_correct_links(client, key)),
+            ("global activity pagination", lambda: test_activity_pagination(client, key)),
         ]
 
         passed = 1  # account creation already passed
@@ -6647,6 +6650,133 @@ def run_all():
 
     teardown()
     return 1 if failed else 0
+
+
+def _seed_activity_fixtures(client, key):
+    """Create a public wiki + an unlisted wiki that also holds a private page.
+
+    Returns the header dict. Used by the activity-feed tests below.
+    """
+    h = {"Authorization": f"Bearer {key}"}
+    # public wiki with a public page
+    client.post("/api/v1/wikis", json={"slug": "pubwiki", "title": "Public Wiki"}, headers=h)
+    client.post("/api/v1/wikis/agent1/pubwiki/pages", json={
+        "path": "wiki/public-note.md",
+        "content": "---\ntitle: Public Note\nvisibility: public\n---\n\n# Public Note\n",
+        "visibility": "public",
+    }, headers=h)
+    # unlisted wiki: one unlisted page (reachable by link) + one private page (secret)
+    client.post("/api/v1/wikis", json={"slug": "secretwiki", "title": "Secret Wiki"}, headers=h)
+    client.post("/api/v1/wikis/agent1/secretwiki/pages", json={
+        "path": "wiki/unlisted-note.md",
+        "content": "---\ntitle: Unlisted Note\nvisibility: unlisted\n---\n\n# Unlisted Note\n",
+        "visibility": "unlisted",
+    }, headers=h)
+    client.post("/api/v1/wikis/agent1/secretwiki/pages", json={
+        "path": "wiki/private-note.md",
+        "content": "---\ntitle: Private Note\nvisibility: private\n---\n\n# Private Note\n",
+        "visibility": "private",
+    }, headers=h)
+    return h
+
+
+def test_global_activity_excludes_non_public(client, key):
+    """Global /activity page + /activity.rss show public pages only; unlisted and
+    private never leak into the site-wide surface."""
+    _seed_activity_fixtures(client, key)
+
+    # HTML page (anonymous request)
+    r = client.get("/activity")
+    assert r.status_code == 200, f"/activity should render, got {r.status_code}"
+    body = r.get_data(as_text=True)
+    assert "Public Note" in body, "public page must appear in global activity"
+    assert "Unlisted Note" not in body, "unlisted page must NOT appear in global activity"
+    assert "Private Note" not in body, "private page must NOT appear in global activity"
+
+    # RSS feed (anonymous request)
+    r = client.get("/activity.rss")
+    assert r.status_code == 200
+    assert r.mimetype == "application/rss+xml", f"unexpected mimetype {r.mimetype}"
+    rss = r.get_data(as_text=True)
+    assert "Public Note" in rss
+    assert "Unlisted Note" not in rss
+    assert "Private Note" not in rss
+
+
+def test_activity_rss_is_well_formed_with_correct_links(client, key):
+    """Both the global and per-wiki RSS feeds parse as XML and carry absolute
+    links matching the request host (tested for two host forms)."""
+    from xml.etree import ElementTree
+
+    _seed_activity_fixtures(client, key)
+    # flask_login caches current_user on `g`, which persists across requests
+    # inside this harness's wrapping app_context(). Clear it AND use a fresh
+    # cookieless client so "anonymous" surfaces are checked as a true anon
+    # request (else the owner would see their own private pages). Same idiom as
+    # test_me_capabilities.
+    from flask import g as _flask_g
+    _flask_g.pop("_login_user", None)
+    anon = client.application.test_client()
+
+    # two host forms to prove absolute links track the request host. Avoid the
+    # production apex (wikihub.md), which triggers canonical-redirect middleware
+    # on /@owner/slug paths — irrelevant to feed-link correctness.
+    for host in ("localhost", "example.test"):
+        # global feed
+        r = anon.get("/activity.rss", headers={"Host": host})
+        assert r.status_code == 200
+        root = ElementTree.fromstring(r.get_data())  # raises on malformed XML
+        assert root.tag == "rss"
+        channel = root.find("channel")
+        assert channel is not None
+        items = channel.findall("item")
+        assert items, "global RSS should have at least one item"
+        # global feed carries only public pages; the private note never leaks
+        all_links = " ".join(it.find("link").text for it in items)
+        assert "/@agent1/pubwiki/" in all_links, f"public page missing from global RSS: {all_links[:200]}"
+        assert "secretwiki" not in all_links, "unlisted/private wiki must not leak into global RSS"
+        self_link = channel.find("{http://www.w3.org/2005/Atom}link")
+        assert self_link is not None and host in self_link.get("href")
+
+        # per-wiki feed for the unlisted wiki (anonymous request)
+        r = anon.get("/@agent1/secretwiki/activity.rss", headers={"Host": host})
+        assert r.status_code == 200
+        assert r.mimetype == "application/rss+xml"
+        root = ElementTree.fromstring(r.get_data())
+        titles = [it.find("title").text for it in root.find("channel").findall("item")]
+        joined = " ".join(titles)
+        # unlisted pages are reachable-by-link, so they belong in the wiki feed…
+        assert "Unlisted Note" in joined, "unlisted page should appear in per-wiki RSS"
+        # …but private pages must never appear for an anonymous request
+        assert "Private Note" not in joined, f"private page must NOT appear in anon per-wiki RSS; got titles={titles!r}"
+        for it in root.find("channel").findall("item"):
+            assert it.find("link").text.startswith(f"http://{host}/@agent1/secretwiki/")
+
+
+def test_activity_pagination(client, key):
+    """Global activity paginates; page 2 shows different entries than page 1."""
+    h = {"Authorization": f"Bearer {key}"}
+    client.post("/api/v1/wikis", json={"slug": "pagewiki", "title": "Page Wiki"}, headers=h)
+    # create > one page of activity (per_page=40)
+    for i in range(45):
+        client.post("/api/v1/wikis/agent1/pagewiki/pages", json={
+            "path": f"wiki/note-{i:03d}.md",
+            "content": f"---\ntitle: Note {i:03d}\nvisibility: public\n---\n\n# Note {i:03d}\n",
+            "visibility": "public",
+        }, headers=h)
+
+    r1 = client.get("/activity?page=1")
+    assert r1.status_code == 200
+    b1 = r1.get_data(as_text=True)
+    assert "Page 1 of" in b1
+    assert "Older" in b1  # has_next → link present
+
+    r2 = client.get("/activity?page=2")
+    assert r2.status_code == 200
+    b2 = r2.get_data(as_text=True)
+    assert "Page 2 of" in b2
+    # the two pages should not be identical (different slice of entries)
+    assert b1 != b2, "page 2 should differ from page 1"
 
 
 if __name__ == "__main__":
