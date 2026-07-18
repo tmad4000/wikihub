@@ -6,6 +6,7 @@ not individual functions. run with: python3 tests/test_e2e.py
 """
 
 import io
+import inspect
 import json
 import os
 import shutil
@@ -594,6 +595,28 @@ def test_anonymous_search_uses_bounded_content_batches():
     assert "batch_size = 100" in src
     assert "content_page_path_filter(Page.path)" in src
     assert "_bounded_anonymous_content_results" in src
+
+
+def test_llms_txt_uses_bounded_content_batches():
+    agent_surfaces_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app", "routes", "agent_surfaces.py")
+    with open(agent_surfaces_path) as f:
+        src = f.read()
+    llms_src = src.split("def llms_txt():", 1)[1].split("@main_bp.route(\"/llms-full.txt\")", 1)[0]
+    assert ".limit(batch_size)" in llms_src
+    assert "content_page_path_filter(Page.path)" in llms_src
+    assert "is_content_page_path(p.path)" in llms_src
+    assert ".all()" in llms_src
+    assert ".join(Wiki).join(User, Wiki.owner_id == User.id).all()" not in llms_src
+
+
+def test_discoverable_page_for_wiki_uses_targeted_homepage_lookups():
+    from app.discovery import discoverable_page_for_wiki
+
+    src = inspect.getsource(discoverable_page_for_wiki)
+    assert "for path in (\"index.md\", \"README.md\")" in src
+    assert "filter_by(wiki_id=wiki_id, path=path)" in src
+    assert "is_content_page_path(page.path)" in src
+    assert ".all()" not in src
 
 
 def test_reader_owner_visibility_control(client, api_key):
@@ -7447,6 +7470,8 @@ def run_all():
             ("set_wiki_limit imports from app root (wikihub-20ct)", lambda: test_set_wiki_limit_script_imports_from_repo_root()),
             ("global activity excludes non-public content", lambda: test_global_activity_excludes_non_public(client, key)),
             ("discoverable wiki ids use DB distinct + risky fallback", lambda: test_discoverable_wiki_ids_uses_db_distinct_with_risky_path_fallback(client, key)),
+            ("llms.txt uses bounded content batches", lambda: test_llms_txt_uses_bounded_content_batches()),
+            ("discoverable page uses targeted lookups", lambda: test_discoverable_page_for_wiki_uses_targeted_homepage_lookups()),
             ("global activity paginates after normalized plumbing filter", lambda: test_global_activity_paginates_after_normalized_plumbing_filter(client, key)),
             ("activity RSS well-formed + correct links (both hosts)", lambda: test_activity_rss_is_well_formed_with_correct_links(client, key)),
             ("private-only wiki RSS does not leak metadata", lambda: test_wiki_activity_rss_private_only_wiki_does_not_leak_metadata(client, key)),

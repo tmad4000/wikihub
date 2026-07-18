@@ -14,7 +14,7 @@ all the cheap discovery endpoints that make wikihub agent-native:
 from flask import Response, current_app, jsonify, render_template, request
 
 from app.models import Wiki, Page, User
-from app.page_utils import is_content_page_path
+from app.page_utils import content_page_path_filter, is_content_page_path
 from app.routes import main_bp
 from app.url_utils import url_path_from_page_path
 
@@ -68,20 +68,32 @@ def llms_txt():
         "## Optional",
     ]
 
-    # list public wikis
-    public_pages = Page.query.filter(
-        Page.visibility.in_(["public", "public-edit"])
-    ).join(Wiki).join(User, Wiki.owner_id == User.id).all()
-    public_pages = [page for page in public_pages if is_content_page_path(page.path)]
-
     seen_wikis = set()
-    for p in public_pages:
-        wiki_key = f"{p.wiki.owner.username}/{p.wiki.slug}"
-        if wiki_key not in seen_wikis:
-            lines.append(f"- [/@{wiki_key}](/@{wiki_key}): {p.wiki.title or p.wiki.slug}")
-            seen_wikis.add(wiki_key)
-            if len(seen_wikis) >= 50:
-                break
+    offset = 0
+    batch_size = 100
+    while len(seen_wikis) < 50:
+        public_pages = (
+            Page.query.filter(Page.visibility.in_(["public", "public-edit"]))
+            .filter(content_page_path_filter(Page.path))
+            .join(Wiki)
+            .join(User, Wiki.owner_id == User.id)
+            .order_by(User.username.asc(), Wiki.slug.asc(), Page.path.asc())
+            .offset(offset)
+            .limit(batch_size)
+            .all()
+        )
+        if not public_pages:
+            break
+        for p in public_pages:
+            if not is_content_page_path(p.path):
+                continue
+            wiki_key = f"{p.wiki.owner.username}/{p.wiki.slug}"
+            if wiki_key not in seen_wikis:
+                lines.append(f"- [/@{wiki_key}](/@{wiki_key}): {p.wiki.title or p.wiki.slug}")
+                seen_wikis.add(wiki_key)
+                if len(seen_wikis) >= 50:
+                    break
+        offset += batch_size
 
     return Response("\n".join(lines), content_type="text/plain; charset=utf-8")
 

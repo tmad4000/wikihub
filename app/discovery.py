@@ -40,13 +40,11 @@ def visible_wikis_for_owner(owner, viewer=None):
 
 
 def discoverable_page_for_wiki(wiki_id, viewer_is_owner=False):
-    query = Page.query.filter_by(wiki_id=wiki_id)
-    if not viewer_is_owner:
-        query = query.filter(Page.visibility.in_(DISCOVERABLE_VISIBILITIES))
-    pages = [page for page in query.all() if is_content_page_path(page.path)]
-
-    page = next((page for page in pages if page.path == "index.md"), None)
-    if page:
-        return page
-    page = next((page for page in pages if page.path == "README.md"), None)
-    return page
+    for path in ("index.md", "README.md"):
+        query = Page.query.filter_by(wiki_id=wiki_id, path=path)
+        if not viewer_is_owner:
+            query = query.filter(Page.visibility.in_(DISCOVERABLE_VISIBILITIES))
+        page = query.first()
+        if page and is_content_page_path(page.path):
+            return page
+    return None
