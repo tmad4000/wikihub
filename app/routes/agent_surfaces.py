@@ -14,6 +14,7 @@ all the cheap discovery endpoints that make wikihub agent-native:
 from flask import Response, current_app, jsonify, render_template, request
 
 from app.models import Wiki, Page, User
+from app.page_utils import is_content_page_path
 from app.routes import main_bp
 from app.url_utils import url_path_from_page_path
 
@@ -70,9 +71,8 @@ def llms_txt():
     # list public wikis
     public_pages = Page.query.filter(
         Page.visibility.in_(["public", "public-edit"])
-    ).filter(
-        ~Page.path.startswith(".wikihub/"), Page.path != ".wikihub"
-    ).join(Wiki).join(User, Wiki.owner_id == User.id).limit(50).all()
+    ).join(Wiki).join(User, Wiki.owner_id == User.id).all()
+    public_pages = [page for page in public_pages if is_content_page_path(page.path)]
 
     seen_wikis = set()
     for p in public_pages:
@@ -80,6 +80,8 @@ def llms_txt():
         if wiki_key not in seen_wikis:
             lines.append(f"- [/@{wiki_key}](/@{wiki_key}): {p.wiki.title or p.wiki.slug}")
             seen_wikis.add(wiki_key)
+            if len(seen_wikis) >= 50:
+                break
 
     return Response("\n".join(lines), content_type="text/plain; charset=utf-8")
 
@@ -95,11 +97,10 @@ def llms_full_txt():
 
     pages = Page.query.filter(
         Page.visibility.in_(["public", "public-edit"])
-    ).filter(
-        ~Page.path.startswith(".wikihub/"), Page.path != ".wikihub"
     ).join(Wiki).join(User, Wiki.owner_id == User.id).order_by(
         User.username, Wiki.slug, Page.path
     ).all()
+    pages = [page for page in pages if is_content_page_path(page.path)]
 
     current_wiki = None
     for p in pages:
@@ -662,11 +663,11 @@ def wiki_llms_txt(username, slug):
     wiki = Wiki.query.filter_by(owner_id=owner.id, slug=slug).first_or_404()
     pages = (
         Page.query.filter_by(wiki_id=wiki.id)
-        .filter(~Page.path.startswith(".wikihub/"), Page.path != ".wikihub")
         .filter(Page.visibility.in_(["public", "public-edit"]))
         .order_by(Page.path.asc())
         .all()
     )
+    pages = [page for page in pages if is_content_page_path(page.path)]
     lines = [
         f"# @{owner.username}/{wiki.slug}",
         f"> {wiki.title or wiki.slug}",
@@ -685,11 +686,11 @@ def wiki_llms_full_txt(username, slug):
     wiki = Wiki.query.filter_by(owner_id=owner.id, slug=slug).first_or_404()
     pages = (
         Page.query.filter_by(wiki_id=wiki.id)
-        .filter(~Page.path.startswith(".wikihub/"), Page.path != ".wikihub")
         .filter(Page.visibility.in_(["public", "public-edit"]))
         .order_by(Page.path.asc())
         .all()
     )
+    pages = [page for page in pages if is_content_page_path(page.path)]
     lines = [f"# @{owner.username}/{wiki.slug} — full index", ""]
     for page in pages:
         lines.append(f"## {page.title or page.path}")

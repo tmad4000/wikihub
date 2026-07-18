@@ -29,7 +29,8 @@ from app.git_sync import (
 from app.acl import can_read, can_write, list_all_grants, normalize_page_visibility, remove_grant, resolve_grants, resolve_visibility
 from app.email_service import send_share_invite_existing_user, send_share_invite_pending
 from app.credentials_hint import resolve_server_url
-from app.page_utils import is_wikihub_plumbing_path
+from app.discovery import discoverable_wiki_ids
+from app.page_utils import is_content_page_path, is_wikihub_plumbing_path
 from app.content_utils import (
     page_reference_aliases,
     parse_markdown_document,
@@ -143,11 +144,8 @@ def _reject_wikihub_plumbing_path():
 
 
 def _content_page_count(wiki):
-    return (
-        Page.query.filter_by(wiki_id=wiki.id)
-        .filter(~Page.path.startswith(".wikihub/"), Page.path != ".wikihub")
-        .count()
-    )
+    paths = Page.query.filter_by(wiki_id=wiki.id).with_entities(Page.path).all()
+    return sum(1 for (path,) in paths if is_content_page_path(path))
 
 
 def _current_user_is_owner(wiki):
@@ -212,24 +210,18 @@ def list_wikis():
 
     # a wiki is "public" if it has at least one public or public-edit page.
     # same filter as /explore. an authed user additionally sees their own wikis.
-    public_wiki_ids_subq = (
-        db.session.query(Page.wiki_id)
-        .filter(Page.visibility.in_(["public", "public-edit"]))
-        .filter(~Page.path.startswith(".wikihub/"), Page.path != ".wikihub")
-        .distinct()
-        .subquery()
-    )
+    public_wiki_ids = discoverable_wiki_ids(("public", "public-edit"))
 
     query = Wiki.query.join(User, Wiki.owner_id == User.id)
     if user:
         query = query.filter(
             db.or_(
-                Wiki.id.in_(db.session.query(public_wiki_ids_subq)),
+                Wiki.id.in_(public_wiki_ids),
                 Wiki.owner_id == user.id,
             )
         )
     else:
-        query = query.filter(Wiki.id.in_(db.session.query(public_wiki_ids_subq)))
+        query = query.filter(Wiki.id.in_(public_wiki_ids))
 
     if owner_param:
         query = query.filter(User.username == owner_param)
@@ -1686,7 +1678,6 @@ def search_pages():
     offset = int(request.args.get("offset", 0))
 
     query = Page.query.join(Wiki).join(User, Wiki.owner_id == User.id)
-    query = query.filter(~Page.path.startswith(".wikihub/"), Page.path != ".wikihub")
     public_search_visibilities = ("public", "public-view", "public-edit")
 
     # scope to specific wiki
@@ -1730,6 +1721,8 @@ def search_pages():
         acl_rules_by_wiki = {}
         visible_results = []
         for page in ordered_query.all():
+            if not is_content_page_path(page.path):
+                continue
             if page.wiki.owner_id == user.id or page.visibility in public_search_visibilities:
                 visible_results.append(page)
                 continue
@@ -1745,8 +1738,9 @@ def search_pages():
         total = len(visible_results)
         results = visible_results[offset:offset + limit]
     else:
-        total = query.count()
-        results = ordered_query.offset(offset).limit(limit).all()
+        visible_results = [page for page in ordered_query.all() if is_content_page_path(page.path)]
+        total = len(visible_results)
+        results = visible_results[offset:offset + limit]
 
     return jsonify({
         "results": [{

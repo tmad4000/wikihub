@@ -466,6 +466,7 @@ def render_page(content, wiki_owner=None, wiki_slug=None, current_page_path=None
     current_page_path: the page's path in the repo (e.g. 'wiki/courses/cs224n.md')
     used to resolve relative markdown links like ../raw/foo.md"""
     from app.models import Page, User, Wiki
+    from app.page_utils import is_content_page_path
 
     known_pages = {}
     title_aliases = {}
@@ -474,9 +475,9 @@ def render_page(content, wiki_owner=None, wiki_slug=None, current_page_path=None
             Page.query.join(Wiki, Page.wiki_id == Wiki.id)
             .join(User, Wiki.owner_id == User.id)
             .filter(User.username == wiki_owner, Wiki.slug == wiki_slug)
-            .filter(~Page.path.startswith(".wikihub/"), Page.path != ".wikihub")
             .all()
         )
+        pages = [page for page in pages if is_content_page_path(page.path)]
         known_pages = {page.path: page for page in pages}
         basename_pages = {}
         for page in pages:

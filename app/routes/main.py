@@ -3,9 +3,10 @@ from flask_login import login_required, logout_user, current_user
 
 from app import db
 from app.acl import grants_for_user, list_all_grants, parse_acl
-from app.discovery import discoverable_page_for_wiki, visible_wikis_for_owner
+from app.discovery import discoverable_page_for_wiki, discoverable_wiki_ids, visible_wikis_for_owner
 from app.git_sync import read_file_from_repo
 from app.models import Wiki, Page, ApiKey, User, Star, Fork, MagicLoginToken, UsernameRedirect, utcnow
+from app.page_utils import is_content_page_path
 from app.routes import main_bp
 import os
 import shutil
@@ -15,8 +16,6 @@ from app.wiki_ops import delete_wiki_repos
 @main_bp.route("/")
 def index():
     from app.models import Wiki, Page
-    from app.discovery import discoverable_wiki_ids
-
     # agent content negotiation: if the client asks for markdown, serve AGENTS.md
     # directly instead of the human landing page. wikihub-55jv
     accept = request.headers.get("Accept", "")
@@ -68,12 +67,7 @@ def explore():
             editorial.append(wiki)
     # All wikis with at least one public page, excluding editorial
     editorial_ids = {wiki.id for wiki in editorial}
-    public_wiki_ids = (
-        db.session.query(Page.wiki_id)
-        .filter(Page.visibility.in_(["public", "public-edit"]))
-        .filter(~Page.path.startswith(".wikihub/"), Page.path != ".wikihub")
-        .distinct()
-    )
+    public_wiki_ids = discoverable_wiki_ids(("public", "public-edit"))
     all_wikis = (
         Wiki.query.filter(Wiki.id.in_(public_wiki_ids))
         .order_by(Wiki.updated_at.desc())
@@ -222,9 +216,8 @@ def shared():
         unlisted = Page.query.filter(
             Page.wiki_id == wiki.id,
             Page.visibility.in_(("unlisted", "unlisted-edit")),
-            ~Page.path.startswith(".wikihub/"),
-            Page.path != ".wikihub",
         ).all()
+        unlisted = [page for page in unlisted if is_content_page_path(page.path)]
         if grants or unlisted:
             shared_by_me.append({
                 "wiki": wiki,

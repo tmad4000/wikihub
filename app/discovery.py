@@ -1,5 +1,6 @@
 from app import db
 from app.models import Page, Wiki
+from app.page_utils import is_content_page_path
 
 
 DISCOVERABLE_VISIBILITIES = ("public", "public-view", "public-edit")
@@ -9,14 +10,14 @@ def _is_self_viewer(viewer, owner):
     return bool(viewer and getattr(viewer, "is_authenticated", False) and viewer.id == owner.id)
 
 
-def discoverable_wiki_ids():
+def discoverable_wiki_ids(visibilities=DISCOVERABLE_VISIBILITIES):
     return {
         wiki_id
-        for (wiki_id,) in db.session.query(Page.wiki_id)
-        .filter(Page.visibility.in_(DISCOVERABLE_VISIBILITIES))
-        .filter(~Page.path.startswith(".wikihub/"), Page.path != ".wikihub")
+        for wiki_id, path in db.session.query(Page.wiki_id, Page.path)
+        .filter(Page.visibility.in_(visibilities))
         .distinct()
         .all()
+        if is_content_page_path(path)
     }
 
 
@@ -31,11 +32,12 @@ def visible_wikis_for_owner(owner, viewer=None):
 
 def discoverable_page_for_wiki(wiki_id, viewer_is_owner=False):
     query = Page.query.filter_by(wiki_id=wiki_id)
-    query = query.filter(~Page.path.startswith(".wikihub/"), Page.path != ".wikihub")
     if not viewer_is_owner:
         query = query.filter(Page.visibility.in_(DISCOVERABLE_VISIBILITIES))
+    pages = [page for page in query.all() if is_content_page_path(page.path)]
 
-    page = query.filter_by(path="index.md").first()
+    page = next((page for page in pages if page.path == "index.md"), None)
     if page:
         return page
-    return query.filter_by(path="README.md").first()
+    page = next((page for page in pages if page.path == "README.md"), None)
+    return page

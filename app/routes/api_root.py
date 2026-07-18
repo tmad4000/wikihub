@@ -81,6 +81,7 @@ def api_wikis_compat(owner, slug):
         agents needing the auth hint)
     """
     from app.models import User, Wiki, Page
+    from app.page_utils import is_content_page_path
     from app.auth_utils import get_current_user_from_request
     from app.acl import resolve_visibility
     from app.wiki_ops import load_acl_rules, sync_wiki_counters
@@ -121,10 +122,10 @@ def api_wikis_compat(owner, slug):
         "subdomain": wiki.subdomain,
         "star_count": wiki.star_count,
         "fork_count": wiki.fork_count,
-        "page_count": (
-            Page.query.filter_by(wiki_id=wiki.id)
-            .filter(~Page.path.startswith(".wikihub/"), Page.path != ".wikihub")
-            .count()
+        "page_count": sum(
+            1
+            for (path,) in Page.query.filter_by(wiki_id=wiki.id).with_entities(Page.path).all()
+            if is_content_page_path(path)
         ),
         "created_at": wiki.created_at.isoformat(),
         "updated_at": wiki.updated_at.isoformat(),

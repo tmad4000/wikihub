@@ -1412,6 +1412,7 @@ def test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(a
     """
     from app.git_sync import read_file_from_repo, sync_page_to_repo
     from app.models import Page, Proposal, ProposalPagePatch, ProposalRevision, Wiki
+    from app.page_utils import is_content_page_path
 
     h = {"Authorization": f"Bearer {api_key}"}
     anon = app.test_client()
@@ -1713,14 +1714,29 @@ def test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(a
     db.session.add(stale_page)
     db.session.flush()
     refresh_wikilinks_for_page(stale_page, stale_content)
+    dot_stale_marker = "GBVisibility Dot Segment Plumbing Marker"
+    dot_stale_page = Page(
+        wiki_id=wiki_id,
+        path="./.wikihub/dot-serve-inline.md",
+        title=dot_stale_marker,
+        visibility="public",
+        frontmatter_json={"title": dot_stale_marker, "tags": ["dot-plumbing-leak"]},
+        excerpt=dot_stale_marker,
+    )
+    dot_stale_content = f"---\ntitle: {dot_stale_marker}\ntags: [dot-plumbing-leak]\n---\n\n# {dot_stale_marker}\n"
+    update_page_metadata(dot_stale_page, dot_stale_content)
+    db.session.add(dot_stale_page)
+    db.session.flush()
+    refresh_wikilinks_for_page(dot_stale_page, dot_stale_content)
     db.session.commit()
     assert Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/serve-inline.md").first() is not None
-    content_page_count = (
-        Page.query.filter_by(wiki_id=wiki_id)
-        .filter(~Page.path.startswith(".wikihub/"), Page.path != ".wikihub")
-        .count()
+    assert Page.query.filter_by(wiki_id=wiki_id, path="./.wikihub/dot-serve-inline.md").first() is not None
+    content_page_count = sum(
+        1
+        for page in Page.query.filter_by(wiki_id=wiki_id).all()
+        if is_content_page_path(page.path)
     )
-    assert Page.query.filter_by(wiki_id=wiki_id).count() == content_page_count + 1
+    assert Page.query.filter_by(wiki_id=wiki_id).count() == content_page_count + 2
 
     r = anon.get(f"/api/v1/wikis/agent1/{slug}")
     assert r.status_code == 200
@@ -1819,10 +1835,21 @@ def test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(a
     assert ".wikihub" not in json.dumps(r.get_json())
     r = anon.get(f"/@agent1/{slug}/llms.txt")
     assert r.status_code == 200
-    assert stale_marker not in r.data.decode("utf-8", errors="replace")
+    llms_body = r.data.decode("utf-8", errors="replace")
+    assert stale_marker not in llms_body
+    assert dot_stale_marker not in llms_body
+    r = anon.get("/llms.txt")
+    assert r.status_code == 200
+    assert dot_stale_marker not in r.data.decode("utf-8", errors="replace")
+    r = anon.get("/llms-full.txt")
+    assert r.status_code == 200
+    assert dot_stale_marker not in r.data.decode("utf-8", errors="replace")
     r = anon.get(f"/api/v1/search?q={stale_marker}")
     assert r.status_code == 200
     assert r.get_json()["results"] == [], "stale plumbing row must not become searchable"
+    r = anon.get(f"/api/v1/search?q={dot_stale_marker}")
+    assert r.status_code == 200
+    assert r.get_json()["results"] == [], "dot-segment stale plumbing row must not become searchable"
 
     from app.git_backend import _repo_path
     import subprocess
