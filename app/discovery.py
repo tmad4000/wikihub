@@ -11,14 +11,23 @@ def _is_self_viewer(viewer, owner):
 
 
 def discoverable_wiki_ids(visibilities=DISCOVERABLE_VISIBILITIES):
-    return {
+    safe_ids = {
+        wiki_id for (wiki_id,) in db.session.query(Page.wiki_id)
+        .filter(Page.visibility.in_(visibilities))
+        .filter(content_page_path_filter(Page.path))
+        .filter(~Page.path.contains(".."))
+        .distinct()
+        .all()
+    }
+    risky_ids = {
         wiki_id for wiki_id, path in db.session.query(Page.wiki_id, Page.path)
         .filter(Page.visibility.in_(visibilities))
         .filter(content_page_path_filter(Page.path))
-        .distinct()
+        .filter(Page.path.contains(".."))
         .all()
         if is_content_page_path(path)
     }
+    return safe_ids | risky_ids
 
 
 def visible_wikis_for_owner(owner, viewer=None):

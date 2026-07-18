@@ -14,7 +14,7 @@ import sys
 import zipfile
 from datetime import timedelta
 from urllib.parse import quote, urlparse
-from sqlalchemy import text
+from sqlalchemy import event, text
 
 # ensure app is importable
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -7446,6 +7446,7 @@ def run_all():
             ("per-user wiki limit + 429 (wikihub-20ct)", lambda: test_wiki_limit_effective_resolution_and_429(client, app)),
             ("set_wiki_limit imports from app root (wikihub-20ct)", lambda: test_set_wiki_limit_script_imports_from_repo_root()),
             ("global activity excludes non-public content", lambda: test_global_activity_excludes_non_public(client, key)),
+            ("discoverable wiki ids use DB distinct + risky fallback", lambda: test_discoverable_wiki_ids_uses_db_distinct_with_risky_path_fallback(client, key)),
             ("global activity paginates after normalized plumbing filter", lambda: test_global_activity_paginates_after_normalized_plumbing_filter(client, key)),
             ("activity RSS well-formed + correct links (both hosts)", lambda: test_activity_rss_is_well_formed_with_correct_links(client, key)),
             ("private-only wiki RSS does not leak metadata", lambda: test_wiki_activity_rss_private_only_wiki_does_not_leak_metadata(client, key)),
@@ -7566,6 +7567,59 @@ def test_global_activity_excludes_non_public(client, key):
     assert "Private Note" not in rss
     assert "Public Plumbing Activity" not in rss
     assert "Dot Plumbing Activity" not in rss
+
+
+def test_discoverable_wiki_ids_uses_db_distinct_with_risky_path_fallback(client, key):
+    h = {"Authorization": f"Bearer {key}"}
+    client.post("/api/v1/wikis", json={"slug": "discover-safe", "title": "Discover Safe"}, headers=h)
+    client.post("/api/v1/wikis", json={"slug": "discover-risky-content", "title": "Discover Risky Content"}, headers=h)
+    client.post("/api/v1/wikis", json={"slug": "discover-risky-plumbing", "title": "Discover Risky Plumbing"}, headers=h)
+
+    owner = User.query.filter_by(username="agent1").first()
+    safe_wiki = Wiki.query.filter_by(owner_id=owner.id, slug="discover-safe").first()
+    risky_content_wiki = Wiki.query.filter_by(owner_id=owner.id, slug="discover-risky-content").first()
+    risky_plumbing_wiki = Wiki.query.filter_by(owner_id=owner.id, slug="discover-risky-plumbing").first()
+    db.session.add(Page(
+        wiki_id=safe_wiki.id,
+        path="wiki/discover-safe.md",
+        title="Discover Safe Page",
+        visibility="public",
+    ))
+    db.session.add(Page(
+        wiki_id=risky_content_wiki.id,
+        path="wiki/../discover-risky-content.md",
+        title="Discover Risky Content Page",
+        visibility="public",
+    ))
+    db.session.add(Page(
+        wiki_id=risky_plumbing_wiki.id,
+        path="wiki/../.wikihub/discover-risky-plumbing.md",
+        title="Discover Risky Plumbing Page",
+        visibility="public",
+    ))
+    db.session.commit()
+
+    from app.discovery import discoverable_wiki_ids
+
+    statements = []
+
+    def capture_sql(conn, cursor, statement, parameters, context, executemany):
+        if "FROM pages" in statement and "pages.visibility" in statement:
+            statements.append(statement)
+
+    event.listen(db.engine, "before_cursor_execute", capture_sql)
+    try:
+        ids = discoverable_wiki_ids()
+    finally:
+        event.remove(db.engine, "before_cursor_execute", capture_sql)
+
+    assert safe_wiki.id in ids, "normal public content must make a wiki discoverable"
+    assert risky_content_wiki.id in ids, "normalized non-plumbing content fallback must still count"
+    assert risky_plumbing_wiki.id not in ids, "normalized plumbing fallback must not count"
+    assert len(statements) == 2, f"expected safe and risky discovery queries, got {len(statements)}"
+    assert "SELECT DISTINCT pages.wiki_id" in statements[0]
+    assert "pages.path AS" not in statements[0], "common discovery path must not materialize page paths"
+    assert "pages.path AS" in statements[1], "only risky fallback may materialize page paths"
 
 
 def test_global_activity_paginates_after_normalized_plumbing_filter(client, key):
