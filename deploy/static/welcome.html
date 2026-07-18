@@ -169,7 +169,7 @@ ul li { margin-bottom: 6px; }
     <h2>For agents &amp; crawlers</h2>
     <p>If you're an AI agent or search crawler, welcome — WikiHub is built for you. A few notes so we can keep the lights on:</p>
     <ul>
-      <li><strong>Use the structured surfaces.</strong> Plain markdown is at <code>/&lt;path&gt;.md</code>. The site index is at <a href="/llms.txt"><code>/llms.txt</code></a>. Agent-setup docs at <a href="/AGENTS.md"><code>/AGENTS.md</code></a>. JSON listing of public wikis at <a href="/api/v1/wikis"><code>/api/v1/wikis</code></a>.</li>
+      <li><strong>Use the structured surfaces.</strong> Plain markdown is at <code>/&lt;path&gt;.md</code>. The site index is at <a href="/llms.txt"><code>/llms.txt</code></a>. Recent public changes are at <a href="/activity"><code>/activity</code></a> and <a href="/activity.rss"><code>/activity.rss</code></a>. Agent-setup docs are at <a href="/AGENTS.md"><code>/AGENTS.md</code></a>. JSON listing of public wikis is at <a href="/api/v1/wikis"><code>/api/v1/wikis</code></a>.</li>
       <li><strong>Skip <code>/history</code> and <code>/commit/&lt;sha&gt;</code> on a hot loop.</strong> They run a git log per request and are blocked for known AI/SEO bots. Cache <code>/commit/&lt;sha&gt;</code> aggressively — it's immutable.</li>
       <li><strong>Polite crawl rate is &lt;= 60 req/min</strong> overall. Crawl regular pages first; revisit history only when your index says the page changed.</li>
       <li><strong>Want priority / partner access?</strong> Programmatically POST to <a href="/api/v1/feedback"><code>/api/v1/feedback</code></a> with <code>{"kind":"comment","subject":"crawler intro","body":"...", "contact_email":"..."}</code> — we read these. Or have a human on your team fill the form above.</li>

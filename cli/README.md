@@ -61,8 +61,9 @@ wikihub search "hello" --wiki you/notes
 When omitted, page visibility inherits from `.wikihub/acl`; ACL-only
 `public-view` and `unlisted-view` directives are returned as page-level
 `public` and `unlisted`. Unlisted pages are readable by direct URL and appear
-in that wiki's own navigation/sidebar for viewers who can read them, but remain
-excluded from discovery surfaces such as search, explore, and profiles.
+in that wiki's own navigation/sidebar and per-wiki RSS feed for viewers who can
+read them, but remain excluded from global discovery surfaces such as search,
+explore, global activity, global RSS, and profiles.
 To pin a page in the wiki sidebar, include `pinned: true` in the page
 frontmatter and write or publish the full markdown file again. Pinning only
 affects readable pages; it does not grant access.

@@ -7,7 +7,7 @@ GitHub for LLM wikis. A hosting platform for markdown knowledge bases with per-f
 - Publish markdown wikis instantly — drag-drop files or `git push`
 - Per-file access control via `.wikihub/acl` (CODEOWNERS-pattern globs)
 - Agent-native: REST API, MCP server, content negotiation, `llms.txt`
-- Social: fork, star, explore, profiles
+- Social: fork, star, explore, activity feeds, profiles
 - Rendering: KaTeX math, syntax highlighting, wikilinks, footnotes, Obsidian embeds, wiki-relative links
 - Reader side peek: same-wiki page links open in a right-side preview panel on desktop
 - Every wiki is a real git repo — clone, push, blame, bisect
@@ -82,8 +82,9 @@ Page `visibility` values are `public`, `public-edit`, `private`, `unlisted`,
 and `unlisted-edit`. When visibility is inherited from `.wikihub/acl`,
 ACL-only `public-view` and `unlisted-view` directives are reported as
 `public` and `unlisted` on the page. Unlisted pages are readable by direct
-URL and appear in that wiki's own navigation/sidebar for viewers who can read
-them, but stay out of discovery surfaces such as search, explore, and profiles.
+URL and appear in that wiki's own navigation/sidebar and per-wiki RSS feed for
+viewers who can read them, but stay out of global discovery surfaces such as
+search, explore, global activity, global RSS, and profiles.
 Set frontmatter `pinned: true` on a page to float it to the top of the wiki
 sidebar for viewers who can read it; pinning never overrides read permissions.
 
@@ -124,7 +125,8 @@ forms are accepted as aliases. Frontmatter `visibility:` on individual files
 overrides the ACL and is stored as the page-level enum: `public`, `public-edit`,
 `private`, `unlisted`, or `unlisted-edit`. Unlisted governs discovery, not
 in-wiki navigation: a link-holder who can read the page sees it in the wiki
-sidebar, while search/explore/profile listings still exclude it. Frontmatter
+sidebar and per-wiki RSS feed, while search/explore/global activity/profile
+listings still exclude it. Frontmatter
 `pinned: true` is also honored by the sidebar: pinned readable pages sort into
 a top section before the normal folder/page list.
 
@@ -156,7 +158,8 @@ Set `DATABASE_URL` and `REPOS_DIR` to run an isolated test lane without sharing
 the default `wikihub_test` database or `/tmp/wikihub-test-repos` directory.
 
 End-to-end tests cover account creation, wiki lifecycle, search, social, upload,
-agent surfaces, ACL permissions, reader behavior, live-update polling, and regression cases.
+activity feeds, agent surfaces, ACL permissions, reader behavior, live-update
+polling, and regression cases.
 
 ## Architecture
 
@@ -166,6 +169,7 @@ app/
   acl.py             .wikihub/acl parser
   git_backend.py     git Smart HTTP (clone/push)
   git_sync.py        DB->git plumbing, public mirror regen
+  feeds.py           Activity entry + RSS formatting helpers
   renderer.py        markdown-it pipeline, wikilinks, wiki-relative link rewriting
   auth_utils.py      password hashing, API keys, Bearer auth
   routes/            Flask blueprints

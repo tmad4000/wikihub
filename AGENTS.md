@@ -32,6 +32,7 @@ tests are intentional — each one verifies a real user flow end-to-end or a bro
 6. **agent surfaces** — all discovery endpoints respond (llms.txt, AGENTS.md, .well-known/*)
 7. **ACL permissions** — private pages not readable without auth
 8. **reader behavior** — sidebar, page controls, side peek, live updates, and other browser-facing regressions
+9. **activity feeds** — global activity excludes non-public content; RSS links are well-formed and visibility-safe
 
 don't add unit tests for individual functions. if something breaks, add an e2e test that covers the broken flow. tests should run in <10 seconds.
 
@@ -83,6 +84,7 @@ host (`ubuntu@54.145.123.7`) — that's historical. Production is GCP now.
 - `app/acl.py` — CODEOWNERS-pattern ACL parser for `.wikihub/acl`
 - `app/git_backend.py` — git Smart HTTP (clone/push), ported from listhub
 - `app/git_sync.py` — DB→git plumbing (does NOT fire hooks), public mirror regeneration
+- `app/feeds.py` — pure activity entry, relative time, and RSS formatting helpers
 - `app/renderer.py` — markdown-it-py with wikilinks, KaTeX, footnotes, Obsidian embeds, wiki-relative link rewriting
 - `app/static/js/sidepeek.js` — desktop reader slide-over for same-wiki page links; fetches rendered body JSON via `?fragment=1`
 - `app/auth_utils.py` — password hashing, API key gen/verify, Bearer auth decorators
@@ -96,7 +98,7 @@ host (`ubuntu@54.145.123.7`) — that's historical. Production is GCP now.
 - **DB→git sync does NOT fire hooks.** this prevents infinite sync loops.
 - **two repos per wiki:** `repos/<user>/<slug>.git` (authoritative) + `repos/<user>/<slug>-public.git` (derived mirror).
 - **frontmatter visibility wins over ACL file** (most specific wins).
-- **unlisted is readable-by-URL but not discoverable.** Link-holders who can read an unlisted page see it inside the wiki's own sidebar/page tree; search, explore, and profile listings still exclude it.
+- **unlisted is readable-by-URL but not globally discoverable.** Link-holders who can read an unlisted page see it inside the wiki's own sidebar/page tree and per-wiki RSS feed; search, explore, global activity/RSS, and profile listings still exclude it.
 - **pinned pages float to the top of the sidebar.** Frontmatter `pinned: true` on a page renders it in a top section of the wiki's left sidebar (subtle divider, then folders/pages alphabetical as usual). Frontmatter-wins, mirroring the visibility precedent. Read permissions still apply — a pinned page the viewer can't read simply doesn't appear. **Pin/unpin via the MCP `wikihub_update_page` tool by setting/removing `pinned: true` in the page's frontmatter — no dedicated tool.** Integrators (e.g. GroupBrain-provisioned wikis) can pin rules / chat-history pages the same way, by writing `pinned: true` frontmatter from their side. Implemented in `_build_sidebar_tree` (`app/routes/wiki.py`) + `render_sidebar` macro and async JS in `app/templates/reader.html`. Regression: `test_pinned_pages_sort_to_top`.
 - **empty nav/sidebar surfaces show explicit unconditional copy, never blankness.** A profile with no visible wikis/pages shows "No public pages here — this account may have unlisted content reachable by direct link."; a wiki sidebar with no visible pages shows "No listed pages visible to you." The wording is **identical whether or not unlisted content exists** — no information leak (same no-leak rule as the 403-vs-404 distinction). Zero-case profile wiki count reads "No public wikis". Regressions: `test_empty_sidebar_copy`, `test_empty_profile_copy_no_leak`.
 - **API keys start with `wh_`**, SHA-256 hashed in DB, shown once on creation.
