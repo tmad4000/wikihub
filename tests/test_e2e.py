@@ -7488,6 +7488,23 @@ def _seed_activity_fixtures(client, key):
         "content": "---\ntitle: Private Note\nvisibility: private\n---\n\n# Private Note\n",
         "visibility": "private",
     }, headers=h)
+    owner = User.query.filter_by(username="agent1").first()
+    public_wiki = Wiki.query.filter_by(owner_id=owner.id, slug="pubwiki").first()
+    db.session.add(Page(
+        wiki_id=public_wiki.id,
+        path=".wikihub/activity-log.md",
+        title="Public Plumbing Activity",
+        visibility="public",
+        excerpt="Public Plumbing Activity",
+    ))
+    db.session.add(Page(
+        wiki_id=public_wiki.id,
+        path="./.wikihub/dot-activity-log.md",
+        title="Dot Plumbing Activity",
+        visibility="public",
+        excerpt="Dot Plumbing Activity",
+    ))
+    db.session.commit()
     return h
 
 
@@ -7503,6 +7520,8 @@ def test_global_activity_excludes_non_public(client, key):
     assert "Public Note" in body, "public page must appear in global activity"
     assert "Unlisted Note" not in body, "unlisted page must NOT appear in global activity"
     assert "Private Note" not in body, "private page must NOT appear in global activity"
+    assert "Public Plumbing Activity" not in body, "stale plumbing page must NOT appear in global activity"
+    assert "Dot Plumbing Activity" not in body, "dot-segment plumbing page must NOT appear in global activity"
 
     # RSS feed (anonymous request)
     r = client.get("/activity.rss")
@@ -7512,6 +7531,8 @@ def test_global_activity_excludes_non_public(client, key):
     assert "Public Note" in rss
     assert "Unlisted Note" not in rss
     assert "Private Note" not in rss
+    assert "Public Plumbing Activity" not in rss
+    assert "Dot Plumbing Activity" not in rss
 
 
 def test_activity_rss_is_well_formed_with_correct_links(client, key):

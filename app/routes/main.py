@@ -1,3 +1,6 @@
+from math import ceil
+from types import SimpleNamespace
+
 from flask import current_app, flash, jsonify, redirect, render_template, request, url_for
 from flask_login import login_required, logout_user, current_user
 
@@ -104,6 +107,10 @@ def _global_activity_query():
     )
 
 
+def _content_activity_rows(rows):
+    return [(page, wiki, user) for (page, wiki, user) in rows if is_content_page_path(page.path)]
+
+
 @main_bp.route("/activity")
 def activity():
     """Site-wide activity feed across public wikis. Paginated."""
@@ -115,8 +122,18 @@ def activity():
         page_num = 1
     per_page = 40
 
-    pagination = _global_activity_query().paginate(
-        page=page_num, per_page=per_page, error_out=False
+    rows = _content_activity_rows(_global_activity_query().all())
+    total = len(rows)
+    pages = ceil(total / per_page) if total else 0
+    start = (page_num - 1) * per_page
+    pagination = SimpleNamespace(
+        items=rows[start:start + per_page],
+        page=page_num,
+        pages=pages,
+        has_prev=page_num > 1,
+        has_next=page_num < pages,
+        prev_num=page_num - 1,
+        next_num=page_num + 1,
     )
     entries = [
         activity_entry(page, wiki, user.username, request.host_url)
@@ -135,7 +152,7 @@ def activity_rss():
     """RSS 2.0 feed for the global public activity feed."""
     from app.feeds import activity_entry, render_rss
 
-    rows = _global_activity_query().limit(50).all()
+    rows = _content_activity_rows(_global_activity_query().all())[:50]
     entries = [
         activity_entry(page, wiki, user.username, request.host_url)
         for (page, wiki, user) in rows

@@ -16,7 +16,7 @@ from app.content_utils import has_private_bands, parse_markdown_document, set_vi
 from app.discovery import discoverable_page_for_wiki, visible_wikis_for_owner
 from app.git_backend import _repo_path
 from app.git_sync import read_file_from_repo, read_file_bytes_from_repo, list_files_in_repo, regenerate_public_mirror, remove_page_from_repo, sync_page_to_repo, update_mirror_page
-from app.page_utils import is_wikihub_plumbing_path
+from app.page_utils import is_content_page_path, is_wikihub_plumbing_path
 from app.models import (
     Page,
     Proposal,
@@ -42,7 +42,7 @@ def _recently_updated_pages(wiki, limit=8, public_only=False):
     query = _content_pages_query(wiki)
     if public_only:
         query = query.filter(Page.visibility.in_(('public', 'public-view', 'public-edit')))
-    return query.order_by(Page.updated_at.desc()).limit(limit).all()
+    return _content_pages(query.order_by(Page.updated_at.desc()))[:limit]
 
 
 def _is_wikihub_plumbing_path(path):
@@ -51,6 +51,14 @@ def _is_wikihub_plumbing_path(path):
 
 def _content_pages_query(wiki):
     return Page.query.filter_by(wiki_id=wiki.id).filter(~Page.path.startswith(".wikihub/"), Page.path != ".wikihub")
+
+
+def _content_pages(query):
+    return [page for page in query.all() if is_content_page_path(page.path)]
+
+
+def _content_page_count(wiki):
+    return len(_content_pages(_content_pages_query(wiki)))
 
 
 def _stored_page_visibility(*candidates):
@@ -134,7 +142,7 @@ def _get_full_graph(wiki, viewer_filter=True):
     are visible to the viewer. An edge from a private page to a public page
     would otherwise reveal the private page's existence (wikihub-8888.2).
     """
-    pages = _content_pages_query(wiki).all()
+    pages = _content_pages(_content_pages_query(wiki))
     owner = db.session.get(User, wiki.owner_id)
 
     visible_ids = None
@@ -288,12 +296,7 @@ def _viewer_can_see_any_page(wiki, acl_rules=None, owner=None):
         acl_rules = load_acl_rules(owner.username, wiki.slug)
     # Anyone can see public/public-view/public-edit and unlisted-* pages.
     public_visibilities = ("public", "public-view", "public-edit", "unlisted", "unlisted-view", "unlisted-edit")
-    has_public = (
-        _content_pages_query(wiki)
-        .filter(Page.visibility.in_(public_visibilities))
-        .first()
-        is not None
-    )
+    has_public = bool(_content_pages(_content_pages_query(wiki).filter(Page.visibility.in_(public_visibilities))))
     if has_public:
         return True
     # ACL grantee with a per-user grant against any page → can see authoritative
@@ -373,7 +376,7 @@ def _visible_files(username, slug, wiki, public=False, acl_filter_user=None, pag
         # non-owner with ACL grants — read authoritative repo, filter by can_read
         acl_rules = load_acl_rules(username, slug)
         if pages_by_path is None:
-            pages_by_path = {p.path: p for p in _content_pages_query(wiki).all()}
+            pages_by_path = {p.path: p for p in _content_pages(_content_pages_query(wiki))}
         return [
             path
             for path in files
@@ -390,7 +393,7 @@ def _visible_files(username, slug, wiki, public=False, acl_filter_user=None, pag
     # excludes private pages, so files here are readable-by-URL by construction.
     acl_rules = load_acl_rules(username, slug)
     if pages_by_path is None:
-        pages_by_path = {p.path: p for p in _content_pages_query(wiki).all()}
+        pages_by_path = {p.path: p for p in _content_pages(_content_pages_query(wiki))}
     return [
         path
         for path in files
@@ -562,7 +565,7 @@ def _sidebar_current_path_from_request(username, slug):
 def _build_sidebar_tree(username, slug, wiki, public=False, current_path=None, acl_filter_user=None):
     current_path = _normalize_sidebar_current_path(current_path)
     root = {"children": {}}
-    pages_by_path = {p.path: p for p in _content_pages_query(wiki).all()}
+    pages_by_path = {p.path: p for p in _content_pages(_content_pages_query(wiki))}
 
     for path in sorted(_visible_files(username, slug, wiki, public=public, acl_filter_user=acl_filter_user, pages_by_path=pages_by_path)):
         parts = path.split("/")
@@ -665,7 +668,7 @@ def _wiki_activity_items(owner, wiki, acl_rules, limit=60):
     """
     items = []
     visible_pages = []
-    for page in _content_pages_query(wiki).order_by(Page.updated_at.desc()).limit(120).all():
+    for page in _content_pages(_content_pages_query(wiki).order_by(Page.updated_at.desc()))[:120]:
         if _viewer_can_read_page(wiki, page, acl_rules=acl_rules, owner=owner):
             visible_pages.append(page)
             verb = "created" if abs((_activity_time(page.updated_at) - _activity_time(page.created_at)).total_seconds()) < 2 else "updated"
@@ -755,7 +758,7 @@ def _wiki_activity_items(owner, wiki, acl_rules, limit=60):
 def _folder_listing(username, slug, wiki, folder_path="", public=False, acl_filter_user=None):
     prefix = folder_path.strip("/")
     files = _visible_files(username, slug, wiki, public=public, acl_filter_user=acl_filter_user)
-    pages_by_path = {page.path: page for page in _content_pages_query(wiki).all()}
+    pages_by_path = {page.path: page for page in _content_pages(_content_pages_query(wiki))}
     seen = set()
     items = []
 
@@ -1007,9 +1010,9 @@ def wiki_llms_txt(username, slug):
         "## Pages",
     ]
 
-    pages = _content_pages_query(wiki).filter(
+    pages = _content_pages(_content_pages_query(wiki).filter(
         Page.visibility.in_(["public", "public-view", "public-edit"])
-    ).order_by(Page.path).all()
+    ).order_by(Page.path))
 
     for p in pages:
         url = _page_url(owner.username, wiki.slug, p.path)
@@ -1056,7 +1059,7 @@ SIDEBAR_ASYNC_THRESHOLD = 200  # wikis with more pages than this get client-side
 
 def _sidebar_for_wiki(username, slug, wiki, public=False, current_path=None, acl_filter_user=None):
     """return sidebar items, or None if the wiki is too large (use sidebar.json instead)."""
-    page_count = _content_pages_query(wiki).count()
+    page_count = _content_page_count(wiki)
     if page_count > SIDEBAR_ASYNC_THRESHOLD:
         return None  # template will fetch sidebar.json client-side
     return _build_sidebar_tree(username, slug, wiki, public=public, current_path=current_path, acl_filter_user=acl_filter_user)
@@ -1109,7 +1112,7 @@ def wiki_index(username, slug):
             # wikihub-dkp8: the wiki row EXISTS. If it has any pages this viewer
             # simply can't see → restricted (403). Only a genuinely empty wiki
             # (no pages at all) falls back to the ambiguous 404.
-            if _content_pages_query(wiki).count() > 0:
+            if _content_page_count(wiki) > 0:
                 return _render_restricted(owner, wiki)
             return render_template("permission_error.html", owner=owner, wiki=wiki), 404
         return render_template(
@@ -1469,7 +1472,7 @@ def wiki_tag_index(username, slug, tag_name):
     owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
     # JSON (not JSONB) — filter in Python after pulling pages for this wiki.
     # Volume per-wiki is bounded; this avoids JSONB-only operators.
-    candidates = _content_pages_query(wiki).order_by(Page.title.asc()).all()
+    candidates = _content_pages(_content_pages_query(wiki).order_by(Page.title.asc()))
     pages = []
     for p in candidates:
         fm = p.frontmatter_json or {}
