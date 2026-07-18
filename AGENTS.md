@@ -138,6 +138,7 @@ Explicit phase ordering (Jacob 2026-04-22):
 - **Live URL:** https://wikihub.md (legacy alias: https://wikihub.globalbr.ai, still redirects)
 - **Server:** GCP Compute Engine `wikihub-prod` (project `wikihub-prod`, zone `us-east1-b`, IP `35.237.163.58`)
 - **SSH:** `gcloud compute ssh wikihub-prod --project=wikihub-prod --zone=us-east1-b`
+- **If SSH times out on port 22** (`connect to host 35.237.163.58 port 22: Operation timed out`): direct external SSH is firewalled — add `--tunnel-through-iap` to any `gcloud compute ssh`/`scp` command below and it works (verified 2026-07-17). If gcloud says "Reauthentication failed. cannot prompt during non-interactive execution", the human must run `gcloud auth login` first — agents can't.
 - **Code on server:** `/opt/wikihub-app`
 - **DB:** PostgreSQL 16 `wikihub` database (local to server)
 - **Process:** gunicorn on port 5100, managed by systemd (`wikihub.service`)
