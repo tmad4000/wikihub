@@ -488,7 +488,7 @@ def _build_system_prompt(username, owner, wiki_slug, page_path, page_content, pa
 - Use read_file and list_files to explore the wiki content
 - Use write_file to create or edit pages (changes are auto-committed and pushed)
 - Use search_content to find information across the wiki
-- Use wikihub_api for metadata operations (starring, forking, reading wiki info)
+- Use wikihub_api for metadata and owner-only plumbing operations (starring, forking, reading wiki info, ACL updates)
 - File paths are relative to the working directory root: {owner}/{wiki_slug}/filename.md
 
 ## Guidelines

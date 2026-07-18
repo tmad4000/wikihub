@@ -1531,6 +1531,46 @@ def test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(a
     assert read_file_from_repo("agent1", slug, ".wikihub/acl", public=True) is None
     assert read_file_from_repo("agent1", slug, ".wikihub/events.jsonl", public=True) is None
 
+    share_user = client.post("/api/v1/accounts", json={"username": "gbsharetarget"}).get_json()
+    bulk_user = client.post("/api/v1/accounts", json={"username": "gbbulktarget"}).get_json()
+
+    def assert_claimable_preserved(label):
+        snapshot = page_snapshot("claimable.md")
+        assert snapshot["id"] == claimable_before_replace["id"], f"{label} churned Page.id"
+        assert snapshot["author"] == claimable_before_replace["author"], f"{label} changed author"
+        assert snapshot["anonymous"] is True, f"{label} changed anonymous"
+        assert snapshot["claimable"] is True, f"{label} changed claimable"
+        assert snapshot["created_at"] == claimable_before_replace["created_at"], f"{label} changed created_at"
+
+    r = client.post(f"/api/v1/wikis/agent1/{slug}/pages/claimable.md/share", json={
+        "username": share_user["username"],
+        "role": "read",
+    }, headers=h)
+    assert r.status_code == 200, f"page share failed: {r.status_code} {r.data[:200]}"
+    assert_claimable_preserved("page share ACL reindex")
+
+    r = client.post(f"/api/v1/wikis/agent1/{slug}/share", json={
+        "pattern": "topics.md",
+        "username": share_user["username"],
+        "role": "edit",
+    }, headers=h)
+    assert r.status_code == 200, f"wiki share failed: {r.status_code} {r.data[:200]}"
+    assert_claimable_preserved("wiki share ACL reindex")
+
+    r = client.post(f"/api/v1/wikis/agent1/{slug}/share/bulk", json={
+        "grants": [{"username": bulk_user["username"], "role": "read", "pattern": "log.md"}],
+    }, headers=h)
+    assert r.status_code == 200, f"bulk share failed: {r.status_code} {r.data[:200]}"
+    assert r.get_json()["added"], "bulk share should add a grant"
+    assert_claimable_preserved("bulk share ACL reindex")
+
+    r = client.delete(f"/api/v1/wikis/agent1/{slug}/pages/claimable.md/share", json={
+        "username": share_user["username"],
+    }, headers=h)
+    assert r.status_code == 200, f"unshare failed: {r.status_code} {r.data[:200]}"
+    assert r.get_json()["revoked"] is True
+    assert_claimable_preserved("unshare ACL reindex")
+
     r = anon.get(f"/@agent1/{slug}/.wikihub/acl")
     assert r.status_code == 404, f"direct ACL route must not serve plumbing, got {r.status_code}"
     r = anon.get(f"/@agent1/{slug}/.wikihub/events.jsonl")

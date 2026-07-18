@@ -1284,8 +1284,7 @@ def share_page(owner, slug, page_path):
         acl_text = acl_text.rstrip() + f"\n{acl_line}\n"
         sync_page_to_repo(owner_user.username, wiki.slug, ".wikihub/acl", acl_text, message=f"Share {page_path} with @{username}:{role}")
         append_event_to_repo(owner_user.username, wiki.slug, "page.share", path=page_path, grant=f"@{username}:{role}", actor=request.current_user.username)
-        index_repo_pages(owner_user.username, wiki.slug, wiki, reset=True)
-        regenerate_public_mirror(owner_user.username, wiki.slug, load_acl_rules(owner_user.username, wiki.slug))
+        reindex_wiki_pages_and_mirror(owner_user.username, wiki.slug, wiki)
         db.session.commit()
 
     return jsonify({"path": page_path, "grant": f"@{username}:{role}"})
@@ -1346,8 +1345,7 @@ def share_wiki(owner, slug):
         append_event_to_repo(owner_user.username, wiki.slug, "page.share",
                              pattern=pattern, grant=f"@{username}:{role}",
                              actor=request.current_user.username)
-        index_repo_pages(owner_user.username, wiki.slug, wiki, reset=True)
-        regenerate_public_mirror(owner_user.username, wiki.slug, load_acl_rules(owner_user.username, wiki.slug))
+        reindex_wiki_pages_and_mirror(owner_user.username, wiki.slug, wiki)
         db.session.commit()
     if newly_granted and target.id != request.current_user.id:
         _notify_existing_user(target_username=username, role=role, ctx=ctx)
@@ -1496,8 +1494,7 @@ def bulk_share_wiki(owner, slug):
                 pattern=g["pattern"], grant=f"@{g['username']}:{g['role']}",
                 actor=request.current_user.username,
             )
-        index_repo_pages(owner_user.username, wiki.slug, wiki, reset=True)
-        regenerate_public_mirror(owner_user.username, wiki.slug, load_acl_rules(owner_user.username, wiki.slug))
+        reindex_wiki_pages_and_mirror(owner_user.username, wiki.slug, wiki)
     if new_lines or invite_writes:
         db.session.commit()
 
@@ -1574,8 +1571,7 @@ def unshare(owner, slug, page_path=None):
                 append_event_to_repo(owner_user.username, wiki.slug, "page.unshare",
                                      pattern=pattern, target_user=username,
                                      actor=request.current_user.username)
-                index_repo_pages(owner_user.username, wiki.slug, wiki, reset=True)
-                regenerate_public_mirror(owner_user.username, wiki.slug, load_acl_rules(owner_user.username, wiki.slug))
+                reindex_wiki_pages_and_mirror(owner_user.username, wiki.slug, wiki)
                 revoked = True
 
     if revoked:
