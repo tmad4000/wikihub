@@ -71,6 +71,7 @@ def explore():
     public_wiki_ids = (
         db.session.query(Page.wiki_id)
         .filter(Page.visibility.in_(["public", "public-edit"]))
+        .filter(~Page.path.startswith(".wikihub/"), Page.path != ".wikihub")
         .distinct()
     )
     all_wikis = (

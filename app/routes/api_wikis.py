@@ -207,6 +207,7 @@ def list_wikis():
     public_wiki_ids_subq = (
         db.session.query(Page.wiki_id)
         .filter(Page.visibility.in_(["public", "public-edit"]))
+        .filter(~Page.path.startswith(".wikihub/"), Page.path != ".wikihub")
         .distinct()
         .subquery()
     )

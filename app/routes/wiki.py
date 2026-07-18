@@ -2002,6 +2002,8 @@ def edit_page(username, slug, page_path):
         page = Page.query.filter_by(wiki_id=wiki.id, path=space_path).first()
         if page:
             file_path = space_path
+    if _is_wikihub_plumbing_path(file_path):
+        abort(400)
     acl_rules = load_acl_rules(owner.username, wiki.slug)
     is_owner = _is_owner(wiki)
     username_for_acl = current_user.username if current_user.is_authenticated else None
@@ -2015,6 +2017,8 @@ def edit_page(username, slug, page_path):
         if new_path and not new_path.endswith(".md"):
             new_path += ".md"
         target_path = new_path if (is_owner and new_path) else file_path
+        if _is_wikihub_plumbing_path(target_path):
+            abort(400)
         renamed = target_path != file_path
 
         visibility = request.form.get("visibility", page.visibility if page else resolve_visibility(target_path, acl_rules))
@@ -2078,6 +2082,8 @@ def new_page(username, slug):
         page_path = request.form.get("path", "").strip()
         if not page_path.endswith(".md"):
             page_path += ".md"
+        if _is_wikihub_plumbing_path(page_path):
+            abort(400)
         if not is_owner and not can_write(page_path, acl_rules, username_for_acl):
             return _render_permission_error(owner, wiki)
         content = request.form.get("content", "")
@@ -2123,6 +2129,8 @@ def new_page(username, slug):
         while Page.query.filter_by(wiki_id=wiki.id, path=page_path).first():
             page_path = f"{base}-{n}.md"
             n += 1
+    if _is_wikihub_plumbing_path(page_path):
+        abort(400)
     if not is_owner and not can_write(page_path, acl_rules, username_for_acl):
         return _render_permission_error(owner, wiki)
     default_vis = resolve_visibility(page_path, acl_rules)

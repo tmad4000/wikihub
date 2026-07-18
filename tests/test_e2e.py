@@ -1543,6 +1543,27 @@ def test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(a
     assert r.status_code == 400, f"generic plumbing delete must be rejected, got {r.status_code}"
     assert Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/events.jsonl").first() is None
     assert Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/serve-inline").first() is None
+
+    owner_browser = app.test_client()
+    r = owner_browser.post("/auth/login", data={"api_key": api_key}, follow_redirects=False)
+    assert r.status_code in (302, 303)
+    r = owner_browser.get(f"/@agent1/{slug}/new?path=.wikihub/serve-inline.md")
+    assert r.status_code == 400, f"web new plumbing GET must be rejected, got {r.status_code}"
+    r = owner_browser.post(f"/@agent1/{slug}/new", data={
+        "path": ".wikihub/serve-inline.md",
+        "content": "serve inline plumbing",
+        "visibility": "public",
+    }, follow_redirects=False)
+    assert r.status_code == 400, f"web new plumbing POST must be rejected, got {r.status_code}"
+    r = owner_browser.post(f"/@agent1/{slug}/log/edit", data={
+        "path": ".wikihub/events.md",
+        "content": f"---\ntitle: {log_title}\n---\n\n# Log\n\nattempted plumbing rename.",
+        "visibility": "unlisted",
+    }, follow_redirects=False)
+    assert r.status_code == 400, f"web edit rename into plumbing must be rejected, got {r.status_code}"
+    assert Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/serve-inline.md").first() is None
+    assert Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/events.md").first() is None
+
     r = client.get(f"/api/v1/wikis/agent1/{slug}/pages", headers=h)
     assert r.status_code == 200
     assert all(not page["path"].startswith(".wikihub/") for page in r.get_json()["pages"])
@@ -1596,6 +1617,8 @@ def test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(a
     db.session.commit()
     assert Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/serve-inline.md").first() is not None
 
+    r = owner_browser.get(f"/@agent1/{slug}/.wikihub/serve-inline/edit")
+    assert r.status_code == 400, f"stale plumbing edit route must be rejected, got {r.status_code}"
     r = anon.get(f"/@agent1/{slug}/.wikihub/serve-inline")
     assert r.status_code == 404, f"stale plumbing web route must not render, got {r.status_code}"
     r = anon.get(f"/api/v1/wikis/agent1/{slug}/pages/.wikihub/serve-inline.md")
