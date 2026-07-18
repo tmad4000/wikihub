@@ -948,6 +948,11 @@ def test_hover_previews_toggle(client):
     hover_handler = html.split("page-level hover detection", 1)[1].split("closest('.wikilink", 1)[0]
     assert "previewsOff()" in hover_handler, "mouseover handler not guarded by previewsOff()"
     assert "data-hover-previews-toggle" in html, "no toggle control in nav"
+    assert 'role="menuitemcheckbox"' in html, "toggle lacks checkbox menu semantics"
+    assert 'aria-checked="true"' in html, "toggle lacks initial checked state"
+    assert "wikihub:hover-previews-changed" in html, "toggle surfaces do not synchronize immediately"
+    assert "window.addEventListener('storage'" in html, "setting changes do not synchronize across tabs"
+    assert "syncPreviewState()" in html, "disabling does not cancel an open or in-flight preview"
     assert "hover-preview-disable" in html, "no quick-disable action styling for the card"
 
 

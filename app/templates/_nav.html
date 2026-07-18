@@ -72,7 +72,7 @@
           <span>Settings</span>
           <span class="menu-hint">account</span>
         </a>
-        <button type="button" class="nav-account-item" role="menuitem" data-hover-previews-toggle>
+        <button type="button" class="nav-account-item" role="menuitemcheckbox" aria-checked="true" data-hover-previews-toggle>
           <span>Hover previews</span>
           <span class="menu-hint" data-hover-previews-state>on</span>
         </button>
@@ -104,7 +104,7 @@
       <a href="/shared" class="nav-mobile-item" role="menuitem">Shared</a>
       <a href="/settings" class="nav-mobile-item" role="menuitem">Settings</a>
     {% endif %}
-    <button type="button" class="nav-mobile-item" role="menuitem" data-hover-previews-toggle>
+    <button type="button" class="nav-mobile-item" role="menuitemcheckbox" aria-checked="true" data-hover-previews-toggle>
       Hover previews: <span data-hover-previews-state>on</span>
     </button>
     {% if current_user and current_user.is_authenticated %}
@@ -146,8 +146,10 @@
 // wikihub-lzex: hover-previews on/off toggle (per-browser localStorage flag,
 // read by the hover-preview script in base.html; works logged out)
 (function(){
+  var settingKey = 'wh_hover_previews';
+  var changeEvent = 'wikihub:hover-previews-changed';
   function isOn(){
-    try { return localStorage.getItem('wh_hover_previews') !== 'off'; }
+    try { return localStorage.getItem(settingKey) !== 'off'; }
     catch(e){ return true; }
   }
   var toggles = document.querySelectorAll('[data-hover-previews-toggle]');
@@ -157,14 +159,21 @@
     toggles.forEach(function(b){
       var s = b.querySelector('[data-hover-previews-state]');
       if (s) s.textContent = on ? 'on' : 'off';
-      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      b.setAttribute('aria-checked', on ? 'true' : 'false');
     });
   }
   toggles.forEach(function(b){
     b.addEventListener('click', function(){
-      try { localStorage.setItem('wh_hover_previews', isOn() ? 'off' : 'on'); } catch(e){}
+      try { localStorage.setItem(settingKey, isOn() ? 'off' : 'on'); } catch(e){}
       render();
+      document.dispatchEvent(new CustomEvent(changeEvent, {
+        detail: { enabled: isOn() }
+      }));
     });
+  });
+  document.addEventListener(changeEvent, render);
+  window.addEventListener('storage', function(e){
+    if (e.key === settingKey) render();
   });
   render();
 })();

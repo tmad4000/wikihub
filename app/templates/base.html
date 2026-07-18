@@ -579,16 +579,20 @@ document.addEventListener('DOMContentLoaded', () => {
   var stack = []; // array of {el: card element, depth: number}
   var hideTimer = null;
   var cache = {};
+  var previewSettingKey = 'wh_hover_previews';
+  var previewChangeEvent = 'wikihub:hover-previews-changed';
 
   // wikihub-lzex: per-browser opt-out, no login required. Toggled from the
   // card footer, the account menu, and the mobile nav panel (_nav.html).
   function previewsOff() {
-    try { return localStorage.getItem('wh_hover_previews') === 'off'; }
+    try { return localStorage.getItem(previewSettingKey) === 'off'; }
     catch (e) { return false; }
   }
   function disablePreviews() {
-    try { localStorage.setItem('wh_hover_previews', 'off'); } catch (e) {}
-    closeAll();
+    try { localStorage.setItem(previewSettingKey, 'off'); } catch (e) {}
+    document.dispatchEvent(new CustomEvent(previewChangeEvent, {
+      detail: { enabled: false }
+    }));
   }
   function appendDisableAction(c) {
     var d = document.createElement('button');
@@ -648,6 +652,17 @@ document.addEventListener('DOMContentLoaded', () => {
   function cancelClose() {
     clearTimeout(hideTimer);
   }
+
+  function syncPreviewState() {
+    if (!previewsOff()) return;
+    cancelClose();
+    closeFromDepth(0);
+    lastHoverEl = null;
+  }
+  document.addEventListener(previewChangeEvent, syncPreviewState);
+  window.addEventListener('storage', function(e) {
+    if (e.key === previewSettingKey) syncPreviewState();
+  });
 
   function positionCard(c, rect, depth) {
     var preferBelow = (depth % 2 === 0);
