@@ -16,7 +16,7 @@ from flask import current_app, jsonify, render_template, request, redirect, url_
 from flask_login import current_user, login_required, login_user
 
 from app import db
-from app.acl import resolve_visibility
+from app.acl import normalize_page_visibility, resolve_visibility
 from app.auth_utils import generate_api_key, rate_limit_writes
 from app.credentials_hint import build_client_config, resolve_server_url
 from app.models import ApiKey, User, Wiki, Page
@@ -238,7 +238,7 @@ def _index_page(wiki_id, path, content, username, slug):
     if not page:
         page = Page(wiki_id=wiki_id, path=path)
         db.session.add(page)
-    page.visibility = resolve_visibility(path, acl_rules, frontmatter.get("visibility"))
+    page.visibility = normalize_page_visibility(resolve_visibility(path, acl_rules, frontmatter.get("visibility"))) or "private"
     update_page_metadata(page, content, frontmatter)
     db.session.flush()
     refresh_wikilinks_for_page(page, content)

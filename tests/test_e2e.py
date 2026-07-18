@@ -1406,21 +1406,35 @@ def test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(a
         page = Page.query.filter_by(wiki_id=wiki_id, path=path).first()
         return page.visibility if page else None
 
+    def page_snapshot(path):
+        db.session.expire_all()
+        page = Page.query.filter_by(wiki_id=wiki_id, path=path).first()
+        assert page is not None
+        return {
+            "id": page.id,
+            "author": page.author,
+            "anonymous": page.anonymous,
+            "claimable": page.claimable,
+            "created_at": page.created_at,
+            "visibility": page.visibility,
+        }
+
     assert visibility_for("index.md") == "private"
     assert visibility_for("log.md") == "private"
     assert Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/acl").first() is None
 
     r = client.post(f"/api/v1/wikis/agent1/{slug}/pages", json={
         "path": ".wikihub/acl",
-        "content": "* unlisted\n",
+        "content": "* unlisted-view\n",
     }, headers=h)
     assert r.status_code == 201, f"generic ACL write failed: {r.status_code} {r.data[:200]}"
     assert r.get_json()["reindexed"] is True
-    assert read_file_from_repo("agent1", slug, ".wikihub/acl") == "* unlisted\n"
+    assert read_file_from_repo("agent1", slug, ".wikihub/acl") == "* unlisted-view\n"
     assert Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/acl").first() is None, \
         ".wikihub/acl must stay plumbing, not an indexed page"
     assert visibility_for("index.md") == "unlisted"
     assert visibility_for("log.md") == "unlisted"
+    assert visibility_for("index.md") != "unlisted-view"
 
     log_title = "GBVisibility Log Marker"
     r = client.put(f"/api/v1/wikis/agent1/{slug}/pages/log.md", json={
@@ -1437,6 +1451,18 @@ def test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(a
     assert r.status_code == 201, f"topics create failed: {r.status_code} {r.data[:200]}"
     assert r.get_json()["visibility"] == "unlisted"
 
+    claimable_title = "GBVisibility Claimable Marker"
+    r = client.post(f"/api/v1/wikis/agent1/{slug}/pages", json={
+        "path": "claimable.md",
+        "content": f"---\ntitle: {claimable_title}\n---\n\n# Claimable\n\nanonymous claimable page.",
+        "anonymous": True,
+        "claimable": True,
+    }, headers=h)
+    assert r.status_code == 201, f"claimable create failed: {r.status_code} {r.data[:200]}"
+    claimable_before_replace = page_snapshot("claimable.md")
+    assert claimable_before_replace["anonymous"] is True
+    assert claimable_before_replace["claimable"] is True
+
     private_title = "GBVisibility Owner Private Marker"
     r = client.post(f"/api/v1/wikis/agent1/{slug}/pages", json={
         "path": "owner-control.md",
@@ -1447,14 +1473,28 @@ def test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(a
     }, headers=h)
     assert r.status_code == 201, f"private page create failed: {r.status_code} {r.data[:200]}"
     assert r.get_json()["visibility"] == "private"
+    log_before_replace = page_snapshot("log.md")
 
     r = client.put(f"/api/v1/wikis/agent1/{slug}/pages/.wikihub/acl", json={
-        "content": "* unlisted\n",
+        "content": "* unlisted-view\n",
     }, headers=h)
     assert r.status_code == 200, f"generic ACL replace failed: {r.status_code} {r.data[:200]}"
     assert visibility_for("log.md") == "unlisted"
     assert visibility_for("topics.md") == "unlisted"
+    assert visibility_for("claimable.md") == "unlisted"
     assert visibility_for("owner-control.md") == "private", "explicit private frontmatter must win over ACL"
+    log_after_replace = page_snapshot("log.md")
+    claimable_after_replace = page_snapshot("claimable.md")
+    assert log_after_replace["id"] == log_before_replace["id"]
+    assert log_after_replace["author"] == log_before_replace["author"]
+    assert log_after_replace["anonymous"] == log_before_replace["anonymous"]
+    assert log_after_replace["claimable"] == log_before_replace["claimable"]
+    assert log_after_replace["created_at"] == log_before_replace["created_at"]
+    assert claimable_after_replace["id"] == claimable_before_replace["id"]
+    assert claimable_after_replace["author"] == claimable_before_replace["author"]
+    assert claimable_after_replace["anonymous"] is True
+    assert claimable_after_replace["claimable"] is True
+    assert claimable_after_replace["created_at"] == claimable_before_replace["created_at"]
     assert read_file_from_repo("agent1", slug, ".wikihub/acl", public=True) is None
     assert read_file_from_repo("agent1", slug, ".wikihub/events.jsonl", public=True) is None
 
@@ -1474,7 +1514,7 @@ def test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(a
     assert r.status_code in (401, 403), f"private page should be restricted, got {r.status_code}"
     assert private_title.encode() not in r.data
 
-    for query, leaked_page in ((log_title, "log.md"), (topics_title, "topics.md"), (private_title, "owner-control.md")):
+    for query, leaked_page in ((log_title, "log.md"), (topics_title, "topics.md"), (claimable_title, "claimable.md"), (private_title, "owner-control.md")):
         r = anon.get(f"/api/v1/search?q={query}")
         assert r.status_code == 200, f"search failed: {r.status_code} {r.data[:200]}"
         assert all(hit.get("wiki") != f"agent1/{slug}" or hit.get("page") != leaked_page for hit in r.get_json()["results"]), \
@@ -1485,7 +1525,7 @@ def test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(a
         assert r.status_code == 200, f"{path} failed: {r.status_code}"
         body = r.data.decode("utf-8", errors="replace")
         assert title not in body, f"{path} must not list an unlisted-only wiki"
-        assert log_title not in body and topics_title not in body and private_title not in body
+        assert log_title not in body and topics_title not in body and claimable_title not in body and private_title not in body
 
     r = anon.get(f"/api/v1/wikis?owner=agent1&q={title}")
     assert r.status_code == 200
@@ -1516,7 +1556,7 @@ def test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(a
     assert hook_wiki is not None
     assert Page.query.filter_by(wiki_id=hook_wiki.id, path="log.md").first().visibility == "private"
 
-    sync_page_to_repo("agent1", hook_slug, ".wikihub/acl", "* unlisted\n")
+    sync_page_to_repo("agent1", hook_slug, ".wikihub/acl", "* public-view\n")
     r = client.post("/api/v1/admin/regenerate-mirror", json={
         "username": "agent1",
         "slug": hook_slug,
@@ -1525,7 +1565,7 @@ def test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(a
     assert r.status_code == 200, f"admin reindex failed: {r.status_code} {r.data[:200]}"
     assert r.get_json()["reindexed"] is True
     db.session.expire_all()
-    assert Page.query.filter_by(wiki_id=hook_wiki.id, path="log.md").first().visibility == "unlisted"
+    assert Page.query.filter_by(wiki_id=hook_wiki.id, path="log.md").first().visibility == "public"
     r = anon.get(f"/@agent1/{hook_slug}/log")
     assert r.status_code == 200, f"hook/admin ACL reindex should make /log anonymously readable, got {r.status_code}"
 
@@ -1536,7 +1576,7 @@ def test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(a
     assert delete_wiki is not None
     r = client.post(f"/api/v1/wikis/agent1/{delete_slug}/pages", json={
         "path": ".wikihub/acl",
-        "content": "* unlisted\n",
+        "content": "* unlisted-view\n",
     }, headers=h)
     assert r.status_code == 201
     db.session.expire_all()

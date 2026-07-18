@@ -1856,7 +1856,7 @@ def admin_sync_page():
 
     content = data.get("content", "")
     frontmatter = data.get("frontmatter", {})
-    page.visibility = data.get("visibility", "private")
+    page.visibility = normalize_page_visibility(data.get("visibility")) or "private"
     update_page_metadata(page, content, frontmatter)
     db.session.flush()
     refresh_wikilinks_for_page(page, content)

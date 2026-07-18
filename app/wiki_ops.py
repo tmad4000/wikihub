@@ -5,7 +5,7 @@ import shutil
 from datetime import date, datetime
 
 from app import db
-from app.acl import parse_acl, parse_serve_inline, resolve_visibility
+from app.acl import normalize_page_visibility, parse_acl, parse_serve_inline, resolve_visibility
 from app.content_utils import extract_wikilinks, parse_markdown_document
 from app.git_backend import _repo_path, init_wiki_repo
 from app.git_sync import list_files_in_repo, read_file_from_repo, regenerate_public_mirror, scaffold_wiki, sync_page_to_repo
@@ -169,7 +169,7 @@ def replace_acl_file(username, slug, content, message="Update ACL"):
 
 def reindex_wiki_pages_and_mirror(username, slug, wiki):
     """Rebuild DB page metadata and the public mirror from the current repo ACL."""
-    index_repo_pages(username, slug, wiki, reset=True)
+    index_repo_pages(username, slug, wiki, reset=False)
     regenerate_public_mirror(username, slug, load_acl_rules(username, slug))
 
 
@@ -228,9 +228,7 @@ def materialize_pending_invites_for(user):
                 owner.username, wiki.slug, ".wikihub/acl", acl_text,
                 message=f"Materialize pending invite(s) for @{user.username}",
             )
-            acl_rules = load_acl_rules(owner.username, wiki.slug)
-            index_repo_pages(owner.username, wiki.slug, wiki, reset=True)
-            regenerate_public_mirror(owner.username, wiki.slug, acl_rules)
+            reindex_wiki_pages_and_mirror(owner.username, wiki.slug, wiki)
 
     return applied
 
@@ -275,7 +273,7 @@ def index_repo_pages(username, slug, wiki, reset=False):
             content = ""
             frontmatter = {}
 
-        visibility = resolve_visibility(path, acl_rules, frontmatter.get("visibility"))
+        visibility = normalize_page_visibility(resolve_visibility(path, acl_rules, frontmatter.get("visibility"))) or "private"
         page = existing_pages.get(path)
         if page is None:
             page = Page(wiki_id=wiki.id, path=path)
