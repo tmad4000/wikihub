@@ -2192,6 +2192,8 @@ def new_folder(username, slug):
             ), 400
 
         file_path = f"{folder_path}/index.md"
+        if _is_wikihub_plumbing_path(file_path):
+            abort(400)
         existing_content = read_file_from_repo(owner.username, wiki.slug, file_path, public=False)
         if existing_content is not None:
             edit_path = url_path_from_page_path(f"{folder_path}/index", strip_md=True)

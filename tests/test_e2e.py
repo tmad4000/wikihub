@@ -1620,8 +1620,15 @@ def test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(a
         "visibility": "unlisted",
     }, follow_redirects=False)
     assert r.status_code == 400, f"web edit rename into plumbing must be rejected, got {r.status_code}"
+    r = owner_browser.post(f"/@agent1/{slug}/new-folder", data={
+        "folder_name": ".wikihub/serve-inline",
+        "visibility": "public",
+    }, follow_redirects=False)
+    assert r.status_code == 400, f"web new-folder plumbing POST must be rejected, got {r.status_code}"
     assert Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/serve-inline.md").first() is None
     assert Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/events.md").first() is None
+    assert Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/serve-inline/index.md").first() is None
+    assert read_file_from_repo("agent1", slug, ".wikihub/serve-inline/index.md") is None
 
     r = client.get(f"/api/v1/wikis/agent1/{slug}/pages", headers=h)
     assert r.status_code == 200
