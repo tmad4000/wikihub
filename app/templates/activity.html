@@ -46,10 +46,10 @@
 .gactivity-list { display: flex; flex-direction: column; gap: 2px; }
 .gactivity-row {
   display: block; padding: 12px 14px; border: 1px solid var(--border-default);
-  border-radius: var(--radius-md); background: var(--bg-surface); text-decoration: none;
+  border-radius: var(--radius-md); background: var(--bg-surface);
   transition: border-color 0.15s ease;
 }
-.gactivity-row:hover { border-color: var(--border-emphasis); text-decoration: none; }
+.gactivity-row:hover { border-color: var(--border-emphasis); }
 .gactivity-line { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 .gactivity-verb {
   font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;
@@ -57,7 +57,8 @@
 }
 .gactivity-verb.created { color: var(--color-success, #4a9d5a); border: 1px solid var(--color-success, #4a9d5a); }
 .gactivity-verb.updated { color: var(--accent); border: 1px solid var(--accent); }
-.gactivity-title { font-weight: 600; color: var(--text-primary); }
+.gactivity-title { font-weight: 600; color: var(--text-primary); text-decoration: none; }
+.gactivity-title:hover { color: var(--accent); text-decoration: none; }
 .gactivity-meta { margin-top: 4px; font-size: 0.8125rem; color: var(--text-muted); font-family: var(--font-mono); }
 .gactivity-meta a { color: var(--text-secondary); text-decoration: none; }
 .gactivity-meta a:hover { color: var(--accent); }
@@ -161,16 +162,16 @@
   {% if entries %}
   <div class="gactivity-list">
     {% for e in entries %}
-    <a href="{{ e.rel_url }}" class="gactivity-row">
+    <div class="gactivity-row">
       <div class="gactivity-line">
         <span class="gactivity-verb {{ e.event }}">{{ e.event }}</span>
-        <span class="gactivity-title">{{ e.page_title }}</span>
+        <a href="{{ e.rel_url }}" class="gactivity-title">{{ e.page_title }}</a>
       </div>
       <div class="gactivity-meta">
-        in <a href="/@{{ e.owner }}/{{ e.wiki_slug }}" onclick="event.stopPropagation();">{{ e.wiki_title }}</a>
+        in <a href="/@{{ e.owner }}/{{ e.wiki_slug }}">{{ e.wiki_title }}</a>
         &middot; {{ e.relative }}{% if e.author %} &middot; by {{ e.author }}{% endif %}
       </div>
-    </a>
+    </div>
     {% endfor %}
   </div>
 

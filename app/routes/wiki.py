@@ -1484,18 +1484,31 @@ def wiki_activity_rss(username, slug):
 
     owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
     acl_rules = load_acl_rules(owner.username, wiki.slug)
-    # Candidate pool bounded so a huge private wiki can't force a full scan;
-    # 300 newest is far more than the 50 we emit even after ACL filtering.
-    candidates = (
-        Page.query.filter_by(wiki_id=wiki.id)
-        .order_by(Page.updated_at.desc(), Page.id.desc())
-        .limit(300)
-        .all()
+    query = Page.query.filter_by(wiki_id=wiki.id)
+    has_acl_grants = (
+        current_user.is_authenticated
+        and acl_rules
+        and grants_for_user(acl_rules, current_user.username)
     )
-    visible = [
-        p for p in candidates
-        if _viewer_can_read_page(wiki, p, acl_rules=acl_rules, owner=owner)
-    ][:50]
+    if not _is_owner(wiki) and not has_acl_grants:
+        query = query.filter(Page.visibility.in_((
+            "public", "public-view", "public-edit",
+            "unlisted", "unlisted-view", "unlisted-edit",
+        )))
+    query = query.order_by(Page.updated_at.desc(), Page.id.desc())
+    visible = []
+    offset = 0
+    batch_size = 200
+    while len(visible) < 50:
+        candidates = query.offset(offset).limit(batch_size).all()
+        if not candidates:
+            break
+        for p in candidates:
+            if _viewer_can_read_page(wiki, p, acl_rules=acl_rules, owner=owner):
+                visible.append(p)
+                if len(visible) == 50:
+                    break
+        offset += batch_size
     entries = [
         activity_entry(p, wiki, owner.username, request.host_url) for p in visible
     ]

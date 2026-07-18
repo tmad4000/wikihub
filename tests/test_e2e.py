@@ -29,7 +29,7 @@ os.environ["SESSION_COOKIE_SECURE"] = "0"
 
 from app import create_app, db
 from app.auth_utils import _ip_write_timestamps, _write_timestamps
-from app.models import User, utcnow
+from app.models import Page, User, Wiki, utcnow
 
 
 def setup():
@@ -6624,6 +6624,8 @@ def run_all():
             ("set_wiki_limit imports from app root (wikihub-20ct)", lambda: test_set_wiki_limit_script_imports_from_repo_root()),
             ("global activity excludes non-public content", lambda: test_global_activity_excludes_non_public(client, key)),
             ("activity RSS well-formed + correct links (both hosts)", lambda: test_activity_rss_is_well_formed_with_correct_links(client, key)),
+            ("per-wiki RSS finds older unlisted pages after private pages", lambda: test_wiki_activity_rss_keeps_older_unlisted_after_private_pages(client, key)),
+            ("global activity rows avoid nested anchors", lambda: test_global_activity_rows_do_not_nest_anchors(client, key)),
             ("global activity pagination", lambda: test_activity_pagination(client, key)),
         ]
 
@@ -6751,6 +6753,96 @@ def test_activity_rss_is_well_formed_with_correct_links(client, key):
         assert "Private Note" not in joined, f"private page must NOT appear in anon per-wiki RSS; got titles={titles!r}"
         for it in root.find("channel").findall("item"):
             assert it.find("link").text.startswith(f"http://{host}/@agent1/secretwiki/")
+
+
+def test_wiki_activity_rss_keeps_older_unlisted_after_private_pages(client, key):
+    """Anonymous per-wiki RSS keeps reachable unlisted pages even when newer
+    private pages would otherwise fill the candidate window."""
+    from datetime import timedelta
+    from flask import g as _flask_g
+    from xml.etree import ElementTree
+
+    h = {"Authorization": f"Bearer {key}"}
+    client.post("/api/v1/wikis", json={"slug": "rss-sparse", "title": "RSS Sparse"}, headers=h)
+    client.post("/api/v1/wikis/agent1/rss-sparse/pages", json={
+        "path": "wiki/older-unlisted.md",
+        "content": "---\ntitle: Older Unlisted\nvisibility: unlisted\n---\n\n# Older Unlisted\n",
+        "visibility": "unlisted",
+    }, headers=h)
+
+    owner = User.query.filter_by(username="agent1").first()
+    wiki = Wiki.query.filter_by(owner_id=owner.id, slug="rss-sparse").first()
+    base = utcnow()
+    visible_page = Page.query.filter_by(wiki_id=wiki.id, path="wiki/older-unlisted.md").first()
+    visible_page.updated_at = base
+    visible_page.created_at = base
+    for i in range(305):
+        db.session.add(Page(
+            wiki_id=wiki.id,
+            path=f"secrets/private-{i:03d}.md",
+            title=f"Private {i:03d}",
+            visibility="private",
+            created_at=base + timedelta(seconds=i + 1),
+            updated_at=base + timedelta(seconds=i + 1),
+        ))
+    db.session.commit()
+
+    _flask_g.pop("_login_user", None)
+    anon = client.application.test_client()
+    r = anon.get("/@agent1/rss-sparse/activity.rss")
+    assert r.status_code == 200
+    titles = [
+        it.find("title").text
+        for it in ElementTree.fromstring(r.get_data()).find("channel").findall("item")
+    ]
+    joined = " ".join(titles)
+    assert "Older Unlisted" in joined, f"older readable page missing from RSS: {titles!r}"
+    assert "Private 304" not in joined, "anonymous RSS must not expose private pages"
+
+
+def test_global_activity_rows_do_not_nest_anchors(client, key):
+    """Global activity rows render page and wiki links as sibling anchors."""
+    from html.parser import HTMLParser
+
+    _seed_activity_fixtures(client, key)
+    r = client.get("/activity")
+    assert r.status_code == 200
+
+    class AnchorNestingParser(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.anchor_depth = 0
+            self.nested = False
+            self.row_count = 0
+            self.page_links = 0
+            self.wiki_links = 0
+
+        def handle_starttag(self, tag, attrs):
+            attrs = dict(attrs)
+            classes = attrs.get("class", "").split()
+            href = attrs.get("href", "")
+            if "gactivity-row" in classes:
+                self.row_count += 1
+                assert tag != "a", "global activity row must not be an anchor"
+            if tag == "a":
+                if self.anchor_depth:
+                    self.nested = True
+                self.anchor_depth += 1
+                if "gactivity-title" in classes:
+                    self.page_links += 1
+                if href.startswith("/@agent1/pubwiki"):
+                    self.wiki_links += 1
+
+        def handle_endtag(self, tag):
+            if tag == "a":
+                self.anchor_depth -= 1
+
+    parser = AnchorNestingParser()
+    parser.feed(r.get_data(as_text=True))
+    assert parser.row_count > 0, "expected global activity rows"
+    assert parser.page_links > 0, "page title should remain a primary link"
+    assert parser.wiki_links > 0, "wiki link should remain present"
+    assert not parser.nested, "global activity must not contain nested anchors"
 
 
 def test_activity_pagination(client, key):
