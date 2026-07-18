@@ -30,7 +30,7 @@ from app.acl import can_read, can_write, list_all_grants, normalize_page_visibil
 from app.email_service import send_share_invite_existing_user, send_share_invite_pending
 from app.credentials_hint import resolve_server_url
 from app.discovery import discoverable_wiki_ids
-from app.page_utils import is_content_page_path, is_wikihub_plumbing_path
+from app.page_utils import content_page_path_filter, is_content_page_path, is_wikihub_plumbing_path
 from app.content_utils import (
     page_reference_aliases,
     parse_markdown_document,
@@ -1664,6 +1664,35 @@ def append_section(owner, slug, page_path):
 
 # --- search ---
 
+def _bounded_anonymous_content_results(ordered_query, offset, limit):
+    results = []
+    visible_seen = 0
+    sql_offset = 0
+    batch_size = 100
+
+    while len(results) < limit:
+        batch = ordered_query.offset(sql_offset).limit(batch_size).all()
+        if not batch:
+            break
+
+        for page in batch:
+            if not is_content_page_path(page.path):
+                continue
+            if visible_seen < offset:
+                visible_seen += 1
+                continue
+            results.append(page)
+            visible_seen += 1
+            if len(results) >= limit:
+                break
+
+        sql_offset += len(batch)
+        if len(batch) < batch_size:
+            break
+
+    return results
+
+
 @api_bp.route("/search", methods=["GET"])
 @api_auth_optional
 def search_pages():
@@ -1738,9 +1767,9 @@ def search_pages():
         total = len(visible_results)
         results = visible_results[offset:offset + limit]
     else:
-        visible_results = [page for page in ordered_query.all() if is_content_page_path(page.path)]
-        total = len(visible_results)
-        results = visible_results[offset:offset + limit]
+        ordered_query = ordered_query.filter(content_page_path_filter(Page.path))
+        total = ordered_query.count()
+        results = _bounded_anonymous_content_results(ordered_query, offset, limit)
 
     return jsonify({
         "results": [{

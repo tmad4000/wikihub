@@ -586,6 +586,16 @@ def test_search(client, api_key):
     assert "total" in data
 
 
+def test_anonymous_search_uses_bounded_content_batches():
+    api_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app", "routes", "api_wikis.py")
+    with open(api_path) as f:
+        src = f.read()
+    assert "visible_results = [page for page in ordered_query.all() if is_content_page_path(page.path)]" not in src
+    assert "batch_size = 100" in src
+    assert "content_page_path_filter(Page.path)" in src
+    assert "_bounded_anonymous_content_results" in src
+
+
 def test_reader_owner_visibility_control(client, api_key):
     """owners get a direct page-visibility control on the reader surface."""
     h = {"Authorization": f"Bearer {api_key}"}
@@ -7330,6 +7340,7 @@ def run_all():
             ("binary file serving", lambda: test_binary_file_serving(client, key)),
             ("unlisted-view ACL default readable by anon (issue #15)", lambda: test_unlisted_view_acl_default_readable_by_anon(client, key)),
             ("search", lambda: test_search(client, key)),
+            ("anonymous search uses bounded content batches", lambda: test_anonymous_search_uses_bounded_content_batches()),
             ("reader owner visibility control", lambda: test_reader_owner_visibility_control(client, key)),
             ("search respects ACL shares", lambda: test_search_respects_acl_shares(client, key)),
             ("social (star + fork)", lambda: test_social(client, key)),
@@ -7512,10 +7523,10 @@ def _seed_activity_fixtures(client, key):
     ))
     db.session.add(Page(
         wiki_id=plumbing_only_wiki.id,
-        path="./.wikihub/discovery-log.md",
-        title="Dot Plumbing Discovery",
+        path="wiki/../.wikihub/discovery-log.md",
+        title="Normalized Plumbing Discovery",
         visibility="public",
-        excerpt="Dot Plumbing Discovery",
+        excerpt="Normalized Plumbing Discovery",
     ))
     db.session.commit()
     return h

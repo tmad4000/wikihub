@@ -12,11 +12,12 @@ def _is_self_viewer(viewer, owner):
 
 def discoverable_wiki_ids(visibilities=DISCOVERABLE_VISIBILITIES):
     return {
-        wiki_id for (wiki_id,) in db.session.query(Page.wiki_id)
+        wiki_id for wiki_id, path in db.session.query(Page.wiki_id, Page.path)
         .filter(Page.visibility.in_(visibilities))
         .filter(content_page_path_filter(Page.path))
         .distinct()
         .all()
+        if is_content_page_path(path)
     }
 
 
