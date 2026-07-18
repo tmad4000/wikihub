@@ -7446,11 +7446,13 @@ def run_all():
             ("per-user wiki limit + 429 (wikihub-20ct)", lambda: test_wiki_limit_effective_resolution_and_429(client, app)),
             ("set_wiki_limit imports from app root (wikihub-20ct)", lambda: test_set_wiki_limit_script_imports_from_repo_root()),
             ("global activity excludes non-public content", lambda: test_global_activity_excludes_non_public(client, key)),
+            ("global activity paginates after normalized plumbing filter", lambda: test_global_activity_paginates_after_normalized_plumbing_filter(client, key)),
             ("activity RSS well-formed + correct links (both hosts)", lambda: test_activity_rss_is_well_formed_with_correct_links(client, key)),
             ("private-only wiki RSS does not leak metadata", lambda: test_wiki_activity_rss_private_only_wiki_does_not_leak_metadata(client, key)),
             ("per-wiki RSS finds older unlisted pages after private pages", lambda: test_wiki_activity_rss_keeps_older_unlisted_after_private_pages(client, key)),
             ("global activity rows avoid nested anchors", lambda: test_global_activity_rows_do_not_nest_anchors(client, key)),
             ("global activity pagination", lambda: test_activity_pagination(client, key)),
+            ("anonymous search total filters normalized plumbing", lambda: test_anonymous_search_total_filters_normalized_plumbing(client, key)),
         ]
 
         passed = 1  # account creation already passed
@@ -7564,6 +7566,42 @@ def test_global_activity_excludes_non_public(client, key):
     assert "Private Note" not in rss
     assert "Public Plumbing Activity" not in rss
     assert "Dot Plumbing Activity" not in rss
+
+
+def test_global_activity_paginates_after_normalized_plumbing_filter(client, key):
+    """Global activity windowing ignores normalized plumbing rows before paging."""
+    h = {"Authorization": f"Bearer {key}"}
+    client.post("/api/v1/wikis", json={"slug": "activity-window", "title": "Activity Window"}, headers=h)
+
+    owner = User.query.filter_by(username="agent1").first()
+    wiki = Wiki.query.filter_by(owner_id=owner.id, slug="activity-window").first()
+    base = utcnow() + timedelta(days=1)
+    visible_title = "Visible After Plumbing Window"
+    for i in range(85):
+        db.session.add(Page(
+            wiki_id=wiki.id,
+            path=f"wiki/../.wikihub/window-{i:03d}.md",
+            title=f"Hidden Plumbing Window {i:03d}",
+            visibility="public",
+            created_at=base + timedelta(seconds=i + 1),
+            updated_at=base + timedelta(seconds=i + 1),
+        ))
+    db.session.add(Page(
+        wiki_id=wiki.id,
+        path="wiki/visible-after-plumbing-window.md",
+        title=visible_title,
+        visibility="public",
+        excerpt=visible_title,
+        created_at=base,
+        updated_at=base,
+    ))
+    db.session.commit()
+
+    r = client.get("/activity")
+    assert r.status_code == 200, f"/activity should render, got {r.status_code}"
+    body = r.get_data(as_text=True)
+    assert visible_title in body, "visible row must not be pushed out by normalized plumbing rows"
+    assert "Hidden Plumbing Window" not in body, "normalized plumbing rows must stay hidden"
 
 
 def test_activity_rss_is_well_formed_with_correct_links(client, key):
@@ -7751,6 +7789,30 @@ def test_activity_pagination(client, key):
     assert "Page 2 of" in b2
     # the two pages should not be identical (different slice of entries)
     assert b1 != b2, "page 2 should differ from page 1"
+
+
+def test_anonymous_search_total_filters_normalized_plumbing(client, key):
+    h = {"Authorization": f"Bearer {key}"}
+    client.post("/api/v1/wikis", json={"slug": "search-total", "title": "Search Total"}, headers=h)
+
+    owner = User.query.filter_by(username="agent1").first()
+    wiki = Wiki.query.filter_by(owner_id=owner.id, slug="search-total").first()
+    marker = "NeedleNormalizedPlumbingTotal"
+    db.session.add(Page(
+        wiki_id=wiki.id,
+        path="wiki/../.wikihub/search-total.md",
+        title=marker,
+        visibility="public",
+        excerpt=marker,
+    ))
+    db.session.commit()
+
+    anon = client.application.test_client()
+    r = anon.get(f"/api/v1/search?q={marker}")
+    assert r.status_code == 200, f"anonymous search failed: {r.status_code} {r.data[:200]}"
+    data = r.get_json()
+    assert data["results"] == [], "normalized plumbing row must not become searchable"
+    assert data["total"] == 0, "search total must not count normalized plumbing rows"
 
 
 if __name__ == "__main__":

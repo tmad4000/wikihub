@@ -1,4 +1,3 @@
-from math import ceil
 from types import SimpleNamespace
 
 from flask import current_app, flash, jsonify, redirect, render_template, request, url_for
@@ -108,8 +107,36 @@ def _global_activity_query():
     )
 
 
-def _content_activity_rows(rows):
-    return [(page, wiki, user) for (page, wiki, user) in rows if is_content_page_path(page.path)]
+def _content_activity_window(query, offset, limit):
+    results = []
+    content_seen = 0
+    sql_offset = 0
+    batch_size = 100
+    needed = offset + limit
+
+    while len(results) < limit:
+        batch = query.offset(sql_offset).limit(batch_size).all()
+        if not batch:
+            break
+
+        for page, wiki, user in batch:
+            if not is_content_page_path(page.path):
+                continue
+            if content_seen < offset:
+                content_seen += 1
+                continue
+            results.append((page, wiki, user))
+            content_seen += 1
+            if len(results) >= limit:
+                break
+
+        sql_offset += len(batch)
+        if len(batch) < batch_size:
+            break
+        if content_seen >= needed and len(results) >= limit:
+            break
+
+    return results
 
 
 @main_bp.route("/activity")
@@ -124,16 +151,17 @@ def activity():
     per_page = 40
 
     query = _global_activity_query()
-    total = query.count()
-    pages = ceil(total / per_page) if total else 0
     start = (page_num - 1) * per_page
-    rows = _content_activity_rows(query.offset(start).limit(per_page * 2).all())[:per_page]
+    window = _content_activity_window(query, start, per_page + 1)
+    rows = window[:per_page]
+    has_next = len(window) > per_page
+    pages = page_num + 1 if has_next else (page_num if rows else max(page_num - 1, 0))
     pagination = SimpleNamespace(
         items=rows,
         page=page_num,
         pages=pages,
         has_prev=page_num > 1,
-        has_next=page_num < pages,
+        has_next=has_next,
         prev_num=page_num - 1,
         next_num=page_num + 1,
     )
@@ -154,7 +182,7 @@ def activity_rss():
     """RSS 2.0 feed for the global public activity feed."""
     from app.feeds import activity_entry, render_rss
 
-    rows = _content_activity_rows(_global_activity_query().limit(100).all())[:50]
+    rows = _content_activity_window(_global_activity_query(), 0, 50)
     entries = [
         activity_entry(page, wiki, user.username, request.host_url)
         for (page, wiki, user) in rows

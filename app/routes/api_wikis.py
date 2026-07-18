@@ -1669,8 +1669,9 @@ def _bounded_anonymous_content_results(ordered_query, offset, limit):
     visible_seen = 0
     sql_offset = 0
     batch_size = 100
+    has_more = False
 
-    while len(results) < limit:
+    while len(results) < limit + 1:
         batch = ordered_query.offset(sql_offset).limit(batch_size).all()
         if not batch:
             break
@@ -1683,14 +1684,17 @@ def _bounded_anonymous_content_results(ordered_query, offset, limit):
                 continue
             results.append(page)
             visible_seen += 1
-            if len(results) >= limit:
+            if len(results) > limit:
+                has_more = True
                 break
 
         sql_offset += len(batch)
         if len(batch) < batch_size:
             break
 
-    return results
+    if has_more:
+        return results[:limit], offset + limit + 1
+    return results[:limit], visible_seen
 
 
 @api_bp.route("/search", methods=["GET"])
@@ -1768,8 +1772,7 @@ def search_pages():
         results = visible_results[offset:offset + limit]
     else:
         ordered_query = ordered_query.filter(content_page_path_filter(Page.path))
-        total = ordered_query.count()
-        results = _bounded_anonymous_content_results(ordered_query, offset, limit)
+        results, total = _bounded_anonymous_content_results(ordered_query, offset, limit)
 
     return jsonify({
         "results": [{
