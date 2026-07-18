@@ -3828,6 +3828,11 @@ def test_subdomain_routing(client):
     r = client.get("/intro", headers={"Host": "recipes.wikihub.md"})
     assert r.status_code == 200, f"wiki subdomain page failed: {r.status_code}"
 
+    r = client.post("/api/v1/wikis/subowner/cookbook/pages",
+                    json={"path": "activity/menu.md", "content": "# Activity Menu\nWeekly prep.",
+                          "visibility": "public", "message": "add activity page"}, headers=h)
+    assert r.status_code in (200, 201)
+
     # Apex /@user/<slug> 301s to wiki subdomain
     r = client.get("/@subowner/cookbook",
                    headers={"Host": "wikihub.md"}, follow_redirects=False)
@@ -3855,6 +3860,11 @@ def test_subdomain_routing(client):
         assert r.mimetype == "application/rss+xml"
         assert b"WikiHub" in r.data
         assert b"recent activity" in r.data
+
+    r = client.get("/activity/menu", headers={"Host": "recipes.wikihub.md"})
+    assert r.status_code == 200, f"/activity/<page> should rewrite to wiki page on wiki subdomain: {r.status_code}"
+    assert b"Activity Menu" in r.data
+    assert b"Recent page creations and updates across public wikis" not in r.data
 
     # Internal url_for()-generated links use the full /@user/slug/page form.
     # On a wiki subdomain, those must resolve — either directly or 301 to the
