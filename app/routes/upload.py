@@ -179,6 +179,7 @@ def _process_uploads(username, slug, wiki_id, files):
         wiki = Wiki.query.get(wiki_id)
         if wiki:
             reindex_wiki_pages_and_mirror(username, slug, wiki)
+            db.session.commit()
         return
 
     for path, text in entries:

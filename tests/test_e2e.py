@@ -810,6 +810,8 @@ def test_zip_upload(client, api_key):
         "files": (buf, "wiki.zip"),
     }, content_type="multipart/form-data", follow_redirects=False)
     assert r.status_code == 302
+    db.session.remove()
+
     wiki = Wiki.query.join(User, Wiki.owner_id == User.id).filter(User.username == "uploader", Wiki.slug == "uploaded").first()
     assert wiki is not None
     assert Page.query.filter_by(wiki_id=wiki.id, path="wiki/page1.md").first().visibility == "public"
