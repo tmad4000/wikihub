@@ -221,6 +221,8 @@ def shared():
         unlisted = Page.query.filter(
             Page.wiki_id == wiki.id,
             Page.visibility.in_(("unlisted", "unlisted-edit")),
+            ~Page.path.startswith(".wikihub/"),
+            Page.path != ".wikihub",
         ).all()
         if grants or unlisted:
             shared_by_me.append({

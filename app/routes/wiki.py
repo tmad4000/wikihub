@@ -10,12 +10,13 @@ from app.url_utils import page_path_from_url_path, url_path_from_page_path
 from flask_login import current_user
 
 from app import db
-from app.acl import can_read, can_write, grants_for_user, matches_serve_inline, resolve_grants, resolve_visibility
+from app.acl import can_read, can_write, grants_for_user, matches_serve_inline, normalize_page_visibility, resolve_grants, resolve_visibility
 from app.backlinks import get_backlinks_for_page
 from app.content_utils import has_private_bands, parse_markdown_document, set_visibility_in_content
 from app.discovery import discoverable_page_for_wiki, visible_wikis_for_owner
 from app.git_backend import _repo_path
 from app.git_sync import read_file_from_repo, read_file_bytes_from_repo, list_files_in_repo, regenerate_public_mirror, remove_page_from_repo, sync_page_to_repo, update_mirror_page
+from app.page_utils import is_wikihub_plumbing_path
 from app.models import (
     Page,
     Proposal,
@@ -38,10 +39,26 @@ from app.wiki_ops import index_repo_pages, load_acl_rules, load_serve_inline_pat
 
 def _recently_updated_pages(wiki, limit=8, public_only=False):
     """get the most recently updated pages for a wiki."""
-    query = Page.query.filter_by(wiki_id=wiki.id)
+    query = _content_pages_query(wiki)
     if public_only:
         query = query.filter(Page.visibility.in_(('public', 'public-view', 'public-edit')))
     return query.order_by(Page.updated_at.desc()).limit(limit).all()
+
+
+def _is_wikihub_plumbing_path(path):
+    return is_wikihub_plumbing_path(path)
+
+
+def _content_pages_query(wiki):
+    return Page.query.filter_by(wiki_id=wiki.id).filter(~Page.path.startswith(".wikihub/"), Page.path != ".wikihub")
+
+
+def _stored_page_visibility(*candidates):
+    for candidate in candidates:
+        normalized = normalize_page_visibility(candidate)
+        if normalized:
+            return normalized
+    return "private"
 
 
 def _get_backlinks(page):
@@ -117,7 +134,7 @@ def _get_full_graph(wiki, viewer_filter=True):
     are visible to the viewer. An edge from a private page to a public page
     would otherwise reveal the private page's existence (wikihub-8888.2).
     """
-    pages = Page.query.filter_by(wiki_id=wiki.id).all()
+    pages = _content_pages_query(wiki).all()
     owner = db.session.get(User, wiki.owner_id)
 
     visible_ids = None
@@ -243,6 +260,8 @@ def _viewer_can_read_page(wiki, page, acl_rules=None, owner=None):
     """
     if page is None:
         return False
+    if _is_wikihub_plumbing_path(page.path):
+        return False
     if _is_owner(wiki):
         return True
     if acl_rules is None:
@@ -270,7 +289,7 @@ def _viewer_can_see_any_page(wiki, acl_rules=None, owner=None):
     # Anyone can see public/public-view/public-edit and unlisted-* pages.
     public_visibilities = ("public", "public-view", "public-edit", "unlisted", "unlisted-view", "unlisted-edit")
     has_public = (
-        Page.query.filter_by(wiki_id=wiki.id)
+        _content_pages_query(wiki)
         .filter(Page.visibility.in_(public_visibilities))
         .first()
         is not None
@@ -354,7 +373,7 @@ def _visible_files(username, slug, wiki, public=False, acl_filter_user=None, pag
         # non-owner with ACL grants — read authoritative repo, filter by can_read
         acl_rules = load_acl_rules(username, slug)
         if pages_by_path is None:
-            pages_by_path = {p.path: p for p in Page.query.filter_by(wiki_id=wiki.id).all()}
+            pages_by_path = {p.path: p for p in _content_pages_query(wiki).all()}
         return [
             path
             for path in files
@@ -371,7 +390,7 @@ def _visible_files(username, slug, wiki, public=False, acl_filter_user=None, pag
     # excludes private pages, so files here are readable-by-URL by construction.
     acl_rules = load_acl_rules(username, slug)
     if pages_by_path is None:
-        pages_by_path = {p.path: p for p in Page.query.filter_by(wiki_id=wiki.id).all()}
+        pages_by_path = {p.path: p for p in _content_pages_query(wiki).all()}
     return [
         path
         for path in files
@@ -525,7 +544,7 @@ def _sidebar_current_path_from_request(username, slug):
 def _build_sidebar_tree(username, slug, wiki, public=False, current_path=None, acl_filter_user=None):
     current_path = _normalize_sidebar_current_path(current_path)
     root = {"children": {}}
-    pages_by_path = {p.path: p for p in Page.query.filter_by(wiki_id=wiki.id).all()}
+    pages_by_path = {p.path: p for p in _content_pages_query(wiki).all()}
 
     for path in sorted(_visible_files(username, slug, wiki, public=public, acl_filter_user=acl_filter_user, pages_by_path=pages_by_path)):
         parts = path.split("/")
@@ -628,7 +647,7 @@ def _wiki_activity_items(owner, wiki, acl_rules, limit=60):
     """
     items = []
     visible_pages = []
-    for page in Page.query.filter_by(wiki_id=wiki.id).order_by(Page.updated_at.desc()).limit(120).all():
+    for page in _content_pages_query(wiki).order_by(Page.updated_at.desc()).limit(120).all():
         if _viewer_can_read_page(wiki, page, acl_rules=acl_rules, owner=owner):
             visible_pages.append(page)
             verb = "created" if abs((_activity_time(page.updated_at) - _activity_time(page.created_at)).total_seconds()) < 2 else "updated"
@@ -718,7 +737,7 @@ def _wiki_activity_items(owner, wiki, acl_rules, limit=60):
 def _folder_listing(username, slug, wiki, folder_path="", public=False, acl_filter_user=None):
     prefix = folder_path.strip("/")
     files = _visible_files(username, slug, wiki, public=public, acl_filter_user=acl_filter_user)
-    pages_by_path = {page.path: page for page in Page.query.filter_by(wiki_id=wiki.id).all()}
+    pages_by_path = {page.path: page for page in _content_pages_query(wiki).all()}
     seen = set()
     items = []
 
@@ -953,7 +972,7 @@ def wiki_llms_txt(username, slug):
         "## Pages",
     ]
 
-    pages = Page.query.filter_by(wiki_id=wiki.id).filter(
+    pages = _content_pages_query(wiki).filter(
         Page.visibility.in_(["public", "public-view", "public-edit"])
     ).order_by(Page.path).all()
 
@@ -998,7 +1017,7 @@ SIDEBAR_ASYNC_THRESHOLD = 200  # wikis with more pages than this get client-side
 
 def _sidebar_for_wiki(username, slug, wiki, public=False, current_path=None, acl_filter_user=None):
     """return sidebar items, or None if the wiki is too large (use sidebar.json instead)."""
-    page_count = Page.query.filter_by(wiki_id=wiki.id).count()
+    page_count = _content_pages_query(wiki).count()
     if page_count > SIDEBAR_ASYNC_THRESHOLD:
         return None  # template will fetch sidebar.json client-side
     return _build_sidebar_tree(username, slug, wiki, public=public, current_path=current_path, acl_filter_user=acl_filter_user)
@@ -1051,7 +1070,7 @@ def wiki_index(username, slug):
             # wikihub-dkp8: the wiki row EXISTS. If it has any pages this viewer
             # simply can't see → restricted (403). Only a genuinely empty wiki
             # (no pages at all) falls back to the ambiguous 404.
-            if Page.query.filter_by(wiki_id=wiki.id).count() > 0:
+            if _content_pages_query(wiki).count() > 0:
                 return _render_restricted(owner, wiki)
             return render_template("permission_error.html", owner=owner, wiki=wiki), 404
         return render_template(
@@ -1238,7 +1257,7 @@ def accept_proposal(username, slug, proposal_id):
 
     content = set_visibility_in_content(patch.proposed_content, page.visibility)
     frontmatter, _ = parse_markdown_document(content)
-    page.visibility = frontmatter.get("visibility") or page.visibility
+    page.visibility = _stored_page_visibility(frontmatter.get("visibility"), page.visibility)
     page.author = proposal.author_name
     update_page_metadata(page, content, frontmatter)
     refresh_wikilinks_for_page(page, content)
@@ -1365,6 +1384,8 @@ def page_graph_json(username, slug, page_path):
     """
     raw_page_path = page_path
     page_path = page_path_from_url_path(page_path)
+    if _is_wikihub_plumbing_path(page_path):
+        return jsonify({"nodes": [], "links": []}), 404
     owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
     raw_file_path = raw_page_path if raw_page_path.endswith(".md") else raw_page_path + ".md"
     file_path = raw_file_path
@@ -1408,7 +1429,7 @@ def wiki_tag_index(username, slug, tag_name):
     owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
     # JSON (not JSONB) — filter in Python after pulling pages for this wiki.
     # Volume per-wiki is bounded; this avoids JSONB-only operators.
-    candidates = Page.query.filter_by(wiki_id=wiki.id).order_by(Page.title.asc()).all()
+    candidates = _content_pages_query(wiki).order_by(Page.title.asc()).all()
     pages = []
     for p in candidates:
         fm = p.frontmatter_json or {}
@@ -1789,7 +1810,7 @@ def wiki_page(username, slug, page_path):
             # restricted" (403) from "no such folder" (404). A folder exists iff
             # any page's path lives under it.
             folder_prefix = page_path.strip("/") + "/"
-            has_hidden = Page.query.filter_by(wiki_id=wiki.id).filter(
+            has_hidden = _content_pages_query(wiki).filter(
                 Page.path.like(folder_prefix.replace("%", r"\%").replace("_", r"\_") + "%", escape="\\")
             ).first() is not None
             if has_hidden:
@@ -2003,7 +2024,7 @@ def edit_page(username, slug, page_path):
             content = set_visibility_in_content(content, page.visibility)
 
         frontmatter, _ = parse_markdown_document(content)
-        page_visibility = frontmatter.get("visibility") or resolve_visibility(target_path, acl_rules)
+        page_visibility = _stored_page_visibility(frontmatter.get("visibility"), resolve_visibility(target_path, acl_rules))
 
         if renamed and page:
             remove_page_from_repo(owner.username, wiki.slug, file_path)
@@ -2066,7 +2087,7 @@ def new_page(username, slug):
             content = set_visibility_in_content(content, visibility)
 
         frontmatter, _ = parse_markdown_document(content)
-        page_visibility = frontmatter.get("visibility") or resolve_visibility(page_path, acl_rules)
+        page_visibility = _stored_page_visibility(frontmatter.get("visibility"), resolve_visibility(page_path, acl_rules))
 
         page = Page(wiki_id=wiki.id, path=page_path)
         db.session.add(page)
@@ -2165,7 +2186,7 @@ def new_folder(username, slug):
             db.session.add(page)
 
         frontmatter, _ = parse_markdown_document(content)
-        page.visibility = frontmatter.get("visibility") or resolve_visibility(file_path, acl_rules)
+        page.visibility = _stored_page_visibility(frontmatter.get("visibility"), resolve_visibility(file_path, acl_rules))
         page.author = current_user.username
         update_page_metadata(page, content, frontmatter)
         db.session.flush()

@@ -14,6 +14,7 @@ def discoverable_wiki_ids():
         wiki_id
         for (wiki_id,) in db.session.query(Page.wiki_id)
         .filter(Page.visibility.in_(DISCOVERABLE_VISIBILITIES))
+        .filter(~Page.path.startswith(".wikihub/"), Page.path != ".wikihub")
         .distinct()
         .all()
     }
@@ -30,6 +31,7 @@ def visible_wikis_for_owner(owner, viewer=None):
 
 def discoverable_page_for_wiki(wiki_id, viewer_is_owner=False):
     query = Page.query.filter_by(wiki_id=wiki_id)
+    query = query.filter(~Page.path.startswith(".wikihub/"), Page.path != ".wikihub")
     if not viewer_is_owner:
         query = query.filter(Page.visibility.in_(DISCOVERABLE_VISIBILITIES))
 

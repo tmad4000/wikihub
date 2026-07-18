@@ -474,6 +474,7 @@ def render_page(content, wiki_owner=None, wiki_slug=None, current_page_path=None
             Page.query.join(Wiki, Page.wiki_id == Wiki.id)
             .join(User, Wiki.owner_id == User.id)
             .filter(User.username == wiki_owner, Wiki.slug == wiki_slug)
+            .filter(~Page.path.startswith(".wikihub/"), Page.path != ".wikihub")
             .all()
         )
         known_pages = {page.path: page for page in pages}

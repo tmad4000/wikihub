@@ -1451,6 +1451,20 @@ def test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(a
     assert r.status_code == 201, f"topics create failed: {r.status_code} {r.data[:200]}"
     assert r.get_json()["visibility"] == "unlisted"
 
+    rename_title = "GBVisibility Rename Marker"
+    r = client.post(f"/api/v1/wikis/agent1/{slug}/pages", json={
+        "path": "rename-source.md",
+        "content": f"---\ntitle: {rename_title}\n---\n\n# Rename Source\n\nrename coverage.",
+    }, headers=h)
+    assert r.status_code == 201, f"rename source create failed: {r.status_code} {r.data[:200]}"
+    r = client.patch(f"/api/v1/wikis/agent1/{slug}/pages/rename-source.md", json={
+        "new_path": "rename-target.md",
+    }, headers=h)
+    assert r.status_code == 200, f"rename under ACL default failed: {r.status_code} {r.data[:200]}"
+    assert r.get_json()["visibility"] == "unlisted"
+    assert visibility_for("rename-target.md") == "unlisted"
+    assert visibility_for("rename-target.md") != "unlisted-view"
+
     claimable_title = "GBVisibility Claimable Marker"
     r = client.post(f"/api/v1/wikis/agent1/{slug}/pages", json={
         "path": "claimable.md",
@@ -1563,6 +1577,50 @@ def test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(a
     r = anon.get(f"/api/v1/search?q={admin_plumbing_marker}")
     assert r.status_code == 200
     assert r.get_json()["results"] == [], "admin plumbing sync must not become searchable"
+
+    from app.wiki_ops import refresh_wikilinks_for_page, update_page_metadata
+    stale_marker = "GBVisibility Stale Plumbing Marker"
+    stale_page = Page(
+        wiki_id=wiki_id,
+        path=".wikihub/serve-inline.md",
+        title=stale_marker,
+        visibility="public",
+        frontmatter_json={"title": stale_marker, "tags": ["plumbing-leak"]},
+        excerpt=stale_marker,
+    )
+    stale_content = f"---\ntitle: {stale_marker}\ntags: [plumbing-leak]\n---\n\n# {stale_marker}\n\n[[log]]"
+    update_page_metadata(stale_page, stale_content)
+    db.session.add(stale_page)
+    db.session.flush()
+    refresh_wikilinks_for_page(stale_page, stale_content)
+    db.session.commit()
+    assert Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/serve-inline.md").first() is not None
+
+    r = anon.get(f"/@agent1/{slug}/.wikihub/serve-inline")
+    assert r.status_code == 404, f"stale plumbing web route must not render, got {r.status_code}"
+    r = anon.get(f"/api/v1/wikis/agent1/{slug}/pages/.wikihub/serve-inline.md")
+    assert r.status_code == 404, f"stale plumbing API read must not render, got {r.status_code}"
+    r = anon.get(f"/api/wikis/agent1/{slug}/pages/.wikihub/serve-inline.md")
+    assert r.status_code == 404, f"stale plumbing compat API read must not render, got {r.status_code}"
+    r = anon.get(f"/@agent1/{slug}/activity")
+    assert r.status_code == 200
+    assert stale_marker not in r.data.decode("utf-8", errors="replace")
+    r = anon.get(f"/@agent1/{slug}/graph.json")
+    assert r.status_code == 200
+    graph = r.get_json()
+    assert all(".wikihub/" not in node.get("url", "") and node.get("title") != stale_marker for node in graph.get("nodes", []))
+    r = anon.get(f"/@agent1/{slug}/tag/plumbing-leak")
+    assert r.status_code == 200
+    assert stale_marker not in r.data.decode("utf-8", errors="replace")
+    r = anon.get(f"/@agent1/{slug}/sidebar.json")
+    assert r.status_code == 200
+    assert ".wikihub" not in json.dumps(r.get_json())
+    r = anon.get(f"/@agent1/{slug}/llms.txt")
+    assert r.status_code == 200
+    assert stale_marker not in r.data.decode("utf-8", errors="replace")
+    r = anon.get(f"/api/v1/search?q={stale_marker}")
+    assert r.status_code == 200
+    assert r.get_json()["results"] == [], "stale plumbing row must not become searchable"
 
     r = anon.get(f"/@agent1/{slug}/log")
     assert r.status_code == 200, f"anonymous /log direct link should be 200, got {r.status_code}"

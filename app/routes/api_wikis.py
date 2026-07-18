@@ -29,6 +29,7 @@ from app.git_sync import (
 from app.acl import can_read, can_write, list_all_grants, normalize_page_visibility, remove_grant, resolve_grants, resolve_visibility
 from app.email_service import send_share_invite_existing_user, send_share_invite_pending
 from app.credentials_hint import resolve_server_url
+from app.page_utils import is_wikihub_plumbing_path
 from app.content_utils import (
     page_reference_aliases,
     parse_markdown_document,
@@ -134,8 +135,7 @@ def _is_acl_file_path(path):
 
 
 def _is_wikihub_plumbing_path(path):
-    normalized = (path or "").strip().replace("\\", "/")
-    return normalized == ".wikihub" or normalized.startswith(".wikihub/")
+    return is_wikihub_plumbing_path(path)
 
 
 def _reject_wikihub_plumbing_path():
@@ -163,6 +163,14 @@ def _write_acl_file_and_reindex(owner_user, wiki, content, message):
 
 def _load_page_content(owner, slug, page_path, public=False):
     return read_file_from_repo(owner, slug, page_path, public=public)
+
+
+def _stored_page_visibility(*candidates):
+    for candidate in candidates:
+        normalized = normalize_page_visibility(candidate)
+        if normalized:
+            return normalized
+    return "private"
 
 
 # --- wiki endpoints ---
@@ -612,10 +620,7 @@ def create_page(owner, slug):
     # Store the page-level enum, not an ACL-file token. resolve_visibility() can
     # return `unlisted-view`/`public-view`; persist `unlisted`/`public` so the DB
     # column and list_pages report valid page visibilities (wikihub issue #15).
-    normalized_visibility = normalize_page_visibility(visibility)
-    if not normalized_visibility:
-        normalized_visibility = normalize_page_visibility(resolve_visibility(path, acl_rules)) or "private"
-    visibility = normalized_visibility
+    visibility = _stored_page_visibility(visibility, resolve_visibility(path, acl_rules))
 
     page = Page(
         wiki_id=wiki.id,
@@ -771,7 +776,7 @@ def read_page(owner, slug, page_path):
     # ?include=backlinks,outgoing_links could be supported later in the same shape).
     includes = {tok.strip() for tok in (request.args.get("include") or "").split(",") if tok.strip()}
     if "backlinks" in includes:
-        sources = get_backlinks_for_page(page)
+        sources = [src for src in get_backlinks_for_page(page) if not _is_wikihub_plumbing_path(src.path)]
         # Apply ACL: do not surface a private backlink source to a viewer who
         # can't read it. The fact that it links here is itself information.
         viewer_username = user.username if user else None
@@ -810,7 +815,7 @@ def page_backlinks(owner, slug, page_path):
     if not is_owner and not can_read(page.path, acl_rules, viewer_username, page.visibility):
         return {"error": "not_found", "message": "Page not found"}, 404
 
-    sources = get_backlinks_for_page(page)
+    sources = [src for src in get_backlinks_for_page(page) if not _is_wikihub_plumbing_path(src.path)]
     visible = [
         src for src in sources
         if is_owner or can_read(src.path, acl_rules, viewer_username, src.visibility)
@@ -872,7 +877,7 @@ def replace_page(owner, slug, page_path):
         content = set_visibility_in_content(content, page.visibility)
 
     frontmatter, _ = parse_markdown_document(content)
-    page.visibility = frontmatter.get("visibility") or new_visibility or page.visibility or resolve_visibility(page.path, acl_rules)
+    page.visibility = _stored_page_visibility(frontmatter.get("visibility"), new_visibility, page.visibility, resolve_visibility(page.path, acl_rules))
     update_page_metadata(page, content, frontmatter)
     page.author = _current_username()
     refresh_wikilinks_for_page(page, content)
@@ -968,6 +973,8 @@ def patch_page(owner, slug, page_path):
         repo_changes = [{"action": "delete", "path": old_path}]
 
         for candidate in Page.query.filter_by(wiki_id=wiki.id).all():
+            if _is_wikihub_plumbing_path(candidate.path):
+                continue
             candidate_content = read_file_from_repo(owner_user.username, wiki.slug, candidate.path, public=False) or ""
             if candidate.id == page.id:
                 candidate_content = updated_content
@@ -990,7 +997,7 @@ def patch_page(owner, slug, page_path):
         for candidate, target_path, rewritten in rewritten_pages:
             candidate.path = target_path
             frontmatter, _ = parse_markdown_document(rewritten)
-            candidate.visibility = frontmatter.get("visibility") or resolve_visibility(target_path, acl_rules)
+            candidate.visibility = _stored_page_visibility(frontmatter.get("visibility"), resolve_visibility(target_path, acl_rules))
             candidate.author = _current_username() if candidate.id == page.id else candidate.author
             update_page_metadata(candidate, rewritten, frontmatter)
         db.session.flush()
@@ -998,7 +1005,7 @@ def patch_page(owner, slug, page_path):
             refresh_wikilinks_for_page(candidate, rewritten)
     else:
         frontmatter, _ = parse_markdown_document(updated_content)
-        page.visibility = frontmatter.get("visibility") or requested_visibility or page.visibility or resolve_visibility(page.path, acl_rules)
+        page.visibility = _stored_page_visibility(frontmatter.get("visibility"), requested_visibility, page.visibility, resolve_visibility(page.path, acl_rules))
         page.author = _current_username()
         update_page_metadata(page, updated_content, frontmatter)
         db.session.flush()
@@ -1084,7 +1091,7 @@ def set_page_visibility(owner, slug, page_path):
     content = read_file_from_repo(owner_user.username, wiki.slug, page.path, public=False) or ""
     content = set_visibility_in_content(content, visibility)
     frontmatter, _ = parse_markdown_document(content)
-    page.visibility = frontmatter.get("visibility") or visibility
+    page.visibility = _stored_page_visibility(frontmatter.get("visibility"), visibility)
     update_page_metadata(page, content, frontmatter)
     refresh_wikilinks_for_page(page, content)
     sync_page_to_repo(owner_user.username, wiki.slug, page.path, content, message=f"Set visibility for {page.path}")
@@ -1135,7 +1142,7 @@ def bulk_visibility(owner, slug):
         content = read_file_from_repo(owner_user.username, wiki.slug, page.path, public=False) or ""
         content = set_visibility_in_content(content, visibility)
         frontmatter, _ = parse_markdown_document(content)
-        page.visibility = frontmatter.get("visibility") or visibility
+        page.visibility = _stored_page_visibility(frontmatter.get("visibility"), visibility)
         update_page_metadata(page, content, frontmatter)
         refresh_wikilinks_for_page(page, content)
         repo_changes.append({"action": "write", "path": page.path, "content": content})
@@ -1859,7 +1866,8 @@ def revert_page(owner, slug):
     if page:
         from app.content_utils import parse_markdown_document
         frontmatter, _ = parse_markdown_document(content)
-        page.visibility = frontmatter.get("visibility") or page.visibility
+        acl_rules = load_acl_rules(owner_user.username, wiki.slug)
+        page.visibility = _stored_page_visibility(frontmatter.get("visibility"), page.visibility, resolve_visibility(page.path, acl_rules))
         update_page_metadata(page, content, frontmatter)
         refresh_wikilinks_for_page(page, content)
 
@@ -1902,7 +1910,7 @@ def admin_sync_page():
 
     content = data.get("content", "")
     frontmatter = data.get("frontmatter", {})
-    page.visibility = normalize_page_visibility(data.get("visibility")) or "private"
+    page.visibility = _stored_page_visibility(data.get("visibility"))
     update_page_metadata(page, content, frontmatter)
     db.session.flush()
     refresh_wikilinks_for_page(page, content)

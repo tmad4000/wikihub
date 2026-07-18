@@ -22,6 +22,7 @@ from app.acl import can_read, can_write
 from app.auth_utils import get_current_user_from_request
 from app.git_sync import list_files_in_repo, read_file_from_repo
 from app.models import Page, User, Wiki
+from app.page_utils import is_wikihub_plumbing_path
 from app.wiki_ops import load_acl_rules
 
 agent_chat_bp = Blueprint("agent_chat", __name__)
@@ -266,6 +267,8 @@ def _tool_list_files(session, directory=""):
         wiki = Wiki.query.filter_by(owner_id=owner_user.id, slug=sess_slug).first() if owner_user else None
         if wiki:
             for p in Page.query.filter_by(wiki_id=wiki.id).all():
+                if is_wikihub_plumbing_path(p.path):
+                    continue
                 page_vis[p.path] = p.visibility
 
     try:
@@ -276,10 +279,13 @@ def _tool_list_files(session, directory=""):
             entry_path = os.path.join(full, entry)
             kind = "dir" if os.path.isdir(entry_path) else "file"
             rel = os.path.relpath(entry_path, work_dir)
+            _o, _s, rel_page_path = _split_session_path(rel)
+            if rel_page_path and is_wikihub_plumbing_path(rel_page_path):
+                continue
             # ACL filter for files (not the owner). For directories, allow listing
             # but the per-file filter will catch private files inside.
             if not is_owner and kind == "file":
-                _o, _s, page_path = _split_session_path(rel)
+                page_path = rel_page_path
                 if page_path:
                     fm = page_vis.get(page_path)
                     if not can_read(page_path, acl_rules, username, fm):
@@ -311,6 +317,8 @@ def _tool_search_content(session, query):
         wiki = Wiki.query.filter_by(owner_id=owner_user.id, slug=sess_slug).first() if owner_user else None
         if wiki:
             for p in Page.query.filter_by(wiki_id=wiki.id).all():
+                if is_wikihub_plumbing_path(p.path):
+                    continue
                 page_vis[p.path] = p.visibility
 
     try:
@@ -338,6 +346,8 @@ def _tool_search_content(session, query):
             try:
                 fpath, _rest = line[2:].split(":", 1)
             except ValueError:
+                continue
+            if is_wikihub_plumbing_path(fpath):
                 continue
             if not is_owner:
                 fm = page_vis.get(fpath)
@@ -632,6 +642,8 @@ def agent_chat():
             page_vis = {}
             if not is_owner and wiki_obj:
                 for p in Page.query.filter_by(wiki_id=wiki_obj.id).all():
+                    if is_wikihub_plumbing_path(p.path):
+                        continue
                     page_vis[p.path] = p.visibility
 
             # current page content
@@ -1521,5 +1533,3 @@ def admin_terminal_stop():
                 pass
             _admin_term["master_fd"] = None
     return jsonify({"stopped": True})
-
-

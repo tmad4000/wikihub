@@ -70,6 +70,8 @@ def llms_txt():
     # list public wikis
     public_pages = Page.query.filter(
         Page.visibility.in_(["public", "public-edit"])
+    ).filter(
+        ~Page.path.startswith(".wikihub/"), Page.path != ".wikihub"
     ).join(Wiki).join(User, Wiki.owner_id == User.id).limit(50).all()
 
     seen_wikis = set()
@@ -93,6 +95,8 @@ def llms_full_txt():
 
     pages = Page.query.filter(
         Page.visibility.in_(["public", "public-edit"])
+    ).filter(
+        ~Page.path.startswith(".wikihub/"), Page.path != ".wikihub"
     ).join(Wiki).join(User, Wiki.owner_id == User.id).order_by(
         User.username, Wiki.slug, Page.path
     ).all()
@@ -658,6 +662,7 @@ def wiki_llms_txt(username, slug):
     wiki = Wiki.query.filter_by(owner_id=owner.id, slug=slug).first_or_404()
     pages = (
         Page.query.filter_by(wiki_id=wiki.id)
+        .filter(~Page.path.startswith(".wikihub/"), Page.path != ".wikihub")
         .filter(Page.visibility.in_(["public", "public-edit"]))
         .order_by(Page.path.asc())
         .all()
@@ -680,6 +685,7 @@ def wiki_llms_full_txt(username, slug):
     wiki = Wiki.query.filter_by(owner_id=owner.id, slug=slug).first_or_404()
     pages = (
         Page.query.filter_by(wiki_id=wiki.id)
+        .filter(~Page.path.startswith(".wikihub/"), Page.path != ".wikihub")
         .filter(Page.visibility.in_(["public", "public-edit"]))
         .order_by(Page.path.asc())
         .all()

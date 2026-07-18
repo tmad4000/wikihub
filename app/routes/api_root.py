@@ -138,6 +138,10 @@ def api_wiki_page_compat(owner, slug, page_path):
     from app.acl import can_read
     from app.wiki_ops import load_acl_rules
     from app.url_utils import page_path_from_url_path
+    from app.page_utils import is_wikihub_plumbing_path
+
+    if is_wikihub_plumbing_path(page_path_from_url_path(page_path)):
+        return _not_found_json(request.path, "Page not found")
 
     owner_user = User.query.filter_by(username=owner).first()
     user = get_current_user_from_request()

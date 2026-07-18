@@ -10,6 +10,7 @@ from app.content_utils import extract_wikilinks, parse_markdown_document
 from app.git_backend import _repo_path, init_wiki_repo
 from app.git_sync import list_files_in_repo, read_file_from_repo, regenerate_public_mirror, scaffold_wiki, sync_page_to_repo
 from app.models import Page, Wikilink, Wiki, Star, Fork, User, PendingInvite
+from app.page_utils import is_wikihub_plumbing_path
 
 
 def _sanitize_for_json(obj):
@@ -89,9 +90,12 @@ def refresh_wikilinks_for_page(page, content):
     wiki_pages = {
         candidate.path: candidate.id
         for candidate in Page.query.filter_by(wiki_id=page.wiki_id).all()
+        if not is_wikihub_plumbing_path(candidate.path)
     }
     basename_pages = {}
     for candidate in Page.query.filter_by(wiki_id=page.wiki_id).all():
+        if is_wikihub_plumbing_path(candidate.path):
+            continue
         basename = candidate.path.rsplit("/", 1)[-1]
         basename_pages.setdefault(basename, candidate.id)
         if basename.endswith(".md"):
