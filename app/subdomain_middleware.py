@@ -29,6 +29,8 @@ _GLOBAL_PREFIXES = (
     "/static/",
     "/search",
     "/explore",
+    "/activity",
+    "/activity.rss",
     "/people",
     "/shared",
     "/roadmap",

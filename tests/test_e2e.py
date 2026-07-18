@@ -3846,6 +3846,16 @@ def test_subdomain_routing(client):
     # rewritten into /@subowner/api/v1/ping (which would 404 differently)
     assert r.status_code in (404, 200)
 
+    for host in ("subowner.wikihub.md", "recipes.wikihub.md"):
+        r = client.get("/activity", headers={"Host": host})
+        assert r.status_code == 200, f"/activity should stay global on {host}: {r.status_code}"
+        assert b"Recent page creations and updates across public wikis" in r.data
+        r = client.get("/activity.rss", headers={"Host": host})
+        assert r.status_code == 200, f"/activity.rss should stay global on {host}: {r.status_code}"
+        assert r.mimetype == "application/rss+xml"
+        assert b"WikiHub" in r.data
+        assert b"recent activity" in r.data
+
     # Internal url_for()-generated links use the full /@user/slug/page form.
     # On a wiki subdomain, those must resolve — either directly or 301 to the
     # short form on the same host. Regression test for the double-prefix bug.
