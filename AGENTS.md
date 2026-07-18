@@ -31,7 +31,7 @@ tests are intentional — each one verifies a real user flow end-to-end or a bro
 5. **zip upload** — create wiki via web form with zip file
 6. **agent surfaces** — all discovery endpoints respond (llms.txt, AGENTS.md, .well-known/*)
 7. **ACL permissions** — private pages not readable without auth
-8. **reader behavior** — sidebar, page controls, side peek, live updates, and other browser-facing regressions
+8. **reader behavior** — sidebar, page controls, side peek, hover previews, live updates, and other browser-facing regressions
 9. **activity feeds** — global activity excludes non-public content; RSS links are well-formed and visibility-safe
 
 don't add unit tests for individual functions. if something breaks, add an e2e test that covers the broken flow. tests should run in <10 seconds.
@@ -88,6 +88,8 @@ host (`ubuntu@54.145.123.7`) — that's historical. Production is GCP now.
 - `app/page_utils.py` — canonical repo-path normalization plus `.wikihub/*` plumbing/content-page checks
 - `app/renderer.py` — markdown-it-py with wikilinks, KaTeX, footnotes, Obsidian embeds, wiki-relative link rewriting
 - `app/static/js/sidepeek.js` — desktop reader slide-over for same-wiki page links; fetches rendered body JSON via `?fragment=1`
+- `app/templates/base.html` — global chrome, hover-preview cards, search modal, theme/A2HS scripts
+- `app/templates/_nav.html` — shared nav/account menu, including the per-browser hover-preview toggle
 - `app/auth_utils.py` — password hashing, API key gen/verify, Bearer auth decorators
 - `app/routes/` — blueprints: main, auth, api, api_wikis, wiki, agent_surfaces, upload
 - `hooks/post-receive` — git→DB sync (installed into each wiki's bare repo)
@@ -103,6 +105,8 @@ host (`ubuntu@54.145.123.7`) — that's historical. Production is GCP now.
 - **`.wikihub/*` is plumbing, not content.** Only `.wikihub/acl` is exposed through generic page write APIs, and only to the wiki owner. ACL writes/replaces/patches/deletes/reverts, zip uploads containing `.wikihub/acl`, and git pushes that change `.wikihub/acl` must reindex inherited `Page.visibility` values and regenerate the public mirror. Other `.wikihub/*` paths are rejected by generic web/API page writes and excluded from page counts, public mirrors, discovery, search, backlinks, sidebars, history/diff, zip exports, and agent-chat context.
 - **pinned pages float to the top of the sidebar.** Frontmatter `pinned: true` on a page renders it in a top section of the wiki's left sidebar (subtle divider, then folders/pages alphabetical as usual). Frontmatter-wins, mirroring the visibility precedent. Read permissions still apply — a pinned page the viewer can't read simply doesn't appear. **Pin/unpin via the MCP `wikihub_update_page` tool by setting/removing `pinned: true` in the page's frontmatter — no dedicated tool.** Integrators (e.g. GroupBrain-provisioned wikis) can pin rules / chat-history pages the same way, by writing `pinned: true` frontmatter from their side. Implemented in `_build_sidebar_tree` (`app/routes/wiki.py`) + `render_sidebar` macro and async JS in `app/templates/reader.html`. Regression: `test_pinned_pages_sort_to_top`.
 - **empty nav/sidebar surfaces show explicit unconditional copy, never blankness.** A profile with no visible wikis/pages shows "No public pages here — this account may have unlisted content reachable by direct link."; a wiki sidebar with no visible pages shows "No listed pages visible to you." The wording is **identical whether or not unlisted content exists** — no information leak (same no-leak rule as the 403-vs-404 distinction). Zero-case profile wiki count reads "No public wikis". Regressions: `test_empty_sidebar_copy`, `test_empty_profile_copy_no_leak`.
+- **hover previews are browser-local and reversible.** Same-wiki hover preview cards are enabled by default for logged-in and logged-out readers. The card footer plus desktop/mobile nav menus can disable them per browser by setting localStorage `wh_hover_previews=off`; toggles expose `role="menuitemcheckbox"` and accurate `aria-checked`, dispatch `wikihub:hover-previews-changed`, sync across tabs via `storage`, and immediately close any active/in-flight preview. Regression: `test_hover_previews_toggle`.
+- **closed backdrop-filter menus must be visibility-hidden.** Safari applies `backdrop-filter` even on `opacity:0` account menus, causing phantom blur. Any always-rendered nav/account menu with `backdrop-filter` needs closed-state `visibility:hidden` and open-state `visibility:visible` in every copy of the nav CSS, including landing. Regression: `test_nav_menu_no_phantom_backdrop_blur`.
 - **API keys start with `wh_`**, SHA-256 hashed in DB, shown once on creation.
 - **wiki caps resolve per user.** `User.wiki_limit` overrides `MAX_WIKIS_PER_USER`; enforcement and `/api/v1/me/capabilities` must use `User.effective_wiki_limit()`.
 
