@@ -1885,6 +1885,8 @@ def admin_sync_page():
     username = data["username"]
     slug = data["slug"]
     path = data["path"]
+    if _is_wikihub_plumbing_path(path):
+        return "", 204
 
     owner = User.query.filter_by(username=username).first()
     if not owner:
@@ -1921,6 +1923,8 @@ def admin_delete_page():
     username = data["username"]
     slug = data["slug"]
     path = data["path"]
+    if _is_wikihub_plumbing_path(path):
+        return "", 204
 
     owner = User.query.filter_by(username=username).first()
     if not owner:

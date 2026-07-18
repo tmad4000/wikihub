@@ -1536,6 +1536,34 @@ def test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(a
     assert r.status_code == 200
     assert r.get_json()["results"] == [], "rejected plumbing writes must not become searchable"
 
+    import runpy
+    hook = runpy.run_path(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "hooks", "post-receive"))
+    assert hook["is_wikihub_plumbing_path"](".wikihub/serve-inline.md") is True
+    assert hook["is_wikihub_plumbing_path"]("wiki/serve-inline.md") is False
+
+    admin_headers = {"Authorization": "Bearer test-admin-token"}
+    admin_plumbing_marker = "GBVisibility Admin Plumbing Leak Marker"
+    r = client.post("/api/v1/admin/sync-page", json={
+        "username": "agent1",
+        "slug": slug,
+        "path": ".wikihub/serve-inline.md",
+        "title": "Serve Inline Plumbing",
+        "visibility": "public",
+        "content": admin_plumbing_marker,
+        "frontmatter": {"title": "Serve Inline Plumbing"},
+    }, headers=admin_headers)
+    assert r.status_code == 204, f"admin plumbing sync must be ignored, got {r.status_code}"
+    assert Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/serve-inline.md").first() is None
+    r = client.post("/api/v1/admin/delete-page", json={
+        "username": "agent1",
+        "slug": slug,
+        "path": ".wikihub/serve-inline.md",
+    }, headers=admin_headers)
+    assert r.status_code == 204, f"admin plumbing delete must be ignored, got {r.status_code}"
+    r = anon.get(f"/api/v1/search?q={admin_plumbing_marker}")
+    assert r.status_code == 200
+    assert r.get_json()["results"] == [], "admin plumbing sync must not become searchable"
+
     r = anon.get(f"/@agent1/{slug}/log")
     assert r.status_code == 200, f"anonymous /log direct link should be 200, got {r.status_code}"
     assert log_title.encode() in r.data

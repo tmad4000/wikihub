@@ -83,6 +83,12 @@ def read_file_content(sha, filepath, repo_dir):
         return None
     return result.stdout
 
+
+def is_wikihub_plumbing_path(filepath):
+    normalized = (filepath or "").strip().replace("\\", "/")
+    return normalized == ".wikihub" or normalized.startswith(".wikihub/")
+
+
 def api_request(base_url, path, method, data, admin_token):
     url = f"{base_url}{path}"
     body = json.dumps(data).encode("utf-8")
@@ -135,7 +141,10 @@ def main():
         acl_rules = parse_acl(acl_text) if acl_text else []
 
         # upsert changed .md files
-        md_changed = [f for f in changed if f.endswith(".md") and f not in deleted]
+        md_changed = [
+            f for f in changed
+            if f.endswith(".md") and f not in deleted and not is_wikihub_plumbing_path(f)
+        ]
         for filepath in md_changed:
             content = read_file_content(new_sha, filepath, repo_dir)
             if content is None:
@@ -165,7 +174,7 @@ def main():
                 print(f"  FAILED: {filepath}: {result}", file=sys.stderr)
 
         # delete removed .md files
-        md_deleted = [f for f in deleted if f.endswith(".md")]
+        md_deleted = [f for f in deleted if f.endswith(".md") and not is_wikihub_plumbing_path(f)]
         for filepath in md_deleted:
             result, status = api_request(
                 base_url,
