@@ -2442,6 +2442,8 @@ def test_relative_links_resolve_inside_wiki_on_subdomain(client, api_key):
             "- [Deals](deals)\n"
             "- [Folder](folder/)\n"
             "- [Encoded](Foo%20Bar.md)\n"
+            "- [Dotfile](..notes.md)\n"
+            "- [Dotdir](..2026/plan)\n"
             "- [Notes](notes/scratch.md)\n"
             "- [External](https://example.com/topics)\n"
             "- [Upper External](HTTPS://example.com/upper)\n"
@@ -2452,7 +2454,7 @@ def test_relative_links_resolve_inside_wiki_on_subdomain(client, api_key):
         "visibility": "public",
     }, headers=h)
     assert r.status_code == 200, f"index update failed: {r.status_code} {r.data[:200]}"
-    for p in ("topics.md", "deals.md", "folder/index.md", "Foo Bar.md", "notes/scratch.md"):
+    for p in ("topics.md", "deals.md", "folder/index.md", "Foo Bar.md", "..notes.md", "..2026/plan.md", "notes/scratch.md"):
         r = client.post("/api/v1/wikis/agent1/rel-links/pages", json={
             "path": p,
             "content": f"---\ntitle: {p}\nvisibility: public\n---\n\n# {p}",
@@ -2491,6 +2493,8 @@ def test_relative_links_resolve_inside_wiki_on_subdomain(client, api_key):
     assert "/@agent1/rel-links/deals" in hrefs, f"expected absolute deals link, got {hrefs}"
     assert "/@agent1/rel-links/folder/" in hrefs, f"expected absolute folder link with trailing slash, got {hrefs}"
     assert "/@agent1/rel-links/Foo_Bar" in hrefs, f"expected decoded encoded-file link, got {hrefs}"
+    assert "/@agent1/rel-links/..notes" in hrefs, f"expected dot-prefixed filename link, got {hrefs}"
+    assert "/@agent1/rel-links/..2026/plan" in hrefs, f"expected dot-prefixed folder link, got {hrefs}"
     assert "/@agent1/rel-links/notes/scratch" in hrefs, f"expected absolute nested link, got {hrefs}"
     assert "HTTPS://example.com/upper" in hrefs, f"expected explicit scheme link untouched, got {hrefs}"
     assert "ftp://example.com/file" in hrefs, f"expected explicit scheme link untouched, got {hrefs}"

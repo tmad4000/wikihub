@@ -539,7 +539,7 @@ def render_page(content, wiki_owner=None, wiki_slug=None, current_page_path=None
             # resolve ../path relative to the current page's directory
             resolved = posixpath.normpath(posixpath.join(page_dir, path_part))
             # a link that escapes the wiki root (../../x) has no sane wiki URL
-            if resolved.startswith("..") or resolved == ".":
+            if resolved == ".." or resolved.startswith("../") or resolved == ".":
                 return match.group(0)
             if resolved.endswith(".md"):
                 # prefer the canonical URL of a known page; otherwise still
