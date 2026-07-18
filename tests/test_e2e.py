@@ -1411,7 +1411,7 @@ def test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(a
     though the ACL and public mirror allowed it.
     """
     from app.git_sync import read_file_from_repo, sync_page_to_repo
-    from app.models import Page, Wiki
+    from app.models import Page, Proposal, ProposalPagePatch, ProposalRevision, Wiki
 
     h = {"Authorization": f"Bearer {api_key}"}
     anon = app.test_client()
@@ -1747,6 +1747,59 @@ def test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(a
         headers={"Authorization": f"Bearer {claimer['api_key']}"},
     )
     assert r.status_code == 404, f"stale plumbing claim target must not render, got {r.status_code}"
+
+    r = anon.get(f"/@agent1/{slug}/-/suggest/.wikihub/serve-inline")
+    assert r.status_code == 404, f"stale plumbing suggest route must not render, got {r.status_code}"
+
+    share_user_row = User.query.filter_by(username=share_user["username"]).first()
+    stale_proposal = Proposal(
+        wiki_id=wiki_id,
+        page_id=stale_page.id,
+        page_path=".wikihub/serve-inline.md",
+        author_id=share_user_row.id,
+        author_name=share_user_row.username,
+        title="Hidden plumbing suggestion",
+        status="changes_requested",
+        base_content_hash=stale_page.content_hash,
+    )
+    db.session.add(stale_proposal)
+    db.session.flush()
+    stale_revision = ProposalRevision(proposal_id=stale_proposal.id, revision_number=1, note="hidden")
+    db.session.add(stale_revision)
+    db.session.flush()
+    db.session.add(ProposalPagePatch(
+        revision_id=stale_revision.id,
+        page_path=".wikihub/serve-inline.md",
+        base_content_hash=stale_page.content_hash,
+        base_content=stale_content,
+        proposed_content=stale_content + "\n\nproposal plumbing secret",
+    ))
+    db.session.commit()
+    proposal_path = f"/@agent1/{slug}/-/proposals/{stale_proposal.id}"
+
+    r = owner_browser.get(f"/@agent1/{slug}/-/proposals")
+    assert r.status_code == 200, f"owner proposal list failed: {r.status_code}"
+    proposal_list_body = r.data.decode("utf-8", errors="replace")
+    assert "Hidden plumbing suggestion" not in proposal_list_body
+    assert ".wikihub/serve-inline" not in proposal_list_body
+    r = owner_browser.get(proposal_path)
+    assert r.status_code == 404, f"owner stale plumbing proposal detail must 404, got {r.status_code}"
+    r = owner_browser.post(proposal_path + "/accept", follow_redirects=False)
+    assert r.status_code == 404, f"owner stale plumbing proposal accept must 404, got {r.status_code}"
+
+    proposal_author_browser = app.test_client()
+    r = proposal_author_browser.get(f"/auth/login?api_key={share_user['api_key']}&next=/", follow_redirects=False)
+    assert r.status_code == 302
+    r = proposal_author_browser.get(proposal_path)
+    assert r.status_code == 404, f"author stale plumbing proposal detail must 404, got {r.status_code}"
+    r = proposal_author_browser.post(proposal_path + "/comment", data={"body": "hidden"}, follow_redirects=False)
+    assert r.status_code == 404, f"author stale plumbing proposal comment must 404, got {r.status_code}"
+    r = proposal_author_browser.post(proposal_path + "/resubmit", data={
+        "note": "hidden",
+        "content": stale_content,
+    }, follow_redirects=False)
+    assert r.status_code == 404, f"author stale plumbing proposal resubmit must 404, got {r.status_code}"
+
     db.session.expire_all()
     stale_after_claim = Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/serve-inline.md").first()
     assert stale_after_claim.anonymous is True

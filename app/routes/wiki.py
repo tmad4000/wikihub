@@ -458,7 +458,18 @@ def _proposal_diff(base_content, proposed_content, path):
     ))
 
 
+def _proposal_targets_plumbing(proposal, patch=None):
+    if patch is None:
+        _, patch = _latest_proposal_patch(proposal)
+    return (
+        _is_wikihub_plumbing_path(proposal.page_path)
+        or bool(patch and _is_wikihub_plumbing_path(patch.page_path))
+    )
+
+
 def _proposal_participant_can_view(proposal, current_page, owner, wiki, patch):
+    if not patch or _proposal_targets_plumbing(proposal, patch):
+        return False
     if _is_owner(wiki):
         return True
     if current_user.is_authenticated and proposal.author_id == current_user.id:
@@ -466,6 +477,13 @@ def _proposal_participant_can_view(proposal, current_page, owner, wiki, patch):
     acl_rules = load_acl_rules(owner.username, wiki.slug)
     username_for_acl = current_user.username if current_user.is_authenticated else None
     return bool(current_page and can_read(patch.page_path, acl_rules, username_for_acl, current_page.visibility))
+
+
+def _proposal_patch_or_404(proposal):
+    revision, patch = _latest_proposal_patch(proposal)
+    if not patch or _proposal_targets_plumbing(proposal, patch):
+        abort(404)
+    return revision, patch
 
 
 def _proposal_participant_name():
@@ -1138,9 +1156,11 @@ def wiki_index(username, slug):
 
 @wiki_bp.route("/@<username>/<slug>/-/suggest/<path:page_path>", methods=["GET", "POST"])
 def suggest_edit(username, slug, page_path):
+    if _is_wikihub_plumbing_path(page_path):
+        abort(404)
     owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
     page, file_path = _resolve_markdown_page(wiki, page_path)
-    if not page:
+    if not page or _is_wikihub_plumbing_path(file_path):
         abort(404)
 
     acl_rules = load_acl_rules(owner.username, wiki.slug)
@@ -1217,12 +1237,15 @@ def proposal_list(username, slug):
     if not _is_owner(wiki):
         return render_template("permission_error.html", owner=owner, wiki=wiki), 403
 
-    proposals = (
+    proposals = [
+        proposal for proposal in (
         Proposal.query
         .filter_by(wiki_id=wiki.id)
         .order_by(Proposal.status.asc(), Proposal.created_at.desc())
         .all()
-    )
+        )
+        if not _proposal_targets_plumbing(proposal)
+    ]
     return render_template("proposals.html", owner=owner, wiki=wiki, proposals=proposals)
 
 
@@ -1230,9 +1253,7 @@ def proposal_list(username, slug):
 def proposal_detail(username, slug, proposal_id):
     owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
     proposal = Proposal.query.filter_by(id=proposal_id, wiki_id=wiki.id).first_or_404()
-    revision, patch = _latest_proposal_patch(proposal)
-    if not patch:
-        abort(404)
+    revision, patch = _proposal_patch_or_404(proposal)
 
     current_page = Page.query.filter_by(wiki_id=wiki.id, path=patch.page_path).first()
     if not _proposal_participant_can_view(proposal, current_page, owner, wiki, patch):
@@ -1266,9 +1287,7 @@ def accept_proposal(username, slug, proposal_id):
     if proposal.status != "pending":
         return redirect(url_for("wiki.proposal_detail", username=owner.username, slug=wiki.slug, proposal_id=proposal.id))
 
-    _, patch = _latest_proposal_patch(proposal)
-    if not patch:
-        abort(404)
+    _, patch = _proposal_patch_or_404(proposal)
 
     page = Page.query.filter_by(wiki_id=wiki.id, path=patch.page_path).first()
     if not page:
@@ -1310,6 +1329,7 @@ def reject_proposal(username, slug, proposal_id):
         return render_template("permission_error.html", owner=owner, wiki=wiki), 403
 
     proposal = Proposal.query.filter_by(id=proposal_id, wiki_id=wiki.id).first_or_404()
+    _proposal_patch_or_404(proposal)
     if proposal.status == "pending":
         proposal.status = "rejected"
         proposal.reviewed_by_id = current_user.id
@@ -1322,9 +1342,7 @@ def reject_proposal(username, slug, proposal_id):
 def comment_proposal(username, slug, proposal_id):
     owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
     proposal = Proposal.query.filter_by(id=proposal_id, wiki_id=wiki.id).first_or_404()
-    _, patch = _latest_proposal_patch(proposal)
-    if not patch:
-        abort(404)
+    _, patch = _proposal_patch_or_404(proposal)
     current_page = Page.query.filter_by(wiki_id=wiki.id, path=patch.page_path).first()
     if not _proposal_participant_can_view(proposal, current_page, owner, wiki, patch):
         return render_template("permission_error.html", owner=owner, wiki=wiki), 403
@@ -1341,6 +1359,7 @@ def request_proposal_changes(username, slug, proposal_id):
         return render_template("permission_error.html", owner=owner, wiki=wiki), 403
 
     proposal = Proposal.query.filter_by(id=proposal_id, wiki_id=wiki.id).first_or_404()
+    _proposal_patch_or_404(proposal)
     if proposal.status == "pending":
         proposal.status = "changes_requested"
         proposal.reviewed_by_id = current_user.id
@@ -1358,6 +1377,7 @@ def resubmit_proposal(username, slug, proposal_id):
         return render_template("permission_error.html", owner=owner, wiki=wiki), 403
     if proposal.status != "changes_requested":
         return redirect(url_for("wiki.proposal_detail", username=owner.username, slug=wiki.slug, proposal_id=proposal.id))
+    _proposal_patch_or_404(proposal)
 
     page = Page.query.filter_by(wiki_id=wiki.id, path=proposal.page_path).first()
     if not page:
