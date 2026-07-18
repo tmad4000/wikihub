@@ -813,6 +813,10 @@ def page_backlinks(owner, slug, page_path):
     if err:
         return err
 
+    normalized_page_path = _normalize_page_path_param(page_path)
+    if _is_wikihub_plumbing_path(normalized_page_path):
+        return {"error": "not_found", "message": "Page not found"}, 404
+
     page = _lookup_page(wiki.id, page_path)
     if not page:
         return {"error": "not_found", "message": "Page not found"}, 404
@@ -1228,6 +1232,10 @@ def claim_page(owner, slug, page_path):
     owner_user, wiki, err = _get_wiki_or_404(owner, slug)
     if err:
         return err
+
+    normalized_page_path = _normalize_page_path_param(page_path)
+    if _is_wikihub_plumbing_path(normalized_page_path):
+        return {"error": "not_found", "message": "Page not found"}, 404
 
     page = _lookup_page(wiki.id, page_path)
     if not page:

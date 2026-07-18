@@ -1667,6 +1667,8 @@ def test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(a
         visibility="public",
         frontmatter_json={"title": stale_marker, "tags": ["plumbing-leak"]},
         excerpt=stale_marker,
+        anonymous=True,
+        claimable=True,
     )
     stale_content = f"---\ntitle: {stale_marker}\ntags: [plumbing-leak]\n---\n\n# {stale_marker}\n\n[[log]]"
     update_page_metadata(stale_page, stale_content)
@@ -1699,6 +1701,18 @@ def test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(a
     assert r.status_code == 404, f"stale plumbing API read must not render, got {r.status_code}"
     r = anon.get(f"/api/wikis/agent1/{slug}/pages/.wikihub/serve-inline.md")
     assert r.status_code == 404, f"stale plumbing compat API read must not render, got {r.status_code}"
+    r = anon.get(f"/api/v1/wikis/agent1/{slug}/pages/.wikihub/serve-inline.md/backlinks")
+    assert r.status_code == 404, f"stale plumbing backlinks target must not render, got {r.status_code}"
+    claimer = client.post("/api/v1/accounts", json={"username": "plumbingclaimer"}).get_json()
+    r = client.post(
+        f"/api/v1/wikis/agent1/{slug}/pages/.wikihub/serve-inline.md/claim",
+        headers={"Authorization": f"Bearer {claimer['api_key']}"},
+    )
+    assert r.status_code == 404, f"stale plumbing claim target must not render, got {r.status_code}"
+    db.session.expire_all()
+    stale_after_claim = Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/serve-inline.md").first()
+    assert stale_after_claim.anonymous is True
+    assert stale_after_claim.claimable is True
     r = anon.get(f"/@agent1/{slug}/activity")
     assert r.status_code == 200
     assert stale_marker not in r.data.decode("utf-8", errors="replace")
