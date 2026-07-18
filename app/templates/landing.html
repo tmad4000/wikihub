@@ -157,10 +157,15 @@
       border-radius: var(--radius-md); border: 1px solid var(--border-emphasis);
       background: var(--menu-bg); backdrop-filter: blur(12px); box-shadow: none;
       opacity: 0; transform: translateY(-4px); pointer-events: none;
-      transition: opacity 0.14s ease, transform 0.14s ease;
+      /* visibility:hidden while closed — Safari applies backdrop-filter even at
+         opacity:0, leaving a phantom blurred rectangle (wikihub-i4am) */
+      visibility: hidden;
+      transition: opacity 0.14s ease, transform 0.14s ease, visibility 0s linear 0.14s;
     }
     .nav-account.open .nav-account-menu {
       opacity: 1; transform: translateY(0); pointer-events: auto;
+      visibility: visible;
+      transition: opacity 0.14s ease, transform 0.14s ease, visibility 0s;
     }
     .nav-account-summary { padding: 10px 12px 12px; border-bottom: 1px solid var(--border-default); margin-bottom: 4px; }
     .nav-account-summary strong { display: block; font-size: 0.875rem; color: var(--text-primary); }

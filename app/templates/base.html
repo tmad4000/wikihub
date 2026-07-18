@@ -157,6 +157,9 @@ a:hover { text-decoration: underline; }
   font-size: 0.9375rem;
   text-decoration: none;
   border-radius: var(--radius-sm);
+  /* button-as-menuitem reset (hover previews toggle, wikihub-lzex) */
+  width: 100%; background: none; border: none; cursor: pointer;
+  font-family: inherit; text-align: left;
 }
 .nav-mobile-item:hover { background: var(--accent-subtle); text-decoration: none; }
 .nav-mobile-item-danger { color: var(--color-error-soft); }
@@ -217,12 +220,17 @@ a:hover { text-decoration: underline; }
   opacity: 0;
   transform: translateY(-4px);
   pointer-events: none;
-  transition: opacity 0.14s ease, transform 0.14s ease;
+  /* visibility:hidden while closed — Safari applies backdrop-filter even at
+     opacity:0, leaving a phantom blurred rectangle (wikihub-i4am) */
+  visibility: hidden;
+  transition: opacity 0.14s ease, transform 0.14s ease, visibility 0s linear 0.14s;
 }
 .nav-account.open .nav-account-menu {
   opacity: 1;
   transform: translateY(0);
   pointer-events: auto;
+  visibility: visible;
+  transition: opacity 0.14s ease, transform 0.14s ease, visibility 0s;
 }
 .nav-account-menu::before {
   content: '';
@@ -258,6 +266,9 @@ a:hover { text-decoration: underline; }
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
   font-size: 0.8125rem;
+  /* button-as-menuitem reset (hover previews toggle, wikihub-lzex) */
+  width: 100%; background: none; border: none; cursor: pointer;
+  font-family: inherit; text-align: left;
   text-decoration: none;
 }
 .nav-account-item:hover {
@@ -402,6 +413,12 @@ a:hover { text-decoration: underline; }
 .hover-preview-related-label { font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 4px; }
 .hover-preview-link { display: block; font-size: 0.75rem; color: var(--accent); text-decoration: none; padding: 2px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hover-preview-link:hover { text-decoration: underline; }
+.hover-preview-disable {
+  display: block; margin-top: 8px; padding: 0;
+  font-size: 0.6875rem; color: var(--text-muted);
+  background: none; border: none; cursor: pointer; font-family: inherit;
+}
+.hover-preview-disable:hover { color: var(--text-secondary); text-decoration: underline; }
 
 /* .theme-toggle styles live in _theme.html */
 
@@ -563,6 +580,30 @@ document.addEventListener('DOMContentLoaded', () => {
   var hideTimer = null;
   var cache = {};
 
+  // wikihub-lzex: per-browser opt-out, no login required. Toggled from the
+  // card footer, the account menu, and the mobile nav panel (_nav.html).
+  function previewsOff() {
+    try { return localStorage.getItem('wh_hover_previews') === 'off'; }
+    catch (e) { return false; }
+  }
+  function disablePreviews() {
+    try { localStorage.setItem('wh_hover_previews', 'off'); } catch (e) {}
+    closeAll();
+  }
+  function appendDisableAction(c) {
+    var d = document.createElement('button');
+    d.type = 'button';
+    d.className = 'hover-preview-disable';
+    d.textContent = 'hide previews';
+    d.title = 'Turn off hover previews (re-enable from the menu)';
+    d.addEventListener('click', function(ev) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      disablePreviews();
+    });
+    c.appendChild(d);
+  }
+
   function parseWikiUrl(href) {
     try {
       var url = new URL(href, window.location.origin);
@@ -698,6 +739,8 @@ document.addEventListener('DOMContentLoaded', () => {
       c.appendChild(relatedEl);
     }
 
+    appendDisableAction(c);
+
     // keep stack alive while mouse is on any card
     c.addEventListener('mouseenter', function() { cancelClose(); });
     c.addEventListener('mouseleave', onCardLeave(depth));
@@ -827,6 +870,8 @@ document.addEventListener('DOMContentLoaded', () => {
     create.href = linkEl.getAttribute('href');
     c.appendChild(create);
 
+    appendDisableAction(c);
+
     c.addEventListener('mouseenter', function() { cancelClose(); });
     c.addEventListener('mouseleave', onCardLeave(depth));
     document.body.appendChild(c);
@@ -837,6 +882,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // page-level hover detection — immediate, no delay
   var lastHoverEl = null;
   document.addEventListener('mouseover', function(e) {
+    if (previewsOff()) return; // wikihub-lzex
     var el = e.target.closest('.wikilink, .article a[href^="/@"]');
     if (!el || el === lastHoverEl) return;
     if (el.closest('.hover-preview')) return;
