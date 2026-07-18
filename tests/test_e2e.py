@@ -791,12 +791,17 @@ def test_curator_sidebar_only_renders_when_usable(app, client, api_key):
 
 def test_zip_upload(client, api_key):
     """create wiki via zip upload"""
+    from app.models import Page, Wiki
+
     # login via web
     client.post("/auth/signup", data={"username": "uploader", "password": "testpass123"})
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr("wiki/page1.md", "---\nvisibility: public\n---\n# Page 1\n\nContent.")
+        zf.writestr("notes/log.md", "# Uploaded Log\n\nThis inherits ACL visibility.")
+        zf.writestr(".wikihub/acl", "* unlisted-view\nwiki/** public-view\n")
+        zf.writestr(".wikihub/serve-inline.md", "# Uploaded Plumbing\n\nThis must not index.")
     buf.seek(0)
 
     r = client.post("/new", data={
@@ -805,6 +810,18 @@ def test_zip_upload(client, api_key):
         "files": (buf, "wiki.zip"),
     }, content_type="multipart/form-data", follow_redirects=False)
     assert r.status_code == 302
+    wiki = Wiki.query.join(User, Wiki.owner_id == User.id).filter(User.username == "uploader", Wiki.slug == "uploaded").first()
+    assert wiki is not None
+    assert Page.query.filter_by(wiki_id=wiki.id, path="wiki/page1.md").first().visibility == "public"
+    assert Page.query.filter_by(wiki_id=wiki.id, path="notes/log.md").first().visibility == "unlisted"
+    assert Page.query.filter_by(wiki_id=wiki.id, path=".wikihub/serve-inline.md").first() is None
+
+    anon = client.application.test_client()
+    r = anon.get("/@uploader/uploaded/notes/log")
+    assert r.status_code == 200, f"uploaded ACL should make notes/log direct-link readable, got {r.status_code}"
+    r = anon.get("/api/v1/search?q=Uploaded+Plumbing")
+    assert r.status_code == 200
+    assert r.get_json()["results"] == [], "uploaded plumbing markdown must not be indexed"
 
 
 def test_anonymous_upload(app):
@@ -4576,6 +4593,7 @@ def test_agent_chat_blocks_cross_user_private_read(client, api_key):
     with a session built as user B but pointed at user A's wiki. (wikihub-7w40)
     """
     import tempfile, shutil as _sh
+    from app.git_sync import sync_page_to_repo
     from app.models import User
     from app.routes.agent_chat import _execute_tool
 
@@ -4598,6 +4616,8 @@ def test_agent_chat_blocks_cross_user_private_read(client, api_key):
     r = client.post("/api/v1/accounts", json={"username": "agent_b"})
     assert r.status_code == 201
     agent_b = User.query.filter_by(username="agent_b").first()
+    sync_page_to_repo("agent1", "curator-priv-a", ".wikihub/acl", "* public-edit\n")
+    sync_page_to_repo("agent1", "curator-priv-a", ".wikihub/serve-inline.md", "# Plumbing Secret\n\nplumbing-agent-chat-secret")
 
     work_dir = tempfile.mkdtemp(prefix="curator-test-")
     try:
@@ -4633,6 +4653,16 @@ def test_agent_chat_blocks_cross_user_private_read(client, api_key):
         out = _execute_tool("write_file", {
             "path": "agent1/curator-priv-a/secret/plan.md",
             "content": "pwned",
+        }, sess)
+        assert "no access" in out or "not found" in out, out
+
+        out = _execute_tool("read_file", {"path": "agent1/curator-priv-a/.wikihub/serve-inline.md"}, sess)
+        assert "plumbing-agent-chat-secret" not in out, f"LEAK: agent_b read plumbing file: {out!r}"
+        assert "no access" in out or "not found" in out, out
+
+        out = _execute_tool("write_file", {
+            "path": "agent1/curator-priv-a/.wikihub/events.jsonl",
+            "content": "{}\n",
         }, sess)
         assert "no access" in out or "not found" in out, out
     finally:

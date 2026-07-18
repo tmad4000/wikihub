@@ -183,6 +183,9 @@ def _check_path_access(session, path, write=False):
     if is_owner:
         return True, None
 
+    if page_path and is_wikihub_plumbing_path(page_path):
+        return False, _ACL_DENIED
+
     acl_rules = load_acl_rules(sess_owner, sess_slug)
 
     # Empty page_path means a wiki-root operation (list_files, search). Allow it
