@@ -43,6 +43,12 @@ caller's read access are `403 forbidden` with a key or `401
 authentication_required` without one. Restricted errors confirm the page exists
 but never include title, content, or frontmatter.
 
+Pinned pages use normal markdown frontmatter, not a dedicated MCP tool. Set
+`pinned: true` in the page content with `wikihub_create_page` or
+`wikihub_update_page` to float that readable page to the top of the wiki
+sidebar; remove the field or set it false to unpin. Pinning never bypasses ACL
+or visibility checks.
+
 ---
 
 ## Install

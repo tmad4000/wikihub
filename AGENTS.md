@@ -20,6 +20,7 @@ source .venv/bin/activate && python3 tests/test_e2e.py
 ```
 
 tests use a separate `wikihub_test` database. create it once: `/opt/homebrew/opt/postgresql@16/bin/createdb wikihub_test`.
+Set `DATABASE_URL` and `REPOS_DIR` before running tests when you need an isolated lane; otherwise the harness defaults to `postgresql://localhost/wikihub_test` and `/tmp/wikihub-test-repos`.
 
 tests are intentional — each one verifies a real user flow end-to-end or a browser-facing regression, not isolated helper internals. Core flows include:
 

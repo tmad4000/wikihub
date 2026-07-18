@@ -84,6 +84,8 @@ ACL-only `public-view` and `unlisted-view` directives are reported as
 `public` and `unlisted` on the page. Unlisted pages are readable by direct
 URL and appear in that wiki's own navigation/sidebar for viewers who can read
 them, but stay out of discovery surfaces such as search, explore, and profiles.
+Set frontmatter `pinned: true` on a page to float it to the top of the wiki
+sidebar for viewers who can read it; pinning never overrides read permissions.
 
 `max_wikis_per_user` is the authenticated account's effective wiki cap: the
 server default unless a per-user override is set. Wiki create and fork requests
@@ -122,7 +124,9 @@ forms are accepted as aliases. Frontmatter `visibility:` on individual files
 overrides the ACL and is stored as the page-level enum: `public`, `public-edit`,
 `private`, `unlisted`, or `unlisted-edit`. Unlisted governs discovery, not
 in-wiki navigation: a link-holder who can read the page sees it in the wiki
-sidebar, while search/explore/profile listings still exclude it.
+sidebar, while search/explore/profile listings still exclude it. Frontmatter
+`pinned: true` is also honored by the sidebar: pinned readable pages sort into
+a top section before the normal folder/page list.
 
 ## Feedback
 
@@ -147,6 +151,9 @@ Flask, Postgres, bare git, Jinja, markdown-it-py. No JS framework. Server-render
 createdb wikihub_test  # once
 source .venv/bin/activate && python3 tests/test_e2e.py
 ```
+
+Set `DATABASE_URL` and `REPOS_DIR` to run an isolated test lane without sharing
+the default `wikihub_test` database or `/tmp/wikihub-test-repos` directory.
 
 End-to-end tests cover account creation, wiki lifecycle, search, social, upload,
 agent surfaces, ACL permissions, reader behavior, live-update polling, and regression cases.

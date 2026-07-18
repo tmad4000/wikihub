@@ -63,6 +63,9 @@ When omitted, page visibility inherits from `.wikihub/acl`; ACL-only
 `public` and `unlisted`. Unlisted pages are readable by direct URL and appear
 in that wiki's own navigation/sidebar for viewers who can read them, but remain
 excluded from discovery surfaces such as search, explore, and profiles.
+To pin a page in the wiki sidebar, include `pinned: true` in the page
+frontmatter and write or publish the full markdown file again. Pinning only
+affects readable pages; it does not grant access.
 
 `read` uses the REST page-read endpoint's access semantics: a missing page is
 `404 not_found`, while an existing page outside the active profile's read access
