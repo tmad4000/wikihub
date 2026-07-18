@@ -892,8 +892,15 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Add-to-Home-Screen: capture the install prompt; show a small banner on second visit
+  // Add-to-Home-Screen: capture the install prompt; show a small banner on second visit.
+  // Mobile-only (wikihub-2q0d): desktop Chrome/Edge also fire beforeinstallprompt, but the
+  // banner is only wanted on phones/tablets, so gate on touch-first UA/pointer.
   var deferredPrompt = null;
+  function isMobileDevice() {
+    if (/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)) return true;
+    return !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches &&
+              window.matchMedia('(max-width: 1024px)').matches);
+  }
   window.addEventListener('beforeinstallprompt', function(e) {
     e.preventDefault();
     deferredPrompt = e;
@@ -902,7 +909,7 @@ document.addEventListener('DOMContentLoaded', () => {
       localStorage.setItem('wh_visit_count', String(visits));
       var dismissed = localStorage.getItem('wh_a2hs_dismissed');
       var alreadyInstalled = window.matchMedia && window.matchMedia('(display-mode: standalone)').matches;
-      if (visits >= 2 && !dismissed && !alreadyInstalled) showA2HSBanner();
+      if (isMobileDevice() && visits >= 2 && !dismissed && !alreadyInstalled) showA2HSBanner();
     } catch(e) {}
   });
 

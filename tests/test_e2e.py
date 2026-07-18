@@ -836,6 +836,20 @@ def test_agent_surfaces(client):
         assert r.status_code == 200, f"{url} returned {r.status_code}"
 
 
+def test_a2hs_banner_gated_to_mobile(client):
+    """regression (wikihub-2q0d): the add-to-home-screen banner must be gated on
+    mobile — desktop Chrome/Edge fire beforeinstallprompt too, and the banner
+    used to show there. The served base template must wire the mobile check
+    into the beforeinstallprompt handler before showA2HSBanner() fires."""
+    r = client.get("/explore")
+    assert r.status_code == 200
+    html = r.data.decode()
+    assert "beforeinstallprompt" in html, "A2HS script missing from base template"
+    assert "isMobileDevice" in html, "mobile gate missing from A2HS script"
+    handler = html.split("beforeinstallprompt", 1)[1].split("showA2HSBanner()", 1)[0]
+    assert "isMobileDevice()" in handler, "showA2HSBanner() not guarded by isMobileDevice()"
+
+
 def test_token_and_settings(client):
     r = client.post("/auth/signup", data={"username": "webuser", "password": "testpass123"}, follow_redirects=False)
     assert r.status_code == 302
@@ -6267,6 +6281,7 @@ def run_all():
             ("zip upload", lambda: test_zip_upload(client, key)),
             ("anonymous upload (wikihub-i2xm)", lambda: test_anonymous_upload(app)),
             ("agent surfaces", lambda: test_agent_surfaces(client)),
+            ("A2HS banner mobile-only (wikihub-2q0d)", lambda: test_a2hs_banner_gated_to_mobile(client)),
             ("token + settings", lambda: test_token_and_settings(client)),
             ("client_config hint", lambda: test_client_config_hint(client)),
             ("magic link login", lambda: test_magic_link_login(client)),
