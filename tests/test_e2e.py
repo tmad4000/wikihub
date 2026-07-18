@@ -6,6 +6,7 @@ not individual functions. run with: python3 tests/test_e2e.py
 """
 
 import io
+import json
 import os
 import shutil
 import subprocess
@@ -802,6 +803,7 @@ def test_zip_upload(client, api_key):
         zf.writestr("notes/log.md", "# Uploaded Log\n\nThis inherits ACL visibility.")
         zf.writestr(".wikihub/acl", "* unlisted-view\nwiki/** public-view\n")
         zf.writestr(".wikihub/serve-inline.md", "# Uploaded Plumbing\n\nThis must not index.")
+        zf.writestr("./.wikihub/dotserve.md", "# Dot Plumbing\n\nThis must not write.")
     buf.seek(0)
 
     r = client.post("/new", data={
@@ -817,6 +819,7 @@ def test_zip_upload(client, api_key):
     assert Page.query.filter_by(wiki_id=wiki.id, path="wiki/page1.md").first().visibility == "public"
     assert Page.query.filter_by(wiki_id=wiki.id, path="notes/log.md").first().visibility == "unlisted"
     assert Page.query.filter_by(wiki_id=wiki.id, path=".wikihub/serve-inline.md").first() is None
+    assert Page.query.filter_by(wiki_id=wiki.id, path=".wikihub/dotserve.md").first() is None
 
     anon = client.application.test_client()
     r = anon.get("/@uploader/uploaded/notes/log")
@@ -824,6 +827,8 @@ def test_zip_upload(client, api_key):
     r = anon.get("/api/v1/search?q=Uploaded+Plumbing")
     assert r.status_code == 200
     assert r.get_json()["results"] == [], "uploaded plumbing markdown must not be indexed"
+    from app.git_sync import read_file_from_repo
+    assert read_file_from_repo("uploader", "uploaded", ".wikihub/dotserve.md") is None
 
 
 def test_anonymous_upload(app):
@@ -1582,6 +1587,11 @@ def test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(a
         "content": plumbing_marker,
     }, headers=h)
     assert r.status_code == 400, f"generic plumbing create must be rejected, got {r.status_code}"
+    r = client.post(f"/api/v1/wikis/agent1/{slug}/pages", json={
+        "path": "./.wikihub/dot-events.jsonl",
+        "content": plumbing_marker,
+    }, headers=h)
+    assert r.status_code == 400, f"dot-segment plumbing create must be rejected, got {r.status_code}"
     r = client.put(f"/api/v1/wikis/agent1/{slug}/pages/.wikihub/serve-inline", json={
         "content": "log.md\n",
     }, headers=h)
@@ -1594,6 +1604,10 @@ def test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(a
         "new_path": ".wikihub/serve-inline",
     }, headers=h)
     assert r.status_code == 400, f"renaming a page into plumbing must be rejected, got {r.status_code}"
+    r = client.patch(f"/api/v1/wikis/agent1/{slug}/pages/log.md", json={
+        "new_path": "./.wikihub/dot-serve-inline",
+    }, headers=h)
+    assert r.status_code == 400, f"dot-segment rename into plumbing must be rejected, got {r.status_code}"
     r = client.post(f"/api/v1/wikis/agent1/{slug}/pages/.wikihub/serve-inline/visibility", json={
         "visibility": "public",
     }, headers=h)
@@ -1614,6 +1628,12 @@ def test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(a
         "visibility": "public",
     }, follow_redirects=False)
     assert r.status_code == 400, f"web new plumbing POST must be rejected, got {r.status_code}"
+    r = owner_browser.post(f"/@agent1/{slug}/new", data={
+        "path": "./.wikihub/dot-serve-inline.md",
+        "content": "serve inline plumbing",
+        "visibility": "public",
+    }, follow_redirects=False)
+    assert r.status_code == 400, f"web new dot-segment plumbing POST must be rejected, got {r.status_code}"
     r = owner_browser.post(f"/@agent1/{slug}/log/edit", data={
         "path": ".wikihub/events.md",
         "content": f"---\ntitle: {log_title}\n---\n\n# Log\n\nattempted plumbing rename.",
@@ -1625,9 +1645,17 @@ def test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(a
         "visibility": "public",
     }, follow_redirects=False)
     assert r.status_code == 400, f"web new-folder plumbing POST must be rejected, got {r.status_code}"
+    r = owner_browser.post(f"/@agent1/{slug}/new-folder", data={
+        "folder_name": "./.wikihub/dot-serve-inline",
+        "visibility": "public",
+    }, follow_redirects=False)
+    assert r.status_code == 400, f"web new-folder dot-segment plumbing POST must be rejected, got {r.status_code}"
     assert Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/serve-inline.md").first() is None
     assert Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/events.md").first() is None
     assert Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/serve-inline/index.md").first() is None
+    assert Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/dot-events.jsonl").first() is None
+    assert Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/dot-serve-inline.md").first() is None
+    assert Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/dot-serve-inline/index.md").first() is None
     assert read_file_from_repo("agent1", slug, ".wikihub/serve-inline/index.md") is None
 
     r = client.get(f"/api/v1/wikis/agent1/{slug}/pages", headers=h)
@@ -1640,6 +1668,7 @@ def test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(a
     import runpy
     hook = runpy.run_path(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "hooks", "post-receive"))
     assert hook["is_wikihub_plumbing_path"](".wikihub/serve-inline.md") is True
+    assert hook["is_wikihub_plumbing_path"]("./.wikihub/serve-inline.md") is True
     assert hook["is_wikihub_plumbing_path"]("wiki/serve-inline.md") is False
 
     admin_headers = {"Authorization": "Bearer test-admin-token"}
@@ -1745,6 +1774,55 @@ def test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(a
     from app.git_backend import _repo_path
     import subprocess
     repo_path = _repo_path("agent1", slug)
+    public_repo_path = _repo_path("agent1", slug, public=True)
+    public_idx = os.path.join(os.environ["REPOS_DIR"], "stale-public-zip.idx")
+    public_env = {**os.environ, "GIT_INDEX_FILE": public_idx}
+    try:
+        subprocess.run(["git", "-C", public_repo_path, "read-tree", "HEAD"], env=public_env, check=True, capture_output=True)
+        blob = subprocess.run(
+            ["git", "-C", public_repo_path, "hash-object", "-w", "--stdin"],
+            input=b"stale mirrored plumbing secret",
+            env=public_env,
+            check=True,
+            capture_output=True,
+        ).stdout.strip().decode()
+        subprocess.run(
+            ["git", "-C", public_repo_path, "update-index", "--add", "--cacheinfo", "100644", blob, ".wikihub/serve-inline.md"],
+            env=public_env,
+            check=True,
+            capture_output=True,
+        )
+        tree = subprocess.run(
+            ["git", "-C", public_repo_path, "write-tree"],
+            env=public_env,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        head = subprocess.run(
+            ["git", "-C", public_repo_path, "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        commit = subprocess.run(
+            ["git", "-C", public_repo_path, "commit-tree", tree, "-p", head, "-m", "stale public plumbing"],
+            env=public_env,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        subprocess.run(["git", "-C", public_repo_path, "update-ref", "refs/heads/main", commit], check=True, capture_output=True)
+    finally:
+        if os.path.exists(public_idx):
+            os.unlink(public_idx)
+    r = anon.get(f"/@agent1/{slug}.zip")
+    assert r.status_code == 200, f"wiki zip failed: {r.status_code}"
+    with zipfile.ZipFile(io.BytesIO(r.data)) as zf:
+        names = zf.namelist()
+        assert all(not name.startswith(".wikihub/") and name != ".wikihub" for name in names), \
+            "wiki zip must exclude stale mirrored plumbing files"
+
     acl_sha = subprocess.check_output([
         "git", "-C", repo_path, "log", "-1", "--format=%H", "--", ".wikihub/acl"
     ], text=True).strip()

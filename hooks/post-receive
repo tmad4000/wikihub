@@ -14,6 +14,7 @@ ported from listhub's post-receive hook.
 
 import json
 import os
+import posixpath
 import subprocess
 import sys
 import urllib.request
@@ -86,6 +87,8 @@ def read_file_content(sha, filepath, repo_dir):
 
 def is_wikihub_plumbing_path(filepath):
     normalized = (filepath or "").strip().replace("\\", "/")
+    if normalized:
+        normalized = posixpath.normpath(normalized).lstrip("/")
     return normalized == ".wikihub" or normalized.startswith(".wikihub/")
 
 

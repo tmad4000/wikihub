@@ -1018,7 +1018,11 @@ def wiki_zip(username, slug):
     if not os.path.isdir(repo):
         abort(404)
 
-    proc = subprocess.run(["git", "archive", "--format=zip", "HEAD"], cwd=repo, capture_output=True)
+    proc = subprocess.run(
+        ["git", "archive", "--format=zip", "HEAD", "--", ".", ":(exclude).wikihub", ":(exclude).wikihub/**"],
+        cwd=repo,
+        capture_output=True,
+    )
     if proc.returncode != 0:
         abort(500)
 

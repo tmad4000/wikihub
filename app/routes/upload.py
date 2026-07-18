@@ -22,7 +22,7 @@ from app.credentials_hint import build_client_config, resolve_server_url
 from app.models import ApiKey, User, Wiki, Page
 from app.content_utils import parse_markdown_document
 from app.git_sync import regenerate_public_mirror, read_file_from_repo, scaffold_wiki, sync_page_to_repo
-from app.page_utils import is_wikihub_plumbing_path
+from app.page_utils import is_wikihub_plumbing_path, normalize_repo_path
 from app.routes import main_bp
 from app.wiki_ops import create_wiki_for_user, ensure_personal_wiki, index_repo_pages, load_acl_rules, refresh_wikilinks_for_page, reindex_wiki_pages_and_mirror, update_page_metadata
 
@@ -162,10 +162,20 @@ def _process_uploads(username, slug, wiki_id, files):
 
         entries.append((filename, text))
 
+    normalized_entries = []
+    for path, text in entries:
+        raw_path = (path or "").strip().replace("\\", "/")
+        normalized_path = normalize_repo_path(path)
+        if raw_path.startswith("/") or normalized_path in ("", "..") or normalized_path.startswith("../"):
+            continue
+        normalized_entries.append((normalized_path, text))
+    entries = normalized_entries
     uploaded_paths = [path for path, _text in entries]
     has_uploaded_acl = ".wikihub/acl" in uploaded_paths
 
     for path, text in entries:
+        if is_wikihub_plumbing_path(path) and path != ".wikihub/acl":
+            continue
         sync_page_to_repo(username, slug, path, text)
 
     if not has_uploaded_acl:
