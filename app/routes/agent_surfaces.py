@@ -565,6 +565,10 @@ Or append `.md` to the URL.
 For rendered HTML without the full reader chrome, append `?fragment=1` to a
 page URL. The response is JSON `{title, html, url, path}` for the article body
 only and uses the same ACL checks as the full page route.
+Hover preview cards use the same rendered-page data path and can be disabled
+per browser without logging in via the "hide previews" card action or the
+`Hover previews` menu toggle; the setting is stored in localStorage as
+`wh_hover_previews=off` and syncs across open tabs.
 For markdown, fragment, and full-page reads, a genuinely missing path stays 404;
 an existing path outside your access returns the restricted 403/401 signal
 without page fields.
