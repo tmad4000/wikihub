@@ -17,6 +17,13 @@
 - `Wikilink` tracks `[[wikilink]]` back-references between pages
 - `ApiKey`: `key_hash`, `key_prefix` (`wh_` + 8 chars), **`agent_name`, `agent_version`** already present (useful for provenance — no schema migration needed)
 
+**Content paths:** `.wikihub/*` files are repo plumbing, not pages. Generic page
+create/update/delete may target `.wikihub/acl` only for the wiki owner; those
+ACL changes reindex inherited `Page.visibility` rows and regenerate the public
+mirror. Other `.wikihub/*` paths are rejected by generic page write APIs and
+hidden from page lists, discovery/search, backlinks, history/diff, zip exports,
+agent chat context, and public git mirrors.
+
 **Auth:** `Bearer wh_...` header. Keys rotate independently per label. Credentials convention: `~/.wikihub/credentials.json` (mode 0600).
 
 **REST surface inventory** (from `api_wikis.py` + `api.py` + `agent_surfaces.py`):
@@ -30,16 +37,16 @@
 | GET | `/api/v1/wikis/<owner>/<slug>` | Optional |
 | PATCH | `/api/v1/wikis/<owner>/<slug>` | Required (owner) |
 | DELETE | `/api/v1/wikis/<owner>/<slug>` | Required (owner) |
-| POST | `/api/v1/wikis/<owner>/<slug>/pages` | Required |
-| GET | `/api/v1/wikis/<owner>/<slug>/pages` | Optional |
-| GET | `/api/v1/wikis/<owner>/<slug>/pages/<path>` | Optional; `?meta=1` returns only `path`, `content_hash`, and `updated_at` for lightweight change polling after the same read ACL check. Missing pages return `404 not_found`; existing pages outside the caller's read access return `403 forbidden` when authenticated or `401 authentication_required` when anonymous, without title/content/frontmatter. |
-| PATCH | `/api/v1/wikis/<owner>/<slug>/pages/<path>` | Required |
-| DELETE | `/api/v1/wikis/<owner>/<slug>/pages/<path>` | Required |
-| POST | `/api/v1/wikis/<owner>/<slug>/pages/<path>/append-section` | Required |
-| POST | `/api/v1/wikis/<owner>/<slug>/pages/<path>/visibility` | Required |
+| POST | `/api/v1/wikis/<owner>/<slug>/pages` | Required; owner may create `.wikihub/acl`, which reindexes inherited visibility and refreshes the public mirror. Other `.wikihub/*` paths return `400 bad_request`. |
+| GET | `/api/v1/wikis/<owner>/<slug>/pages` | Optional; returns content pages only, never `.wikihub/*` plumbing. |
+| GET | `/api/v1/wikis/<owner>/<slug>/pages/<path>` | Optional; `?meta=1` returns only `path`, `content_hash`, and `updated_at` for lightweight change polling after the same read ACL check. Missing pages return `404 not_found`; existing pages outside the caller's read access return `403 forbidden` when authenticated or `401 authentication_required` when anonymous, without title/content/frontmatter. `.wikihub/*` paths return `404 not_found`. |
+| PATCH | `/api/v1/wikis/<owner>/<slug>/pages/<path>` | Required; owner may patch `.wikihub/acl` content, but cannot rename it or append sections. Other `.wikihub/*` paths return `400 bad_request`. |
+| DELETE | `/api/v1/wikis/<owner>/<slug>/pages/<path>` | Required; owner may delete `.wikihub/acl`, which restores private defaults for inherited pages after reindex. Other `.wikihub/*` paths return `400 bad_request`. |
+| POST | `/api/v1/wikis/<owner>/<slug>/pages/<path>/append-section` | Required; content pages only. |
+| POST | `/api/v1/wikis/<owner>/<slug>/pages/<path>/visibility` | Required; content pages only. |
 | POST | `/api/v1/wikis/<owner>/<slug>/share/bulk` | Required |
 | GET | `/api/v1/wikis/<owner>/<slug>/grants` | Required |
-| GET | `/api/v1/wikis/<owner>/<slug>/history` | Optional |
+| GET | `/api/v1/wikis/<owner>/<slug>/history` | Optional; excludes `.wikihub/*` plumbing commits and rejects plumbing-scoped `path` filters. |
 | GET | `/api/v1/search?q=` | Optional |
 | POST | `/agent/chat` | Required (SSE) |
 

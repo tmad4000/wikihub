@@ -87,6 +87,13 @@ viewers who can read them, but stay out of global discovery surfaces such as
 search, explore, global activity, global RSS, and profiles.
 Set frontmatter `pinned: true` on a page to float it to the top of the wiki
 sidebar for viewers who can read it; pinning never overrides read permissions.
+`.wikihub/*` files are wiki plumbing, not content pages: they are excluded from
+page lists, search/discovery, sidebars, backlinks, history/diff surfaces, zip
+downloads, agent chat context, and the public mirror. The owner may write,
+replace, patch, delete, or revert `.wikihub/acl` through the page API; those
+ACL changes rebuild inherited page visibility and regenerate the public mirror.
+Other `.wikihub/*` paths are rejected by generic page write APIs and web edit
+forms.
 
 `max_wikis_per_user` is the authenticated account's effective wiki cap: the
 server default unless a per-user override is set. Wiki create and fork requests
@@ -130,6 +137,14 @@ listings still exclude it. Frontmatter
 `pinned: true` is also honored by the sidebar: pinned readable pages sort into
 a top section before the normal folder/page list.
 
+`.wikihub/acl` is the only `.wikihub/*` path exposed through generic page write
+APIs, and only to the wiki owner. Updating, deleting, uploading, reverting, or
+git-pushing that file reindexes all content pages against the current ACL and
+regenerates the public mirror. Other `.wikihub/*` files remain internal plumbing:
+they are not indexed as pages, never count toward `page_count`, and are omitted
+from discovery, backlinks, history, zip exports, agent context, and public git
+mirrors.
+
 ## Feedback
 
 Send bug reports, feature requests, or praise to `POST /api/v1/feedback`
@@ -169,6 +184,7 @@ app/
   acl.py             .wikihub/acl parser
   git_backend.py     git Smart HTTP (clone/push)
   git_sync.py        DB->git plumbing, public mirror regen
+  page_utils.py      repo path normalization and .wikihub plumbing checks
   feeds.py           Activity entry + RSS formatting helpers
   renderer.py        markdown-it pipeline, wikilinks, wiki-relative link rewriting
   auth_utils.py      password hashing, API keys, Bearer auth

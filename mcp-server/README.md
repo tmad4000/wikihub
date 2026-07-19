@@ -49,6 +49,13 @@ Pinned pages use normal markdown frontmatter, not a dedicated MCP tool. Set
 sidebar; remove the field or set it false to unpin. Pinning never bypasses ACL
 or visibility checks.
 
+`.wikihub/*` paths are wiki plumbing, not normal pages. `wikihub_create_page`,
+`wikihub_update_page`, and `wikihub_delete_page` may target `.wikihub/acl` only
+when the caller owns the wiki; those ACL changes reindex inherited visibility
+and refresh the public mirror. Other `.wikihub/*` paths are rejected or hidden
+from MCP-backed page lists, reads, history, search, backlinks, agent context,
+zip exports, and public git mirrors.
+
 ---
 
 ## Install

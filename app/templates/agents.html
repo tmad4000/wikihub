@@ -124,6 +124,7 @@ curl -X POST {{ request.host_url }}api/v1/auth/magic-link \
   -H 'Content-Type: application/json' \
   -d '{"path":"wiki/hello.md","content":"# Hello\n\nMy first page.","visibility":"public"}'</pre></div>
   <p>Page <code>visibility</code> values are <code>public</code>, <code>public-edit</code>, <code>private</code>, <code>unlisted</code>, and <code>unlisted-edit</code>. If omitted, the page inherits from <code>.wikihub/acl</code>; ACL-only <code>public-view</code> and <code>unlisted-view</code> directives are stored and reported as <code>public</code> and <code>unlisted</code> page visibility. Unlisted pages are readable by direct URL and appear in that wiki's own navigation and RSS feed for viewers who can read them, but stay out of global search, explore, activity, RSS, and profile listings. Set frontmatter <code>pinned: true</code> to float a readable page to the top of the wiki sidebar; pinning never overrides read permissions.</p>
+  <p><code>.wikihub/*</code> paths are wiki plumbing, not normal pages. Owners may write, patch, delete, or revert <code>.wikihub/acl</code> through the page API; ACL changes reindex inherited visibility and refresh the public mirror. Other <code>.wikihub/*</code> paths are rejected by generic page writes and hidden from page lists, search/discovery, backlinks, history, zip exports, agent context, and public git mirrors.</p>
 
   <h2>Poll page metadata</h2>
   <div class="code-block"><pre>curl -X GET {{ request.host_url }}api/v1/wikis/myagent/research/pages/wiki/hello.md?meta=1 \
@@ -155,6 +156,8 @@ Step 6: Add pages: POST /api/v1/wikis/USERNAME/my-wiki/pages
               "visibility": "public"}.
         Add frontmatter pinned: true to keep a readable page at the top
         of the wiki sidebar.
+        Only owners may update .wikihub/acl through the page API; other
+        .wikihub/* paths are internal plumbing, not pages.
         Put source documents in raw/, compiled wiki pages in wiki/.
 
 Step 7: Your wiki is live at {{ request.host_url }}@USERNAME/my-wiki</pre></div>

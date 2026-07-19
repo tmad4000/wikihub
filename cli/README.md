@@ -68,6 +68,13 @@ To pin a page in the wiki sidebar, include `pinned: true` in the page
 frontmatter and write or publish the full markdown file again. Pinning only
 affects readable pages; it does not grant access.
 
+`.wikihub/*` paths are wiki plumbing rather than normal pages. `wikihub write`,
+`publish`, and `rm` may target `.wikihub/acl` when the active profile owns the
+wiki; ACL writes reindex inherited page visibility and refresh the public
+mirror. Other `.wikihub/*` paths are rejected by the generic page API and are
+excluded from `ls`, `read`, search/discovery, history, zip exports, agent
+context, and public git mirrors.
+
 `read` uses the REST page-read endpoint's access semantics: a missing page is
 `404 not_found`, while an existing page outside the active profile's read access
 is `403 forbidden` for authenticated callers or `401 authentication_required`

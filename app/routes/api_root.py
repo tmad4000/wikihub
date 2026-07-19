@@ -80,7 +80,8 @@ def api_wikis_compat(owner, slug):
         of private wikis on a real account; but 401 wins over 404 for
         agents needing the auth hint)
     """
-    from app.models import User, Wiki
+    from app.models import User, Wiki, Page
+    from app.page_utils import is_content_page_path
     from app.auth_utils import get_current_user_from_request
     from app.acl import resolve_visibility
     from app.wiki_ops import load_acl_rules, sync_wiki_counters
@@ -106,7 +107,14 @@ def api_wikis_compat(owner, slug):
         rules = []
     root_vis = resolve_visibility("", rules)
     is_owner = bool(user and user.id == owner_user.id)
-    is_anon_readable = root_vis in ("public", "public-edit", "unlisted", "unlisted-edit")
+    is_anon_readable = root_vis in (
+        "public",
+        "public-view",
+        "public-edit",
+        "unlisted",
+        "unlisted-view",
+        "unlisted-edit",
+    )
 
     if not is_owner and not is_anon_readable and not user:
         return _unauthorized_json(request.path)
@@ -121,7 +129,11 @@ def api_wikis_compat(owner, slug):
         "subdomain": wiki.subdomain,
         "star_count": wiki.star_count,
         "fork_count": wiki.fork_count,
-        "page_count": wiki.pages.count(),
+        "page_count": sum(
+            1
+            for (path,) in Page.query.filter_by(wiki_id=wiki.id).with_entities(Page.path).all()
+            if is_content_page_path(path)
+        ),
         "created_at": wiki.created_at.isoformat(),
         "updated_at": wiki.updated_at.isoformat(),
         "canonical_api": f"/api/v1/wikis/{owner_user.username}/{wiki.slug}",
@@ -138,6 +150,10 @@ def api_wiki_page_compat(owner, slug, page_path):
     from app.acl import can_read
     from app.wiki_ops import load_acl_rules
     from app.url_utils import page_path_from_url_path
+    from app.page_utils import is_wikihub_plumbing_path
+
+    if is_wikihub_plumbing_path(page_path_from_url_path(page_path)):
+        return _not_found_json(request.path, "Page not found")
 
     owner_user = User.query.filter_by(username=owner).first()
     user = get_current_user_from_request()

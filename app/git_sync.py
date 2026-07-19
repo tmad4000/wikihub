@@ -178,7 +178,7 @@ def remove_page_from_repo(username, slug, file_path):
 
 def regenerate_public_mirror(username, slug, acl_rules=None):
     """regenerate the public mirror from the authoritative repo.
-    strips private files (per ACL), private bands, and .wikihub/acl itself.
+    strips private files (per ACL), private bands, and .wikihub/* plumbing.
     force-updates to a single commit."""
     from app.acl import resolve_visibility
 
@@ -207,8 +207,8 @@ def regenerate_public_mirror(username, slug, acl_rules=None):
             if not filepath:
                 continue
 
-            # skip .wikihub/acl itself
-            if filepath == ".wikihub/acl":
+            # skip WikiHub plumbing files regardless of ACL defaults
+            if filepath.startswith(".wikihub/"):
                 continue
 
             # read file content from authoritative repo
@@ -298,7 +298,7 @@ def _update_mirror_page_impl(username, slug, filepath, acl_rules=None, deleted=F
         if mirror_tree:
             _git(pub_repo, "read-tree", mirror_tree, env=env)
 
-        if deleted or filepath == ".wikihub/acl":
+        if deleted or filepath.startswith(".wikihub/"):
             # remove from mirror (ignore if file wasn't in mirror)
             try:
                 _git(

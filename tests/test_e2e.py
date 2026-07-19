@@ -6,6 +6,8 @@ not individual functions. run with: python3 tests/test_e2e.py
 """
 
 import io
+import inspect
+import json
 import os
 import shutil
 import subprocess
@@ -13,7 +15,7 @@ import sys
 import zipfile
 from datetime import timedelta
 from urllib.parse import quote, urlparse
-from sqlalchemy import text
+from sqlalchemy import event, text
 
 # ensure app is importable
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -585,6 +587,38 @@ def test_search(client, api_key):
     assert "total" in data
 
 
+def test_anonymous_search_uses_bounded_content_batches():
+    api_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app", "routes", "api_wikis.py")
+    with open(api_path) as f:
+        src = f.read()
+    assert "visible_results = [page for page in ordered_query.all() if is_content_page_path(page.path)]" not in src
+    assert "batch_size = 100" in src
+    assert "content_page_path_filter(Page.path)" in src
+    assert "_bounded_anonymous_content_results" in src
+
+
+def test_llms_txt_uses_bounded_content_batches():
+    agent_surfaces_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app", "routes", "agent_surfaces.py")
+    with open(agent_surfaces_path) as f:
+        src = f.read()
+    llms_src = src.split("def llms_txt():", 1)[1].split("@main_bp.route(\"/llms-full.txt\")", 1)[0]
+    assert ".limit(batch_size)" in llms_src
+    assert "content_page_path_filter(Page.path)" in llms_src
+    assert "is_content_page_path(p.path)" in llms_src
+    assert ".all()" in llms_src
+    assert ".join(Wiki).join(User, Wiki.owner_id == User.id).all()" not in llms_src
+
+
+def test_discoverable_page_for_wiki_uses_targeted_homepage_lookups():
+    from app.discovery import discoverable_page_for_wiki
+
+    src = inspect.getsource(discoverable_page_for_wiki)
+    assert "for path in (\"index.md\", \"README.md\")" in src
+    assert "filter_by(wiki_id=wiki_id, path=path)" in src
+    assert "is_content_page_path(page.path)" in src
+    assert ".all()" not in src
+
+
 def test_reader_owner_visibility_control(client, api_key):
     """owners get a direct page-visibility control on the reader surface."""
     h = {"Authorization": f"Bearer {api_key}"}
@@ -791,12 +825,18 @@ def test_curator_sidebar_only_renders_when_usable(app, client, api_key):
 
 def test_zip_upload(client, api_key):
     """create wiki via zip upload"""
+    from app.models import Page, Wiki
+
     # login via web
     client.post("/auth/signup", data={"username": "uploader", "password": "testpass123"})
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr("wiki/page1.md", "---\nvisibility: public\n---\n# Page 1\n\nContent.")
+        zf.writestr("notes/log.md", "# Uploaded Log\n\nThis inherits ACL visibility.")
+        zf.writestr(".wikihub/acl", "* unlisted-view\nwiki/** public-view\n")
+        zf.writestr(".wikihub/serve-inline.md", "# Uploaded Plumbing\n\nThis must not index.")
+        zf.writestr("./.wikihub/dotserve.md", "# Dot Plumbing\n\nThis must not write.")
     buf.seek(0)
 
     r = client.post("/new", data={
@@ -805,6 +845,23 @@ def test_zip_upload(client, api_key):
         "files": (buf, "wiki.zip"),
     }, content_type="multipart/form-data", follow_redirects=False)
     assert r.status_code == 302
+    db.session.remove()
+
+    wiki = Wiki.query.join(User, Wiki.owner_id == User.id).filter(User.username == "uploader", Wiki.slug == "uploaded").first()
+    assert wiki is not None
+    assert Page.query.filter_by(wiki_id=wiki.id, path="wiki/page1.md").first().visibility == "public"
+    assert Page.query.filter_by(wiki_id=wiki.id, path="notes/log.md").first().visibility == "unlisted"
+    assert Page.query.filter_by(wiki_id=wiki.id, path=".wikihub/serve-inline.md").first() is None
+    assert Page.query.filter_by(wiki_id=wiki.id, path=".wikihub/dotserve.md").first() is None
+
+    anon = client.application.test_client()
+    r = anon.get("/@uploader/uploaded/notes/log")
+    assert r.status_code == 200, f"uploaded ACL should make notes/log direct-link readable, got {r.status_code}"
+    r = anon.get("/api/v1/search?q=Uploaded+Plumbing")
+    assert r.status_code == 200
+    assert r.get_json()["results"] == [], "uploaded plumbing markdown must not be indexed"
+    from app.git_sync import read_file_from_repo
+    assert read_file_from_repo("uploader", "uploaded", ".wikihub/dotserve.md") is None
 
 
 def test_anonymous_upload(app):
@@ -1378,6 +1435,656 @@ def test_unlisted_page_in_sidebar_but_not_discovery(app, client, api_key):
     hits = r.get_json()["results"]
     assert all(hit.get("page") != "rules.md" for hit in hits), \
         "unlisted page must NOT appear in search (discovery surface stays excluded)"
+
+
+def test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(app, client, api_key):
+    """GroupBrain regression: scaffolded index/log rows started private, then a
+    generic `.wikihub/acl` write changed the repo default to unlisted without
+    re-indexing Page.visibility. Direct-link readers saw a restricted page even
+    though the ACL and public mirror allowed it.
+    """
+    from app.git_sync import read_file_from_repo, sync_page_to_repo
+    from app.models import Page, Proposal, ProposalPagePatch, ProposalRevision, Wiki
+    from app.page_utils import is_content_page_path
+
+    h = {"Authorization": f"Bearer {api_key}"}
+    anon = app.test_client()
+    slug = "groupbrain-acl-regression"
+    title = "GroupBrain Visibility Regression"
+
+    r = client.post("/api/v1/wikis", json={"slug": slug, "title": title}, headers=h)
+    assert r.status_code == 201, f"setup wiki create failed: {r.status_code} {r.data[:200]}"
+
+    wiki = Wiki.query.join(User, Wiki.owner_id == User.id).filter(User.username == "agent1", Wiki.slug == slug).first()
+    assert wiki is not None
+    wiki_id = wiki.id
+
+    def visibility_for(path):
+        db.session.expire_all()
+        page = Page.query.filter_by(wiki_id=wiki_id, path=path).first()
+        return page.visibility if page else None
+
+    def page_snapshot(path):
+        db.session.expire_all()
+        page = Page.query.filter_by(wiki_id=wiki_id, path=path).first()
+        assert page is not None
+        return {
+            "id": page.id,
+            "author": page.author,
+            "anonymous": page.anonymous,
+            "claimable": page.claimable,
+            "created_at": page.created_at,
+            "visibility": page.visibility,
+        }
+
+    assert visibility_for("index.md") == "private"
+    assert visibility_for("log.md") == "private"
+    assert Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/acl").first() is None
+
+    r = client.post(f"/api/v1/wikis/agent1/{slug}/pages", json={
+        "path": ".wikihub/acl",
+        "content": "* unlisted-view\n",
+    }, headers=h)
+    assert r.status_code == 201, f"generic ACL write failed: {r.status_code} {r.data[:200]}"
+    assert r.get_json()["reindexed"] is True
+    assert read_file_from_repo("agent1", slug, ".wikihub/acl") == "* unlisted-view\n"
+    assert Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/acl").first() is None, \
+        ".wikihub/acl must stay plumbing, not an indexed page"
+    assert visibility_for("index.md") == "unlisted"
+    assert visibility_for("log.md") == "unlisted"
+    assert visibility_for("index.md") != "unlisted-view"
+
+    log_title = "GBVisibility Log Marker"
+    r = client.put(f"/api/v1/wikis/agent1/{slug}/pages/log.md", json={
+        "content": f"---\ntitle: {log_title}\n---\n\n# Log\n\ncontent-only update after ACL reindex.",
+    }, headers=h)
+    assert r.status_code == 200, f"log content update failed: {r.status_code} {r.data[:200]}"
+    assert r.get_json()["visibility"] == "unlisted", "content-only PUT must preserve inherited unlisted visibility"
+
+    topics_title = "GBVisibility Topics Marker"
+    r = client.post(f"/api/v1/wikis/agent1/{slug}/pages", json={
+        "path": "topics.md",
+        "content": f"---\ntitle: {topics_title}\n---\n\n# Topics\n\ncomparison page.",
+    }, headers=h)
+    assert r.status_code == 201, f"topics create failed: {r.status_code} {r.data[:200]}"
+    assert r.get_json()["visibility"] == "unlisted"
+
+    rename_title = "GBVisibility Rename Marker"
+    r = client.post(f"/api/v1/wikis/agent1/{slug}/pages", json={
+        "path": "rename-source.md",
+        "content": f"---\ntitle: {rename_title}\n---\n\n# Rename Source\n\nrename coverage.",
+    }, headers=h)
+    assert r.status_code == 201, f"rename source create failed: {r.status_code} {r.data[:200]}"
+    r = client.patch(f"/api/v1/wikis/agent1/{slug}/pages/rename-source.md", json={
+        "new_path": "rename-target.md",
+    }, headers=h)
+    assert r.status_code == 200, f"rename under ACL default failed: {r.status_code} {r.data[:200]}"
+    assert r.get_json()["visibility"] == "unlisted"
+    assert visibility_for("rename-target.md") == "unlisted"
+    assert visibility_for("rename-target.md") != "unlisted-view"
+
+    claimable_title = "GBVisibility Claimable Marker"
+    r = client.post(f"/api/v1/wikis/agent1/{slug}/pages", json={
+        "path": "claimable.md",
+        "content": f"---\ntitle: {claimable_title}\n---\n\n# Claimable\n\nanonymous claimable page.",
+        "anonymous": True,
+        "claimable": True,
+    }, headers=h)
+    assert r.status_code == 201, f"claimable create failed: {r.status_code} {r.data[:200]}"
+    claimable_before_replace = page_snapshot("claimable.md")
+    assert claimable_before_replace["anonymous"] is True
+    assert claimable_before_replace["claimable"] is True
+
+    private_title = "GBVisibility Owner Private Marker"
+    r = client.post(f"/api/v1/wikis/agent1/{slug}/pages", json={
+        "path": "owner-control.md",
+        "content": (
+            f"---\ntitle: {private_title}\nvisibility: private\n---\n\n"
+            "# Owner control\n\nexplicit private frontmatter remains private."
+        ),
+    }, headers=h)
+    assert r.status_code == 201, f"private page create failed: {r.status_code} {r.data[:200]}"
+    assert r.get_json()["visibility"] == "private"
+    log_before_replace = page_snapshot("log.md")
+
+    r = client.put(f"/api/v1/wikis/agent1/{slug}/pages/.wikihub/acl", json={
+        "content": "* unlisted-view\n",
+    }, headers=h)
+    assert r.status_code == 200, f"generic ACL replace failed: {r.status_code} {r.data[:200]}"
+    assert visibility_for("log.md") == "unlisted"
+    assert visibility_for("topics.md") == "unlisted"
+    assert visibility_for("claimable.md") == "unlisted"
+    assert visibility_for("owner-control.md") == "private", "explicit private frontmatter must win over ACL"
+    log_after_replace = page_snapshot("log.md")
+    claimable_after_replace = page_snapshot("claimable.md")
+    assert log_after_replace["id"] == log_before_replace["id"]
+    assert log_after_replace["author"] == log_before_replace["author"]
+    assert log_after_replace["anonymous"] == log_before_replace["anonymous"]
+    assert log_after_replace["claimable"] == log_before_replace["claimable"]
+    assert log_after_replace["created_at"] == log_before_replace["created_at"]
+    assert claimable_after_replace["id"] == claimable_before_replace["id"]
+    assert claimable_after_replace["author"] == claimable_before_replace["author"]
+    assert claimable_after_replace["anonymous"] is True
+    assert claimable_after_replace["claimable"] is True
+    assert claimable_after_replace["created_at"] == claimable_before_replace["created_at"]
+    assert read_file_from_repo("agent1", slug, ".wikihub/acl", public=True) is None
+    assert read_file_from_repo("agent1", slug, ".wikihub/events.jsonl", public=True) is None
+
+    share_user = client.post("/api/v1/accounts", json={"username": "gbsharetarget"}).get_json()
+    bulk_user = client.post("/api/v1/accounts", json={"username": "gbbulktarget"}).get_json()
+
+    def assert_claimable_preserved(label):
+        snapshot = page_snapshot("claimable.md")
+        assert snapshot["id"] == claimable_before_replace["id"], f"{label} churned Page.id"
+        assert snapshot["author"] == claimable_before_replace["author"], f"{label} changed author"
+        assert snapshot["anonymous"] is True, f"{label} changed anonymous"
+        assert snapshot["claimable"] is True, f"{label} changed claimable"
+        assert snapshot["created_at"] == claimable_before_replace["created_at"], f"{label} changed created_at"
+
+    r = client.post(f"/api/v1/wikis/agent1/{slug}/pages/claimable.md/share", json={
+        "username": share_user["username"],
+        "role": "read",
+    }, headers=h)
+    assert r.status_code == 200, f"page share failed: {r.status_code} {r.data[:200]}"
+    assert_claimable_preserved("page share ACL reindex")
+
+    r = client.post(f"/api/v1/wikis/agent1/{slug}/share", json={
+        "pattern": "topics.md",
+        "username": share_user["username"],
+        "role": "edit",
+    }, headers=h)
+    assert r.status_code == 200, f"wiki share failed: {r.status_code} {r.data[:200]}"
+    assert_claimable_preserved("wiki share ACL reindex")
+
+    r = client.post(f"/api/v1/wikis/agent1/{slug}/share/bulk", json={
+        "grants": [{"username": bulk_user["username"], "role": "read", "pattern": "log.md"}],
+    }, headers=h)
+    assert r.status_code == 200, f"bulk share failed: {r.status_code} {r.data[:200]}"
+    assert r.get_json()["added"], "bulk share should add a grant"
+    assert_claimable_preserved("bulk share ACL reindex")
+
+    r = client.delete(f"/api/v1/wikis/agent1/{slug}/pages/claimable.md/share", json={
+        "username": share_user["username"],
+    }, headers=h)
+    assert r.status_code == 200, f"unshare failed: {r.status_code} {r.data[:200]}"
+    assert r.get_json()["revoked"] is True
+    assert_claimable_preserved("unshare ACL reindex")
+
+    r = anon.get(f"/@agent1/{slug}/.wikihub/acl")
+    assert r.status_code == 404, f"direct ACL route must not serve plumbing, got {r.status_code}"
+    r = anon.get(f"/@agent1/{slug}/.wikihub/events.jsonl")
+    assert r.status_code == 404, f"direct event-log route must not serve plumbing, got {r.status_code}"
+
+    plumbing_marker = "GBVisibility Plumbing Leak Marker"
+    r = client.post(f"/api/v1/wikis/agent1/{slug}/pages", json={
+        "path": ".wikihub/events.jsonl",
+        "content": plumbing_marker,
+    }, headers=h)
+    assert r.status_code == 400, f"generic plumbing create must be rejected, got {r.status_code}"
+    r = client.post(f"/api/v1/wikis/agent1/{slug}/pages", json={
+        "path": "./.wikihub/dot-events.jsonl",
+        "content": plumbing_marker,
+    }, headers=h)
+    assert r.status_code == 400, f"dot-segment plumbing create must be rejected, got {r.status_code}"
+    r = client.put(f"/api/v1/wikis/agent1/{slug}/pages/.wikihub/serve-inline", json={
+        "content": "log.md\n",
+    }, headers=h)
+    assert r.status_code == 400, f"generic plumbing replace must be rejected, got {r.status_code}"
+    r = client.patch(f"/api/v1/wikis/agent1/{slug}/pages/.wikihub/serve-inline", json={
+        "content": "topics.md\n",
+    }, headers=h)
+    assert r.status_code == 400, f"generic plumbing patch must be rejected, got {r.status_code}"
+    r = client.patch(f"/api/v1/wikis/agent1/{slug}/pages/log.md", json={
+        "new_path": ".wikihub/serve-inline",
+    }, headers=h)
+    assert r.status_code == 400, f"renaming a page into plumbing must be rejected, got {r.status_code}"
+    r = client.patch(f"/api/v1/wikis/agent1/{slug}/pages/log.md", json={
+        "new_path": "./.wikihub/dot-serve-inline",
+    }, headers=h)
+    assert r.status_code == 400, f"dot-segment rename into plumbing must be rejected, got {r.status_code}"
+    r = client.post(f"/api/v1/wikis/agent1/{slug}/pages/.wikihub/serve-inline/visibility", json={
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 400, f"generic plumbing visibility update must be rejected, got {r.status_code}"
+    r = client.delete(f"/api/v1/wikis/agent1/{slug}/pages/.wikihub/serve-inline", headers=h)
+    assert r.status_code == 400, f"generic plumbing delete must be rejected, got {r.status_code}"
+    assert Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/events.jsonl").first() is None
+    assert Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/serve-inline").first() is None
+
+    owner_browser = app.test_client()
+    r = owner_browser.post("/auth/login", data={"api_key": api_key}, follow_redirects=False)
+    assert r.status_code in (302, 303)
+    r = owner_browser.get(f"/@agent1/{slug}/new?path=.wikihub/serve-inline.md")
+    assert r.status_code == 400, f"web new plumbing GET must be rejected, got {r.status_code}"
+    r = owner_browser.post(f"/@agent1/{slug}/new", data={
+        "path": ".wikihub/serve-inline.md",
+        "content": "serve inline plumbing",
+        "visibility": "public",
+    }, follow_redirects=False)
+    assert r.status_code == 400, f"web new plumbing POST must be rejected, got {r.status_code}"
+    r = owner_browser.post(f"/@agent1/{slug}/new", data={
+        "path": "./.wikihub/dot-serve-inline.md",
+        "content": "serve inline plumbing",
+        "visibility": "public",
+    }, follow_redirects=False)
+    assert r.status_code == 400, f"web new dot-segment plumbing POST must be rejected, got {r.status_code}"
+    r = owner_browser.post(f"/@agent1/{slug}/log/edit", data={
+        "path": ".wikihub/events.md",
+        "content": f"---\ntitle: {log_title}\n---\n\n# Log\n\nattempted plumbing rename.",
+        "visibility": "unlisted",
+    }, follow_redirects=False)
+    assert r.status_code == 400, f"web edit rename into plumbing must be rejected, got {r.status_code}"
+    r = owner_browser.post(f"/@agent1/{slug}/new-folder", data={
+        "folder_name": ".wikihub/serve-inline",
+        "visibility": "public",
+    }, follow_redirects=False)
+    assert r.status_code == 400, f"web new-folder plumbing POST must be rejected, got {r.status_code}"
+    r = owner_browser.post(f"/@agent1/{slug}/new-folder", data={
+        "folder_name": "./.wikihub/dot-serve-inline",
+        "visibility": "public",
+    }, follow_redirects=False)
+    assert r.status_code == 400, f"web new-folder dot-segment plumbing POST must be rejected, got {r.status_code}"
+    assert Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/serve-inline.md").first() is None
+    assert Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/events.md").first() is None
+    assert Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/serve-inline/index.md").first() is None
+    assert Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/dot-events.jsonl").first() is None
+    assert Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/dot-serve-inline.md").first() is None
+    assert Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/dot-serve-inline/index.md").first() is None
+    assert read_file_from_repo("agent1", slug, ".wikihub/serve-inline/index.md") is None
+
+    r = client.get(f"/api/v1/wikis/agent1/{slug}/pages", headers=h)
+    assert r.status_code == 200
+    assert all(not page["path"].startswith(".wikihub/") for page in r.get_json()["pages"])
+    r = anon.get(f"/api/v1/search?q={plumbing_marker}")
+    assert r.status_code == 200
+    assert r.get_json()["results"] == [], "rejected plumbing writes must not become searchable"
+
+    import runpy
+    hook = runpy.run_path(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "hooks", "post-receive"))
+    assert hook["is_wikihub_plumbing_path"](".wikihub/serve-inline.md") is True
+    assert hook["is_wikihub_plumbing_path"]("./.wikihub/serve-inline.md") is True
+    assert hook["is_wikihub_plumbing_path"]("wiki/serve-inline.md") is False
+
+    admin_headers = {"Authorization": "Bearer test-admin-token"}
+    admin_plumbing_marker = "GBVisibility Admin Plumbing Leak Marker"
+    r = client.post("/api/v1/admin/sync-page", json={
+        "username": "agent1",
+        "slug": slug,
+        "path": ".wikihub/serve-inline.md",
+        "title": "Serve Inline Plumbing",
+        "visibility": "public",
+        "content": admin_plumbing_marker,
+        "frontmatter": {"title": "Serve Inline Plumbing"},
+    }, headers=admin_headers)
+    assert r.status_code == 204, f"admin plumbing sync must be ignored, got {r.status_code}"
+    assert Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/serve-inline.md").first() is None
+    r = client.post("/api/v1/admin/delete-page", json={
+        "username": "agent1",
+        "slug": slug,
+        "path": ".wikihub/serve-inline.md",
+    }, headers=admin_headers)
+    assert r.status_code == 204, f"admin plumbing delete must be ignored, got {r.status_code}"
+    r = anon.get(f"/api/v1/search?q={admin_plumbing_marker}")
+    assert r.status_code == 200
+    assert r.get_json()["results"] == [], "admin plumbing sync must not become searchable"
+
+    sync_page_to_repo("agent1", slug, ".wikihub/serve-inline.md", "# Serve Inline\n\nhistory plumbing secret")
+
+    from app.wiki_ops import refresh_wikilinks_for_page, update_page_metadata
+    stale_marker = "GBVisibility Stale Plumbing Marker"
+    stale_page = Page(
+        wiki_id=wiki_id,
+        path=".wikihub/serve-inline.md",
+        title=stale_marker,
+        visibility="public",
+        frontmatter_json={"title": stale_marker, "tags": ["plumbing-leak"]},
+        excerpt=stale_marker,
+        anonymous=True,
+        claimable=True,
+    )
+    stale_content = f"---\ntitle: {stale_marker}\ntags: [plumbing-leak]\n---\n\n# {stale_marker}\n\n[[log]]"
+    update_page_metadata(stale_page, stale_content)
+    db.session.add(stale_page)
+    db.session.flush()
+    refresh_wikilinks_for_page(stale_page, stale_content)
+    dot_stale_marker = "GBVisibility Dot Segment Plumbing Marker"
+    dot_stale_page = Page(
+        wiki_id=wiki_id,
+        path="./.wikihub/dot-serve-inline.md",
+        title=dot_stale_marker,
+        visibility="public",
+        frontmatter_json={"title": dot_stale_marker, "tags": ["dot-plumbing-leak"]},
+        excerpt=dot_stale_marker,
+    )
+    dot_stale_content = f"---\ntitle: {dot_stale_marker}\ntags: [dot-plumbing-leak]\n---\n\n# {dot_stale_marker}\n"
+    update_page_metadata(dot_stale_page, dot_stale_content)
+    db.session.add(dot_stale_page)
+    db.session.flush()
+    refresh_wikilinks_for_page(dot_stale_page, dot_stale_content)
+    db.session.commit()
+    assert Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/serve-inline.md").first() is not None
+    assert Page.query.filter_by(wiki_id=wiki_id, path="./.wikihub/dot-serve-inline.md").first() is not None
+    content_page_count = sum(
+        1
+        for page in Page.query.filter_by(wiki_id=wiki_id).all()
+        if is_content_page_path(page.path)
+    )
+    assert Page.query.filter_by(wiki_id=wiki_id).count() == content_page_count + 2
+
+    r = anon.get(f"/api/v1/wikis/agent1/{slug}")
+    assert r.status_code == 200
+    assert r.get_json()["page_count"] == content_page_count, \
+        "canonical wiki detail page_count must exclude stale plumbing rows"
+    r = anon.get(f"/api/wikis/agent1/{slug}")
+    assert r.status_code == 200
+    assert r.get_json()["page_count"] == content_page_count, \
+        "compat wiki detail page_count must exclude stale plumbing rows"
+
+    r = owner_browser.get(f"/@agent1/{slug}/.wikihub/serve-inline/edit")
+    assert r.status_code == 400, f"stale plumbing edit route must be rejected, got {r.status_code}"
+    r = anon.get(f"/@agent1/{slug}/.wikihub/serve-inline")
+    assert r.status_code == 404, f"stale plumbing web route must not render, got {r.status_code}"
+    r = anon.get(f"/api/v1/wikis/agent1/{slug}/pages/.wikihub/serve-inline.md")
+    assert r.status_code == 404, f"stale plumbing API read must not render, got {r.status_code}"
+    r = anon.get(f"/api/wikis/agent1/{slug}/pages/.wikihub/serve-inline.md")
+    assert r.status_code == 404, f"stale plumbing compat API read must not render, got {r.status_code}"
+    r = anon.get(f"/api/v1/wikis/agent1/{slug}/pages/.wikihub/serve-inline.md/backlinks")
+    assert r.status_code == 404, f"stale plumbing backlinks target must not render, got {r.status_code}"
+    claimer = client.post("/api/v1/accounts", json={"username": "plumbingclaimer"}).get_json()
+    r = client.post(
+        f"/api/v1/wikis/agent1/{slug}/pages/.wikihub/serve-inline.md/claim",
+        headers={"Authorization": f"Bearer {claimer['api_key']}"},
+    )
+    assert r.status_code == 404, f"stale plumbing claim target must not render, got {r.status_code}"
+
+    r = anon.get(f"/@agent1/{slug}/-/suggest/.wikihub/serve-inline")
+    assert r.status_code == 404, f"stale plumbing suggest route must not render, got {r.status_code}"
+
+    share_user_row = User.query.filter_by(username=share_user["username"]).first()
+    stale_proposal = Proposal(
+        wiki_id=wiki_id,
+        page_id=stale_page.id,
+        page_path=".wikihub/serve-inline.md",
+        author_id=share_user_row.id,
+        author_name=share_user_row.username,
+        title="Hidden plumbing suggestion",
+        status="changes_requested",
+        base_content_hash=stale_page.content_hash,
+    )
+    db.session.add(stale_proposal)
+    db.session.flush()
+    stale_revision = ProposalRevision(proposal_id=stale_proposal.id, revision_number=1, note="hidden")
+    db.session.add(stale_revision)
+    db.session.flush()
+    db.session.add(ProposalPagePatch(
+        revision_id=stale_revision.id,
+        page_path=".wikihub/serve-inline.md",
+        base_content_hash=stale_page.content_hash,
+        base_content=stale_content,
+        proposed_content=stale_content + "\n\nproposal plumbing secret",
+    ))
+    db.session.commit()
+    proposal_path = f"/@agent1/{slug}/-/proposals/{stale_proposal.id}"
+
+    r = owner_browser.get(f"/@agent1/{slug}/-/proposals")
+    assert r.status_code == 200, f"owner proposal list failed: {r.status_code}"
+    proposal_list_body = r.data.decode("utf-8", errors="replace")
+    assert "Hidden plumbing suggestion" not in proposal_list_body
+    assert ".wikihub/serve-inline" not in proposal_list_body
+    r = owner_browser.get(proposal_path)
+    assert r.status_code == 404, f"owner stale plumbing proposal detail must 404, got {r.status_code}"
+    r = owner_browser.post(proposal_path + "/accept", follow_redirects=False)
+    assert r.status_code == 404, f"owner stale plumbing proposal accept must 404, got {r.status_code}"
+
+    proposal_author_browser = app.test_client()
+    r = proposal_author_browser.get(f"/auth/login?api_key={share_user['api_key']}&next=/", follow_redirects=False)
+    assert r.status_code == 302
+    r = proposal_author_browser.get(proposal_path)
+    assert r.status_code == 404, f"author stale plumbing proposal detail must 404, got {r.status_code}"
+    r = proposal_author_browser.post(proposal_path + "/comment", data={"body": "hidden"}, follow_redirects=False)
+    assert r.status_code == 404, f"author stale plumbing proposal comment must 404, got {r.status_code}"
+    r = proposal_author_browser.post(proposal_path + "/resubmit", data={
+        "note": "hidden",
+        "content": stale_content,
+    }, follow_redirects=False)
+    assert r.status_code == 404, f"author stale plumbing proposal resubmit must 404, got {r.status_code}"
+
+    db.session.expire_all()
+    stale_after_claim = Page.query.filter_by(wiki_id=wiki_id, path=".wikihub/serve-inline.md").first()
+    assert stale_after_claim.anonymous is True
+    assert stale_after_claim.claimable is True
+    r = anon.get(f"/@agent1/{slug}/activity")
+    assert r.status_code == 200
+    assert stale_marker not in r.data.decode("utf-8", errors="replace")
+    r = anon.get(f"/@agent1/{slug}/graph.json")
+    assert r.status_code == 200
+    graph = r.get_json()
+    assert all(".wikihub/" not in node.get("url", "") and node.get("title") != stale_marker for node in graph.get("nodes", []))
+    r = owner_browser.get(f"/@agent1/{slug}/log/graph.json")
+    assert r.status_code == 200
+    graph = r.get_json()
+    assert all(".wikihub/" not in node.get("url", "") and node.get("title") != stale_marker for node in graph.get("nodes", []))
+    r = anon.get(f"/@agent1/{slug}/tag/plumbing-leak")
+    assert r.status_code == 200
+    assert stale_marker not in r.data.decode("utf-8", errors="replace")
+    r = anon.get(f"/@agent1/{slug}/sidebar.json")
+    assert r.status_code == 200
+    assert ".wikihub" not in json.dumps(r.get_json())
+    r = anon.get(f"/@agent1/{slug}/llms.txt")
+    assert r.status_code == 200
+    llms_body = r.data.decode("utf-8", errors="replace")
+    assert stale_marker not in llms_body
+    assert dot_stale_marker not in llms_body
+    r = anon.get("/llms.txt")
+    assert r.status_code == 200
+    assert dot_stale_marker not in r.data.decode("utf-8", errors="replace")
+    r = anon.get("/llms-full.txt")
+    assert r.status_code == 200
+    assert dot_stale_marker not in r.data.decode("utf-8", errors="replace")
+    r = anon.get(f"/api/v1/search?q={stale_marker}")
+    assert r.status_code == 200
+    assert r.get_json()["results"] == [], "stale plumbing row must not become searchable"
+    r = anon.get(f"/api/v1/search?q={dot_stale_marker}")
+    assert r.status_code == 200
+    assert r.get_json()["results"] == [], "dot-segment stale plumbing row must not become searchable"
+
+    from app.git_backend import _repo_path
+    import subprocess
+    repo_path = _repo_path("agent1", slug)
+    public_repo_path = _repo_path("agent1", slug, public=True)
+    public_idx = os.path.join(os.environ["REPOS_DIR"], "stale-public-zip.idx")
+    public_env = {**os.environ, "GIT_INDEX_FILE": public_idx}
+    try:
+        subprocess.run(["git", "-C", public_repo_path, "read-tree", "HEAD"], env=public_env, check=True, capture_output=True)
+        blob = subprocess.run(
+            ["git", "-C", public_repo_path, "hash-object", "-w", "--stdin"],
+            input=b"stale mirrored plumbing secret",
+            env=public_env,
+            check=True,
+            capture_output=True,
+        ).stdout.strip().decode()
+        subprocess.run(
+            ["git", "-C", public_repo_path, "update-index", "--add", "--cacheinfo", "100644", blob, ".wikihub/serve-inline.md"],
+            env=public_env,
+            check=True,
+            capture_output=True,
+        )
+        tree = subprocess.run(
+            ["git", "-C", public_repo_path, "write-tree"],
+            env=public_env,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        head = subprocess.run(
+            ["git", "-C", public_repo_path, "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        commit = subprocess.run(
+            ["git", "-C", public_repo_path, "commit-tree", tree, "-p", head, "-m", "stale public plumbing"],
+            env=public_env,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        subprocess.run(["git", "-C", public_repo_path, "update-ref", "refs/heads/main", commit], check=True, capture_output=True)
+    finally:
+        if os.path.exists(public_idx):
+            os.unlink(public_idx)
+    r = anon.get(f"/@agent1/{slug}.zip")
+    assert r.status_code == 200, f"wiki zip failed: {r.status_code}"
+    with zipfile.ZipFile(io.BytesIO(r.data)) as zf:
+        names = zf.namelist()
+        assert all(not name.startswith(".wikihub/") and name != ".wikihub" for name in names), \
+            "wiki zip must exclude stale mirrored plumbing files"
+
+    acl_sha = subprocess.check_output([
+        "git", "-C", repo_path, "log", "-1", "--format=%H", "--", ".wikihub/acl"
+    ], text=True).strip()
+
+    grantee_browser = app.test_client()
+    r = grantee_browser.get(f"/auth/login?api_key={share_user['api_key']}&next=/", follow_redirects=False)
+    assert r.status_code == 302
+    r = grantee_browser.get(f"/@agent1/{slug}/history")
+    assert r.status_code == 200, f"grantee history failed: {r.status_code}"
+    history_body = r.data.decode("utf-8", errors="replace")
+    assert ".wikihub/acl" not in history_body
+    assert ".wikihub/serve-inline" not in history_body
+    assert "history plumbing secret" not in history_body
+    r = grantee_browser.get(f"/@agent1/{slug}/commit/{acl_sha}")
+    assert r.status_code == 404, f"plumbing-only commit should be hidden from grantee, got {r.status_code}"
+    assert ".wikihub/acl" not in r.data.decode("utf-8", errors="replace")
+
+    r = client.get(f"/api/v1/wikis/agent1/{slug}/history", headers=h)
+    assert r.status_code == 200
+    assert ".wikihub/" not in json.dumps(r.get_json())
+    r = client.get(f"/api/v1/wikis/agent1/{slug}/history?path=.wikihub/acl", headers=h)
+    assert r.status_code == 404, f"plumbing-scoped JSON history should 404, got {r.status_code}"
+
+    r = anon.get(f"/@agent1/{slug}/log")
+    assert r.status_code == 200, f"anonymous /log direct link should be 200, got {r.status_code}"
+    assert log_title.encode() in r.data
+    r = anon.get(f"/@agent1/{slug}/topics")
+    assert r.status_code == 200, f"anonymous /topics direct link should be 200, got {r.status_code}"
+    assert topics_title.encode() in r.data
+
+    r = anon.get(f"/@agent1/{slug}/owner-control")
+    assert r.status_code in (401, 403), f"private page should be restricted, got {r.status_code}"
+    assert private_title.encode() not in r.data
+
+    for query, leaked_page in ((log_title, "log.md"), (topics_title, "topics.md"), (claimable_title, "claimable.md"), (private_title, "owner-control.md")):
+        r = anon.get(f"/api/v1/search?q={query}")
+        assert r.status_code == 200, f"search failed: {r.status_code} {r.data[:200]}"
+        assert all(hit.get("wiki") != f"agent1/{slug}" or hit.get("page") != leaked_page for hit in r.get_json()["results"]), \
+            f"{leaked_page} must not appear in anonymous search"
+
+    for path in ("/@agent1", "/explore"):
+        r = anon.get(path)
+        assert r.status_code == 200, f"{path} failed: {r.status_code}"
+        body = r.data.decode("utf-8", errors="replace")
+        assert title not in body, f"{path} must not list an unlisted-only wiki"
+        assert log_title not in body and topics_title not in body and claimable_title not in body and private_title not in body
+
+    r = anon.get(f"/api/v1/wikis?owner=agent1&q={title}")
+    assert r.status_code == 200
+    assert r.get_json()["total"] == 0, "public wiki listing API must exclude unlisted-only wiki"
+
+    other_account = client.post("/api/v1/accounts", json={"username": "aclother"}).get_json()
+    other_h = {"Authorization": f"Bearer {other_account['api_key']}"}
+    other_title = "GBVisibility Other Private Marker"
+    r = client.post("/api/v1/wikis", json={"slug": "private-silo", "title": "Private Silo"}, headers=other_h)
+    assert r.status_code == 201
+    r = client.post("/api/v1/wikis/aclother/private-silo/pages", json={
+        "path": "secret.md",
+        "content": f"---\ntitle: {other_title}\n---\n\n# Secret\n\nprivate across another wiki.",
+    }, headers=other_h)
+    assert r.status_code == 201
+
+    r = anon.get("/@aclother/private-silo/secret")
+    assert r.status_code in (401, 403), f"other user's private page should be restricted, got {r.status_code}"
+    assert other_title.encode() not in r.data
+    r = anon.get(f"/api/v1/search?q={other_title}")
+    assert r.status_code == 200
+    assert r.get_json()["results"] == [], "reindexing one wiki must not leak another wiki's private page"
+
+    hook_slug = "groupbrain-hook-acl"
+    r = client.post("/api/v1/wikis", json={"slug": hook_slug, "title": "GroupBrain Hook ACL"}, headers=h)
+    assert r.status_code == 201
+    hook_wiki = Wiki.query.join(User, Wiki.owner_id == User.id).filter(User.username == "agent1", Wiki.slug == hook_slug).first()
+    assert hook_wiki is not None
+    assert Page.query.filter_by(wiki_id=hook_wiki.id, path="log.md").first().visibility == "private"
+
+    sync_page_to_repo("agent1", hook_slug, ".wikihub/acl", "* public-view\n")
+    r = client.post("/api/v1/admin/regenerate-mirror", json={
+        "username": "agent1",
+        "slug": hook_slug,
+        "reindex": True,
+    }, headers={"Authorization": "Bearer test-admin-token"})
+    assert r.status_code == 200, f"admin reindex failed: {r.status_code} {r.data[:200]}"
+    assert r.get_json()["reindexed"] is True
+    db.session.expire_all()
+    assert Page.query.filter_by(wiki_id=hook_wiki.id, path="log.md").first().visibility == "public"
+    r = anon.get(f"/@agent1/{hook_slug}/log")
+    assert r.status_code == 200, f"hook/admin ACL reindex should make /log anonymously readable, got {r.status_code}"
+
+    delete_slug = "groupbrain-acl-delete"
+    r = client.post("/api/v1/wikis", json={"slug": delete_slug, "title": "GroupBrain ACL Delete"}, headers=h)
+    assert r.status_code == 201
+    delete_wiki = Wiki.query.join(User, Wiki.owner_id == User.id).filter(User.username == "agent1", Wiki.slug == delete_slug).first()
+    assert delete_wiki is not None
+    r = client.post(f"/api/v1/wikis/agent1/{delete_slug}/pages", json={
+        "path": ".wikihub/acl",
+        "content": "* unlisted-view\n",
+    }, headers=h)
+    assert r.status_code == 201
+    db.session.expire_all()
+    assert Page.query.filter_by(wiki_id=delete_wiki.id, path="log.md").first().visibility == "unlisted"
+    r = client.delete(f"/api/v1/wikis/agent1/{delete_slug}/pages/.wikihub/acl", headers=h)
+    assert r.status_code == 204
+    db.session.expire_all()
+    assert read_file_from_repo("agent1", delete_slug, ".wikihub/acl") is None
+    assert Page.query.filter_by(wiki_id=delete_wiki.id, path="log.md").first().visibility == "private"
+    r = anon.get(f"/@agent1/{delete_slug}/log")
+    assert r.status_code in (401, 403), f"deleting ACL should restore private default, got {r.status_code}"
+
+    revert_slug = "groupbrain-acl-revert"
+    r = client.post("/api/v1/wikis", json={"slug": revert_slug, "title": "GroupBrain ACL Revert"}, headers=h)
+    assert r.status_code == 201
+    revert_wiki = Wiki.query.join(User, Wiki.owner_id == User.id).filter(User.username == "agent1", Wiki.slug == revert_slug).first()
+    assert revert_wiki is not None
+
+    from app.git_backend import _repo_path
+    import subprocess
+    repo_path = _repo_path("agent1", revert_slug)
+    private_acl_sha = subprocess.check_output([
+        "git", "-C", repo_path, "log", "--format=%H", "--", ".wikihub/acl"
+    ], text=True).splitlines()[-1]
+
+    r = client.put(f"/api/v1/wikis/agent1/{revert_slug}/pages/.wikihub/acl", json={
+        "content": "* unlisted-view\n",
+    }, headers=h)
+    assert r.status_code == 200
+    db.session.expire_all()
+    assert Page.query.filter_by(wiki_id=revert_wiki.id, path="log.md").first().visibility == "unlisted"
+    r = anon.get(f"/@agent1/{revert_slug}/log")
+    assert r.status_code == 200
+
+    r = client.post(f"/api/v1/wikis/agent1/{revert_slug}/revert", json={
+        "sha": private_acl_sha,
+        "path": ".wikihub/acl",
+    }, headers=h)
+    assert r.status_code == 200, f"ACL revert failed: {r.status_code} {r.data[:200]}"
+    assert r.get_json()["reindexed"] is True
+    db.session.expire_all()
+    assert Page.query.filter_by(wiki_id=revert_wiki.id, path=".wikihub/acl").first() is None
+    assert Page.query.filter_by(wiki_id=revert_wiki.id, path="log.md").first().visibility == "private"
+    reverted_acl = read_file_from_repo("agent1", revert_slug, ".wikihub/acl")
+    assert "* private\n" in reverted_acl
+    assert "* unlisted-view\n" not in reverted_acl
+    r = anon.get(f"/@agent1/{revert_slug}/log")
+    assert r.status_code in (401, 403), f"reverting ACL should refresh inherited private visibility, got {r.status_code}"
 
 
 def test_email_verification_flow(client):
@@ -4189,6 +4896,7 @@ def test_agent_chat_blocks_cross_user_private_read(client, api_key):
     with a session built as user B but pointed at user A's wiki. (wikihub-7w40)
     """
     import tempfile, shutil as _sh
+    from app.git_sync import sync_page_to_repo
     from app.models import User
     from app.routes.agent_chat import _execute_tool
 
@@ -4211,6 +4919,8 @@ def test_agent_chat_blocks_cross_user_private_read(client, api_key):
     r = client.post("/api/v1/accounts", json={"username": "agent_b"})
     assert r.status_code == 201
     agent_b = User.query.filter_by(username="agent_b").first()
+    sync_page_to_repo("agent1", "curator-priv-a", ".wikihub/acl", "* public-edit\n")
+    sync_page_to_repo("agent1", "curator-priv-a", ".wikihub/serve-inline.md", "# Plumbing Secret\n\nplumbing-agent-chat-secret")
 
     work_dir = tempfile.mkdtemp(prefix="curator-test-")
     try:
@@ -4246,6 +4956,16 @@ def test_agent_chat_blocks_cross_user_private_read(client, api_key):
         out = _execute_tool("write_file", {
             "path": "agent1/curator-priv-a/secret/plan.md",
             "content": "pwned",
+        }, sess)
+        assert "no access" in out or "not found" in out, out
+
+        out = _execute_tool("read_file", {"path": "agent1/curator-priv-a/.wikihub/serve-inline.md"}, sess)
+        assert "plumbing-agent-chat-secret" not in out, f"LEAK: agent_b read plumbing file: {out!r}"
+        assert "no access" in out or "not found" in out, out
+
+        out = _execute_tool("write_file", {
+            "path": "agent1/curator-priv-a/.wikihub/events.jsonl",
+            "content": "{}\n",
         }, sess)
         assert "no access" in out or "not found" in out, out
     finally:
@@ -4397,6 +5117,78 @@ def test_agent_chat_disabled_returns_503(app, client):
         assert r.status_code == 503, f"expected 503 when disabled, got {r.status_code}"
     finally:
         app.config["CURATOR_ENABLED"] = orig
+
+
+def test_agent_chat_blocks_plumbing_bootstrap_context(app, client, api_key):
+    h = {"Authorization": f"Bearer {api_key}"}
+    slug = "agent-plumbing-context"
+    r = client.post("/api/v1/wikis", json={"slug": slug, "title": "Agent Plumbing Context"}, headers=h)
+    assert r.status_code == 201
+    r = client.post(f"/api/v1/wikis/agent1/{slug}/pages", json={
+        "path": ".wikihub/acl",
+        "content": "* unlisted-view\n",
+    }, headers=h)
+    assert r.status_code == 201
+
+    from app.git_sync import sync_page_to_repo
+    sync_page_to_repo("agent1", slug, ".wikihub/serve-inline.md", "# Serve Inline Secret\n")
+
+    other = client.post("/api/v1/accounts", json={"username": "plumbingviewer"}).get_json()
+    other_h = {"Authorization": f"Bearer {other['api_key']}"}
+
+    from app.routes.agent_chat import _sessions, _sessions_lock
+    with _sessions_lock:
+        _sessions.clear()
+
+    original_enabled = app.config.get("CURATOR_ENABLED", True)
+    original_api_key = os.environ.pop("ANTHROPIC_API_KEY", None)
+    app.config["CURATOR_ENABLED"] = True
+    try:
+        r = client.post("/api/v1/agent/chat", json={
+            "message": "read current page",
+            "context": {"owner": "agent1", "wiki": slug, "page_path": ".wikihub/serve-inline.md"},
+        }, headers=other_h)
+        assert r.status_code == 404, f"non-owner plumbing context must be rejected, got {r.status_code}"
+
+        r = client.post("/api/v1/agent/chat", json={
+            "message": "show files",
+            "context": {"owner": "agent1", "wiki": slug, "page_path": "log.md"},
+        }, headers=h)
+        assert r.status_code == 400
+        with _sessions_lock:
+            prompts = [session["system_prompt"] for session in _sessions.values()]
+        assert prompts, "owner request should create a session before LLM config validation"
+        prompt = prompts[-1]
+        assert ".wikihub/" not in prompt
+        assert "Serve Inline Secret" not in prompt
+
+        import tempfile, shutil as _sh
+        from app.models import User
+        from app.routes.agent_chat import _execute_tool
+        owner = User.query.filter_by(username="agent1").first()
+        work_dir = tempfile.mkdtemp(prefix="curator-test-")
+        try:
+            sess = _make_curator_session(
+                client.application, work_dir,
+                owner="agent1", wiki_slug=slug,
+                username="agent1", user_id=owner.id,
+            )
+            out = _execute_tool("read_file", {"path": f"agent1/{slug}/.wikihub/serve-inline.md"}, sess)
+            assert "Serve Inline Secret" not in out
+            assert "no access" in out or "not found" in out, out
+            out = _execute_tool("write_file", {
+                "path": f"agent1/{slug}/.wikihub/events.jsonl",
+                "content": "{}\n",
+            }, sess)
+            assert "no access" in out or "not found" in out, out
+        finally:
+            _sh.rmtree(work_dir, ignore_errors=True)
+    finally:
+        app.config["CURATOR_ENABLED"] = original_enabled
+        if original_api_key is not None:
+            os.environ["ANTHROPIC_API_KEY"] = original_api_key
+        with _sessions_lock:
+            _sessions.clear()
 
 
 def test_backlinks_api(client, api_key):
@@ -6571,6 +7363,7 @@ def run_all():
             ("binary file serving", lambda: test_binary_file_serving(client, key)),
             ("unlisted-view ACL default readable by anon (issue #15)", lambda: test_unlisted_view_acl_default_readable_by_anon(client, key)),
             ("search", lambda: test_search(client, key)),
+            ("anonymous search uses bounded content batches", lambda: test_anonymous_search_uses_bounded_content_batches()),
             ("reader owner visibility control", lambda: test_reader_owner_visibility_control(client, key)),
             ("search respects ACL shares", lambda: test_search_respects_acl_shares(client, key)),
             ("social (star + fork)", lambda: test_social(client, key)),
@@ -6586,6 +7379,7 @@ def run_all():
             ("sign-in flow redirects back to target (wikihub-kvwh)", lambda: test_signin_flow_redirects_back_to_target(app, client)),
             ("logout (wikihub-uq9)", lambda: test_logout(client)),
             ("unlisted page in sidebar but not discovery (wikihub #17)", lambda: test_unlisted_page_in_sidebar_but_not_discovery(app, client, key)),
+            ("ACL file changes reindex inherited visibility without discovery leaks", lambda: test_acl_file_updates_reindex_inherited_visibility_without_discovery_leaks(app, client, key)),
             ("email verification flow (wikihub-ks5t.3)", lambda: test_email_verification_flow(client)),
             ("password reset flow (wikihub-ks5t.5)", lambda: test_password_reset_lifecycle(client)),
             ("Google auto-link security (wikihub-ks5t.4)", lambda: test_google_auto_link_security(app)),
@@ -6634,6 +7428,7 @@ def run_all():
             ("agent chat search filters private pages (wikihub-7w40)", lambda: test_agent_chat_search_filters_private_pages(client, key)),
             ("agent chat resists prompt-injection ACL bypass (wikihub-7w40)", lambda: test_agent_chat_resists_prompt_injection_for_acl_bypass(client, key)),
             ("agent chat disabled returns 503 (wikihub-7w40)", lambda: test_agent_chat_disabled_returns_503(app, client)),
+            ("agent chat blocks plumbing bootstrap context (nsv-w43k)", lambda: test_agent_chat_blocks_plumbing_bootstrap_context(app, client, key)),
             ("backlinks API + forward-ref fallback (wikihub-yqe6)", lambda: test_backlinks_api(client, key)),
             ("highlight.js script URL is canonical (wikihub-1rx9)", lambda: test_highlight_js_script_url_is_canonical()),
             ("nginx serves Service-Worker-Allowed header (wikihub-o1ib)", lambda: test_nginx_serves_service_worker_allowed_header()),
@@ -6674,11 +7469,16 @@ def run_all():
             ("per-user wiki limit + 429 (wikihub-20ct)", lambda: test_wiki_limit_effective_resolution_and_429(client, app)),
             ("set_wiki_limit imports from app root (wikihub-20ct)", lambda: test_set_wiki_limit_script_imports_from_repo_root()),
             ("global activity excludes non-public content", lambda: test_global_activity_excludes_non_public(client, key)),
+            ("discoverable wiki ids use DB distinct + risky fallback", lambda: test_discoverable_wiki_ids_uses_db_distinct_with_risky_path_fallback(client, key)),
+            ("llms.txt uses bounded content batches", lambda: test_llms_txt_uses_bounded_content_batches()),
+            ("discoverable page uses targeted lookups", lambda: test_discoverable_page_for_wiki_uses_targeted_homepage_lookups()),
+            ("global activity paginates after normalized plumbing filter", lambda: test_global_activity_paginates_after_normalized_plumbing_filter(client, key)),
             ("activity RSS well-formed + correct links (both hosts)", lambda: test_activity_rss_is_well_formed_with_correct_links(client, key)),
             ("private-only wiki RSS does not leak metadata", lambda: test_wiki_activity_rss_private_only_wiki_does_not_leak_metadata(client, key)),
             ("per-wiki RSS finds older unlisted pages after private pages", lambda: test_wiki_activity_rss_keeps_older_unlisted_after_private_pages(client, key)),
             ("global activity rows avoid nested anchors", lambda: test_global_activity_rows_do_not_nest_anchors(client, key)),
             ("global activity pagination", lambda: test_activity_pagination(client, key)),
+            ("anonymous search total filters normalized plumbing", lambda: test_anonymous_search_total_filters_normalized_plumbing(client, key)),
         ]
 
         passed = 1  # account creation already passed
@@ -6731,6 +7531,35 @@ def _seed_activity_fixtures(client, key):
         "content": "---\ntitle: Private Note\nvisibility: private\n---\n\n# Private Note\n",
         "visibility": "private",
     }, headers=h)
+    owner = User.query.filter_by(username="agent1").first()
+    public_wiki = Wiki.query.filter_by(owner_id=owner.id, slug="pubwiki").first()
+    client.post("/api/v1/wikis", json={"slug": "plumbingonly", "title": "Plumbing Only"}, headers=h)
+    plumbing_only_wiki = Wiki.query.filter_by(owner_id=owner.id, slug="plumbingonly").first()
+    if not Page.query.filter_by(wiki_id=public_wiki.id, path=".wikihub/activity-log.md").first():
+        db.session.add(Page(
+            wiki_id=public_wiki.id,
+            path=".wikihub/activity-log.md",
+            title="Public Plumbing Activity",
+            visibility="public",
+            excerpt="Public Plumbing Activity",
+        ))
+    if not Page.query.filter_by(wiki_id=public_wiki.id, path="./.wikihub/dot-activity-log.md").first():
+        db.session.add(Page(
+            wiki_id=public_wiki.id,
+            path="./.wikihub/dot-activity-log.md",
+            title="Dot Plumbing Activity",
+            visibility="public",
+            excerpt="Dot Plumbing Activity",
+        ))
+    if not Page.query.filter_by(wiki_id=plumbing_only_wiki.id, path="wiki/../.wikihub/discovery-log.md").first():
+        db.session.add(Page(
+            wiki_id=plumbing_only_wiki.id,
+            path="wiki/../.wikihub/discovery-log.md",
+            title="Normalized Plumbing Discovery",
+            visibility="public",
+            excerpt="Normalized Plumbing Discovery",
+        ))
+    db.session.commit()
     return h
 
 
@@ -6746,6 +7575,15 @@ def test_global_activity_excludes_non_public(client, key):
     assert "Public Note" in body, "public page must appear in global activity"
     assert "Unlisted Note" not in body, "unlisted page must NOT appear in global activity"
     assert "Private Note" not in body, "private page must NOT appear in global activity"
+    assert "Public Plumbing Activity" not in body, "stale plumbing page must NOT appear in global activity"
+    assert "Dot Plumbing Activity" not in body, "dot-segment plumbing page must NOT appear in global activity"
+    assert "Plumbing Only" not in body, "wiki with only stale plumbing rows must NOT appear in global activity"
+
+    from app.discovery import discoverable_wiki_ids
+    owner = User.query.filter_by(username="agent1").first()
+    plumbing_only_wiki = Wiki.query.filter_by(owner_id=owner.id, slug="plumbingonly").first()
+    assert plumbing_only_wiki.id not in discoverable_wiki_ids(), \
+        "wiki with only dot-segment plumbing rows must not be discoverable"
 
     # RSS feed (anonymous request)
     r = client.get("/activity.rss")
@@ -6755,6 +7593,97 @@ def test_global_activity_excludes_non_public(client, key):
     assert "Public Note" in rss
     assert "Unlisted Note" not in rss
     assert "Private Note" not in rss
+    assert "Public Plumbing Activity" not in rss
+    assert "Dot Plumbing Activity" not in rss
+
+
+def test_discoverable_wiki_ids_uses_db_distinct_with_risky_path_fallback(client, key):
+    h = {"Authorization": f"Bearer {key}"}
+    client.post("/api/v1/wikis", json={"slug": "discover-safe", "title": "Discover Safe"}, headers=h)
+    client.post("/api/v1/wikis", json={"slug": "discover-risky-content", "title": "Discover Risky Content"}, headers=h)
+    client.post("/api/v1/wikis", json={"slug": "discover-risky-plumbing", "title": "Discover Risky Plumbing"}, headers=h)
+
+    owner = User.query.filter_by(username="agent1").first()
+    safe_wiki = Wiki.query.filter_by(owner_id=owner.id, slug="discover-safe").first()
+    risky_content_wiki = Wiki.query.filter_by(owner_id=owner.id, slug="discover-risky-content").first()
+    risky_plumbing_wiki = Wiki.query.filter_by(owner_id=owner.id, slug="discover-risky-plumbing").first()
+    db.session.add(Page(
+        wiki_id=safe_wiki.id,
+        path="wiki/discover-safe.md",
+        title="Discover Safe Page",
+        visibility="public",
+    ))
+    db.session.add(Page(
+        wiki_id=risky_content_wiki.id,
+        path="wiki/../discover-risky-content.md",
+        title="Discover Risky Content Page",
+        visibility="public",
+    ))
+    db.session.add(Page(
+        wiki_id=risky_plumbing_wiki.id,
+        path="wiki/../.wikihub/discover-risky-plumbing.md",
+        title="Discover Risky Plumbing Page",
+        visibility="public",
+    ))
+    db.session.commit()
+
+    from app.discovery import discoverable_wiki_ids
+
+    statements = []
+
+    def capture_sql(conn, cursor, statement, parameters, context, executemany):
+        if "FROM pages" in statement and "pages.visibility" in statement:
+            statements.append(statement)
+
+    event.listen(db.engine, "before_cursor_execute", capture_sql)
+    try:
+        ids = discoverable_wiki_ids()
+    finally:
+        event.remove(db.engine, "before_cursor_execute", capture_sql)
+
+    assert safe_wiki.id in ids, "normal public content must make a wiki discoverable"
+    assert risky_content_wiki.id in ids, "normalized non-plumbing content fallback must still count"
+    assert risky_plumbing_wiki.id not in ids, "normalized plumbing fallback must not count"
+    assert len(statements) == 2, f"expected safe and risky discovery queries, got {len(statements)}"
+    assert "SELECT DISTINCT pages.wiki_id" in statements[0]
+    assert "pages.path AS" not in statements[0], "common discovery path must not materialize page paths"
+    assert "pages.path AS" in statements[1], "only risky fallback may materialize page paths"
+
+
+def test_global_activity_paginates_after_normalized_plumbing_filter(client, key):
+    """Global activity windowing ignores normalized plumbing rows before paging."""
+    h = {"Authorization": f"Bearer {key}"}
+    client.post("/api/v1/wikis", json={"slug": "activity-window", "title": "Activity Window"}, headers=h)
+
+    owner = User.query.filter_by(username="agent1").first()
+    wiki = Wiki.query.filter_by(owner_id=owner.id, slug="activity-window").first()
+    base = utcnow() + timedelta(days=1)
+    visible_title = "Visible After Plumbing Window"
+    for i in range(85):
+        db.session.add(Page(
+            wiki_id=wiki.id,
+            path=f"wiki/../.wikihub/window-{i:03d}.md",
+            title=f"Hidden Plumbing Window {i:03d}",
+            visibility="public",
+            created_at=base + timedelta(seconds=i + 1),
+            updated_at=base + timedelta(seconds=i + 1),
+        ))
+    db.session.add(Page(
+        wiki_id=wiki.id,
+        path="wiki/visible-after-plumbing-window.md",
+        title=visible_title,
+        visibility="public",
+        excerpt=visible_title,
+        created_at=base,
+        updated_at=base,
+    ))
+    db.session.commit()
+
+    r = client.get("/activity")
+    assert r.status_code == 200, f"/activity should render, got {r.status_code}"
+    body = r.get_data(as_text=True)
+    assert visible_title in body, "visible row must not be pushed out by normalized plumbing rows"
+    assert "Hidden Plumbing Window" not in body, "normalized plumbing rows must stay hidden"
 
 
 def test_activity_rss_is_well_formed_with_correct_links(client, key):
@@ -6942,6 +7871,30 @@ def test_activity_pagination(client, key):
     assert "Page 2 of" in b2
     # the two pages should not be identical (different slice of entries)
     assert b1 != b2, "page 2 should differ from page 1"
+
+
+def test_anonymous_search_total_filters_normalized_plumbing(client, key):
+    h = {"Authorization": f"Bearer {key}"}
+    client.post("/api/v1/wikis", json={"slug": "search-total", "title": "Search Total"}, headers=h)
+
+    owner = User.query.filter_by(username="agent1").first()
+    wiki = Wiki.query.filter_by(owner_id=owner.id, slug="search-total").first()
+    marker = "NeedleNormalizedPlumbingTotal"
+    db.session.add(Page(
+        wiki_id=wiki.id,
+        path="wiki/../.wikihub/search-total.md",
+        title=marker,
+        visibility="public",
+        excerpt=marker,
+    ))
+    db.session.commit()
+
+    anon = client.application.test_client()
+    r = anon.get(f"/api/v1/search?q={marker}")
+    assert r.status_code == 200, f"anonymous search failed: {r.status_code} {r.data[:200]}"
+    data = r.get_json()
+    assert data["results"] == [], "normalized plumbing row must not become searchable"
+    assert data["total"] == 0, "search total must not count normalized plumbing rows"
 
 
 if __name__ == "__main__":

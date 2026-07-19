@@ -23,6 +23,7 @@ from sqlalchemy import or_
 from app import db
 from app.content_utils import page_reference_aliases
 from app.models import Page, Wikilink
+from app.page_utils import is_wikihub_plumbing_path
 
 
 def get_backlinks_for_page(page):
@@ -65,6 +66,7 @@ def get_backlinks_for_page(page):
         return []
 
     sources = Page.query.filter(Page.id.in_(source_ids)).order_by(Page.path.asc()).all()
+    sources = [page for page in sources if not is_wikihub_plumbing_path(page.path)]
     return sources
 
 

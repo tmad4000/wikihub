@@ -16,14 +16,15 @@ from flask import current_app, jsonify, render_template, request, redirect, url_
 from flask_login import current_user, login_required, login_user
 
 from app import db
-from app.acl import resolve_visibility
+from app.acl import normalize_page_visibility, resolve_visibility
 from app.auth_utils import generate_api_key, rate_limit_writes
 from app.credentials_hint import build_client_config, resolve_server_url
 from app.models import ApiKey, User, Wiki, Page
 from app.content_utils import parse_markdown_document
 from app.git_sync import regenerate_public_mirror, read_file_from_repo, scaffold_wiki, sync_page_to_repo
+from app.page_utils import is_wikihub_plumbing_path, normalize_repo_path
 from app.routes import main_bp
-from app.wiki_ops import create_wiki_for_user, ensure_personal_wiki, index_repo_pages, load_acl_rules, refresh_wikilinks_for_page, update_page_metadata
+from app.wiki_ops import create_wiki_for_user, ensure_personal_wiki, index_repo_pages, load_acl_rules, refresh_wikilinks_for_page, reindex_wiki_pages_and_mirror, update_page_metadata
 
 
 @main_bp.route("/new", methods=["GET", "POST"])
@@ -142,6 +143,7 @@ def create_wiki_anonymous():
 
 def _process_uploads(username, slug, wiki_id, files):
     """process uploaded files — writes each to git and indexes in DB."""
+    entries = []
     for f in files:
         if not f.filename:
             continue
@@ -149,32 +151,54 @@ def _process_uploads(username, slug, wiki_id, files):
         filename = f.filename
         # handle zip files
         if filename.lower().endswith(".zip"):
-            _process_zip(username, slug, wiki_id, f)
+            entries.extend(_extract_zip_entries(f))
             continue
 
         content = f.read()
         try:
             text = content.decode("utf-8")
         except UnicodeDecodeError:
-            text = None
+            text = content.decode("latin-1")
 
-        # write to git
-        sync_page_to_repo(username, slug, filename, text if text else content.decode("latin-1"))
+        entries.append((filename, text))
 
-        if filename.endswith(".md") and text:
-            _index_page(wiki_id, filename, text, username, slug)
+    normalized_entries = []
+    for path, text in entries:
+        raw_path = (path or "").strip().replace("\\", "/")
+        normalized_path = normalize_repo_path(path)
+        if raw_path.startswith("/") or normalized_path in ("", "..") or normalized_path.startswith("../"):
+            continue
+        normalized_entries.append((normalized_path, text))
+    entries = normalized_entries
+    uploaded_paths = [path for path, _text in entries]
+    has_uploaded_acl = ".wikihub/acl" in uploaded_paths
 
-    # also scaffold ACL if not present
-    if ".wikihub/acl" not in [f.filename for f in files if f.filename]:
+    for path, text in entries:
+        if is_wikihub_plumbing_path(path) and path != ".wikihub/acl":
+            continue
+        sync_page_to_repo(username, slug, path, text)
+
+    if not has_uploaded_acl:
         acl_content = (
             "# wikihub ACL\n"
             "* private\n"
         )
         sync_page_to_repo(username, slug, ".wikihub/acl", acl_content)
 
+    if has_uploaded_acl:
+        wiki = Wiki.query.get(wiki_id)
+        if wiki:
+            reindex_wiki_pages_and_mirror(username, slug, wiki)
+            db.session.commit()
+        return
 
-def _process_zip(username, slug, wiki_id, zip_file):
-    """unpack a zip file and commit all contents."""
+    for path, text in entries:
+        if path.endswith(".md") and not is_wikihub_plumbing_path(path):
+            _index_page(wiki_id, path, text, username, slug)
+
+
+def _extract_zip_entries(zip_file):
+    """unpack a zip file into repo path/content pairs."""
     from flask import current_app
     max_files = current_app.config["MAX_UPLOAD_FILES"]
     max_page = current_app.config["MAX_PAGE_SIZE"]
@@ -189,7 +213,7 @@ def _process_zip(username, slug, wiki_id, zip_file):
     with zf_obj as zf:
         def _skip(name):
             parts = name.split("/")
-            return any(p.startswith(".") for p in parts) or name.startswith("__MACOSX/")
+            return name.startswith("__MACOSX/") or any(p.startswith(".") and p != ".wikihub" for p in parts)
         entries = [i for i in zf.infolist() if not i.is_dir() and not _skip(i.filename)]
 
         # strip common top-level directory wrapper (e.g. notes/ wrapping everything)
@@ -213,6 +237,7 @@ def _process_zip(username, slug, wiki_id, zip_file):
             more = f" (+{len(oversized) - 5} more)" if len(oversized) > 5 else ""
             raise ValueError(f"Files too large (2MB max): {names}{more}")
 
+        extracted = []
         for info in entries:
             filepath = info.filename
             content = zf.read(info)
@@ -221,10 +246,8 @@ def _process_zip(username, slug, wiki_id, zip_file):
             except UnicodeDecodeError:
                 text = content.decode("latin-1")
 
-            sync_page_to_repo(username, slug, filepath, text)
-
-            if filepath.endswith(".md"):
-                _index_page(wiki_id, filepath, text, username, slug)
+            extracted.append((filepath, text))
+        return extracted
 
 
 def _index_page(wiki_id, path, content, username, slug):
@@ -238,7 +261,7 @@ def _index_page(wiki_id, path, content, username, slug):
     if not page:
         page = Page(wiki_id=wiki_id, path=path)
         db.session.add(page)
-    page.visibility = resolve_visibility(path, acl_rules, frontmatter.get("visibility"))
+    page.visibility = normalize_page_visibility(resolve_visibility(path, acl_rules, frontmatter.get("visibility"))) or "private"
     update_page_metadata(page, content, frontmatter)
     db.session.flush()
     refresh_wikilinks_for_page(page, content)

@@ -1,11 +1,14 @@
+from types import SimpleNamespace
+
 from flask import current_app, flash, jsonify, redirect, render_template, request, url_for
 from flask_login import login_required, logout_user, current_user
 
 from app import db
 from app.acl import grants_for_user, list_all_grants, parse_acl
-from app.discovery import discoverable_page_for_wiki, visible_wikis_for_owner
+from app.discovery import discoverable_page_for_wiki, discoverable_wiki_ids, visible_wikis_for_owner
 from app.git_sync import read_file_from_repo
 from app.models import Wiki, Page, ApiKey, User, Star, Fork, MagicLoginToken, UsernameRedirect, utcnow
+from app.page_utils import content_page_path_filter, is_content_page_path
 from app.routes import main_bp
 import os
 import shutil
@@ -15,8 +18,6 @@ from app.wiki_ops import delete_wiki_repos
 @main_bp.route("/")
 def index():
     from app.models import Wiki, Page
-    from app.discovery import discoverable_wiki_ids
-
     # agent content negotiation: if the client asks for markdown, serve AGENTS.md
     # directly instead of the human landing page. wikihub-55jv
     accept = request.headers.get("Accept", "")
@@ -68,11 +69,7 @@ def explore():
             editorial.append(wiki)
     # All wikis with at least one public page, excluding editorial
     editorial_ids = {wiki.id for wiki in editorial}
-    public_wiki_ids = (
-        db.session.query(Page.wiki_id)
-        .filter(Page.visibility.in_(["public", "public-edit"]))
-        .distinct()
-    )
+    public_wiki_ids = discoverable_wiki_ids(("public", "public-edit"))
     all_wikis = (
         Wiki.query.filter(Wiki.id.in_(public_wiki_ids))
         .order_by(Wiki.updated_at.desc())
@@ -105,8 +102,41 @@ def _global_activity_query():
         .join(Wiki, Page.wiki_id == Wiki.id)
         .join(User, Wiki.owner_id == User.id)
         .filter(Page.visibility.in_(DISCOVERABLE_VISIBILITIES))
+        .filter(content_page_path_filter(Page.path))
         .order_by(Page.updated_at.desc(), Page.id.desc())
     )
+
+
+def _content_activity_window(query, offset, limit):
+    results = []
+    content_seen = 0
+    sql_offset = 0
+    batch_size = 100
+    needed = offset + limit
+
+    while len(results) < limit:
+        batch = query.offset(sql_offset).limit(batch_size).all()
+        if not batch:
+            break
+
+        for page, wiki, user in batch:
+            if not is_content_page_path(page.path):
+                continue
+            if content_seen < offset:
+                content_seen += 1
+                continue
+            results.append((page, wiki, user))
+            content_seen += 1
+            if len(results) >= limit:
+                break
+
+        sql_offset += len(batch)
+        if len(batch) < batch_size:
+            break
+        if content_seen >= needed and len(results) >= limit:
+            break
+
+    return results
 
 
 @main_bp.route("/activity")
@@ -120,8 +150,20 @@ def activity():
         page_num = 1
     per_page = 40
 
-    pagination = _global_activity_query().paginate(
-        page=page_num, per_page=per_page, error_out=False
+    query = _global_activity_query()
+    start = (page_num - 1) * per_page
+    window = _content_activity_window(query, start, per_page + 1)
+    rows = window[:per_page]
+    has_next = len(window) > per_page
+    pages = page_num + 1 if has_next else (page_num if rows else max(page_num - 1, 0))
+    pagination = SimpleNamespace(
+        items=rows,
+        page=page_num,
+        pages=pages,
+        has_prev=page_num > 1,
+        has_next=has_next,
+        prev_num=page_num - 1,
+        next_num=page_num + 1,
     )
     entries = [
         activity_entry(page, wiki, user.username, request.host_url)
@@ -140,7 +182,7 @@ def activity_rss():
     """RSS 2.0 feed for the global public activity feed."""
     from app.feeds import activity_entry, render_rss
 
-    rows = _global_activity_query().limit(50).all()
+    rows = _content_activity_window(_global_activity_query(), 0, 50)
     entries = [
         activity_entry(page, wiki, user.username, request.host_url)
         for (page, wiki, user) in rows
@@ -222,6 +264,7 @@ def shared():
             Page.wiki_id == wiki.id,
             Page.visibility.in_(("unlisted", "unlisted-edit")),
         ).all()
+        unlisted = [page for page in unlisted if is_content_page_path(page.path)]
         if grants or unlisted:
             shared_by_me.append({
                 "wiki": wiki,

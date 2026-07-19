@@ -29,6 +29,8 @@ from app.git_sync import (
 from app.acl import can_read, can_write, list_all_grants, normalize_page_visibility, remove_grant, resolve_grants, resolve_visibility
 from app.email_service import send_share_invite_existing_user, send_share_invite_pending
 from app.credentials_hint import resolve_server_url
+from app.discovery import discoverable_wiki_ids
+from app.page_utils import content_page_path_filter, is_content_page_path, is_wikihub_plumbing_path
 from app.content_utils import (
     page_reference_aliases,
     parse_markdown_document,
@@ -41,11 +43,15 @@ from app.wiki_ops import (
     delete_wiki_repos,
     index_repo_pages,
     load_acl_rules,
+    reindex_wiki_pages_and_mirror,
     refresh_wikilinks_for_page,
     sync_wiki_counters,
     update_page_metadata,
 )
 from app.url_utils import page_path_from_url_path, url_path_from_page_path
+
+
+ACL_FILE_PATH = ".wikihub/acl"
 
 
 def _resolve_owner_username(username):
@@ -125,8 +131,52 @@ def _lookup_page(wiki_id, raw_page_path):
     return None
 
 
+def _is_acl_file_path(path):
+    return (path or "").strip().replace("\\", "/") == ACL_FILE_PATH
+
+
+def _is_wikihub_plumbing_path(path):
+    return is_wikihub_plumbing_path(path)
+
+
+def _reject_wikihub_plumbing_path():
+    return {"error": "bad_request", "message": ".wikihub/* paths are wiki plumbing"}, 400
+
+
+def _content_page_count(wiki):
+    paths = Page.query.filter_by(wiki_id=wiki.id).with_entities(Page.path).all()
+    return sum(1 for (path,) in paths if is_content_page_path(path))
+
+
+def _current_user_is_owner(wiki):
+    user = getattr(request, "current_user", None)
+    return bool(user and user.id == wiki.owner_id)
+
+
+def _write_acl_file_and_reindex(owner_user, wiki, content, message):
+    author_name, author_email = _current_author()
+    sync_page_to_repo(
+        owner_user.username,
+        wiki.slug,
+        ACL_FILE_PATH,
+        content,
+        message=message,
+        author_name=author_name,
+        author_email=author_email,
+    )
+    reindex_wiki_pages_and_mirror(owner_user.username, wiki.slug, wiki)
+
+
 def _load_page_content(owner, slug, page_path, public=False):
     return read_file_from_repo(owner, slug, page_path, public=public)
+
+
+def _stored_page_visibility(*candidates):
+    for candidate in candidates:
+        normalized = normalize_page_visibility(candidate)
+        if normalized:
+            return normalized
+    return "private"
 
 
 # --- wiki endpoints ---
@@ -160,23 +210,18 @@ def list_wikis():
 
     # a wiki is "public" if it has at least one public or public-edit page.
     # same filter as /explore. an authed user additionally sees their own wikis.
-    public_wiki_ids_subq = (
-        db.session.query(Page.wiki_id)
-        .filter(Page.visibility.in_(["public", "public-edit"]))
-        .distinct()
-        .subquery()
-    )
+    public_wiki_ids = discoverable_wiki_ids(("public", "public-edit"))
 
     query = Wiki.query.join(User, Wiki.owner_id == User.id)
     if user:
         query = query.filter(
             db.or_(
-                Wiki.id.in_(db.session.query(public_wiki_ids_subq)),
+                Wiki.id.in_(public_wiki_ids),
                 Wiki.owner_id == user.id,
             )
         )
     else:
-        query = query.filter(Wiki.id.in_(db.session.query(public_wiki_ids_subq)))
+        query = query.filter(Wiki.id.in_(public_wiki_ids))
 
     if owner_param:
         query = query.filter(User.username == owner_param)
@@ -288,7 +333,7 @@ def get_wiki(owner, slug):
         "subdomain": wiki.subdomain,
         "star_count": wiki.star_count,
         "fork_count": wiki.fork_count,
-        "page_count": wiki.pages.count(),
+        "page_count": _content_page_count(wiki),
         "created_at": wiki.created_at.isoformat(),
         "updated_at": wiki.updated_at.isoformat(),
     })
@@ -544,6 +589,15 @@ def create_page(owner, slug):
     if len(content.encode("utf-8")) > max_page:
         return {"error": "too_large", "message": f"Page content exceeds {max_page // (1024*1024)}MB limit"}, 413
 
+    if _is_acl_file_path(path):
+        if not _current_user_is_owner(wiki):
+            return {"error": "forbidden", "message": "Only the owner can update wiki ACL"}, 403
+        _write_acl_file_and_reindex(owner_user, wiki, content, "Update .wikihub/acl")
+        db.session.commit()
+        return jsonify({"path": ACL_FILE_PATH, "reindexed": True}), 201
+    if _is_wikihub_plumbing_path(path):
+        return _reject_wikihub_plumbing_path()
+
     if Page.query.filter_by(wiki_id=wiki.id, path=path).first():
         return {"error": "conflict", "message": f"Page '{path}' already exists"}, 409
 
@@ -567,10 +621,7 @@ def create_page(owner, slug):
     # Store the page-level enum, not an ACL-file token. resolve_visibility() can
     # return `unlisted-view`/`public-view`; persist `unlisted`/`public` so the DB
     # column and list_pages report valid page visibilities (wikihub issue #15).
-    normalized_visibility = normalize_page_visibility(visibility)
-    if not normalized_visibility:
-        normalized_visibility = normalize_page_visibility(resolve_visibility(path, acl_rules)) or "private"
-    visibility = normalized_visibility
+    visibility = _stored_page_visibility(visibility, resolve_visibility(path, acl_rules))
 
     page = Page(
         wiki_id=wiki.id,
@@ -619,6 +670,8 @@ def list_pages(owner, slug):
 
     pages = []
     for page in Page.query.filter_by(wiki_id=wiki.id).order_by(Page.path.asc()).all():
+        if _is_wikihub_plumbing_path(page.path):
+            continue
         if is_owner or can_read(page.path, acl_rules, username, page.visibility):
             pages.append({
                 "path": page.path,
@@ -635,6 +688,10 @@ def read_page(owner, slug, page_path):
     owner_user, wiki, err = _get_wiki_or_404(owner, slug)
     if err:
         return err
+
+    normalized_page_path = _normalize_page_path_param(page_path)
+    if _is_wikihub_plumbing_path(normalized_page_path):
+        return {"error": "not_found", "message": "Page not found"}, 404
 
     page = _lookup_page(wiki.id, page_path)
     if not page:
@@ -720,7 +777,7 @@ def read_page(owner, slug, page_path):
     # ?include=backlinks,outgoing_links could be supported later in the same shape).
     includes = {tok.strip() for tok in (request.args.get("include") or "").split(",") if tok.strip()}
     if "backlinks" in includes:
-        sources = get_backlinks_for_page(page)
+        sources = [src for src in get_backlinks_for_page(page) if not _is_wikihub_plumbing_path(src.path)]
         # Apply ACL: do not surface a private backlink source to a viewer who
         # can't read it. The fact that it links here is itself information.
         viewer_username = user.username if user else None
@@ -748,6 +805,10 @@ def page_backlinks(owner, slug, page_path):
     if err:
         return err
 
+    normalized_page_path = _normalize_page_path_param(page_path)
+    if _is_wikihub_plumbing_path(normalized_page_path):
+        return {"error": "not_found", "message": "Page not found"}, 404
+
     page = _lookup_page(wiki.id, page_path)
     if not page:
         return {"error": "not_found", "message": "Page not found"}, 404
@@ -759,7 +820,7 @@ def page_backlinks(owner, slug, page_path):
     if not is_owner and not can_read(page.path, acl_rules, viewer_username, page.visibility):
         return {"error": "not_found", "message": "Page not found"}, 404
 
-    sources = get_backlinks_for_page(page)
+    sources = [src for src in get_backlinks_for_page(page) if not _is_wikihub_plumbing_path(src.path)]
     visible = [
         src for src in sources
         if is_owner or can_read(src.path, acl_rules, viewer_username, src.visibility)
@@ -778,6 +839,18 @@ def replace_page(owner, slug, page_path):
     owner_user, wiki, err = _get_wiki_or_404(owner, slug)
     if err:
         return err
+
+    normalized_page_path = _normalize_page_path_param(page_path)
+    if _is_acl_file_path(normalized_page_path):
+        if not _current_user_is_owner(wiki):
+            return {"error": "forbidden", "message": "Only the owner can update wiki ACL"}, 403
+        data = request.get_json(silent=True) or {}
+        content = data.get("content", "")
+        _write_acl_file_and_reindex(owner_user, wiki, content, "Update .wikihub/acl")
+        db.session.commit()
+        return jsonify({"path": ACL_FILE_PATH, "reindexed": True})
+    if _is_wikihub_plumbing_path(normalized_page_path):
+        return _reject_wikihub_plumbing_path()
 
     page = _lookup_page(wiki.id, page_path)
     if not page:
@@ -809,7 +882,7 @@ def replace_page(owner, slug, page_path):
         content = set_visibility_in_content(content, page.visibility)
 
     frontmatter, _ = parse_markdown_document(content)
-    page.visibility = frontmatter.get("visibility") or new_visibility or page.visibility or resolve_visibility(page.path, acl_rules)
+    page.visibility = _stored_page_visibility(frontmatter.get("visibility"), new_visibility, page.visibility, resolve_visibility(page.path, acl_rules))
     update_page_metadata(page, content, frontmatter)
     page.author = _current_username()
     refresh_wikilinks_for_page(page, content)
@@ -828,6 +901,24 @@ def patch_page(owner, slug, page_path):
     owner_user, wiki, err = _get_wiki_or_404(owner, slug)
     if err:
         return err
+
+    normalized_page_path = _normalize_page_path_param(page_path)
+    if _is_acl_file_path(normalized_page_path):
+        if not _current_user_is_owner(wiki):
+            return {"error": "forbidden", "message": "Only the owner can update wiki ACL"}, 403
+        data = request.get_json(silent=True) or {}
+        if data.get("new_path"):
+            return {"error": "bad_request", "message": ".wikihub/acl cannot be renamed"}, 400
+        if data.get("append_section"):
+            return {"error": "bad_request", "message": "append_section is not supported for .wikihub/acl"}, 400
+        content = data.get("content")
+        if content is None:
+            content = read_file_from_repo(owner_user.username, wiki.slug, ACL_FILE_PATH, public=False) or ""
+        _write_acl_file_and_reindex(owner_user, wiki, content, "Update .wikihub/acl")
+        db.session.commit()
+        return jsonify({"path": ACL_FILE_PATH, "reindexed": True})
+    if _is_wikihub_plumbing_path(normalized_page_path):
+        return _reject_wikihub_plumbing_path()
 
     page = _lookup_page(wiki.id, page_path)
     if not page:
@@ -876,6 +967,8 @@ def patch_page(owner, slug, page_path):
     author_name, author_email = _current_author()
 
     if new_path:
+        if _is_wikihub_plumbing_path(new_path):
+            return _reject_wikihub_plumbing_path()
         if Page.query.filter_by(wiki_id=wiki.id, path=new_path).first():
             return {"error": "conflict", "message": f"Path '{new_path}' already exists"}, 409
 
@@ -885,6 +978,8 @@ def patch_page(owner, slug, page_path):
         repo_changes = [{"action": "delete", "path": old_path}]
 
         for candidate in Page.query.filter_by(wiki_id=wiki.id).all():
+            if _is_wikihub_plumbing_path(candidate.path):
+                continue
             candidate_content = read_file_from_repo(owner_user.username, wiki.slug, candidate.path, public=False) or ""
             if candidate.id == page.id:
                 candidate_content = updated_content
@@ -907,7 +1002,7 @@ def patch_page(owner, slug, page_path):
         for candidate, target_path, rewritten in rewritten_pages:
             candidate.path = target_path
             frontmatter, _ = parse_markdown_document(rewritten)
-            candidate.visibility = frontmatter.get("visibility") or resolve_visibility(target_path, acl_rules)
+            candidate.visibility = _stored_page_visibility(frontmatter.get("visibility"), resolve_visibility(target_path, acl_rules))
             candidate.author = _current_username() if candidate.id == page.id else candidate.author
             update_page_metadata(candidate, rewritten, frontmatter)
         db.session.flush()
@@ -915,7 +1010,7 @@ def patch_page(owner, slug, page_path):
             refresh_wikilinks_for_page(candidate, rewritten)
     else:
         frontmatter, _ = parse_markdown_document(updated_content)
-        page.visibility = frontmatter.get("visibility") or requested_visibility or page.visibility or resolve_visibility(page.path, acl_rules)
+        page.visibility = _stored_page_visibility(frontmatter.get("visibility"), requested_visibility, page.visibility, resolve_visibility(page.path, acl_rules))
         page.author = _current_username()
         update_page_metadata(page, updated_content, frontmatter)
         db.session.flush()
@@ -944,6 +1039,17 @@ def delete_page(owner, slug, page_path):
     owner_user, wiki, err = _get_wiki_or_404(owner, slug)
     if err:
         return err
+
+    normalized_page_path = _normalize_page_path_param(page_path)
+    if _is_acl_file_path(normalized_page_path):
+        if not _current_user_is_owner(wiki):
+            return {"error": "forbidden", "message": "Only the owner can delete wiki ACL"}, 403
+        remove_page_from_repo(owner_user.username, wiki.slug, ACL_FILE_PATH)
+        reindex_wiki_pages_and_mirror(owner_user.username, wiki.slug, wiki)
+        db.session.commit()
+        return "", 204
+    if _is_wikihub_plumbing_path(normalized_page_path):
+        return _reject_wikihub_plumbing_path()
 
     page = _lookup_page(wiki.id, page_path)
     if not page:
@@ -974,6 +1080,10 @@ def set_page_visibility(owner, slug, page_path):
     if request.current_user.id != wiki.owner_id:
         return {"error": "forbidden", "message": "Only the owner can change visibility"}, 403
 
+    normalized_page_path = _normalize_page_path_param(page_path)
+    if _is_wikihub_plumbing_path(normalized_page_path):
+        return _reject_wikihub_plumbing_path()
+
     page = _lookup_page(wiki.id, page_path)
     if not page:
         return {"error": "not_found", "message": "Page not found"}, 404
@@ -986,7 +1096,7 @@ def set_page_visibility(owner, slug, page_path):
     content = read_file_from_repo(owner_user.username, wiki.slug, page.path, public=False) or ""
     content = set_visibility_in_content(content, visibility)
     frontmatter, _ = parse_markdown_document(content)
-    page.visibility = frontmatter.get("visibility") or visibility
+    page.visibility = _stored_page_visibility(frontmatter.get("visibility"), visibility)
     update_page_metadata(page, content, frontmatter)
     refresh_wikilinks_for_page(page, content)
     sync_page_to_repo(owner_user.username, wiki.slug, page.path, content, message=f"Set visibility for {page.path}")
@@ -1017,9 +1127,12 @@ def bulk_visibility(owner, slug):
     # expand folder prefixes into page paths
     expanded = set()
     for p in paths:
+        if _is_wikihub_plumbing_path(p):
+            continue
         if p.endswith("/"):
             for page in Page.query.filter_by(wiki_id=wiki.id).filter(Page.path.startswith(p)).all():
-                expanded.add(page.path)
+                if not _is_wikihub_plumbing_path(page.path):
+                    expanded.add(page.path)
         else:
             expanded.add(p)
 
@@ -1034,7 +1147,7 @@ def bulk_visibility(owner, slug):
         content = read_file_from_repo(owner_user.username, wiki.slug, page.path, public=False) or ""
         content = set_visibility_in_content(content, visibility)
         frontmatter, _ = parse_markdown_document(content)
-        page.visibility = frontmatter.get("visibility") or visibility
+        page.visibility = _stored_page_visibility(frontmatter.get("visibility"), visibility)
         update_page_metadata(page, content, frontmatter)
         refresh_wikilinks_for_page(page, content)
         repo_changes.append({"action": "write", "path": page.path, "content": content})
@@ -1071,9 +1184,12 @@ def bulk_delete(owner, slug):
     # expand folder prefixes into page paths
     expanded = set()
     for p in paths:
+        if _is_wikihub_plumbing_path(p):
+            continue
         if p.endswith("/"):
             for page in Page.query.filter_by(wiki_id=wiki.id).filter(Page.path.startswith(p)).all():
-                expanded.add(page.path)
+                if not _is_wikihub_plumbing_path(page.path):
+                    expanded.add(page.path)
         else:
             expanded.add(p)
 
@@ -1108,6 +1224,10 @@ def claim_page(owner, slug, page_path):
     owner_user, wiki, err = _get_wiki_or_404(owner, slug)
     if err:
         return err
+
+    normalized_page_path = _normalize_page_path_param(page_path)
+    if _is_wikihub_plumbing_path(normalized_page_path):
+        return {"error": "not_found", "message": "Page not found"}, 404
 
     page = _lookup_page(wiki.id, page_path)
     if not page:
@@ -1164,8 +1284,7 @@ def share_page(owner, slug, page_path):
         acl_text = acl_text.rstrip() + f"\n{acl_line}\n"
         sync_page_to_repo(owner_user.username, wiki.slug, ".wikihub/acl", acl_text, message=f"Share {page_path} with @{username}:{role}")
         append_event_to_repo(owner_user.username, wiki.slug, "page.share", path=page_path, grant=f"@{username}:{role}", actor=request.current_user.username)
-        index_repo_pages(owner_user.username, wiki.slug, wiki, reset=True)
-        regenerate_public_mirror(owner_user.username, wiki.slug, load_acl_rules(owner_user.username, wiki.slug))
+        reindex_wiki_pages_and_mirror(owner_user.username, wiki.slug, wiki)
         db.session.commit()
 
     return jsonify({"path": page_path, "grant": f"@{username}:{role}"})
@@ -1226,8 +1345,7 @@ def share_wiki(owner, slug):
         append_event_to_repo(owner_user.username, wiki.slug, "page.share",
                              pattern=pattern, grant=f"@{username}:{role}",
                              actor=request.current_user.username)
-        index_repo_pages(owner_user.username, wiki.slug, wiki, reset=True)
-        regenerate_public_mirror(owner_user.username, wiki.slug, load_acl_rules(owner_user.username, wiki.slug))
+        reindex_wiki_pages_and_mirror(owner_user.username, wiki.slug, wiki)
         db.session.commit()
     if newly_granted and target.id != request.current_user.id:
         _notify_existing_user(target_username=username, role=role, ctx=ctx)
@@ -1376,8 +1494,7 @@ def bulk_share_wiki(owner, slug):
                 pattern=g["pattern"], grant=f"@{g['username']}:{g['role']}",
                 actor=request.current_user.username,
             )
-        index_repo_pages(owner_user.username, wiki.slug, wiki, reset=True)
-        regenerate_public_mirror(owner_user.username, wiki.slug, load_acl_rules(owner_user.username, wiki.slug))
+        reindex_wiki_pages_and_mirror(owner_user.username, wiki.slug, wiki)
     if new_lines or invite_writes:
         db.session.commit()
 
@@ -1454,8 +1571,7 @@ def unshare(owner, slug, page_path=None):
                 append_event_to_repo(owner_user.username, wiki.slug, "page.unshare",
                                      pattern=pattern, target_user=username,
                                      actor=request.current_user.username)
-                index_repo_pages(owner_user.username, wiki.slug, wiki, reset=True)
-                regenerate_public_mirror(owner_user.username, wiki.slug, load_acl_rules(owner_user.username, wiki.slug))
+                reindex_wiki_pages_and_mirror(owner_user.username, wiki.slug, wiki)
                 revoked = True
 
     if revoked:
@@ -1548,6 +1664,39 @@ def append_section(owner, slug, page_path):
 
 # --- search ---
 
+def _bounded_anonymous_content_results(ordered_query, offset, limit):
+    results = []
+    visible_seen = 0
+    sql_offset = 0
+    batch_size = 100
+    has_more = False
+
+    while len(results) < limit + 1:
+        batch = ordered_query.offset(sql_offset).limit(batch_size).all()
+        if not batch:
+            break
+
+        for page in batch:
+            if not is_content_page_path(page.path):
+                continue
+            if visible_seen < offset:
+                visible_seen += 1
+                continue
+            results.append(page)
+            visible_seen += 1
+            if len(results) > limit:
+                has_more = True
+                break
+
+        sql_offset += len(batch)
+        if len(batch) < batch_size:
+            break
+
+    if has_more:
+        return results[:limit], offset + limit + 1
+    return results[:limit], visible_seen
+
+
 @api_bp.route("/search", methods=["GET"])
 @api_auth_optional
 def search_pages():
@@ -1605,6 +1754,8 @@ def search_pages():
         acl_rules_by_wiki = {}
         visible_results = []
         for page in ordered_query.all():
+            if not is_content_page_path(page.path):
+                continue
             if page.wiki.owner_id == user.id or page.visibility in public_search_visibilities:
                 visible_results.append(page)
                 continue
@@ -1620,8 +1771,8 @@ def search_pages():
         total = len(visible_results)
         results = visible_results[offset:offset + limit]
     else:
-        total = query.count()
-        results = ordered_query.offset(offset).limit(limit).all()
+        ordered_query = ordered_query.filter(content_page_path_filter(Page.path))
+        results, total = _bounded_anonymous_content_results(ordered_query, offset, limit)
 
     return jsonify({
         "results": [{
@@ -1654,6 +1805,8 @@ def wiki_history(owner, slug):
     limit = min(int(request.args.get("limit", 20)), 100)
     offset = max(int(request.args.get("offset", 0)), 0)
     path = request.args.get("path")
+    if _is_wikihub_plumbing_path(path):
+        return {"error": "not_found", "message": "Path not found"}, 404
 
     cmd = [
         "git",
@@ -1667,6 +1820,8 @@ def wiki_history(owner, slug):
     ]
     if path:
         cmd += ["--", path]
+    else:
+        cmd += ["--", ".", ":(exclude).wikihub", ":(exclude).wikihub/**"]
     result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         return {"error": "git_error", "message": result.stderr.strip() or "Unable to read history"}, 500
@@ -1693,10 +1848,12 @@ def wiki_history(owner, slug):
                 "files_changed": [],
             }
         elif current is not None:
-            current["files_changed"].append(line)
+            if not _is_wikihub_plumbing_path(line):
+                current["files_changed"].append(line)
     if current:
         commits.append(current)
 
+    commits = [commit for commit in commits if commit["files_changed"]]
     return jsonify({"commits": commits, "total": len(commits)})
 
 
@@ -1716,6 +1873,9 @@ def revert_page(owner, slug):
     path = data.get("path", "").strip()
     if not sha or not path:
         return {"error": "invalid", "message": "sha and path are required"}, 400
+    normalized_path = _normalize_page_path_param(path)
+    if _is_wikihub_plumbing_path(normalized_path) and not _is_acl_file_path(normalized_path):
+        return _reject_wikihub_plumbing_path()
 
     from app.git_backend import _repo_path
 
@@ -1733,6 +1893,11 @@ def revert_page(owner, slug):
 
     content = result.stdout.decode("utf-8", errors="replace")
 
+    if _is_acl_file_path(normalized_path):
+        _write_acl_file_and_reindex(owner_user, wiki, content, f"Revert .wikihub/acl to {sha[:12]}")
+        db.session.commit()
+        return jsonify({"path": ACL_FILE_PATH, "reindexed": True})
+
     # write as new commit
     sync_page_to_repo(
         owner_user.username, wiki.slug, path, content,
@@ -1746,7 +1911,8 @@ def revert_page(owner, slug):
     if page:
         from app.content_utils import parse_markdown_document
         frontmatter, _ = parse_markdown_document(content)
-        page.visibility = frontmatter.get("visibility") or page.visibility
+        acl_rules = load_acl_rules(owner_user.username, wiki.slug)
+        page.visibility = _stored_page_visibility(frontmatter.get("visibility"), page.visibility, resolve_visibility(page.path, acl_rules))
         update_page_metadata(page, content, frontmatter)
         refresh_wikilinks_for_page(page, content)
 
@@ -1772,6 +1938,8 @@ def admin_sync_page():
     username = data["username"]
     slug = data["slug"]
     path = data["path"]
+    if _is_wikihub_plumbing_path(path):
+        return "", 204
 
     owner = User.query.filter_by(username=username).first()
     if not owner:
@@ -1787,7 +1955,7 @@ def admin_sync_page():
 
     content = data.get("content", "")
     frontmatter = data.get("frontmatter", {})
-    page.visibility = data.get("visibility", "private")
+    page.visibility = _stored_page_visibility(data.get("visibility"))
     update_page_metadata(page, content, frontmatter)
     db.session.flush()
     refresh_wikilinks_for_page(page, content)
@@ -1808,6 +1976,8 @@ def admin_delete_page():
     username = data["username"]
     slug = data["slug"]
     path = data["path"]
+    if _is_wikihub_plumbing_path(path):
+        return "", 204
 
     owner = User.query.filter_by(username=username).first()
     if not owner:
@@ -1834,6 +2004,17 @@ def admin_regenerate_mirror():
     username = data["username"]
     slug = data["slug"]
 
+    if data.get("reindex"):
+        owner = User.query.filter_by(username=username).first()
+        if not owner:
+            return {"error": "not_found", "message": "User not found"}, 404
+        wiki = Wiki.query.filter_by(owner_id=owner.id, slug=slug).first()
+        if not wiki:
+            return {"error": "not_found", "message": "Wiki not found"}, 404
+        reindex_wiki_pages_and_mirror(username, slug, wiki)
+        db.session.commit()
+        return jsonify({"status": "ok", "reindexed": True})
+
     acl_rules = load_acl_rules(username, slug)
     regenerate_public_mirror(username, slug, acl_rules)
-    return jsonify({"status": "ok"})
+    return jsonify({"status": "ok", "reindexed": False})

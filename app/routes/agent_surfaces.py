@@ -14,27 +14,28 @@ all the cheap discovery endpoints that make wikihub agent-native:
 from flask import Response, current_app, jsonify, render_template, request
 
 from app.models import Wiki, Page, User
+from app.page_utils import content_page_path_filter, is_content_page_path
 from app.routes import main_bp
 from app.url_utils import url_path_from_page_path
 
 
 MCP_TOOLS = [
     {"name": "whoami", "description": "Check auth status"},
-    {"name": "search", "description": "Full-text search across wikis"},
-    {"name": "read_page", "description": "Read a page's content; 404 means missing, 403/401 means restricted"},
-    {"name": "list_pages", "description": "List pages in a wiki"},
-    {"name": "create_page", "description": "Create a page"},
-    {"name": "update_page", "description": "Replace or patch a page"},
-    {"name": "append_section", "description": "Append a section to a page"},
-    {"name": "delete_page", "description": "Delete a page"},
-    {"name": "set_visibility", "description": "Set page visibility"},
+    {"name": "search", "description": "Full-text search across content pages"},
+    {"name": "read_page", "description": "Read a content page; 404 means missing, 403/401 means restricted"},
+    {"name": "list_pages", "description": "List readable content pages in a wiki"},
+    {"name": "create_page", "description": "Create a page; owner may create .wikihub/acl"},
+    {"name": "update_page", "description": "Replace or patch a page; owner may update .wikihub/acl"},
+    {"name": "append_section", "description": "Append a section to a content page"},
+    {"name": "delete_page", "description": "Delete a page; owner may delete .wikihub/acl"},
+    {"name": "set_visibility", "description": "Set content page visibility"},
     {"name": "share", "description": "Grant page/folder/wiki read/edit access"},
     {"name": "unshare", "description": "Revoke page/folder/wiki read/edit access"},
     {"name": "list_grants", "description": "List all sharing grants for a wiki"},
     {"name": "shared_with_me", "description": "List wikis/pages shared with the current user"},
     {"name": "create_wiki", "description": "Create a wiki"},
     {"name": "fork_wiki", "description": "Fork a wiki"},
-    {"name": "commit_log", "description": "Read wiki history"},
+    {"name": "commit_log", "description": "Read content-page wiki history"},
 ]
 
 
@@ -67,17 +68,32 @@ def llms_txt():
         "## Optional",
     ]
 
-    # list public wikis
-    public_pages = Page.query.filter(
-        Page.visibility.in_(["public", "public-edit"])
-    ).join(Wiki).join(User, Wiki.owner_id == User.id).limit(50).all()
-
     seen_wikis = set()
-    for p in public_pages:
-        wiki_key = f"{p.wiki.owner.username}/{p.wiki.slug}"
-        if wiki_key not in seen_wikis:
-            lines.append(f"- [/@{wiki_key}](/@{wiki_key}): {p.wiki.title or p.wiki.slug}")
-            seen_wikis.add(wiki_key)
+    offset = 0
+    batch_size = 100
+    while len(seen_wikis) < 50:
+        public_pages = (
+            Page.query.filter(Page.visibility.in_(["public", "public-edit"]))
+            .filter(content_page_path_filter(Page.path))
+            .join(Wiki)
+            .join(User, Wiki.owner_id == User.id)
+            .order_by(User.username.asc(), Wiki.slug.asc(), Page.path.asc())
+            .offset(offset)
+            .limit(batch_size)
+            .all()
+        )
+        if not public_pages:
+            break
+        for p in public_pages:
+            if not is_content_page_path(p.path):
+                continue
+            wiki_key = f"{p.wiki.owner.username}/{p.wiki.slug}"
+            if wiki_key not in seen_wikis:
+                lines.append(f"- [/@{wiki_key}](/@{wiki_key}): {p.wiki.title or p.wiki.slug}")
+                seen_wikis.add(wiki_key)
+                if len(seen_wikis) >= 50:
+                    break
+        offset += batch_size
 
     return Response("\n".join(lines), content_type="text/plain; charset=utf-8")
 
@@ -96,6 +112,7 @@ def llms_full_txt():
     ).join(Wiki).join(User, Wiki.owner_id == User.id).order_by(
         User.username, Wiki.slug, Page.path
     ).all()
+    pages = [page for page in pages if is_content_page_path(page.path)]
 
     current_wiki = None
     for p in pages:
@@ -327,6 +344,12 @@ Set frontmatter `pinned: true` to float a readable page to the top of the wiki
 sidebar; pinning never overrides read permissions and there is no dedicated
 pinning API or MCP tool.
 
+`.wikihub/*` paths are wiki plumbing, not normal pages. Owners may write, patch,
+delete, or revert `.wikihub/acl` through the page API; ACL changes reindex
+inherited visibility and refresh the public mirror. Other `.wikihub/*` paths are
+rejected by generic page writes and hidden from page lists, search/discovery,
+backlinks, history, zip exports, agent context, and public git mirrors.
+
 ## poll page metadata
 
 when a client only needs to know whether a readable page changed, use the
@@ -365,7 +388,9 @@ git remote add wikihub https://your-name:wh_YOUR_KEY@wikihub.md/@your-name/my-wi
 git push wikihub main
 ```
 
-push markdown files and they go live instantly.
+push markdown files and they go live instantly. Pushing `.wikihub/acl` refreshes
+inherited page visibility and the public mirror; other `.wikihub/*` files remain
+internal plumbing and are not exposed as pages.
 
 ## MCP endpoint — Claude Connector
 
@@ -662,6 +687,7 @@ def wiki_llms_txt(username, slug):
         .order_by(Page.path.asc())
         .all()
     )
+    pages = [page for page in pages if is_content_page_path(page.path)]
     lines = [
         f"# @{owner.username}/{wiki.slug}",
         f"> {wiki.title or wiki.slug}",
@@ -684,6 +710,7 @@ def wiki_llms_full_txt(username, slug):
         .order_by(Page.path.asc())
         .all()
     )
+    pages = [page for page in pages if is_content_page_path(page.path)]
     lines = [f"# @{owner.username}/{wiki.slug} — full index", ""]
     for page in pages:
         lines.append(f"## {page.title or page.path}")

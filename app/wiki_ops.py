@@ -5,11 +5,12 @@ import shutil
 from datetime import date, datetime
 
 from app import db
-from app.acl import parse_acl, parse_serve_inline, resolve_visibility
+from app.acl import normalize_page_visibility, parse_acl, parse_serve_inline, resolve_visibility
 from app.content_utils import extract_wikilinks, parse_markdown_document
 from app.git_backend import _repo_path, init_wiki_repo
 from app.git_sync import list_files_in_repo, read_file_from_repo, regenerate_public_mirror, scaffold_wiki, sync_page_to_repo
 from app.models import Page, Wikilink, Wiki, Star, Fork, User, PendingInvite
+from app.page_utils import is_wikihub_plumbing_path
 
 
 def _sanitize_for_json(obj):
@@ -37,8 +38,8 @@ def load_serve_inline_patterns(username, slug):
     Read from the AUTHORITATIVE repo only (never the public mirror), exactly like
     load_acl_rules reads .wikihub/acl. .wikihub/* are owner-authored plumbing
     files: they're skipped during page indexing and stripped from the public
-    mirror (regenerate_public_mirror defaults non-md files to private), so the
-    mirror has no copy. Reading the mirror always returned [] — the opt-in
+    mirror (regenerate_public_mirror skips .wikihub/ paths), so the mirror has
+    no copy. Reading the mirror always returned [] — the opt-in
     silently never applied for anonymous/public readers (wikihub-6ag bug)."""
     content = read_file_from_repo(username, slug, ".wikihub/serve-inline")
     return parse_serve_inline(content) if content else []
@@ -89,9 +90,12 @@ def refresh_wikilinks_for_page(page, content):
     wiki_pages = {
         candidate.path: candidate.id
         for candidate in Page.query.filter_by(wiki_id=page.wiki_id).all()
+        if not is_wikihub_plumbing_path(candidate.path)
     }
     basename_pages = {}
     for candidate in Page.query.filter_by(wiki_id=page.wiki_id).all():
+        if is_wikihub_plumbing_path(candidate.path):
+            continue
         basename = candidate.path.rsplit("/", 1)[-1]
         basename_pages.setdefault(basename, candidate.id)
         if basename.endswith(".md"):
@@ -167,6 +171,12 @@ def replace_acl_file(username, slug, content, message="Update ACL"):
     sync_page_to_repo(username, slug, ".wikihub/acl", content, message=message)
 
 
+def reindex_wiki_pages_and_mirror(username, slug, wiki):
+    """Rebuild DB page metadata and the public mirror from the current repo ACL."""
+    index_repo_pages(username, slug, wiki, reset=False)
+    regenerate_public_mirror(username, slug, load_acl_rules(username, slug))
+
+
 def materialize_pending_invites_for(user):
     """turn any PendingInvite rows for this user's email into real ACL grants.
     only runs when the user has a verified email — callers should set
@@ -222,9 +232,7 @@ def materialize_pending_invites_for(user):
                 owner.username, wiki.slug, ".wikihub/acl", acl_text,
                 message=f"Materialize pending invite(s) for @{user.username}",
             )
-            acl_rules = load_acl_rules(owner.username, wiki.slug)
-            index_repo_pages(owner.username, wiki.slug, wiki, reset=True)
-            regenerate_public_mirror(owner.username, wiki.slug, acl_rules)
+            reindex_wiki_pages_and_mirror(owner.username, wiki.slug, wiki)
 
     return applied
 
@@ -269,7 +277,7 @@ def index_repo_pages(username, slug, wiki, reset=False):
             content = ""
             frontmatter = {}
 
-        visibility = resolve_visibility(path, acl_rules, frontmatter.get("visibility"))
+        visibility = normalize_page_visibility(resolve_visibility(path, acl_rules, frontmatter.get("visibility"))) or "private"
         page = existing_pages.get(path)
         if page is None:
             page = Page(wiki_id=wiki.id, path=path)
