@@ -101,6 +101,12 @@ Not GitHub. Not Notion. This is a knowledge publishing tool for people who live 
 - Logo: `[[wikihub]]` in mono font
 - Height: 56px. Items centered vertically.
 - No glassmorphism/blur. Clean border separation.
+- Dropdown menus that use `backdrop-filter` must be `visibility:hidden` while closed and `visibility:visible` when open, because Safari can render hidden blur on `opacity:0` elements.
+
+### Hover previews
+- Same-wiki links may show compact preview cards on hover.
+- Cards use `--bg-overlay`, `--border-emphasis`, `--hover-preview-shadow`, and `--radius-md`.
+- Include a low-emphasis text button to hide previews; the nav/account menus provide the matching per-browser `Hover previews` checkbox item.
 
 ### Cards (wiki cards, feature cards)
 - Background: `--bg-surface`

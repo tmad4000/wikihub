@@ -910,6 +910,52 @@ def test_a2hs_banner_gated_to_mobile(client):
     assert "isMobileDevice()" in handler, "showA2HSBanner() not guarded by isMobileDevice()"
 
 
+def test_nav_menu_no_phantom_backdrop_blur(client):
+    """regression (wikihub-i4am): Safari applies backdrop-filter even on
+    opacity:0 elements, so the closed account menu left a phantom blurred
+    rectangle on screen. The closed-state CSS must include visibility:hidden
+    (and the open state visibility:visible) wherever backdrop-filter is used
+    on the always-rendered nav menu."""
+    checked = 0
+    for url in ["/explore", "/"]:
+        r = client.get(url)
+        assert r.status_code == 200
+        html = r.data.decode()
+        if ".nav-account-menu {" not in html:
+            continue
+        closed = html.split(".nav-account-menu {", 1)[1].split("}", 1)[0]
+        if "backdrop-filter" not in closed:
+            continue
+        checked += 1
+        assert "visibility: hidden" in closed, (
+            f"{url}: closed .nav-account-menu has backdrop-filter without "
+            "visibility:hidden — Safari renders a phantom blur (wikihub-i4am)"
+        )
+        opened = html.split(".nav-account.open .nav-account-menu {", 1)[1].split("}", 1)[0]
+        assert "visibility: visible" in opened, f"{url}: open menu never becomes visible"
+    assert checked > 0, "no page served the backdrop-filter nav menu CSS — test needs updating"
+
+
+def test_hover_previews_toggle(client):
+    """regression (wikihub-lzex): hover link previews must be disableable
+    per-browser (localStorage wh_hover_previews) without login. The served
+    page must contain the guard in the hover script and a toggle control."""
+    r = client.get("/explore")
+    assert r.status_code == 200
+    html = r.data.decode()
+    assert "wh_hover_previews" in html, "hover-previews localStorage flag missing"
+    assert "previewsOff()" in html, "hover script missing previewsOff() guard"
+    hover_handler = html.split("page-level hover detection", 1)[1].split("closest('.wikilink", 1)[0]
+    assert "previewsOff()" in hover_handler, "mouseover handler not guarded by previewsOff()"
+    assert "data-hover-previews-toggle" in html, "no toggle control in nav"
+    assert 'role="menuitemcheckbox"' in html, "toggle lacks checkbox menu semantics"
+    assert 'aria-checked="true"' in html, "toggle lacks initial checked state"
+    assert "wikihub:hover-previews-changed" in html, "toggle surfaces do not synchronize immediately"
+    assert "window.addEventListener('storage'" in html, "setting changes do not synchronize across tabs"
+    assert "syncPreviewState()" in html, "disabling does not cancel an open or in-flight preview"
+    assert "hover-preview-disable" in html, "no quick-disable action styling for the card"
+
+
 def test_token_and_settings(client):
     r = client.post("/auth/signup", data={"username": "webuser", "password": "testpass123"}, follow_redirects=False)
     assert r.status_code == 302
@@ -7373,6 +7419,8 @@ def run_all():
             ("anonymous upload (wikihub-i2xm)", lambda: test_anonymous_upload(app)),
             ("agent surfaces", lambda: test_agent_surfaces(client)),
             ("A2HS banner mobile-only (wikihub-2q0d)", lambda: test_a2hs_banner_gated_to_mobile(client)),
+            ("nav menu phantom blur (wikihub-i4am)", lambda: test_nav_menu_no_phantom_backdrop_blur(client)),
+            ("hover previews toggle (wikihub-lzex)", lambda: test_hover_previews_toggle(client)),
             ("token + settings", lambda: test_token_and_settings(client)),
             ("client_config hint", lambda: test_client_config_hint(client)),
             ("magic link login", lambda: test_magic_link_login(client)),

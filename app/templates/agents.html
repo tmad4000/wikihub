@@ -223,6 +223,7 @@ wikihub mcp-config                # prints mcpServers JSON pre-filled</pre></div
   <h2>Content negotiation</h2>
   <p><code>Accept: text/markdown</code> on any page URL returns raw markdown. Or append <code>.md</code>.</p>
   <p>For rendered HTML without the full reader chrome, append <code>?fragment=1</code> to a page URL. The response is JSON with <code>title</code>, <code>html</code>, <code>url</code>, and <code>path</code>, and it uses the same ACL checks as the full page route.</p>
+  <p>Hover preview cards use the same rendered-page data path and can be disabled per browser without logging in via the <code>hide previews</code> card action or the <code>Hover previews</code> menu toggle; the setting is stored in localStorage as <code>wh_hover_previews=off</code> and syncs across open tabs.</p>
   <p>For markdown, fragment, and full-page reads, a genuinely missing path stays <code>404</code>; an existing path outside your access returns the restricted <code>403</code>/<code>401</code> signal without page fields.</p>
 
   <h2>Discovery</h2>

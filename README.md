@@ -10,6 +10,7 @@ GitHub for LLM wikis. A hosting platform for markdown knowledge bases with per-f
 - Social: fork, star, explore, activity feeds, profiles
 - Rendering: KaTeX math, syntax highlighting, wikilinks, footnotes, Obsidian embeds, wiki-relative links
 - Reader side peek: same-wiki page links open in a right-side preview panel on desktop
+- Hover preview cards: wiki links preview on hover, with a per-browser opt-out in the preview card and nav menus
 - Every wiki is a real git repo — clone, push, blame, bisect
 
 ## Quick start
@@ -66,6 +67,10 @@ Authorization: Bearer wh_...
 Content negotiation: `Accept: text/markdown` on any page URL returns raw markdown. Or append `.md`.
 For the desktop reader side peek, append `?fragment=1` to a rendered page URL to get JSON
 `{title, html, url, path}` for the article body only; the route uses the same page ACL checks.
+Hover preview cards use the same rendered-page data path and can be disabled
+per browser without logging in via the "hide previews" card action or the
+`Hover previews` menu toggle; the setting is stored in localStorage as
+`wh_hover_previews=off` and syncs across open tabs.
 Use `?meta=1` on the page-read API when a client only needs the latest
 `content_hash` and `updated_at` for lightweight change polling; it enforces the
 same read permissions as a full page read and does not return page content.
