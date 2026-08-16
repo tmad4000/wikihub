@@ -114,8 +114,55 @@ The top-level `_active` key tracks the active profile. Mode: `0600`.
 
 The CLI is **one** of three authoring surfaces. Pick the one that fits:
 
-- **git** — clone/push over HTTPS is the canonical flow for bulk editing, version history, or working offline.
+- **git** — clone/push over HTTPS is the canonical flow for bulk editing, version history, or working offline. Clone with `wikihub clone`, not a bare `git clone` — see below.
 - **MCP** at `{server}/mcp` — for agents that speak MCP natively (Claude Code, MCP-compatible tools).
 - **CLI** (this) — for shell scripts, cron jobs, onboarding, and any pipe-friendly workflow.
 
 All three wrap the same REST API at `/api/v1/*`.
+
+### `wikihub clone` — and why a bare `git clone` bites owners
+
+```bash
+wikihub clone jacobcole/notes          # OWNER/SLUG
+wikihub clone notes                    # your own wiki
+wikihub clone jacobcole/notes ./dir    # explicit directory
+wikihub clone notes --no-persist       # don't store the auth header in .git/config
+```
+
+Every wiki is backed by **two** repos: the authoritative one (owner) and a
+derived public mirror (everyone else). The server picks between them based on
+HTTP Basic auth.
+
+The trap: git only sends credentials **after** a 401 challenge, and a public
+wiki never challenges on `git-upload-pack`. So a bare `git clone` — even with
+credentials embedded in the URL — is silently anonymous and gives you the
+**mirror**. The mirror is regenerated with fresh commits, so it shares no
+history with the authoritative repo. Everything looks fine until you push:
+
+```
+ ! [rejected]  main -> main (fetch first)
+```
+
+…and `git pull --rebase` never converges, because fetch keeps returning the
+mirror head while push targets the authoritative repo. (`GIT_TRACE_PACKET=1 git
+push` reveals it: receive-pack advertises a sha your fetch has never seen.)
+
+`wikihub clone` sends `Authorization: Basic …` preemptively via
+`http.extraHeader`, so the server dispatches you to the authoritative repo from
+the start, and persists that header into the clone's `.git/config` (chmod 600 —
+it contains your API key; pass `--no-persist` to skip).
+
+Equivalent by hand:
+
+```bash
+AUTH=$(printf 'USER:API_KEY' | base64)
+git -c http.extraHeader="Authorization: Basic $AUTH" \
+  clone https://wikihub.md/@USER/SLUG.git
+```
+
+Non-owners need none of this — the public mirror is the correct repo for them,
+and anonymous clone works as expected.
+
+`.wikihub/*` plumbing files (`acl`, `serve-inline`) are writable **only** over
+git — the REST API rejects those paths — so this is the path you need for, e.g.,
+opting an HTML page into inline serving.

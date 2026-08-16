@@ -8,8 +8,10 @@ app/credentials_hint.py) or the env vars WIKIHUB_SERVER / WIKIHUB_USERNAME
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -733,6 +735,67 @@ def cmd_mcp_config(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_clone(args: argparse.Namespace) -> int:
+    """Clone a wiki's git repo, sending Basic auth PREEMPTIVELY.
+
+    Why this exists: every wiki has two repos — the authoritative one (owner)
+    and a derived public mirror (everyone else). The server dispatches on auth.
+    But git only sends credentials AFTER a 401 challenge, and a public wiki
+    never challenges on upload-pack, so a plain `git clone` by the owner is
+    silently anonymous and hands back the MIRROR. The mirror is regenerated
+    with fresh commits, so it shares no history with the authoritative repo,
+    and any later push is rejected as a non-fast-forward that no amount of
+    pull/rebase can reconcile. Forcing the header up front avoids all of it.
+    """
+    prof = load_profile(resolve_profile_name(args.profile))
+    server = (args.server or prof.get("server") or os.environ.get("WIKIHUB_SERVER") or DEFAULT_SERVER).rstrip("/")
+    api_key = args.api_key or prof.get("api_key") or os.environ.get("WIKIHUB_API_KEY")
+    username = prof.get("username") or os.environ.get("WIKIHUB_USERNAME")
+
+    ref = args.wiki.lstrip("@")
+    owner, _, slug = ref.partition("/")
+    if not slug:
+        if not username:
+            raise ClientError("wiki must be OWNER/SLUG (or log in so the owner can be inferred)")
+        owner, slug = username, ref
+
+    url = f"{server}/@{owner}/{slug}.git"
+    dest = args.directory or slug
+
+    cmd = ["git"]
+    header = None
+    if api_key and username == owner:
+        token = base64.b64encode(f"{username}:{api_key}".encode()).decode()
+        header = f"Authorization: Basic {token}"
+        cmd += ["-c", f"http.extraHeader={header}"]
+    elif api_key:
+        print(f"note: you are not @{owner} — cloning the read-only public mirror", file=sys.stderr)
+    cmd += ["clone", url, dest]
+
+    try:
+        rc = subprocess.call(cmd)
+    except FileNotFoundError:
+        raise ClientError("git not found on PATH")
+    if rc != 0:
+        return rc
+
+    if header and not args.no_persist:
+        # Persist so later fetch/pull/push in this clone stay on the
+        # authoritative repo. This writes the API key into .git/config, so
+        # tighten the file mode; --no-persist skips it.
+        subprocess.call(["git", "-C", dest, "config", "http.extraHeader", header])
+        cfg = Path(dest) / ".git" / "config"
+        try:
+            cfg.chmod(0o600)
+        except OSError:
+            pass
+        print(f"note: {cfg} holds your API key (mode 600); use --no-persist to skip", file=sys.stderr)
+
+    if args.json:
+        print(json.dumps({"cloned": url, "directory": dest, "authoritative": bool(header)}))
+    return 0
+
+
 def cmd_version(args: argparse.Namespace) -> int:
     print(f"wikihub-cli {__version__}")
     return 0
@@ -871,6 +934,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("mcp-config", help="print mcpServers JSON to wire WikiHub's MCP endpoint into an agent")
     s.set_defaults(func=cmd_mcp_config)
+
+    s = sub.add_parser(
+        "clone",
+        help="git clone a wiki (owners get the authoritative repo, not the public mirror)",
+    )
+    s.add_argument("wiki", help="OWNER/SLUG, or just SLUG for your own wiki")
+    s.add_argument("directory", nargs="?", help="target directory (default: the slug)")
+    s.add_argument("--no-persist", action="store_true",
+                   help="don't store the auth header in the clone's .git/config")
+    s.set_defaults(func=cmd_clone)
 
     s = sub.add_parser("version", help="print CLI version")
     s.set_defaults(func=cmd_version)
