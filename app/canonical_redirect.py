@@ -1,12 +1,13 @@
-"""Redirect /@user/... URLs to the canonical subdomain when one exists.
+"""Redirect /@user/... URLs to the canonical host when one exists.
 
-Runs as a Flask before_request handler. Only fires on the apex host
-(not when the request is already on a user/wiki subdomain — that's already
-handled by subdomain_middleware).
+Runs as a Flask before_request handler. On the apex host it chooses the active
+custom domain, wiki subdomain, or user subdomain. On a recognized mapped host it
+only strips a redundant /@user/wiki prefix left in an internal URL.
 
 Scope of redirects (intentionally narrow for safety):
 - /@<user>                          -> https://<user>.wikihub.md/
-- /@<user>/<slug>                   -> https://<sub>.wikihub.md/  (if wiki has subdomain)
+- /@<user>/<slug>                   -> https://<custom-domain>/  (if active with HTTPS)
+                                    -> https://<sub>.wikihub.md/  (if wiki has subdomain)
                                     -> https://<user>.wikihub.md/<slug>  (fallback to user profile subdomain)
 - /@<user>/<slug>/<path>            -> same rules, with /<path> appended
 
@@ -82,7 +83,7 @@ def maybe_redirect():
         return None
     username, slug, rest = m.group(1), m.group(2), m.group(3)
 
-    # Case 2: we're on a subdomain and the path redundantly includes /@<user>/<slug>.
+    # Case 2: we're on a mapped host and the path redundantly includes /@<user>/<slug>.
     # Rewrite to the short canonical form on the same host so URL bar stays pretty.
     host_name = request.environ.get("wikihub.host_name")
     if host_kind == "user" and host_name == username:
@@ -105,7 +106,7 @@ def maybe_redirect():
             qs = "?" + request.query_string.decode() if request.query_string else ""
             return redirect(f"https://{host}{short_tail}{qs}", code=301)
     if host_kind is not None:
-        # we're on a subdomain but the /@path doesn't match; leave alone
+        # we're on a mapped host but the /@path doesn't match; leave alone
         return None
 
     # Case 1: we're on apex wikihub.md (or www). Redirect to canonical subdomain.

@@ -127,7 +127,7 @@ curl -X POST {{ request.host_url }}api/v1/auth/magic-link \
   <p><code>.wikihub/*</code> paths are wiki plumbing, not normal pages. Owners may write, patch, delete, or revert <code>.wikihub/acl</code> through the page API; ACL changes reindex inherited visibility and refresh the public mirror. Other <code>.wikihub/*</code> paths are rejected by generic page writes and hidden from page lists, search/discovery, backlinks, history, zip exports, agent context, and public git mirrors.</p>
 
   <h2>Custom domains</h2>
-  <p>Wiki owners manage external hostnames through authenticated REST endpoints. Creating a hostname returns its TXT verification record and DNS target; verification proves ownership before an operator activates HTTPS.</p>
+  <p>Wiki owners manage external hostnames through authenticated REST endpoints. Creating a hostname returns its TXT verification record and DNS target; verification proves ownership before an operator activates the mapping after its HTTPS certificate is ready.</p>
   <div class="code-block"><pre>GET|POST /api/v1/wikis/{owner}/{slug}/custom-domains
 POST /api/v1/wikis/{owner}/{slug}/custom-domains/{domain_id}/verify
 DELETE /api/v1/wikis/{owner}/{slug}/custom-domains/{domain_id}</pre></div>

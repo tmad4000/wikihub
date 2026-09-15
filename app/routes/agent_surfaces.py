@@ -363,7 +363,7 @@ DELETE /api/v1/wikis/{owner}/{slug}/custom-domains/{domain_id}
 ```
 
 Creation returns the TXT verification record and DNS target. Verification proves
-ownership; an operator activates HTTPS after the certificate is ready.
+ownership; an operator activates the mapping after its HTTPS certificate is ready.
 
 ## CSV, TSV, and published Google Sheets
 

@@ -100,9 +100,9 @@ forms.
 ### Custom domains
 
 Wiki owners can add an external hostname under **Wiki settings → Domains**. WikiHub
-creates a unique `_wikihub-verification` TXT challenge; after the owner adds it,
-`Check DNS` records ownership. A deployment operator then connects DNS/HTTPS and
-activates the domain with:
+creates a unique TXT challenge at `_wikihub.<hostname>` with a value beginning
+`wikihub-verification=`; after the owner adds it, `Check DNS` records ownership.
+A deployment operator then connects DNS/HTTPS and activates the domain with:
 
 ```bash
 flask --app wsgi.py wikihub activate-custom-domain docs.example.org

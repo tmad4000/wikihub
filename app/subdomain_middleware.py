@@ -1,14 +1,15 @@
-"""WSGI middleware: rewrite requests arriving on a user or wiki subdomain
+"""WSGI middleware: rewrite requests arriving on a user, wiki, or custom host
 into the canonical /@user/slug URL form before Flask routes see them.
 
 jacobcole.wikihub.md/recipes/pasta  -> PATH_INFO=/@jacobcole/recipes/pasta
 recipes.wikihub.md/pasta            -> PATH_INFO=/@owner/recipes/pasta   (where owner owns the "recipes" subdomain)
+docs.example.com/pasta              -> PATH_INFO=/@owner/wiki/pasta      (where the custom domain maps to that wiki)
 
 Global routes (api, auth, static, agent surfaces, etc.) pass through unchanged
-so users can log in, hit APIs, etc. from any subdomain.
+so users can log in, hit APIs, etc. from any recognized host.
 
 The resolved ("host_kind", name) tuple is stashed on request.environ so the
-main app knows when it's being accessed via a subdomain (used later for
+main app knows when it's being accessed via a mapped host (used later for
 choosing canonical URLs in templates).
 """
 
@@ -16,7 +17,7 @@ from typing import Callable, Iterable
 
 from app.subdomains import resolve_host
 
-# prefixes that never get rewritten, even when Host is a user/wiki subdomain.
+# prefixes that never get rewritten, even when Host is a mapped wiki host.
 # these are always routed globally (login, api, agent surfaces, static assets).
 _GLOBAL_PREFIXES = (
     "/api/",
