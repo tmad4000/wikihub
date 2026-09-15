@@ -2,14 +2,9 @@
 
 ## prerequisites
 
-- SSH access to the server via `ssh -i ~/.ssh/wikihub-dev-key ubuntu@54.145.123.7`
-- or via alias `ssh wikihub-dev` if `~/.ssh/config` is set up:
-  ```
-  Host wikihub-dev
-      HostName 54.145.123.7
-      User ubuntu
-      IdentityFile ~/.ssh/wikihub-dev-key
-  ```
+- `gcloud` access to project `wikihub-prod`
+- SSH access to instance `wikihub-prod` in `us-east1-b`; add
+  `--tunnel-through-iap` when direct port 22 access is unavailable
 
 ## the deploy process
 
@@ -38,8 +33,8 @@ git push origin main
 ### 3. deploy
 
 ```bash
-ssh -i ~/.ssh/wikihub-dev-key ubuntu@54.145.123.7 \
-  "cd /opt/wikihub-app && git pull && sudo systemctl restart wikihub"
+gcloud compute ssh wikihub-prod --project=wikihub-prod --zone=us-east1-b \
+  --command='cd /opt/wikihub-app && sudo git pull && sudo systemctl restart wikihub'
 ```
 
 ### 4. verify the deploy worked
@@ -49,13 +44,14 @@ ssh -i ~/.ssh/wikihub-dev-key ubuntu@54.145.123.7 \
 curl -s -o /dev/null -w "%{http_code}" https://wikihub.md/
 
 # if 502, check logs immediately
-ssh -i ~/.ssh/wikihub-dev-key ubuntu@54.145.123.7 \
-  "sudo journalctl -u wikihub --no-pager -n 30"
+gcloud compute ssh wikihub-prod --project=wikihub-prod --zone=us-east1-b \
+  --command='sudo journalctl -u wikihub --no-pager -n 30'
 ```
 
 common 502 causes:
 - **ImportError** — forgot to commit a file. fix: commit the file, push, pull, restart.
-- **missing DB extension** — e.g. `pg_trgm`. fix: `psql postgresql://wikihub:wikihub_dev_2026@localhost/wikihub -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"`
+- **missing DB extension** — e.g. `pg_trgm`. fix on the instance with
+  `sudo -u postgres psql -d wikihub -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"`.
 - **missing DB table** — app calls `db.create_all()` on startup, but if the import fails it never gets there.
 
 ### 5. smoke test on production
@@ -75,34 +71,69 @@ after confirming the site is up (200), test the specific things you changed:
 | systemd unit | `wikihub.service` |
 | process | gunicorn on port 5100 |
 | reverse proxy | nginx → gunicorn, Cloudflare in front (SSL) |
-| database | `postgresql://wikihub:wikihub_dev_2026@localhost/wikihub` |
+| database | PostgreSQL 16 database `wikihub`, local to the instance |
 | git repos | `/opt/wikihub-app/repos/` |
 
 ## useful commands
 
 ```bash
 # logs (follow)
-ssh -i ~/.ssh/wikihub-dev-key ubuntu@54.145.123.7 "sudo journalctl -u wikihub -f"
+gcloud compute ssh wikihub-prod --project=wikihub-prod --zone=us-east1-b \
+  --command='sudo journalctl -u wikihub -f'
 
 # restart without pulling
-ssh -i ~/.ssh/wikihub-dev-key ubuntu@54.145.123.7 "sudo systemctl restart wikihub"
+gcloud compute ssh wikihub-prod --project=wikihub-prod --zone=us-east1-b \
+  --command='sudo systemctl restart wikihub'
 
 # query production DB
-ssh -i ~/.ssh/wikihub-dev-key ubuntu@54.145.123.7 \
-  "psql postgresql://wikihub:wikihub_dev_2026@localhost/wikihub"
+gcloud compute ssh wikihub-prod --project=wikihub-prod --zone=us-east1-b \
+  --command='sudo -u postgres psql -d wikihub'
 
 # run a flask CLI command on server
-ssh -i ~/.ssh/wikihub-dev-key ubuntu@54.145.123.7 \
-  "cd /opt/wikihub-app && source .venv/bin/activate && source .env && flask --app wsgi.py wikihub reindex --all"
+gcloud compute ssh wikihub-prod --project=wikihub-prod --zone=us-east1-b \
+  --command='cd /opt/wikihub-app && source .venv/bin/activate && source .env && flask --app wsgi.py wikihub reindex --all'
 ```
+
+## custom-domain cutover
+
+The owner-facing settings/API flow proves hostname ownership but does not
+provision DNS or TLS. After the domain reaches `verified`:
+
+1. Point the hostname at the `dns_target` returned by the custom-domain API
+   (configured with `CUSTOM_DOMAIN_TARGET`, default `domains.wikihub.md`).
+2. Provision HTTPS at the edge and origin as required by the hostname's DNS
+   provider. Do not activate a hostname that still has certificate errors.
+3. Verify the public URL and a representative deep link over HTTPS.
+4. Activate it on the production instance:
+
+   ```bash
+   gcloud compute ssh wikihub-prod --project=wikihub-prod --zone=us-east1-b \
+     --command='cd /opt/wikihub-app && source .venv/bin/activate && source .env && flask --app wsgi.py wikihub activate-custom-domain docs.example.org'
+   ```
+
+5. Confirm that an anonymous apex URL redirects to the custom hostname, a
+   signed-in request remains on `*.wikihub.md`, and the custom hostname serves
+   the clean page URL. Activating a replacement demotes the previous active
+   hostname for that wiki.
+
+The activation command records a Git-backed audit event and refuses domains
+that have not passed ownership verification. Its active TLS status is an
+operator assertion, so the HTTPS check above is required before activation.
 
 ## DB migrations
 
-there is no alembic. schema changes happen via `db.create_all()` which runs on app startup. this creates new tables but does NOT drop columns or tables. if you need to add a column to an existing table, run ALTER TABLE manually on the server:
+There is no Alembic. `db.create_all()` creates missing tables on app startup but
+does not alter existing tables or constraints. Put production DDL in an
+idempotent, dated `migrations/*.sql` file and apply that checked-in file:
 
 ```bash
-ssh -i ~/.ssh/wikihub-dev-key ubuntu@54.145.123.7 \
-  "psql postgresql://wikihub:wikihub_dev_2026@localhost/wikihub -c 'ALTER TABLE pages ADD COLUMN new_col TEXT;'"
+gcloud compute scp migrations/FILE.sql wikihub-prod:/tmp/ \
+  --project=wikihub-prod --zone=us-east1-b
+gcloud compute ssh wikihub-prod --project=wikihub-prod --zone=us-east1-b \
+  --command='sudo -u postgres psql -d wikihub -f /tmp/FILE.sql'
 ```
 
-extensions (like `pg_trgm`) are auto-created by `app/__init__.py` on startup, but only if the DB user has permission. if it fails, create manually via psql.
+Each migration header must state why it exists and include the exact production
+apply command. Extensions such as `pg_trgm` are created by `app/__init__.py` on
+startup when the DB user has permission; otherwise create them manually as the
+PostgreSQL superuser.

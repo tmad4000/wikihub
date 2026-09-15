@@ -108,12 +108,14 @@ A deployment operator then connects DNS/HTTPS and activates the domain with:
 flask --app wsgi.py wikihub activate-custom-domain docs.example.org
 ```
 
-Activation refuses an unverified hostname or a hostname without active HTTPS.
+Activation requires verified ownership and an operator assertion that TLS is active.
 One external hostname per wiki can be active at a time; activating a replacement
 demotes the old hostname. Anonymous public readers use the custom domain, while
 signed-in owners and collaborators stay on `*.wikihub.md` so their session and
 private access are preserved. Both surfaces use the same Git-backed wiki and page
 routes; verbose `/@owner/wiki/...` URLs redirect to their clean equivalents.
+The operator cutover and verification checklist lives in
+[`docs/deploy.md`](docs/deploy.md#custom-domain-cutover).
 
 Legacy source URLs can be preserved with a Git-tracked
 `.wikihub/redirects.json` map:

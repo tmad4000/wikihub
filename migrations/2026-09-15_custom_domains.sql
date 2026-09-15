@@ -1,6 +1,9 @@
 -- wikihub-9nfh: verified external hostnames for public wiki routing.
 -- Apply on production:
---   sudo -u postgres psql wikihub < /tmp/2026-09-15_custom_domains.sql
+--   gcloud compute scp migrations/2026-09-15_custom_domains.sql wikihub-prod:/tmp/ \
+--     --project=wikihub-prod --zone=us-east1-b
+--   gcloud compute ssh wikihub-prod --project=wikihub-prod --zone=us-east1-b \
+--     --command='sudo -u postgres psql -d wikihub -f /tmp/2026-09-15_custom_domains.sql'
 CREATE TABLE IF NOT EXISTS custom_domains (
     id SERIAL PRIMARY KEY,
     wiki_id INTEGER NOT NULL REFERENCES wikis(id) ON DELETE CASCADE,
