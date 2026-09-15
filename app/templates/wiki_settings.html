@@ -185,7 +185,9 @@
         ? '<div class="domain-step"><span class="domain-step-num">1</span><div>Add this ownership record at your DNS provider.' +
             record('TXT name', domain.verification.name) + record('TXT value', domain.verification.value) + '</div></div>' +
           '<div class="domain-step"><span class="domain-step-num">2</span><div>Verify it here. WikiHub will then confirm the final DNS target and make the domain canonical only after HTTPS is ready.</div></div>'
-        : '<div class="domain-step"><span class="domain-step-num">✓</span><div>Ownership verified. DNS and HTTPS activation are being finalized for this hostname.</div></div>';
+        : domain.status === 'active'
+          ? '<div class="domain-step"><span class="domain-step-num">✓</span><div>This domain is live for anonymous readers. Ownership is verified and HTTPS is active.</div></div>'
+          : '<div class="domain-step"><span class="domain-step-num">✓</span><div>Ownership verified. An operator must finish the DNS and HTTPS cutover before activating this domain.</div></div>';
       return '<article class="domain-card" data-domain-id="' + domain.id + '">' +
         '<div class="domain-card-head"><a class="domain-hostname" href="https://' + escapeHtml(domain.hostname) + '" target="_blank" rel="noopener">' + escapeHtml(domain.hostname) + '</a>' +
         '<span class="domain-badge ' + escapeHtml(domain.status) + '">' + statusLabel + '</span></div>' +

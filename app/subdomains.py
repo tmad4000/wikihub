@@ -5,8 +5,8 @@ subdomain. Each wiki may optionally claim a globally-unique <subdomain>.wikihub.
 Both share the reserved-word namespace below, so usernames and wiki subdomains
 must not collide with reserved words or with each other.
 
-Ownership-verified external hostnames are resolved separately as custom domains;
-they do not participate in the built-in subdomain namespace.
+Activated, ownership-verified external hostnames are resolved separately as
+custom domains; they do not participate in the built-in subdomain namespace.
 """
 
 import re

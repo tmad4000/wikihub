@@ -5,8 +5,10 @@ jacobcole.wikihub.md/recipes/pasta  -> PATH_INFO=/@jacobcole/recipes/pasta
 recipes.wikihub.md/pasta            -> PATH_INFO=/@owner/recipes/pasta   (where owner owns the "recipes" subdomain)
 docs.example.com/pasta              -> PATH_INFO=/@owner/wiki/pasta      (where the custom domain maps to that wiki)
 
-Global routes (api, auth, static, agent surfaces, etc.) pass through unchanged
-so users can log in, hit APIs, etc. from any recognized host.
+Global routes (API, auth, static, agent surfaces, etc.) pass through unchanged.
+Built-in hosts retain the normal authenticated surfaces; external custom domains
+are intended for public reading and do not receive the ``*.wikihub.md`` session
+cookie.
 
 The resolved ("host_kind", name) tuple is stashed on request.environ so the
 main app knows when it's being accessed via a mapped host (used later for
