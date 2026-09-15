@@ -116,6 +116,12 @@ def resolve_host(host: str) -> Optional[Tuple[str, str]]:
     elif host.endswith(LOCAL_SUFFIX):
         suffix = LOCAL_SUFFIX
     else:
+        # External custom domains use the same path-rewrite machinery as wiki
+        # subdomains, but are looked up by their complete hostname.
+        from app.custom_domains import resolve_custom_host
+        custom_domain = resolve_custom_host(host)
+        if custom_domain:
+            return ("custom", custom_domain.hostname)
         return None
 
     label = host[: -len(suffix)]

@@ -1,4 +1,5 @@
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -43,6 +44,28 @@ def load_serve_inline_patterns(username, slug):
     silently never applied for anonymous/public readers (wikihub-6ag bug)."""
     content = read_file_from_repo(username, slug, ".wikihub/serve-inline")
     return parse_serve_inline(content) if content else []
+
+
+def load_page_redirects(username, slug):
+    """Load owner-authored legacy URL aliases from .wikihub/redirects.json."""
+    content = read_file_from_repo(username, slug, ".wikihub/redirects.json")
+    if not content:
+        return {}
+    try:
+        payload = json.loads(content)
+    except (TypeError, ValueError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    redirects = {}
+    for alias, target in payload.items():
+        alias = str(alias or "").strip().strip("/")
+        target = str(target or "").strip().lstrip("/")
+        target_path = target.split("#", 1)[0]
+        if not alias or not target_path or is_wikihub_plumbing_path(target_path):
+            continue
+        redirects[alias] = target
+    return redirects
 
 
 def _plain_excerpt(text, length=200):

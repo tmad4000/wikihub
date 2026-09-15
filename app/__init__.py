@@ -211,6 +211,29 @@ def create_app(config_class="config.Config"):
                 click.echo(f"  {path}")
         raise SystemExit(1)
 
+    @wikihub_cli.command("activate-custom-domain")
+    @click.argument("hostname")
+    @click.option("--tls-status", default="active", type=click.Choice(["pending", "active", "error"]))
+    def activate_custom_domain_command(hostname, tls_status):
+        """Mark an ownership-verified domain ready after the TLS/DNS cutover."""
+        from app.custom_domains import normalize_custom_hostname
+        from app.models import CustomDomain, utcnow
+
+        try:
+            normalized = normalize_custom_hostname(hostname)
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
+        domain = CustomDomain.query.filter_by(hostname=normalized).first()
+        if not domain:
+            raise click.ClickException(f"unknown custom domain: {normalized}")
+        if not domain.verified_at:
+            raise click.ClickException("domain ownership must be verified before activation")
+        domain.status = "active"
+        domain.tls_status = tls_status
+        domain.updated_at = utcnow()
+        db.session.commit()
+        click.echo(f"active: {normalized} (tls={tls_status})")
+
     @wikihub_cli.command("rebuild-mirrors")
     @click.option("--all", "all_wikis", is_flag=True, default=False)
     @click.argument("wiki_ref", required=False)

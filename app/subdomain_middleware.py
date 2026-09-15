@@ -114,4 +114,13 @@ class SubdomainMiddleware:
             if not owner:
                 return ""
             return f"/@{owner.username}/{wiki.slug}"
+        if kind == "custom":
+            from app.models import CustomDomain, User
+            domain = CustomDomain.query.filter_by(hostname=name).first()
+            if not domain or not domain.wiki:
+                return ""
+            owner = User.query.get(domain.wiki.owner_id)
+            if not owner:
+                return ""
+            return f"/@{owner.username}/{domain.wiki.slug}"
         return ""

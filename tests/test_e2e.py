@@ -31,7 +31,7 @@ os.environ["SESSION_COOKIE_SECURE"] = "0"
 
 from app import create_app, db
 from app.auth_utils import _ip_write_timestamps, _write_timestamps
-from app.models import Page, User, Wiki, utcnow
+from app.models import CustomDomain, Page, User, Wiki, utcnow
 
 
 def setup():
@@ -51,6 +51,7 @@ def teardown():
 
 def reset_database():
     for table in [
+        "custom_domains",
         "proposal_comments",
         "proposal_page_patches",
         "proposal_revisions",
@@ -4641,6 +4642,172 @@ def test_subdomain_routing(client):
     assert "wikihub.wikihub.md" in r.headers["Location"]
 
 
+def test_custom_domain_lifecycle_and_routing(client, api_key):
+    """Owners verify external domains before they route; active domains become canonical."""
+    from unittest.mock import patch
+    from app.custom_domains import verification_value
+
+    h = {"Authorization": f"Bearer {api_key}"}
+    r = client.post("/api/v1/wikis", json={"slug": "domain-wiki", "title": "Domain Wiki"}, headers=h)
+    assert r.status_code == 201
+    r = client.put("/api/v1/wikis/agent1/domain-wiki/pages/index.md", json={
+        "content": "---\ntitle: Domain Home\nvisibility: public\n---\n\n# Domain Home\n",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 200
+
+    r = client.post(
+        "/api/v1/wikis/agent1/domain-wiki/custom-domains",
+        json={"hostname": "Notes.Example.NET."},
+        headers=h,
+    )
+    assert r.status_code == 201, r.get_data(as_text=True)
+    domain = r.get_json()
+    assert domain["hostname"] == "notes.example.net"
+    assert domain["status"] == "pending"
+    assert domain["verification"]["name"] == "_wikihub.notes.example.net"
+
+    r = client.post(
+        f"/api/v1/wikis/agent1/domain-wiki/custom-domains/{domain['id']}/verify",
+        headers=h,
+    )
+    assert r.status_code in (409, 503), "unproven domains must not verify"
+
+    expected = verification_value(
+        CustomDomain.query.filter_by(id=domain["id"]).first().verification_token
+    )
+    with patch("app.custom_domains._txt_answers", return_value=[expected]):
+        r = client.post(
+            f"/api/v1/wikis/agent1/domain-wiki/custom-domains/{domain['id']}/verify",
+            headers=h,
+        )
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert r.get_json()["status"] == "verified"
+
+    # A verified external host routes to the wiki root but is not canonical
+    # until operations confirms HTTPS is live.
+    r = client.get("/", headers={"Host": "notes.example.net", "Accept": "text/html"})
+    assert r.status_code == 200, r.get_data(as_text=True)[:300]
+    assert "Domain Home" in r.get_data(as_text=True)
+
+    from app.git_sync import sync_page_to_repo
+    sync_page_to_repo(
+        "agent1",
+        "domain-wiki",
+        ".wikihub/redirects.json",
+        json.dumps({"old-home": "index.md#top"}),
+    )
+    r = client.get("/old-home", headers={"Host": "notes.example.net"})
+    assert r.status_code == 301
+    assert r.headers["Location"] == "/#top"
+
+    row = CustomDomain.query.filter_by(id=domain["id"]).first()
+    row.status = "active"
+    row.tls_status = "active"
+    db.session.commit()
+    r = client.get("/@agent1/domain-wiki", headers={"Host": "wikihub.md"})
+    assert r.status_code == 301
+    assert r.headers["Location"] == "https://notes.example.net/"
+
+    # A custom host also strips verbose /@owner/wiki paths to a clean URL.
+    r = client.get(
+        "/@agent1/domain-wiki",
+        headers={"Host": "notes.example.net"},
+    )
+    assert r.status_code == 301
+    assert r.headers["Location"] == "https://notes.example.net/"
+
+    # Arbitrary fetch targets and WikiHub-owned hosts are rejected.
+    r = client.post(
+        "/api/v1/wikis/agent1/domain-wiki/custom-domains",
+        json={"hostname": "https://evil.example/path"},
+        headers=h,
+    )
+    assert r.status_code == 400
+    r = client.post(
+        "/api/v1/wikis/agent1/domain-wiki/custom-domains",
+        json={"hostname": "other.wikihub.md"},
+        headers=h,
+    )
+    assert r.status_code == 400
+
+    r = client.delete(
+        f"/api/v1/wikis/agent1/domain-wiki/custom-domains/{domain['id']}",
+        headers=h,
+    )
+    assert r.status_code == 204
+    assert CustomDomain.query.filter_by(id=domain["id"]).first() is None
+
+
+def test_data_table_render_and_sheet_refresh(client, api_key):
+    """CSV is a searchable/sortable reader page and refreshes safely into Git."""
+    from unittest.mock import patch
+    import requests as requests_lib
+    from app.git_sync import read_file_from_repo, sync_page_to_repo
+
+    h = {"Authorization": f"Bearer {api_key}"}
+    r = client.post("/api/v1/wikis", json={"slug": "table-wiki", "title": "Table Wiki"}, headers=h)
+    assert r.status_code == 201
+    sync_page_to_repo("agent1", "table-wiki", ".wikihub/acl", "* private\ndata/** public\n")
+    r = client.post("/api/v1/wikis/agent1/table-wiki/pages", json={
+        "path": "data/body_masters.csv",
+        "content": "Name,City,Score\nAlice,Oakland,9\n<script>alert(1)</script>,SF,7\n",
+    }, headers=h)
+    assert r.status_code == 201, r.get_data(as_text=True)
+
+    r = client.get(
+        "/@agent1/table-wiki/data/body_masters.csv",
+        headers={"Accept": "text/html"},
+    )
+    assert r.status_code == 200, r.get_data(as_text=True)[:300]
+    body = r.get_data(as_text=True)
+    assert 'data-table-view' in body
+    assert 'data-sort-column="2"' in body
+    assert "Filter rows" in body
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in body
+    assert "<script>alert(1)</script>" not in body
+
+    r = client.get("/@agent1/table-wiki/data/body_masters.csv?raw=1")
+    assert r.status_code == 200
+    assert r.data.startswith(b"Name,City,Score")
+
+    from app.data_tables import parse_delimited_bytes
+    titled = parse_delimited_bytes(b"A title,,\nName,City,Score\nAlice,Oakland,9\n", ".csv")
+    assert titled["headers"] == ["Name", "City", "Score"]
+    assert titled["header_row"] == 2
+
+    source_api = "/api/v1/wikis/agent1/table-wiki/data-sources/data/body_masters.csv"
+    r = client.put(source_api, json={"source_url": "http://127.0.0.1/private"}, headers=h)
+    assert r.status_code == 400, "remote table sources must not become a generic SSRF surface"
+
+    sheet_url = "https://docs.google.com/spreadsheets/d/abc123/edit#gid=42"
+    r = client.put(source_api, json={"source_url": sheet_url}, headers=h)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert r.get_json()["source"]["csv_url"].endswith("export?format=csv&gid=42")
+    config = read_file_from_repo("agent1", "table-wiki", ".wikihub/data-sources.json")
+    assert "data/body_masters.csv" in config and sheet_url in config
+    assert read_file_from_repo("agent1", "table-wiki", ".wikihub/data-sources.json", public=True) is None
+
+    response = requests_lib.Response()
+    response.status_code = 200
+    response._content = b"Name,City,Score\nAlice,Oakland,10\nBob,Berkeley,8\n"
+    response.headers["Content-Type"] = "text/csv; charset=utf-8"
+    response.url = "https://docs.google.com/spreadsheets/d/abc123/export?format=csv&gid=42"
+    with patch("app.data_tables.requests.get", return_value=response):
+        r = client.post(source_api + "/refresh", headers=h)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert r.get_json()["changed"] is True
+    saved = read_file_from_repo("agent1", "table-wiki", "data/body_masters.csv")
+    assert "Bob,Berkeley,8" in saved
+    assert "last_synced_at" in read_file_from_repo("agent1", "table-wiki", ".wikihub/data-sources.json")
+
+    r = client.get(
+        "/@agent1/table-wiki/data/body_masters.csv",
+        headers={"Accept": "text/html"},
+    )
+    assert r.status_code == 200
+    assert "Bob" in r.get_data(as_text=True)
+
 def test_cli(client):
     """CLI end-to-end: credential handling + every subcommand against a
     real app via a requests→flask-test-client shim."""
@@ -7422,6 +7589,8 @@ def run_all():
             ("private surface offers request access", lambda: test_permission_error_offers_request_access(client, key)),
             ("access requests stay ambiguous + notify existing target", lambda: test_access_request_constant_response_and_notify_existing_target(client)),
             ("subdomain routing", lambda: test_subdomain_routing(client)),
+            ("custom domain lifecycle + routing (wikihub-9nfh)", lambda: test_custom_domain_lifecycle_and_routing(client, key)),
+            ("data table render + Sheet refresh (wikihub-291.1)", lambda: test_data_table_render_and_sheet_refresh(client, key)),
             ("agent chat blocks cross-user private read (wikihub-7w40)", lambda: test_agent_chat_blocks_cross_user_private_read(client, key)),
             ("agent chat anon session blocked (wikihub-7w40)", lambda: test_agent_chat_anon_session_blocked(client)),
             ("agent chat session locked to creator (wikihub-7w40)", lambda: test_agent_chat_session_locked_to_creator(client, key)),

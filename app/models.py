@@ -69,10 +69,51 @@ class Wiki(db.Model):
     updated_at = db.Column(db.DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
 
     pages = db.relationship("Page", backref="wiki", lazy="dynamic", cascade="all, delete-orphan")
+    custom_domains = db.relationship(
+        "CustomDomain",
+        backref="wiki",
+        lazy="dynamic",
+        cascade="all, delete-orphan",
+    )
     forked_from = db.relationship("Wiki", remote_side=[id], backref="forks")
 
     __table_args__ = (
         db.UniqueConstraint("owner_id", "slug", name="uq_wiki_owner_slug"),
+    )
+
+
+class CustomDomain(db.Model):
+    """An externally owned hostname mapped to a public wiki.
+
+    Host ownership is proven with a DNS TXT challenge before routing is
+    enabled. TLS provisioning is deliberately tracked separately: the first
+    party AdmitSphere rollout is handled by its Cloudflare zone, while the
+    same model can later be wired to Cloudflare for SaaS (or another provider)
+    without changing hostname routing.
+    """
+
+    __tablename__ = "custom_domains"
+
+    id = db.Column(db.Integer, primary_key=True)
+    wiki_id = db.Column(
+        db.Integer,
+        db.ForeignKey("wikis.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    hostname = db.Column(db.String(253), unique=True, nullable=False, index=True)
+    status = db.Column(db.String(32), default="pending", nullable=False)
+    verification_token = db.Column(db.String(64), unique=True, nullable=False)
+    verified_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    tls_status = db.Column(db.String(32), default="pending", nullable=False)
+    provider = db.Column(db.String(32), nullable=True)
+    provider_hostname_id = db.Column(db.String(128), nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at = db.Column(
+        db.DateTime(timezone=True),
+        default=utcnow,
+        onupdate=utcnow,
+        nullable=False,
     )
 
 

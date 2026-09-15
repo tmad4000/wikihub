@@ -34,7 +34,7 @@ from app.models import (
 )
 from app.renderer import build_html_embed_figure, extract_toc, render_page
 from app.routes import wiki_bp
-from app.wiki_ops import index_repo_pages, load_acl_rules, load_serve_inline_patterns, refresh_wikilinks_for_page, sync_wiki_counters, update_page_metadata
+from app.wiki_ops import index_repo_pages, load_acl_rules, load_page_redirects, load_serve_inline_patterns, refresh_wikilinks_for_page, sync_wiki_counters, update_page_metadata
 
 
 def _recently_updated_pages(wiki, limit=8, public_only=False):
@@ -1729,7 +1729,7 @@ def wiki_page(username, slug, page_path):
     # regress embedded diagrams.) Owners who store script-bearing SVGs as standalone
     # documents accept the same direct-navigation behavior SVG has always had.
     _ACTIVE_EXTS = {".html", ".htm", ".xhtml"}
-    ext = os.path.splitext(page_path)[1].lower()
+    ext = os.path.splitext(raw_page_path)[1].lower()
     if ext and ext not in _MARKDOWN_EXTS and not request.path.endswith("/"):
         import mimetypes
         is_owner = _is_owner(wiki)
@@ -1737,7 +1737,14 @@ def wiki_page(username, slug, page_path):
         user_name = current_user.username if current_user.is_authenticated else None
         # Non-markdown files can still have a Page row with explicit visibility
         # (set via the API). Page-row visibility wins over the file-path ACL.
-        page = Page.query.filter_by(wiki_id=wiki.id, path=page_path).first()
+        # Exact filenames win so an underscore in a CSV/image name remains an
+        # underscore. Fall back to the Wikipedia-style underscore→space path
+        # only when the exact repo path does not exist.
+        page = Page.query.filter_by(wiki_id=wiki.id, path=raw_page_path).first()
+        if page:
+            page_path = page.path
+        elif raw_page_path != page_path:
+            page = Page.query.filter_by(wiki_id=wiki.id, path=page_path).first()
         file_vis = page.visibility if page else resolve_visibility(page_path, acl_rules)
         if not is_owner and not can_read(page_path, acl_rules, user_name, file_vis):
             # wikihub-dkp8: a non-markdown file with an explicit Page row EXISTS
@@ -1750,6 +1757,11 @@ def wiki_page(username, slug, page_path):
             abort(404)
         use_public = _use_public_repo(wiki, acl_rules)
         data = read_file_bytes_from_repo(owner.username, wiki.slug, page_path, public=use_public)
+        if data is None and page is None and raw_page_path != page_path:
+            data = read_file_bytes_from_repo(owner.username, wiki.slug, raw_page_path, public=use_public)
+            if data is not None:
+                page_path = raw_page_path
+                file_vis = resolve_visibility(page_path, acl_rules)
         if data is None and use_public:
             data = read_file_bytes_from_repo(owner.username, wiki.slug, page_path, public=False)
         if data is None:
@@ -1758,6 +1770,67 @@ def wiki_page(username, slug, page_path):
             pass
         else:
             headers = {"Cache-Control": "public, max-age=3600"}
+            # CSV/TSV are first-class readable pages in the browser while their
+            # byte-for-byte form remains available with ?raw=1. The shared
+            # reader chrome keeps navigation, ACL behavior, and history aligned
+            # with Markdown pages instead of introducing a parallel file app.
+            wants_table_view = (
+                ext in {".csv", ".tsv"}
+                and request.args.get("raw") != "1"
+                and "text/html" in request.headers.get("Accept", "")
+            )
+            if wants_table_view:
+                from app.data_tables import TableSourceError, load_data_sources, parse_delimited_bytes
+                try:
+                    table = parse_delimited_bytes(data, ext)
+                except TableSourceError as exc:
+                    return render_template(
+                        "permission_error.html",
+                        owner=owner,
+                        wiki=wiki,
+                        message=str(exc),
+                    ), 422
+                viewer_page = page or type("Page", (), {
+                    "path": page_path,
+                    "title": os.path.splitext(os.path.basename(page_path))[0],
+                    "excerpt": None,
+                    "visibility": file_vis,
+                    "updated_at": wiki.updated_at,
+                })()
+                source = load_data_sources(owner.username, wiki.slug).get(page_path)
+                source_api_url = (
+                    f"/api/v1/wikis/{owner.username}/{wiki.slug}/data-sources/"
+                    f"{url_path_from_page_path(page_path, strip_md=False)}"
+                )
+                rendered_html = render_template(
+                    "_data_table.html",
+                    page=viewer_page,
+                    table=table,
+                    extension=ext,
+                    source=source,
+                    source_api_url=source_api_url,
+                    can_manage_table=is_owner,
+                )
+                use_public_viewer, acl_filter_user_viewer = _repo_access(wiki, acl_rules)
+                return render_template(
+                    "reader.html",
+                    owner=owner,
+                    wiki=wiki,
+                    page=viewer_page,
+                    rendered_html=rendered_html,
+                    toc=[],
+                    backlinks=[],
+                    link_graph={"nodes": [], "edges": []},
+                    recently_updated=_recently_updated_pages(wiki, public_only=use_public_viewer and not acl_filter_user_viewer),
+                    sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, public=use_public_viewer, current_path=page_path, acl_filter_user=acl_filter_user_viewer),
+                    private_band_warning=False,
+                    json_ld_author=owner.display_name or owner.username,
+                    sibling_wikis=siblings,
+                    page_grants=[],
+                    user_can_edit=False,
+                    pending_proposals_count=0,
+                    data_table=True,
+                )
             # Owner opt-in: serve an active-content file (HTML/SVG/etc.) inline as
             # its real type, but ONLY if the path is allowlisted in
             # .wikihub/serve-inline. Hardened with a CSP sandbox + nosniff so the
@@ -1899,6 +1972,23 @@ def wiki_page(username, slug, page_path):
     acl_rules = load_acl_rules(owner.username, wiki.slug)
     user_name = current_user.username if current_user.is_authenticated else None
     is_owner = _is_owner(wiki)
+
+    # Preserve routes from static-site migrations without duplicating pages in
+    # the sidebar. Redirects live in hidden Git plumbing so they travel with the
+    # wiki and remain reviewable. Never reveal an unreadable target.
+    if page is None:
+        redirect_target = load_page_redirects(owner.username, wiki.slug).get(raw_page_path.strip("/"))
+        if redirect_target:
+            target_path, _, fragment = redirect_target.partition("#")
+            target_page = Page.query.filter_by(wiki_id=wiki.id, path=target_path).first()
+            if target_page and (is_owner or can_read(target_path, acl_rules, user_name, target_page.visibility)):
+                target_is_root = target_path in {"index.md", "README.md"}
+                target_url = f"/@{owner.username}/{wiki.slug}" if target_is_root else _page_url(owner.username, wiki.slug, target_path)
+                if request.environ.get("wikihub.host_kind") in {"wiki", "custom"}:
+                    target_url = "/" if target_is_root else "/" + url_path_from_page_path(target_path, strip_md=True)
+                if fragment:
+                    target_url += "#" + fragment
+                return redirect(target_url, code=301)
 
     if page and not is_owner and not can_read(page.path, acl_rules, user_name, page.visibility):
         # wikihub-dkp8: the page EXISTS but this viewer can't read it. Return a

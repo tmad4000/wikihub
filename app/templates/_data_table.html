@@ -1,0 +1,219 @@
+<div class="data-table-view" data-table-view>
+  <header class="data-table-header">
+    <div>
+      <div class="data-table-kicker">Dataset</div>
+      <h1>{{ page.title or page.path.rsplit('/', 1)[-1] }}</h1>
+      <p><span data-visible-count>{{ table.rows|length }}</span> of {{ table.total_rows }} rows{% if table.header_row > 1 %} · headers found on row {{ table.header_row }}{% endif %}{% if table.truncated %} · preview limited to {{ table.rows|length }}{% endif %}</p>
+    </div>
+    <a class="data-table-raw" href="{{ request.path }}?raw=1">Download {{ extension[1:]|upper }}</a>
+  </header>
+
+  {% if table.headers %}
+  <div class="data-table-toolbar">
+    <label for="data-table-filter">Filter rows</label>
+    <div class="data-table-search">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+      <input id="data-table-filter" type="search" placeholder="Search every column…" autocomplete="off" data-table-filter>
+      <kbd>/</kbd>
+    </div>
+  </div>
+
+  <div class="data-table-frame" tabindex="0" aria-label="Scrollable data table">
+    <table>
+      <thead>
+        <tr>
+          {% for header in table.headers %}
+          <th scope="col">
+            <button type="button" data-sort-column="{{ loop.index0 }}" aria-sort="none">
+              <span>{{ header }}</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 9 4-4 4 4"/><path d="m16 15-4 4-4-4"/></svg>
+            </button>
+          </th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in table.rows %}
+        <tr>
+          {% for value in row %}<td data-value="{{ value }}">{{ value }}</td>{% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div class="data-table-empty" data-table-empty hidden>No rows match that filter.</div>
+  </div>
+  {% else %}
+  <div class="data-table-empty-state">This table is empty.</div>
+  {% endif %}
+
+  {% if can_manage_table %}
+  <details class="data-source-panel" {% if not source %}open{% endif %}>
+    <summary>
+      <span>Published Sheet source</span>
+      <span class="data-source-state">{{ 'Connected' if source else 'Optional' }}</span>
+    </summary>
+    <div class="data-source-body">
+      <p>Keep this Git-backed CSV refreshable from a public Google Sheet. Readers always see the saved WikiHub copy.</p>
+      <form data-source-form>
+        <label for="data-source-url">Public Google Sheets URL</label>
+        <div class="data-source-input-row">
+          <input id="data-source-url" type="url" required placeholder="https://docs.google.com/spreadsheets/d/…" value="{{ source.source_url if source else '' }}">
+          <button type="submit">{{ 'Update source' if source else 'Connect source' }}</button>
+        </div>
+      </form>
+      {% if source %}
+      <div class="data-source-meta">
+        <a href="{{ source.source_url }}" target="_blank" rel="noopener">Open source ↗</a>
+        <span>{% if source.last_synced_at %}Last refreshed {{ source.last_synced_at }}{% else %}Not refreshed yet{% endif %}</span>
+      </div>
+      <div class="data-source-actions">
+        <button type="button" class="data-source-refresh" data-source-refresh>Refresh saved copy</button>
+        <button type="button" class="data-source-remove" data-source-remove>Disconnect</button>
+      </div>
+      {% endif %}
+      <div class="data-source-status" role="status" aria-live="polite" data-source-status></div>
+    </div>
+  </details>
+  {% endif %}
+</div>
+
+<style>
+  .data-table-view { --table-grid:var(--border-default);width:min(100%,1200px); }
+  .data-table-header { display:flex;justify-content:space-between;align-items:flex-end;gap:1.5rem;margin-bottom:1.5rem; }
+  .data-table-kicker { color:var(--accent);font:600 0.6875rem/1.4 var(--font-mono);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:0.3rem; }
+  .data-table-header h1 { font-size:clamp(1.5rem,3vw,2.25rem);letter-spacing:-0.025em;margin:0 0 0.25rem; }
+  .data-table-header p { color:var(--text-tertiary);font:0.75rem var(--font-mono);margin:0; }
+  .data-table-raw { flex:0 0 auto;border:1px solid var(--border-emphasis);border-radius:var(--radius-sm);padding:0.55rem 0.75rem;color:var(--text-secondary);font-size:0.8125rem;text-decoration:none; }
+  .data-table-toolbar { display:grid;grid-template-columns:auto minmax(240px,420px);align-items:center;justify-content:space-between;gap:1rem;margin-bottom:0.7rem; }
+  .data-table-toolbar>label { color:var(--text-secondary);font-size:0.8125rem;font-weight:600; }
+  .data-table-search { display:grid;grid-template-columns:1.1rem minmax(0,1fr) auto;align-items:center;gap:0.55rem;padding:0 0.65rem;border:1px solid var(--control-border);border-radius:var(--radius-sm);background:var(--control-bg); }
+  .data-table-search:focus-within { border-color:var(--border-accent); }
+  .data-table-search svg { width:1rem;fill:none;stroke:var(--text-tertiary);stroke-width:2; }
+  .data-table-search input { min-width:0;height:42px;border:0;outline:0;background:transparent;color:var(--text-primary);font:0.8125rem var(--font-body); }
+  .data-table-search kbd { border:1px solid var(--border-emphasis);border-radius:3px;padding:0.05rem 0.32rem;color:var(--text-muted);font:0.6875rem var(--font-mono); }
+  .data-table-frame { max-width:100%;overflow:auto;border:1px solid var(--border-emphasis);border-radius:var(--radius-md);background:var(--bg-surface); }
+  .data-table-frame:focus { outline:1px solid var(--border-accent);outline-offset:2px; }
+  .data-table-frame table { width:100%;border:0;border-collapse:separate;border-spacing:0;font-size:0.8125rem;line-height:1.45; }
+  .data-table-frame th { position:sticky;top:0;z-index:2;padding:0;border:0;border-right:1px solid var(--table-grid);border-bottom:1px solid var(--border-emphasis);background:var(--bg-elevated);text-align:left; }
+  .data-table-frame th:first-child { left:0;z-index:3; }
+  .data-table-frame th button { display:flex;width:100%;min-width:9rem;align-items:center;justify-content:space-between;gap:0.75rem;padding:0.65rem 0.75rem;border:0;background:transparent;color:var(--text-secondary);font:600 0.72rem var(--font-mono);cursor:pointer;text-align:left; }
+  .data-table-frame th button:hover { color:var(--accent);background:var(--accent-subtle); }
+  .data-table-frame th svg { width:0.85rem;fill:none;stroke:currentColor;stroke-width:2;opacity:0.45; }
+  .data-table-frame th button[aria-sort="ascending"] svg path:last-child,.data-table-frame th button[aria-sort="descending"] svg path:first-child { opacity:0.15; }
+  .data-table-frame td { max-width:28rem;padding:0.55rem 0.75rem;border:0;border-right:1px solid var(--table-grid);border-bottom:1px solid var(--table-grid);color:var(--text-secondary);vertical-align:top;overflow-wrap:anywhere; }
+  .data-table-frame td:first-child { position:sticky;left:0;z-index:1;color:var(--text-primary);font-weight:500;background:var(--bg-surface); }
+  .data-table-frame tr:hover td { background:var(--accent-subtle); }
+  .data-table-frame tr[hidden] { display:none; }
+  .data-table-empty,.data-table-empty-state { padding:2rem;color:var(--text-tertiary);font-size:0.875rem;text-align:center; }
+  .data-source-panel { margin-top:1.25rem;border:1px solid var(--border-default);border-radius:var(--radius-md);background:var(--bg-surface); }
+  .data-source-panel summary { display:flex;justify-content:space-between;gap:1rem;padding:0.8rem 0.9rem;cursor:pointer;color:var(--text-secondary);font-size:0.8125rem;font-weight:600; }
+  .data-source-state { color:var(--accent);font:0.6875rem var(--font-mono);text-transform:uppercase;letter-spacing:0.05em; }
+  .data-source-body { padding:0 0.9rem 0.9rem;border-top:1px solid var(--border-default); }
+  .data-source-body p { color:var(--text-tertiary);font-size:0.8125rem;line-height:1.5; }
+  .data-source-body label { display:block;margin-bottom:0.35rem;color:var(--text-secondary);font-size:0.75rem;font-weight:600; }
+  .data-source-input-row { display:grid;grid-template-columns:minmax(0,1fr) auto;gap:0.5rem; }
+  .data-source-input-row input { min-width:0;padding:0.6rem 0.7rem;border:1px solid var(--control-border);border-radius:var(--radius-sm);background:var(--control-bg);color:var(--text-primary);font:0.75rem var(--font-mono); }
+  .data-source-input-row button,.data-source-refresh,.data-source-remove { min-height:40px;padding:0.45rem 0.7rem;border:1px solid var(--border-emphasis);border-radius:var(--radius-sm);background:transparent;color:var(--text-secondary);font-weight:600;cursor:pointer; }
+  .data-source-input-row button,.data-source-refresh { border-color:var(--border-accent);color:var(--accent); }
+  .data-source-meta,.data-source-actions { display:flex;align-items:center;gap:0.75rem;margin-top:0.7rem;color:var(--text-tertiary);font-size:0.75rem; }
+  .data-source-meta span { margin-left:auto; }
+  .data-source-remove { margin-left:auto;color:var(--color-error); }
+  .data-source-status { min-height:1rem;margin-top:0.55rem;color:var(--text-tertiary);font-size:0.75rem; }
+  @media (max-width:680px) {
+    .data-table-header { align-items:flex-start;flex-direction:column; }
+    .data-table-toolbar { grid-template-columns:1fr; }
+    .data-source-input-row { grid-template-columns:1fr; }
+    .data-table-frame { max-height:70vh; }
+  }
+</style>
+
+<script>
+(function() {
+  var root = document.querySelector('[data-table-view]');
+  if (!root) return;
+  var filter = root.querySelector('[data-table-filter]');
+  var body = root.querySelector('tbody');
+  var visibleCount = root.querySelector('[data-visible-count]');
+  var empty = root.querySelector('[data-table-empty]');
+  var rows = body ? Array.from(body.rows) : [];
+
+  function compareValues(a, b) {
+    var left = a.trim(), right = b.trim();
+    var numberPattern = /^[-+]?[$€£]?\s*[\d,.]+\s*%?$/;
+    if (numberPattern.test(left) && numberPattern.test(right)) {
+      var ln = Number(left.replace(/[$€£,%\s]/g, ''));
+      var rn = Number(right.replace(/[$€£,%\s]/g, ''));
+      if (Number.isFinite(ln) && Number.isFinite(rn)) return ln - rn;
+    }
+    return left.localeCompare(right, undefined, {numeric:true,sensitivity:'base'});
+  }
+
+  root.querySelectorAll('[data-sort-column]').forEach(function(button) {
+    button.addEventListener('click', function() {
+      var column = Number(button.dataset.sortColumn);
+      var next = button.getAttribute('aria-sort') === 'ascending' ? 'descending' : 'ascending';
+      root.querySelectorAll('[data-sort-column]').forEach(function(other) { other.setAttribute('aria-sort', 'none'); });
+      button.setAttribute('aria-sort', next);
+      rows.sort(function(a, b) {
+        var result = compareValues(a.cells[column].dataset.value || '', b.cells[column].dataset.value || '');
+        return next === 'ascending' ? result : -result;
+      }).forEach(function(row) { body.appendChild(row); });
+    });
+  });
+
+  function applyFilter() {
+    var query = (filter.value || '').trim().toLocaleLowerCase();
+    var shown = 0;
+    rows.forEach(function(row) {
+      var match = !query || row.textContent.toLocaleLowerCase().includes(query);
+      row.hidden = !match;
+      if (match) shown += 1;
+    });
+    if (visibleCount) visibleCount.textContent = shown;
+    if (empty) empty.hidden = shown !== 0;
+  }
+  if (filter) {
+    filter.addEventListener('input', applyFilter);
+    document.addEventListener('keydown', function(event) {
+      if (event.key === '/' && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) {
+        event.preventDefault(); filter.focus();
+      }
+    });
+  }
+
+  var sourceForm = root.querySelector('[data-source-form]');
+  if (!sourceForm) return;
+  var sourceStatus = root.querySelector('[data-source-status]');
+  var sourceApi = {{ source_api_url|tojson }};
+  function setSourceStatus(message, error) {
+    sourceStatus.textContent = message || '';
+    sourceStatus.style.color = error ? 'var(--color-error)' : 'var(--text-tertiary)';
+  }
+  sourceForm.addEventListener('submit', async function(event) {
+    event.preventDefault(); setSourceStatus('Saving source…');
+    try {
+      var response = await fetch(sourceApi, {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({source_url:sourceForm.querySelector('input').value})});
+      var data = await response.json();
+      if (!response.ok) throw new Error(data.message || 'Could not save source');
+      window.location.reload();
+    } catch (error) { setSourceStatus(error.message, true); }
+  });
+  var refresh = root.querySelector('[data-source-refresh]');
+  if (refresh) refresh.addEventListener('click', async function() {
+    refresh.disabled = true; setSourceStatus('Fetching the published sheet and committing it to Git…');
+    try {
+      var response = await fetch(sourceApi + '/refresh', {method:'POST'});
+      var data = await response.json();
+      if (!response.ok) throw new Error(data.message || 'Refresh failed');
+      window.location.reload();
+    } catch (error) { setSourceStatus(error.message, true); refresh.disabled = false; }
+  });
+  var remove = root.querySelector('[data-source-remove]');
+  if (remove) remove.addEventListener('click', async function() {
+    if (!window.confirm('Disconnect this source? The saved CSV stays in the wiki.')) return;
+    var response = await fetch(sourceApi, {method:'DELETE'});
+    if (response.ok) window.location.reload();
+    else setSourceStatus('Could not disconnect source.', true);
+  });
+})();
+</script>

@@ -7,13 +7,14 @@ import os
 import secrets
 import subprocess
 
+import requests
 from flask import Response, current_app, jsonify, request
 
 from app.url_utils import url_path_from_page_path
 
 from app import db
 from app.backlinks import get_backlinks_for_page, serialize_backlink
-from app.models import User, Wiki, Page, Star, Fork, Wikilink, WikiSlugRedirect, PendingInvite, utcnow
+from app.models import CustomDomain, User, Wiki, Page, Star, Fork, Wikilink, WikiSlugRedirect, PendingInvite, utcnow
 from app.auth_utils import api_auth_optional, api_auth_required, rate_limit_writes
 from app.git_backend import init_wiki_repo
 from app.git_sync import (
@@ -373,6 +374,282 @@ def update_wiki(owner, slug):
         "title": wiki.title,
         "description": wiki.description,
         "subdomain": wiki.subdomain,
+    })
+
+
+def _serialize_custom_domain(domain):
+    from app.custom_domains import verification_name, verification_value
+    return {
+        "id": domain.id,
+        "hostname": domain.hostname,
+        "status": domain.status,
+        "tls_status": domain.tls_status,
+        "verification": {
+            "type": "TXT",
+            "name": verification_name(domain.hostname),
+            "value": verification_value(domain.verification_token),
+        },
+        "dns_target": current_app.config.get("CUSTOM_DOMAIN_TARGET", "domains.wikihub.md"),
+        "created_at": domain.created_at.isoformat(),
+        "verified_at": domain.verified_at.isoformat() if domain.verified_at else None,
+    }
+
+
+@api_bp.route("/wikis/<owner>/<slug>/custom-domains", methods=["GET"])
+@api_auth_required
+def list_custom_domains(owner, slug):
+    _, wiki, err = _get_wiki_or_404(owner, slug)
+    if err:
+        return err
+    if request.current_user.id != wiki.owner_id:
+        return {"error": "forbidden", "message": "Only the owner can manage custom domains"}, 403
+    domains = wiki.custom_domains.order_by(CustomDomain.created_at.asc()).all()
+    return jsonify({"custom_domains": [_serialize_custom_domain(domain) for domain in domains]})
+
+
+@api_bp.route("/wikis/<owner>/<slug>/custom-domains", methods=["POST"])
+@api_auth_required
+@rate_limit_writes()
+def create_custom_domain(owner, slug):
+    _, wiki, err = _get_wiki_or_404(owner, slug)
+    if err:
+        return err
+    if request.current_user.id != wiki.owner_id:
+        return {"error": "forbidden", "message": "Only the owner can manage custom domains"}, 403
+    if wiki.custom_domains.count() >= 4:
+        return {"error": "too_many", "message": "A wiki can have up to four custom domains"}, 409
+
+    from app.custom_domains import custom_hostname_conflicts, normalize_custom_hostname
+    try:
+        hostname = normalize_custom_hostname((request.get_json(silent=True) or {}).get("hostname"))
+    except ValueError as exc:
+        return {"error": "bad_request", "message": str(exc)}, 400
+    if custom_hostname_conflicts(hostname):
+        return {"error": "conflict", "message": "That hostname is already connected to a wiki"}, 409
+
+    domain = CustomDomain(
+        wiki_id=wiki.id,
+        hostname=hostname,
+        verification_token=secrets.token_urlsafe(24),
+    )
+    db.session.add(domain)
+    db.session.commit()
+    append_event_to_repo(
+        wiki.owner.username,
+        wiki.slug,
+        "custom_domain.create",
+        hostname=hostname,
+        actor=request.current_user.username,
+    )
+    return jsonify(_serialize_custom_domain(domain)), 201
+
+
+@api_bp.route("/wikis/<owner>/<slug>/custom-domains/<int:domain_id>/verify", methods=["POST"])
+@api_auth_required
+@rate_limit_writes()
+def verify_custom_domain(owner, slug, domain_id):
+    _, wiki, err = _get_wiki_or_404(owner, slug)
+    if err:
+        return err
+    if request.current_user.id != wiki.owner_id:
+        return {"error": "forbidden", "message": "Only the owner can manage custom domains"}, 403
+    domain = CustomDomain.query.filter_by(id=domain_id, wiki_id=wiki.id).first()
+    if not domain:
+        return {"error": "not_found", "message": "Custom domain not found"}, 404
+
+    from app.custom_domains import verify_dns_challenge
+    try:
+        verified = verify_dns_challenge(domain)
+    except (ValueError, requests.RequestException) as exc:
+        current_app.logger.warning("custom domain DNS verification failed for %s: %s", domain.hostname, exc)
+        return {"error": "dns_unavailable", "message": "DNS could not be checked. Try again shortly."}, 503
+    if not verified:
+        return {
+            "error": "not_verified",
+            "message": "The verification TXT record is not visible yet.",
+            "custom_domain": _serialize_custom_domain(domain),
+        }, 409
+
+    domain.status = "verified"
+    domain.verified_at = utcnow()
+    db.session.commit()
+    append_event_to_repo(
+        wiki.owner.username,
+        wiki.slug,
+        "custom_domain.verify",
+        hostname=domain.hostname,
+        actor=request.current_user.username,
+    )
+    return jsonify(_serialize_custom_domain(domain))
+
+
+@api_bp.route("/wikis/<owner>/<slug>/custom-domains/<int:domain_id>", methods=["DELETE"])
+@api_auth_required
+@rate_limit_writes()
+def delete_custom_domain(owner, slug, domain_id):
+    _, wiki, err = _get_wiki_or_404(owner, slug)
+    if err:
+        return err
+    if request.current_user.id != wiki.owner_id:
+        return {"error": "forbidden", "message": "Only the owner can manage custom domains"}, 403
+    domain = CustomDomain.query.filter_by(id=domain_id, wiki_id=wiki.id).first()
+    if not domain:
+        return {"error": "not_found", "message": "Custom domain not found"}, 404
+    hostname = domain.hostname
+    db.session.delete(domain)
+    db.session.commit()
+    append_event_to_repo(
+        wiki.owner.username,
+        wiki.slug,
+        "custom_domain.delete",
+        hostname=hostname,
+        actor=request.current_user.username,
+    )
+    return "", 204
+
+
+def _data_source_path(raw_path):
+    from app.page_utils import normalize_repo_path
+    # Data files are addressed by their literal repo path. Unlike Markdown
+    # reader URLs, underscores in CSV filenames must not become spaces.
+    path = normalize_repo_path(raw_path)
+    if not path.lower().endswith(".csv") or _is_wikihub_plumbing_path(path):
+        return None
+    return path
+
+
+@api_bp.route("/wikis/<owner>/<slug>/data-sources/<path:page_path>", methods=["GET"])
+@api_auth_required
+def get_data_source(owner, slug, page_path):
+    owner_user, wiki, err = _get_wiki_or_404(owner, slug)
+    if err:
+        return err
+    if request.current_user.id != wiki.owner_id:
+        return {"error": "forbidden", "message": "Only the owner can manage data sources"}, 403
+    path = _data_source_path(page_path)
+    if not path:
+        return {"error": "bad_request", "message": "Published Sheet sources must target a .csv file"}, 400
+    from app.data_tables import load_data_sources
+    source = load_data_sources(owner_user.username, wiki.slug).get(path)
+    return jsonify({"path": path, "source": source})
+
+
+@api_bp.route("/wikis/<owner>/<slug>/data-sources/<path:page_path>", methods=["PUT"])
+@api_auth_required
+@rate_limit_writes()
+def put_data_source(owner, slug, page_path):
+    owner_user, wiki, err = _get_wiki_or_404(owner, slug)
+    if err:
+        return err
+    if request.current_user.id != wiki.owner_id:
+        return {"error": "forbidden", "message": "Only the owner can manage data sources"}, 403
+    path = _data_source_path(page_path)
+    if not path:
+        return {"error": "bad_request", "message": "Published Sheet sources must target a .csv file"}, 400
+
+    from app.data_tables import DATA_SOURCES_PATH, TableSourceError, dump_data_sources, load_data_sources, source_record
+    data = request.get_json(silent=True) or {}
+    sources = load_data_sources(owner_user.username, wiki.slug)
+    try:
+        sources[path] = source_record(data.get("source_url"), sources.get(path))
+    except TableSourceError as exc:
+        return {"error": "bad_request", "message": str(exc)}, 400
+    author_name, author_email = _current_author()
+    apply_repo_changes(
+        owner_user.username,
+        wiki.slug,
+        [{"action": "write", "path": DATA_SOURCES_PATH, "content": dump_data_sources(sources)}],
+        f"Configure published Sheet source for {path}",
+        author_name=author_name,
+        author_email=author_email,
+    )
+    append_event_to_repo(owner_user.username, wiki.slug, "data_source.configure", path=path, actor=request.current_user.username)
+    return jsonify({"path": path, "source": sources[path]})
+
+
+@api_bp.route("/wikis/<owner>/<slug>/data-sources/<path:page_path>", methods=["DELETE"])
+@api_auth_required
+@rate_limit_writes()
+def delete_data_source(owner, slug, page_path):
+    owner_user, wiki, err = _get_wiki_or_404(owner, slug)
+    if err:
+        return err
+    if request.current_user.id != wiki.owner_id:
+        return {"error": "forbidden", "message": "Only the owner can manage data sources"}, 403
+    path = _data_source_path(page_path)
+    if not path:
+        return {"error": "bad_request", "message": "Published Sheet sources must target a .csv file"}, 400
+    from app.data_tables import DATA_SOURCES_PATH, dump_data_sources, load_data_sources
+    sources = load_data_sources(owner_user.username, wiki.slug)
+    if path not in sources:
+        return "", 204
+    del sources[path]
+    author_name, author_email = _current_author()
+    apply_repo_changes(
+        owner_user.username,
+        wiki.slug,
+        [{"action": "write", "path": DATA_SOURCES_PATH, "content": dump_data_sources(sources)}],
+        f"Remove published Sheet source for {path}",
+        author_name=author_name,
+        author_email=author_email,
+    )
+    append_event_to_repo(owner_user.username, wiki.slug, "data_source.delete", path=path, actor=request.current_user.username)
+    return "", 204
+
+
+@api_bp.route("/wikis/<owner>/<slug>/data-sources/<path:page_path>/refresh", methods=["POST"])
+@api_auth_required
+@rate_limit_writes()
+def refresh_data_source(owner, slug, page_path):
+    owner_user, wiki, err = _get_wiki_or_404(owner, slug)
+    if err:
+        return err
+    if request.current_user.id != wiki.owner_id:
+        return {"error": "forbidden", "message": "Only the owner can refresh data sources"}, 403
+    path = _data_source_path(page_path)
+    if not path:
+        return {"error": "bad_request", "message": "Published Sheet sources must target a .csv file"}, 400
+
+    from app.data_tables import (
+        DATA_SOURCES_PATH,
+        TableSourceError,
+        dump_data_sources,
+        fetch_sheet_csv,
+        load_data_sources,
+        mark_source_synced,
+    )
+    sources = load_data_sources(owner_user.username, wiki.slug)
+    source = sources.get(path)
+    if not source:
+        return {"error": "not_found", "message": "No published Sheet source is configured for this table"}, 404
+    try:
+        csv_bytes = fetch_sheet_csv(source.get("source_url"))
+    except TableSourceError as exc:
+        return {"error": "source_error", "message": str(exc)}, 422
+
+    sources[path] = mark_source_synced(source)
+    author_name, author_email = _current_author()
+    changed = apply_repo_changes(
+        owner_user.username,
+        wiki.slug,
+        [
+            {"action": "write", "path": path, "content": csv_bytes},
+            {"action": "write", "path": DATA_SOURCES_PATH, "content": dump_data_sources(sources)},
+        ],
+        f"Refresh {path} from published Google Sheet",
+        author_name=author_name,
+        author_email=author_email,
+    )
+    index_repo_pages(owner_user.username, wiki.slug, wiki, reset=False)
+    regenerate_public_mirror(owner_user.username, wiki.slug, load_acl_rules(owner_user.username, wiki.slug))
+    db.session.commit()
+    append_event_to_repo(owner_user.username, wiki.slug, "data_source.refresh", path=path, actor=request.current_user.username)
+    return jsonify({
+        "path": path,
+        "changed": bool(changed),
+        "bytes": len(csv_bytes),
+        "source": sources[path],
+        "url": f"/@{owner_user.username}/{wiki.slug}/{url_path_from_page_path(path, strip_md=False)}",
     })
 
 
