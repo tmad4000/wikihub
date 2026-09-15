@@ -488,7 +488,8 @@ def verify_custom_domain(owner, slug, domain_id):
             "custom_domain": _serialize_custom_domain(domain),
         }, 409
 
-    domain.status = "verified"
+    if domain.status != "active":
+        domain.status = "verified"
     domain.verified_at = utcnow()
     db.session.commit()
     append_event_to_repo(

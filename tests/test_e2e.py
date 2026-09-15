@@ -4755,6 +4755,14 @@ def test_custom_domain_lifecycle_and_routing(client, api_key):
     assert activation["hostname"] == "notes.example.net"
     assert activation["tls_status"] == "active"
 
+    with patch("app.custom_domains._txt_answers", return_value=[expected]):
+        r = client.post(
+            f"/api/v1/wikis/agent1/domain-wiki/custom-domains/{domain['id']}/verify",
+            headers=h,
+        )
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert r.get_json()["status"] == "active"
+
     r = client.get("/@agent1/domain-wiki", headers={"Host": "wikihub.md"})
     assert r.status_code == 301
     assert r.headers["Location"] == "https://notes.example.net/"
@@ -4854,6 +4862,7 @@ def test_custom_domain_lifecycle_and_routing(client, api_key):
 
 def test_data_table_render_and_sheet_refresh(client, api_key):
     """CSV is a searchable/sortable reader page and refreshes safely into Git."""
+    import hashlib
     from unittest.mock import patch
     import requests as requests_lib
     from app.git_sync import read_file_from_repo, sync_page_to_repo
@@ -4953,12 +4962,41 @@ def test_data_table_render_and_sheet_refresh(client, api_key):
     assert "Bob,Berkeley,8" in saved
     assert "last_synced_at" in read_file_from_repo("agent1", "table-wiki", ".wikihub/data-sources.json")
 
+    page_api = "/api/v1/wikis/agent1/table-wiki/pages/data/body_masters.csv"
+    r = client.get(page_api + "?meta=1", headers=h)
+    assert r.status_code == 200
+    first_meta = r.get_json()
+    assert first_meta["content_hash"] == hashlib.sha256(saved.encode("utf-8")).hexdigest()
+
+    response = requests_lib.Response()
+    response.status_code = 200
+    response._content = b"Name,City,Score\nAlice,Oakland,11\nCharlie,Richmond,6\n"
+    response._content_consumed = True
+    response.headers["Content-Type"] = "text/csv; charset=utf-8"
+    response.url = "https://docs.google.com/spreadsheets/d/abc123/export?format=csv&gid=42"
+    with patch("app.data_tables.requests.get", return_value=response):
+        r = client.post(source_api + "/refresh", headers=h)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    second_saved = read_file_from_repo("agent1", "table-wiki", "data/body_masters.csv")
+    r = client.get(page_api + "?meta=1", headers=h)
+    assert r.status_code == 200
+    second_meta = r.get_json()
+    assert second_meta["content_hash"] == hashlib.sha256(second_saved.encode("utf-8")).hexdigest()
+    assert second_meta["content_hash"] != first_meta["content_hash"]
+    assert second_meta["updated_at"] != first_meta["updated_at"]
+    r = client.put(
+        page_api,
+        json={"content": second_saved, "visibility": "public"},
+        headers={**h, "If-Match": f'"{first_meta["content_hash"]}"'},
+    )
+    assert r.status_code == 409
+
     r = client.get(
         "/@agent1/table-wiki/data/body_masters.csv",
         headers={"Accept": "text/html"},
     )
     assert r.status_code == 200
-    assert "Bob" in r.get_data(as_text=True)
+    assert "Charlie" in r.get_data(as_text=True)
 
     refreshed_csv = read_file_from_repo("agent1", "table-wiki", "data/body_masters.csv")
     r = client.post(
