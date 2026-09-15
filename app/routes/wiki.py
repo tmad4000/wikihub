@@ -1598,14 +1598,19 @@ def page_history(username, slug, folder_path):
     raw_folder_path = folder_path
     folder_path = page_path_from_url_path(folder_path)
     owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
-    path = raw_folder_path if raw_folder_path.endswith(".md") else f"{raw_folder_path}.md"
+    page = Page.query.filter_by(wiki_id=wiki.id, path=raw_folder_path).first()
+    if page is None and raw_folder_path != folder_path:
+        page = Page.query.filter_by(wiki_id=wiki.id, path=folder_path).first()
+    if page is not None:
+        path = page.path
+    else:
+        path = raw_folder_path if raw_folder_path.endswith(".md") else f"{raw_folder_path}.md"
     if _is_wikihub_plumbing_path(path):
         abort(404)
     acl_rules = load_acl_rules(owner.username, wiki.slug)
     # If there's a Page row at this exact path, gate on it. If not (folder
     # history, deleted page), fall back to the wiki-level "any visible page"
     # check.
-    page = Page.query.filter_by(wiki_id=wiki.id, path=path).first()
     if page is not None:
         if not _viewer_can_read_page(wiki, page, acl_rules=acl_rules, owner=owner):
             return _render_permission_error(owner, wiki)

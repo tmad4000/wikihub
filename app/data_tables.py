@@ -39,14 +39,13 @@ def parse_delimited_bytes(data, extension):
         raise TableSourceError(f"Could not parse table: {exc}") from exc
     if not rows:
         return {"headers": [], "rows": [], "total_rows": 0, "truncated": False}
-    # Published Sheets often include a title/link row before the actual header
-    # (Body Masters is a real example). Pick the earliest of the fullest rows
-    # in the first ten lines instead of blindly treating row one as headers.
-    candidates = rows[:10]
-    header_index = max(
-        range(len(candidates)),
-        key=lambda index: (sum(bool(value.strip()) for value in candidates[index]), -index),
-    )
+    header_index = 0
+    first_populated = sum(bool(value.strip()) for value in rows[0])
+    if first_populated <= 1:
+        for index, row in enumerate(rows[1:10], start=1):
+            if sum(bool(value.strip()) for value in row) >= 2:
+                header_index = index
+                break
     width = min(max(len(row) for row in rows[header_index:]), MAX_TABLE_COLUMNS)
     raw_headers = rows[header_index][:width]
     headers = [value.strip() or f"Column {index + 1}" for index, value in enumerate(raw_headers)]
@@ -112,28 +111,45 @@ def fetch_sheet_csv(source_url, timeout=12):
     """Fetch a public sheet without allowing redirects outside Google hosts."""
     current = normalize_sheet_csv_url(source_url)
     for _ in range(MAX_REDIRECTS + 1):
-        response = requests.get(
-            current,
-            timeout=timeout,
-            allow_redirects=False,
-            headers={"User-Agent": "WikiHub-Table-Refresh/1.0", "Accept": "text/csv,text/plain;q=0.9,*/*;q=0.1"},
-        )
-        if response.status_code in {301, 302, 303, 307, 308}:
-            location = response.headers.get("Location")
-            if not location:
-                raise TableSourceError("Google returned an incomplete redirect")
-            current = urljoin(current, location)
-            if not _allowed_google_response_host(urlparse(current).hostname):
-                raise TableSourceError("Google redirected to an unexpected host")
-            continue
+        response = None
         try:
+            response = requests.get(
+                current,
+                timeout=timeout,
+                allow_redirects=False,
+                stream=True,
+                headers={"User-Agent": "WikiHub-Table-Refresh/1.0", "Accept": "text/csv,text/plain;q=0.9,*/*;q=0.1"},
+            )
+            if response.status_code in {301, 302, 303, 307, 308}:
+                location = response.headers.get("Location")
+                if not location:
+                    raise TableSourceError("Google returned an incomplete redirect")
+                current = urljoin(current, location)
+                if not _allowed_google_response_host(urlparse(current).hostname):
+                    raise TableSourceError("Google redirected to an unexpected host")
+                continue
             response.raise_for_status()
+            chunks = []
+            buffered_bytes = 0
+            for chunk in response.iter_content(chunk_size=64 * 1024):
+                if not chunk:
+                    continue
+                remaining = MAX_SOURCE_BYTES + 1 - buffered_bytes
+                if remaining > 0:
+                    stored = chunk[:remaining]
+                    chunks.append(stored)
+                    buffered_bytes += len(stored)
+                if buffered_bytes > MAX_SOURCE_BYTES:
+                    raise TableSourceError("The sheet is larger than the 2 MB refresh limit")
+            data = b"".join(chunks)
+            content_type = response.headers.get("Content-Type", "").lower()
+        except TableSourceError:
+            raise
         except requests.RequestException as exc:
             raise TableSourceError("The sheet could not be downloaded; make sure it is public") from exc
-        data = response.content
-        if len(data) > MAX_SOURCE_BYTES:
-            raise TableSourceError("The sheet is larger than the 2 MB refresh limit")
-        content_type = response.headers.get("Content-Type", "").lower()
+        finally:
+            if response is not None:
+                response.close()
         if "html" in content_type or data.lstrip().lower().startswith(b"<!doctype html"):
             raise TableSourceError("Google returned a sign-in page; publish the sheet or enable link access")
         # Parse once before persisting so a broken export cannot replace a good table.

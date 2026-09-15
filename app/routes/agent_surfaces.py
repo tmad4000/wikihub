@@ -57,6 +57,8 @@ def llms_txt():
         "- Credentials convention: ~/.wikihub/credentials.json (mode 0600) — signup response includes a client_config hint",
         "- Magic sign-in: POST /api/v1/auth/magic-link with Bearer OR {username,password} — returns a one-time browser login URL",
         "- Git: clone/push with https://username:wh_KEY@host/@user/wiki.git",
+        "- Custom domains: GET/POST /api/v1/wikis/{owner}/{slug}/custom-domains; verify or delete by domain ID",
+        "- Published Sheet tables: GET/PUT/DELETE /api/v1/wikis/{owner}/{slug}/data-sources/{csv_path}; POST the /refresh suffix",
         "- MCP: /mcp (add to your agent's mcpServers config)",
         "- CLI: `pipx install wikihub-cli` then `wikihub signup`, `wikihub write`, `wikihub read`, `wikihub search` (see /AGENTS.md)",
         "",
@@ -350,6 +352,34 @@ inherited visibility and refresh the public mirror. Other `.wikihub/*` paths are
 rejected by generic page writes and hidden from page lists, search/discovery,
 backlinks, history, zip exports, agent context, and public git mirrors.
 
+## custom domains
+
+Wiki owners manage hostnames with these authenticated REST endpoints:
+
+```
+GET|POST /api/v1/wikis/{owner}/{slug}/custom-domains
+POST /api/v1/wikis/{owner}/{slug}/custom-domains/{domain_id}/verify
+DELETE /api/v1/wikis/{owner}/{slug}/custom-domains/{domain_id}
+```
+
+Creation returns the TXT verification record and DNS target. Verification proves
+ownership; an operator activates HTTPS after the certificate is ready.
+
+## CSV, TSV, and published Google Sheets
+
+Committed `.csv` and `.tsv` files render as tables in the browser and remain
+available byte-for-byte with `?raw=1`. Owners can connect a public Google Sheet
+to a CSV path and commit refreshed exports to Git:
+
+```
+GET|PUT|DELETE /api/v1/wikis/{owner}/{slug}/data-sources/{csv_path}
+POST /api/v1/wikis/{owner}/{slug}/data-sources/{csv_path}/refresh
+```
+
+`PUT` accepts `{"source_url":"https://docs.google.com/spreadsheets/d/..."}`.
+Source configuration is private wiki plumbing; refreshed CSV data keeps the
+target page's existing ACL visibility.
+
 ## poll page metadata
 
 when a client only needs to know whether a readable page changed, use the
@@ -624,6 +654,12 @@ def mcp_server_card():
             "type": "bearer",
             "instructions": "POST /api/v1/accounts to register and get an API key",
         },
+        "documentation": request.host_url.rstrip("/") + "/agents",
+        "rest_api": {
+            "custom_domains": "/api/v1/wikis/{owner}/{slug}/custom-domains",
+            "table_source": "/api/v1/wikis/{owner}/{slug}/data-sources/{csv_path}",
+            "refresh_table_source": "/api/v1/wikis/{owner}/{slug}/data-sources/{csv_path}/refresh",
+        },
         "tools": MCP_TOOLS,
     })
 
@@ -637,6 +673,7 @@ def mcp_discovery():
             "name": "wikihub",
             "url": request.host_url.rstrip("/") + "/mcp",
             "transport": "streamable-http",
+            "documentation": request.host_url.rstrip("/") + "/agents",
         }],
     })
 
@@ -668,6 +705,11 @@ def wikihub_bootstrap():
         "signup_url": base + "/api/v1/accounts",
         "docs_url": base + "/agents",
         "llms_txt": base + "/llms.txt",
+        "endpoints": {
+            "custom_domains": base + "/api/v1/wikis/{owner}/{slug}/custom-domains",
+            "table_source": base + "/api/v1/wikis/{owner}/{slug}/data-sources/{csv_path}",
+            "refresh_table_source": base + "/api/v1/wikis/{owner}/{slug}/data-sources/{csv_path}/refresh",
+        },
         "cli": {
             "name": "wikihub-cli",
             "install": "pipx install wikihub-cli",

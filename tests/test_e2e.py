@@ -895,6 +895,16 @@ def test_agent_surfaces(client):
     for url in ["/llms.txt", "/AGENTS.md", "/agents", "/.well-known/mcp/server-card.json", "/.well-known/wikihub.json", "/mcp"]:
         r = client.get(url)
         assert r.status_code == 200, f"{url} returned {r.status_code}"
+    for url in ["/llms.txt", "/AGENTS.md", "/agents"]:
+        body = client.get(url).get_data(as_text=True)
+        assert "custom-domains" in body
+        assert "data-sources" in body
+    server_card = client.get("/.well-known/mcp/server-card.json").get_json()
+    assert "custom-domains" in server_card["rest_api"]["custom_domains"]
+    assert "data-sources" in server_card["rest_api"]["table_source"]
+    manifest = client.get("/.well-known/wikihub.json").get_json()
+    assert "custom-domains" in manifest["endpoints"]["custom_domains"]
+    assert "data-sources" in manifest["endpoints"]["table_source"]
 
 
 def test_a2hs_banner_gated_to_mobile(client):
@@ -4775,6 +4785,16 @@ def test_data_table_render_and_sheet_refresh(client, api_key):
     titled = parse_delimited_bytes(b"A title,,\nName,City,Score\nAlice,Oakland,9\n", ".csv")
     assert titled["headers"] == ["Name", "City", "Score"]
     assert titled["header_row"] == 2
+    sparse_header = parse_delimited_bytes(b"Name,,Score\nAlice,Oakland,9\n", ".csv")
+    assert sparse_header["headers"] == ["Name", "Column 2", "Score"]
+    assert sparse_header["header_row"] == 1
+
+    browser = client.application.test_client()
+    r = browser.post("/auth/login", data={"api_key": api_key}, follow_redirects=False)
+    assert r.status_code == 302
+    r = browser.get("/@agent1/table-wiki/data/body_masters.csv/history")
+    assert r.status_code == 200
+    assert "Create data/body_masters.csv" in r.get_data(as_text=True)
 
     source_api = "/api/v1/wikis/agent1/table-wiki/data-sources/data/body_masters.csv"
     r = client.put(source_api, json={"source_url": "http://127.0.0.1/private"}, headers=h)
@@ -4791,11 +4811,13 @@ def test_data_table_render_and_sheet_refresh(client, api_key):
     response = requests_lib.Response()
     response.status_code = 200
     response._content = b"Name,City,Score\nAlice,Oakland,10\nBob,Berkeley,8\n"
+    response._content_consumed = True
     response.headers["Content-Type"] = "text/csv; charset=utf-8"
     response.url = "https://docs.google.com/spreadsheets/d/abc123/export?format=csv&gid=42"
-    with patch("app.data_tables.requests.get", return_value=response):
+    with patch("app.data_tables.requests.get", return_value=response) as get_sheet:
         r = client.post(source_api + "/refresh", headers=h)
     assert r.status_code == 200, r.get_data(as_text=True)
+    assert get_sheet.call_args.kwargs["stream"] is True
     assert r.get_json()["changed"] is True
     saved = read_file_from_repo("agent1", "table-wiki", "data/body_masters.csv")
     assert "Bob,Berkeley,8" in saved
@@ -4807,6 +4829,36 @@ def test_data_table_render_and_sheet_refresh(client, api_key):
     )
     assert r.status_code == 200
     assert "Bob" in r.get_data(as_text=True)
+
+    with patch("app.data_tables.requests.get", side_effect=requests_lib.Timeout("timed out")):
+        r = client.post(source_api + "/refresh", headers=h)
+    assert r.status_code == 422
+    assert "could not be downloaded" in r.get_json()["message"]
+
+    from app.data_tables import MAX_SOURCE_BYTES
+
+    class OversizedStream:
+        status_code = 200
+        headers = {"Content-Type": "text/csv"}
+        closed = False
+
+        def raise_for_status(self):
+            return None
+
+        def iter_content(self, chunk_size):
+            yield b"x" * MAX_SOURCE_BYTES
+            yield b"y"
+            raise AssertionError("oversized downloads must stop immediately")
+
+        def close(self):
+            self.closed = True
+
+    oversized = OversizedStream()
+    with patch("app.data_tables.requests.get", return_value=oversized):
+        r = client.post(source_api + "/refresh", headers=h)
+    assert r.status_code == 422
+    assert "larger than" in r.get_json()["message"]
+    assert oversized.closed is True
 
 def test_cli(client):
     """CLI end-to-end: credential handling + every subcommand against a
