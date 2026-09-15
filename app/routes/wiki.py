@@ -2,7 +2,7 @@ import difflib
 import os
 import subprocess
 from datetime import timezone
-from urllib.parse import unquote, urlparse
+from urllib.parse import quote, unquote, urlparse
 
 from flask import Response, abort, jsonify, redirect, render_template, request, url_for
 
@@ -1820,7 +1820,7 @@ def wiki_page(username, slug, page_path):
                 source = load_data_sources(owner.username, wiki.slug).get(page_path)
                 source_api_url = (
                     f"/api/v1/wikis/{owner.username}/{wiki.slug}/data-sources/"
-                    f"{url_path_from_page_path(page_path, strip_md=False)}"
+                    f"{quote(page_path, safe='/')}"
                 )
                 rendered_html = render_template(
                     "_data_table.html",

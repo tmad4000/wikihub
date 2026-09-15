@@ -12,7 +12,7 @@ from app.models import CustomDomain
 
 _LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 VERIFICATION_PREFIX = "wikihub-verification="
-ROUTABLE_STATUSES = frozenset({"verified", "active"})
+ROUTABLE_STATUSES = frozenset({"active"})
 
 
 def normalize_custom_hostname(value):
@@ -96,6 +96,7 @@ def resolve_custom_host(host):
     return CustomDomain.query.filter(
         db.func.lower(CustomDomain.hostname) == hostname,
         CustomDomain.status.in_(ROUTABLE_STATUSES),
+        CustomDomain.tls_status == "active",
     ).first()
 
 

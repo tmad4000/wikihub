@@ -93,6 +93,15 @@ class CustomDomain(db.Model):
     """
 
     __tablename__ = "custom_domains"
+    __table_args__ = (
+        db.Index(
+            "uq_custom_domains_one_active_per_wiki",
+            "wiki_id",
+            unique=True,
+            postgresql_where=db.text("status = 'active'"),
+            sqlite_where=db.text("status = 'active'"),
+        ),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     wiki_id = db.Column(

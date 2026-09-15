@@ -89,7 +89,10 @@ GET|PUT|DELETE /api/v1/wikis/{owner}/{slug}/data-sources/{table_path}
 POST /api/v1/wikis/{owner}/{slug}/data-sources/{table_path}/refresh
 ```
 
-Custom-domain creation returns the TXT verification record and DNS target.
+Custom-domain creation returns the TXT verification record and DNS target. An
+operator activates one canonical hostname per wiki only after HTTPS is ready;
+public readers use it while signed-in reads stay on `*.wikihub.md` to preserve
+session-based ACL access.
 Table-source `PUT` accepts a public Google Sheets URL as `source_url`; refresh
 commits the exported CSV/TSV and private source metadata to the wiki repository.
 

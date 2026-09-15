@@ -17,3 +17,5 @@ CREATE TABLE IF NOT EXISTS custom_domains (
 
 CREATE INDEX IF NOT EXISTS ix_custom_domains_wiki_id ON custom_domains(wiki_id);
 CREATE INDEX IF NOT EXISTS ix_custom_domains_hostname ON custom_domains(hostname);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_custom_domains_one_active_per_wiki
+    ON custom_domains(wiki_id) WHERE status = 'active';

@@ -363,7 +363,10 @@ DELETE /api/v1/wikis/{owner}/{slug}/custom-domains/{domain_id}
 ```
 
 Creation returns the TXT verification record and DNS target. Verification proves
-ownership; an operator activates the mapping after its HTTPS certificate is ready.
+ownership; an operator activates the hostname after its HTTPS certificate is ready.
+Only one external hostname per wiki is active/canonical at a time. Custom domains
+are the public-reading surface; authenticated reads remain on `*.wikihub.md` so
+the WikiHub session cookie and collaborator ACL access are preserved.
 
 ## CSV, TSV, and published Google Sheets
 

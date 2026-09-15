@@ -20,7 +20,7 @@ We DO NOT redirect:
 """
 
 import re
-from flask import request, redirect
+from flask import redirect, request, session
 
 from app.models import CustomDomain, User, Wiki
 from app.subdomains import CANONICAL_SUFFIX, is_reserved, SYSTEM_SUBDOMAIN_USERS
@@ -136,10 +136,15 @@ def maybe_redirect():
         return None
 
     tail = ("/" + rest) if rest else "/"
-    custom_domain = wiki.custom_domains.filter_by(
-        status="active",
-        tls_status="active",
-    ).order_by(CustomDomain.id.asc()).first()
+    # WikiHub's session cookie intentionally covers *.wikihub.md, not arbitrary
+    # customer domains. Keep authenticated reads on a WikiHub hostname so an
+    # owner or collaborator is never redirected into an anonymous session.
+    custom_domain = None
+    if not session.get("_user_id"):
+        custom_domain = wiki.custom_domains.filter_by(
+            status="active",
+            tls_status="active",
+        ).order_by(CustomDomain.id.asc()).first()
     if custom_domain:
         target = f"{scheme}://{custom_domain.hostname}{tail}{qs}"
     elif wiki.subdomain:

@@ -231,18 +231,34 @@ def create_app(config_class="config.Config"):
             raise click.ClickException("domain ownership must be verified before activation")
         if tls_status != "active":
             raise click.ClickException("TLS must be active before custom-domain activation")
+        replaced = [
+            existing.hostname
+            for existing in CustomDomain.query.filter(
+                CustomDomain.wiki_id == domain.wiki_id,
+                CustomDomain.id != domain.id,
+                CustomDomain.status == "active",
+            ).all()
+        ]
+        if replaced:
+            CustomDomain.query.filter(
+                CustomDomain.wiki_id == domain.wiki_id,
+                CustomDomain.id != domain.id,
+                CustomDomain.status == "active",
+            ).update({"status": "verified"}, synchronize_session=False)
+            db.session.flush()
         domain.status = "active"
         domain.tls_status = tls_status
         domain.updated_at = utcnow()
-        db.session.commit()
         append_event_to_repo(
             domain.wiki.owner.username,
             domain.wiki.slug,
             "custom_domain.activate",
             hostname=normalized,
             tls_status=tls_status,
+            replaced_hostnames=replaced,
             actor="wikihub-cli",
         )
+        db.session.commit()
         click.echo(f"active: {normalized} (tls={tls_status})")
 
     @wikihub_cli.command("rebuild-mirrors")

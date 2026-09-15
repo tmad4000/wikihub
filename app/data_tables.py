@@ -102,9 +102,26 @@ def normalize_sheet_csv_url(value):
     return urlunparse(("https", "docs.google.com", path, "", urlencode(output_query), ""))
 
 
-def _allowed_google_response_host(hostname):
-    host = (hostname or "").lower().rstrip(".")
-    return host == "docs.google.com" or host == "docs.googleusercontent.com" or host.endswith(".googleusercontent.com")
+def _allowed_google_response_url(value):
+    """Only follow credential-free HTTPS redirects to Google's export hosts."""
+    try:
+        parsed = urlparse(value)
+        port = parsed.port
+    except ValueError:
+        return False
+    host = (parsed.hostname or "").lower().rstrip(".")
+    allowed_host = (
+        host == "docs.google.com"
+        or host == "docs.googleusercontent.com"
+        or host.endswith(".googleusercontent.com")
+    )
+    return (
+        parsed.scheme == "https"
+        and allowed_host
+        and parsed.username is None
+        and parsed.password is None
+        and port in (None, 443)
+    )
 
 
 def fetch_sheet_csv(source_url, timeout=12, destination_extension=".csv"):
@@ -125,8 +142,8 @@ def fetch_sheet_csv(source_url, timeout=12, destination_extension=".csv"):
                 if not location:
                     raise TableSourceError("Google returned an incomplete redirect")
                 current = urljoin(current, location)
-                if not _allowed_google_response_host(urlparse(current).hostname):
-                    raise TableSourceError("Google redirected to an unexpected host")
+                if not _allowed_google_response_url(current):
+                    raise TableSourceError("Google redirected to an unsafe destination")
                 continue
             response.raise_for_status()
             chunks = []

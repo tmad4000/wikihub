@@ -4697,11 +4697,10 @@ def test_custom_domain_lifecycle_and_routing(client, api_key):
     assert r.status_code == 200, r.get_data(as_text=True)
     assert r.get_json()["status"] == "verified"
 
-    # A verified external host routes to the wiki root but is not canonical
-    # until operations confirms HTTPS is live.
+    # Ownership verification alone must not route content. The hostname only
+    # becomes a public wiki surface after operations confirms HTTPS is live.
     r = client.get("/", headers={"Host": "notes.example.net", "Accept": "text/html"})
-    assert r.status_code == 200, r.get_data(as_text=True)[:300]
-    assert "Domain Home" in r.get_data(as_text=True)
+    assert "Domain Home" not in r.get_data(as_text=True)
 
     from app.git_sync import read_file_from_repo, sync_page_to_repo
     sync_page_to_repo(
@@ -4710,10 +4709,6 @@ def test_custom_domain_lifecycle_and_routing(client, api_key):
         ".wikihub/redirects.json",
         json.dumps({"old-home": "index.md#top"}),
     )
-    r = client.get("/old-home", headers={"Host": "notes.example.net"})
-    assert r.status_code == 301
-    assert r.headers["Location"] == "/#top"
-
     runner = client.application.test_cli_runner()
     result = runner.invoke(args=[
         "wikihub",
@@ -4733,9 +4728,12 @@ def test_custom_domain_lifecycle_and_routing(client, api_key):
     # the CLI (for example, from a partial/manual migration).
     row.status = "active"
     db.session.commit()
-    r = client.get("/@agent1/domain-wiki", headers={"Host": "wikihub.md"})
+    anonymous = client.application.test_client()
+    r = anonymous.get("/@agent1/domain-wiki", headers={"Host": "wikihub.md"})
     assert r.status_code == 301
     assert r.headers["Location"] != "https://notes.example.net/"
+    r = anonymous.get("/", headers={"Host": "notes.example.net"})
+    assert "Domain Home" not in r.get_data(as_text=True)
     row.status = "verified"
     db.session.commit()
 
@@ -4761,6 +4759,10 @@ def test_custom_domain_lifecycle_and_routing(client, api_key):
     assert r.status_code == 301
     assert r.headers["Location"] == "https://notes.example.net/"
 
+    r = client.get("/old-home", headers={"Host": "notes.example.net"})
+    assert r.status_code == 301
+    assert r.headers["Location"] == "/#top"
+
     # A custom host also strips verbose /@owner/wiki paths to a clean URL.
     r = client.get(
         "/@agent1/domain-wiki",
@@ -4768,6 +4770,60 @@ def test_custom_domain_lifecycle_and_routing(client, api_key):
     )
     assert r.status_code == 301
     assert r.headers["Location"] == "https://notes.example.net/"
+
+    # Only one external hostname per wiki is canonical at a time. Activating a
+    # replacement demotes the previous hostname deterministically.
+    r = client.post(
+        "/api/v1/wikis/agent1/domain-wiki/custom-domains",
+        json={"hostname": "www.example.net"},
+        headers=h,
+    )
+    assert r.status_code == 201, r.get_data(as_text=True)
+    replacement = r.get_json()
+    replacement_value = verification_value(
+        CustomDomain.query.filter_by(id=replacement["id"]).first().verification_token
+    )
+    with patch("app.custom_domains._txt_answers", return_value=[replacement_value]):
+        r = client.post(
+            f"/api/v1/wikis/agent1/domain-wiki/custom-domains/{replacement['id']}/verify",
+            headers=h,
+        )
+    assert r.status_code == 200
+    result = runner.invoke(args=[
+        "wikihub",
+        "activate-custom-domain",
+        "www.example.net",
+        "--tls-status",
+        "active",
+    ])
+    assert result.exit_code == 0, result.output
+    db.session.expire_all()
+    assert CustomDomain.query.filter_by(id=domain["id"]).first().status == "verified"
+    assert CustomDomain.query.filter_by(id=replacement["id"]).first().status == "active"
+    anonymous = client.application.test_client()
+    r = anonymous.get("/@agent1/domain-wiki", headers={"Host": "wikihub.md"})
+    assert r.headers["Location"] == "https://www.example.net/", r.headers.get("Location")
+
+    # Signed-in owners/collaborators keep a *.wikihub.md URL so the WikiHub
+    # session cookie is preserved instead of becoming anonymous externally.
+    signed_in = client.application.test_client()
+    owner_user = User.query.filter_by(username="agent1").first()
+    with signed_in.session_transaction(base_url="https://wikihub.md") as signed_in_session:
+        signed_in_session["_user_id"] = str(owner_user.id)
+        signed_in_session["_fresh"] = True
+    r = signed_in.get(
+        "https://wikihub.md/@agent1/domain-wiki",
+        follow_redirects=False,
+    )
+    assert r.status_code == 301
+    assert "www.example.net" not in r.headers["Location"]
+    assert r.headers["Location"].endswith(".wikihub.md/domain-wiki")
+    with signed_in.session_transaction(base_url="https://wikihub.md") as signed_in_session:
+        signed_in_session.clear()
+    # run_all keeps one outer app context; clear Flask-Login's request cache so
+    # this authenticated regression cannot leak into later independent flows.
+    from flask import g as _g
+    _g.pop("_login_user", None)
 
     # Arbitrary fetch targets and WikiHub-owned hosts are rejected.
     r = client.post(
@@ -4789,6 +4845,11 @@ def test_custom_domain_lifecycle_and_routing(client, api_key):
     )
     assert r.status_code == 204
     assert CustomDomain.query.filter_by(id=domain["id"]).first() is None
+    r = client.delete(
+        f"/api/v1/wikis/agent1/domain-wiki/custom-domains/{replacement['id']}",
+        headers=h,
+    )
+    assert r.status_code == 204
 
 
 def test_data_table_render_and_sheet_refresh(client, api_key):
@@ -4852,6 +4913,30 @@ def test_data_table_render_and_sheet_refresh(client, api_key):
     config = read_file_from_repo("agent1", "table-wiki", ".wikihub/data-sources.json")
     assert "data/body_masters.csv" in config and sheet_url in config
     assert read_file_from_repo("agent1", "table-wiki", ".wikihub/data-sources.json", public=True) is None
+
+    # Literal spaces in a table filename must be percent-encoded in the source
+    # API URL, not converted to Wikipedia-style underscores. This is the path
+    # used by the migrated `health/Body Masters.csv` table.
+    spaced_csv = "Name,City\nAlice,Oakland\n"
+    r = client.post("/api/v1/wikis/agent1/table-wiki/pages", json={
+        "path": "health/Body Masters.csv",
+        "content": spaced_csv,
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201, r.get_data(as_text=True)
+    r = browser.get(
+        "/@agent1/table-wiki/health/Body_Masters.csv",
+        headers={"Accept": "text/html"},
+    )
+    assert r.status_code == 200
+    assert "data-sources/health/Body%20Masters.csv" in r.get_data(as_text=True)
+    assert "data-sources/health/Body_Masters.csv" not in r.get_data(as_text=True)
+    spaced_source_api = "/api/v1/wikis/agent1/table-wiki/data-sources/health/Body%20Masters.csv"
+    r = client.put(spaced_source_api, json={"source_url": sheet_url}, headers=h)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert "health/Body Masters.csv" in read_file_from_repo(
+        "agent1", "table-wiki", ".wikihub/data-sources.json"
+    )
 
     response = requests_lib.Response()
     response.status_code = 200
@@ -4921,6 +5006,15 @@ def test_data_table_render_and_sheet_refresh(client, api_key):
         r = client.post(source_api + "/refresh", headers=h)
     assert r.status_code == 422
     assert "could not be downloaded" in r.get_json()["message"]
+
+    unsafe_redirect = requests_lib.Response()
+    unsafe_redirect.status_code = 302
+    unsafe_redirect._content_consumed = True
+    unsafe_redirect.headers["Location"] = "http://docs.googleusercontent.com/export.csv"
+    with patch("app.data_tables.requests.get", return_value=unsafe_redirect):
+        r = client.post(source_api + "/refresh", headers=h)
+    assert r.status_code == 422
+    assert "unsafe destination" in r.get_json()["message"]
 
     from app.data_tables import MAX_SOURCE_BYTES
 
@@ -7590,14 +7684,14 @@ def test_empty_sidebar_copy(app, client, api_key):
     """wikihub-l3z2: a wiki with no visible pages shows explicit copy, not blankness."""
     # fresh owner with a password so we can drive a logged-in browser session
     r = client.post("/api/v1/accounts", json={"username": "hollowowner", "password": "testpass12345"})
-    assert r.status_code == 201
+    assert r.status_code == 201, f"hollow owner creation: {r.status_code} {r.get_data(as_text=True)}"
     oh = {"Authorization": f"Bearer {r.get_json()['api_key']}"}
     r = client.post("/api/v1/wikis", json={"slug": "hollow", "title": "Hollow"}, headers=oh)
-    assert r.status_code == 201
+    assert r.status_code == 201, f"hollow wiki creation: {r.status_code} {r.get_data(as_text=True)}"
 
     browser = app.test_client()
     login = browser.post("/auth/login", data={"username": "hollowowner", "password": "testpass12345"}, follow_redirects=False)
-    assert login.status_code == 302
+    assert login.status_code == 302, f"hollow owner login: {login.status_code} {login.get_data(as_text=True)}"
     # owner views the brand-new empty wiki (folder.html render, empty sidebar)
     r = browser.get("/@hollowowner/hollow")
     assert r.status_code == 200, f"owner empty-wiki view: {r.status_code}"
