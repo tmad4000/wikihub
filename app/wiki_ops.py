@@ -1,4 +1,5 @@
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -8,7 +9,7 @@ from app import db
 from app.acl import normalize_page_visibility, parse_acl, parse_serve_inline, resolve_visibility
 from app.content_utils import extract_wikilinks, parse_markdown_document
 from app.git_backend import _repo_path, init_wiki_repo
-from app.git_sync import list_files_in_repo, read_file_from_repo, regenerate_public_mirror, scaffold_wiki, sync_page_to_repo
+from app.git_sync import list_files_in_repo, read_file_bytes_from_repo, read_file_from_repo, regenerate_public_mirror, scaffold_wiki, sync_page_to_repo
 from app.models import Page, Wikilink, Wiki, Star, Fork, User, PendingInvite
 from app.page_utils import is_wikihub_plumbing_path
 
@@ -45,6 +46,28 @@ def load_serve_inline_patterns(username, slug):
     return parse_serve_inline(content) if content else []
 
 
+def load_page_redirects(username, slug):
+    """Load owner-authored legacy URL aliases from .wikihub/redirects.json."""
+    content = read_file_from_repo(username, slug, ".wikihub/redirects.json")
+    if not content:
+        return {}
+    try:
+        payload = json.loads(content)
+    except (TypeError, ValueError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    redirects = {}
+    for alias, target in payload.items():
+        alias = str(alias or "").strip().strip("/")
+        target = str(target or "").strip().lstrip("/")
+        target_path = target.split("#", 1)[0]
+        if not alias or not target_path or is_wikihub_plumbing_path(target_path):
+            continue
+        redirects[alias] = target
+    return redirects
+
+
 def _plain_excerpt(text, length=200):
     """strip markdown syntax to produce a plain-text excerpt."""
     t = text
@@ -61,7 +84,7 @@ def _plain_excerpt(text, length=200):
     return t[:length]
 
 
-def update_page_metadata(page, content, frontmatter=None):
+def update_page_metadata(page, content, frontmatter=None, content_bytes=None):
     try:
         if frontmatter is None:
             frontmatter, body = parse_markdown_document(content)
@@ -75,7 +98,8 @@ def update_page_metadata(page, content, frontmatter=None):
     if isinstance(page.title, (date, datetime)):
         page.title = str(page.title)
     page.frontmatter_json = _sanitize_for_json(frontmatter)
-    page.content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    hash_input = content_bytes if content_bytes is not None else content.encode("utf-8")
+    page.content_hash = hashlib.sha256(hash_input).hexdigest()
     page.excerpt = _plain_excerpt(body) if body else ""
     page.search_vector = db.func.to_tsvector("english", f"{page.title or ''} {body or ''}")
     return frontmatter, body
@@ -262,13 +286,21 @@ def index_repo_pages(username, slug, wiki, reset=False):
         if path.endswith(".gitkeep") or path.startswith(".wikihub/"):
             continue
 
-        is_md = path.endswith(".md")
+        extension = os.path.splitext(path)[1].lower()
+        is_md = extension == ".md"
+        content_bytes = None
 
         if is_md:
             content = read_file_from_repo(username, slug, path)
             if content is None:
                 continue
             frontmatter, _ = parse_markdown_document(content)
+        elif extension in {".csv", ".tsv"}:
+            content_bytes = read_file_bytes_from_repo(username, slug, path)
+            if content_bytes is None:
+                continue
+            content = ""
+            frontmatter = {}
         else:
             # Non-markdown files (transcripts, datasets, images, etc.) get Page rows
             # so they appear in sidebar/listings/search. No frontmatter parsing — just
@@ -283,7 +315,7 @@ def index_repo_pages(username, slug, wiki, reset=False):
             page = Page(wiki_id=wiki.id, path=path)
             db.session.add(page)
         page.visibility = visibility
-        update_page_metadata(page, content, frontmatter)
+        update_page_metadata(page, content, frontmatter, content_bytes=content_bytes)
         seen_paths.add(path)
 
     for path, page in existing_pages.items():

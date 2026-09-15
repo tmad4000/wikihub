@@ -886,20 +886,29 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
       </a>
 
+      {% if not data_table %}
       <a href="/@{{ owner.username }}/{{ wiki.slug }}/-/suggest/{{ page.path | page_url }}" class="action-btn" title="Suggest edit">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
         Suggest
       </a>
+      {% endif %}
 
       <div class="download-menu" id="download-menu">
         <button class="action-btn-mini" title="Download / Clone" onclick="event.stopPropagation(); this.parentElement.classList.toggle('open')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         </button>
         <div class="download-dropdown">
+          {% if data_table %}
+          <a href="{{ request.path }}?raw=1" class="download-option" download>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h18v18H3z"/><path d="M3 9h18M9 3v18"/></svg>
+            Download this table
+          </a>
+          {% else %}
           <a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ page.path|page_url }}.md" class="download-option" download>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
             Download this page (.md)
           </a>
+          {% endif %}
           <button type="button" class="download-option" id="qr-trigger" aria-label="Show QR code for this page" onclick="openQrModal()">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3"/><path d="M21 14v.01"/><path d="M14 21h.01"/><path d="M21 21v-3a1 1 0 0 0-1-1h-2"/></svg>
             QR code (open on phone)
@@ -934,7 +943,7 @@
         Review <span class="count">{{ pending_proposals_count }}</span>
       </a>
       {% endif %}
-      {% if user_can_edit or (current_user.is_authenticated and current_user.id == wiki.owner_id) %}
+      {% if not data_table and (user_can_edit or (current_user.is_authenticated and current_user.id == wiki.owner_id)) %}
       <a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ page.path | page_url }}/edit" class="action-btn">
 {#- merge-keep HEAD's user_can_edit gate (wikihub-euw3.1) + origin's page_url filter -#}
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>

@@ -10,6 +10,8 @@ GitHub for LLM wikis. A hosting platform for markdown knowledge bases with per-f
 - Social: fork, star, explore, activity feeds, profiles
 - Rendering: KaTeX math, syntax highlighting, wikilinks, footnotes, Obsidian embeds, wiki-relative links
 - Reader side peek: same-wiki page links open in a right-side preview panel on desktop
+- Custom domains: verify ownership with DNS and map an external hostname to a wiki
+- Data tables: sortable, filterable CSV/TSV pages with optional public Google Sheets refresh
 - Every wiki is a real git repo — clone, push, blame, bisect
 
 ## Quick start
@@ -94,6 +96,50 @@ replace, patch, delete, or revert `.wikihub/acl` through the page API; those
 ACL changes rebuild inherited page visibility and regenerate the public mirror.
 Other `.wikihub/*` paths are rejected by generic page write APIs and web edit
 forms.
+
+### Custom domains
+
+Wiki owners can add an external hostname under **Wiki settings → Domains**. WikiHub
+creates a unique TXT challenge at `_wikihub.<hostname>` with a value beginning
+`wikihub-verification=`; after the owner adds it, `Check DNS` records ownership.
+A deployment operator then connects DNS/HTTPS and activates the domain with:
+
+```bash
+flask --app wsgi.py wikihub activate-custom-domain docs.example.org
+```
+
+Activation requires verified ownership and an operator assertion that TLS is active.
+One external hostname per wiki can be active at a time; activating a replacement
+demotes the old hostname. Anonymous public readers use the custom domain, while
+signed-in owners and collaborators stay on `*.wikihub.md` so their session and
+private access are preserved. Both surfaces use the same Git-backed wiki and page
+routes; verbose `/@owner/wiki/...` URLs redirect to their clean equivalents.
+The operator cutover and verification checklist lives in
+[`docs/deploy.md`](docs/deploy.md#custom-domain-cutover).
+
+Legacy source URLs can be preserved with a Git-tracked
+`.wikihub/redirects.json` map:
+
+```json
+{
+  "old-page": "New Page.md",
+  "old-section": "index.md"
+}
+```
+
+Aliases use the normal page ACL checks before returning a permanent redirect.
+
+### CSV, TSV, and Google Sheets
+
+Committed `.csv` and `.tsv` files render as first-class tables in the browser,
+with search, column sorting, sticky headers, and a raw-download action. Add
+`?raw=1` to fetch the source file directly.
+
+Wiki owners can attach a public Google Sheet from a table page. Refreshing the
+source downloads a validated CSV export and commits both the data and the source
+metadata to Git. Source metadata lives in `.wikihub/data-sources.json`, so the
+connection is portable and auditable; refresh never depends on a private Google
+credential.
 
 `max_wikis_per_user` is the authenticated account's effective wiki cap: the
 server default unless a per-user override is set. Wiki create and fork requests

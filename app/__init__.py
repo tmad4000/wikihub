@@ -211,6 +211,56 @@ def create_app(config_class="config.Config"):
                 click.echo(f"  {path}")
         raise SystemExit(1)
 
+    @wikihub_cli.command("activate-custom-domain")
+    @click.argument("hostname")
+    @click.option("--tls-status", default="active", type=click.Choice(["pending", "active", "error"]))
+    def activate_custom_domain_command(hostname, tls_status):
+        """Mark an ownership-verified domain ready after the TLS/DNS cutover."""
+        from app.custom_domains import normalize_custom_hostname
+        from app.git_sync import append_event_to_repo
+        from app.models import CustomDomain, utcnow
+
+        try:
+            normalized = normalize_custom_hostname(hostname)
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
+        domain = CustomDomain.query.filter_by(hostname=normalized).first()
+        if not domain:
+            raise click.ClickException(f"unknown custom domain: {normalized}")
+        if not domain.verified_at:
+            raise click.ClickException("domain ownership must be verified before activation")
+        if tls_status != "active":
+            raise click.ClickException("TLS must be active before custom-domain activation")
+        replaced = [
+            existing.hostname
+            for existing in CustomDomain.query.filter(
+                CustomDomain.wiki_id == domain.wiki_id,
+                CustomDomain.id != domain.id,
+                CustomDomain.status == "active",
+            ).all()
+        ]
+        if replaced:
+            CustomDomain.query.filter(
+                CustomDomain.wiki_id == domain.wiki_id,
+                CustomDomain.id != domain.id,
+                CustomDomain.status == "active",
+            ).update({"status": "verified"}, synchronize_session=False)
+            db.session.flush()
+        domain.status = "active"
+        domain.tls_status = tls_status
+        domain.updated_at = utcnow()
+        append_event_to_repo(
+            domain.wiki.owner.username,
+            domain.wiki.slug,
+            "custom_domain.activate",
+            hostname=normalized,
+            tls_status=tls_status,
+            replaced_hostnames=replaced,
+            actor="wikihub-cli",
+        )
+        db.session.commit()
+        click.echo(f"active: {normalized} (tls={tls_status})")
+
     @wikihub_cli.command("rebuild-mirrors")
     @click.option("--all", "all_wikis", is_flag=True, default=False)
     @click.argument("wiki_ref", required=False)

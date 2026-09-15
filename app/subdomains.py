@@ -1,9 +1,12 @@
-"""subdomain reservations and resolution.
+"""Built-in subdomain reservations plus built-in and custom-host resolution.
 
 Every user's username implicitly claims <username>.wikihub.md as their profile
 subdomain. Each wiki may optionally claim a globally-unique <subdomain>.wikihub.md.
 Both share the reserved-word namespace below, so usernames and wiki subdomains
 must not collide with reserved words or with each other.
+
+Activated, ownership-verified external hostnames are resolved separately as
+custom domains; they do not participate in the built-in subdomain namespace.
 """
 
 import re
@@ -103,9 +106,11 @@ def resolve_host(host: str) -> Optional[Tuple[str, str]]:
     """given a request Host header, return (kind, name) if it's a recognized
     subdomain, else None.
 
-    kind is "user" or "wiki"; name is the matching username or wiki subdomain.
-    returns None for the bare apex (wikihub.md, www.wikihub.md), reserved
-    subdomains, or unknown hosts — those fall through to the main app.
+    kind is "user", "wiki", or "custom". For built-in hosts, name is the
+    matching username or wiki subdomain; for custom hosts it is the complete
+    external hostname. Returns None for the bare apex (wikihub.md,
+    www.wikihub.md), reserved subdomains, or unknown hosts — those fall through
+    to the main app.
     """
     if not host:
         return None
@@ -116,6 +121,12 @@ def resolve_host(host: str) -> Optional[Tuple[str, str]]:
     elif host.endswith(LOCAL_SUFFIX):
         suffix = LOCAL_SUFFIX
     else:
+        # External custom domains use the same path-rewrite machinery as wiki
+        # subdomains, but are looked up by their complete hostname.
+        from app.custom_domains import resolve_custom_host
+        custom_domain = resolve_custom_host(host)
+        if custom_domain:
+            return ("custom", custom_domain.hostname)
         return None
 
     label = host[: -len(suffix)]

@@ -15,6 +15,7 @@ class Config:
     GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
     SERVER_NAME = os.environ.get("SERVER_NAME")  # e.g. wikihub.md
     BASE_URL = os.environ.get("BASE_URL", "http://localhost:5000")
+    CUSTOM_DOMAIN_TARGET = os.environ.get("CUSTOM_DOMAIN_TARGET", "domains.wikihub.md")
     ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
     # Curator agent (inline AI sidebar on wiki reader pages). wikihub-2jn.2
     # Default ON so the feature is live as soon as the endpoint is deployed.

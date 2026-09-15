@@ -43,6 +43,26 @@
     {% endif %}
   </section>
 
+  <section class="settings-card" id="custom-domain-section">
+    <div class="settings-kicker">Public address</div>
+    <h2>External domain</h2>
+    <p class="settings-copy">
+      Connect a domain you own as another front door to this public wiki. Reading
+      stays on your domain; editing and signed-in reading stay on <code>wikihub.md</code>.
+      One external domain can be live for a wiki at a time.
+    </p>
+
+    <form id="custom-domain-form" class="domain-entry-form">
+      <label for="custom-domain-input" class="sr-only">Custom domain</label>
+      <span class="domain-scheme">https://</span>
+      <input id="custom-domain-input" type="text" inputmode="url"
+             placeholder="docs.example.com" autocomplete="off" spellcheck="false">
+      <button type="submit" class="settings-primary-btn">Connect</button>
+    </form>
+    <div id="custom-domain-status" class="settings-status" role="status" aria-live="polite"></div>
+    <div id="custom-domain-list" class="domain-list"></div>
+  </section>
+
   <section id="collab-section" style="border:1px solid var(--border-default);border-radius:var(--radius-md);padding:1.25rem;margin-bottom:1.5rem;background:var(--bg-surface);">
     <h2 style="margin:0 0 0.5rem;font-size:1rem;">Collaborators</h2>
     <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:0.75rem;">
@@ -79,6 +99,38 @@
 </div>
 
 <style>
+  .settings-card { border:1px solid var(--border-default);border-radius:var(--radius-md);padding:1.25rem;margin-bottom:1.5rem;background:var(--bg-surface); }
+  .settings-card h2 { margin:0 0 0.5rem;font-size:1rem; }
+  .settings-kicker { color:var(--accent);font:600 0.6875rem/1.4 var(--font-mono);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:0.35rem; }
+  .settings-copy { font-size:0.875rem;color:var(--text-muted);line-height:1.55;margin:0 0 1rem; }
+  .domain-entry-form { display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;border:1px solid var(--control-border);border-radius:var(--radius-sm);background:var(--control-bg);overflow:hidden; }
+  .domain-entry-form:focus-within { border-color:var(--border-accent); }
+  .domain-scheme { color:var(--text-tertiary);font:0.8125rem var(--font-mono);padding-left:0.75rem; }
+  .domain-entry-form input { min-width:0;padding:0.7rem 0.5rem;border:0;outline:0;background:transparent;color:var(--text-primary);font:0.875rem var(--font-mono); }
+  .settings-primary-btn { min-height:44px;padding:0 1rem;border:0;border-left:1px solid var(--border-emphasis);background:var(--accent);color:var(--text-on-accent, #0f0e0c);font-weight:700;cursor:pointer; }
+  .settings-status { min-height:1.25rem;margin-top:0.6rem;color:var(--text-tertiary);font-size:0.8125rem; }
+  .domain-list { display:grid;gap:0.75rem;margin-top:0.75rem; }
+  .domain-card { border:1px solid var(--border-default);border-radius:var(--radius-sm);padding:0.875rem;background:var(--bg-base); }
+  .domain-card-head { display:flex;align-items:center;justify-content:space-between;gap:0.75rem; }
+  .domain-hostname { color:var(--text-primary);font:600 0.875rem var(--font-mono);overflow-wrap:anywhere; }
+  .domain-badge { border:1px solid var(--border-emphasis);border-radius:var(--radius-sm);padding:0.15rem 0.4rem;color:var(--text-tertiary);font:600 0.65rem var(--font-mono);letter-spacing:0.04em;text-transform:uppercase; }
+  .domain-badge.active,.domain-badge.verified { color:var(--color-success);border-color:var(--color-success); }
+  .domain-steps { display:grid;gap:0.55rem;margin-top:0.8rem;padding-top:0.8rem;border-top:1px solid var(--border-default); }
+  .domain-step { display:grid;grid-template-columns:1.25rem minmax(0,1fr);gap:0.5rem;color:var(--text-secondary);font-size:0.8125rem;line-height:1.45; }
+  .domain-step-num { color:var(--accent);font-family:var(--font-mono); }
+  .dns-record { display:grid;grid-template-columns:4rem minmax(0,1fr) auto;gap:0.4rem;align-items:center;margin-top:0.35rem;padding:0.4rem 0.5rem;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:var(--control-bg); }
+  .dns-record span { color:var(--text-tertiary);font:0.65rem var(--font-mono);text-transform:uppercase; }
+  .dns-record code { color:var(--text-primary);font-size:0.72rem;overflow-wrap:anywhere; }
+  .dns-copy,.domain-action { border:1px solid var(--border-emphasis);border-radius:var(--radius-sm);background:transparent;color:var(--text-secondary);padding:0.35rem 0.55rem;font-size:0.75rem;cursor:pointer; }
+  .domain-actions { display:flex;gap:0.5rem;margin-top:0.75rem; }
+  .domain-action.verify { border-color:var(--border-accent);color:var(--accent); }
+  .domain-action.remove { margin-left:auto;color:var(--color-private); }
+  @media (max-width:560px) {
+    .domain-entry-form { grid-template-columns:auto minmax(0,1fr); }
+    .domain-entry-form .settings-primary-btn { grid-column:1 / -1;border-left:0;border-top:1px solid var(--border-emphasis); }
+    .dns-record { grid-template-columns:3rem minmax(0,1fr); }
+    .dns-copy { grid-column:2;justify-self:start; }
+  }
   .collab-token { display:inline-flex; align-items:center; gap:0.3rem; padding:0.15rem 0.45rem; background:var(--bg-primary); border:1px solid var(--border-default); border-radius:var(--radius-sm); font-size:0.8125rem; font-family:var(--font-mono); }
   .collab-token button { all:unset; cursor:pointer; color:var(--text-muted); padding:0 0.15rem; line-height:1; }
   .collab-token button:hover { color:var(--color-private, #d44); }
@@ -95,6 +147,111 @@
   #collab-list li .revoke-btn:hover { color:var(--color-private, #d44); background:var(--bg-primary); }
   #collab-list .empty { padding:0.75rem; color:var(--text-muted); font-size:0.8125rem; text-align:center; }
 </style>
+
+<script>
+(function() {
+  var API = '/api/v1/wikis/{{ owner.username|urlencode }}/{{ wiki.slug|urlencode }}/custom-domains';
+  var form = document.getElementById('custom-domain-form');
+  var input = document.getElementById('custom-domain-input');
+  var status = document.getElementById('custom-domain-status');
+  var list = document.getElementById('custom-domain-list');
+
+  function setStatus(message, error) {
+    status.textContent = message || '';
+    status.style.color = error ? 'var(--color-error)' : 'var(--text-tertiary)';
+  }
+
+  function escapeHtml(value) {
+    return String(value).replace(/[&<>'"]/g, function(ch) {
+      return {'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch];
+    });
+  }
+
+  function record(label, value) {
+    var safe = escapeHtml(value);
+    return '<div class="dns-record"><span>' + escapeHtml(label) + '</span><code>' + safe +
+      '</code><button type="button" class="dns-copy" data-copy="' + safe + '">Copy</button></div>';
+  }
+
+  function render(domains) {
+    if (!domains.length) {
+      list.innerHTML = '<div style="color:var(--text-tertiary);font-size:0.8125rem;">No external domains connected.</div>';
+      return;
+    }
+    list.innerHTML = domains.map(function(domain) {
+      var isPending = domain.status === 'pending';
+      var statusLabel = domain.status === 'active' ? 'Live' : (domain.status === 'verified' ? 'Verified' : 'Verify ownership');
+      var steps = isPending
+        ? '<div class="domain-step"><span class="domain-step-num">1</span><div>Add this ownership record at your DNS provider.' +
+            record('TXT name', domain.verification.name) + record('TXT value', domain.verification.value) + '</div></div>' +
+          '<div class="domain-step"><span class="domain-step-num">2</span><div>Verify it here. WikiHub will then confirm the final DNS target and make the domain canonical only after HTTPS is ready.</div></div>'
+        : domain.status === 'active'
+          ? '<div class="domain-step"><span class="domain-step-num">✓</span><div>This domain is live for anonymous readers. Ownership is verified and HTTPS is active.</div></div>'
+          : '<div class="domain-step"><span class="domain-step-num">✓</span><div>Ownership verified. An operator must finish the DNS and HTTPS cutover before activating this domain.</div></div>';
+      return '<article class="domain-card" data-domain-id="' + domain.id + '">' +
+        '<div class="domain-card-head"><a class="domain-hostname" href="https://' + escapeHtml(domain.hostname) + '" target="_blank" rel="noopener">' + escapeHtml(domain.hostname) + '</a>' +
+        '<span class="domain-badge ' + escapeHtml(domain.status) + '">' + statusLabel + '</span></div>' +
+        '<div class="domain-steps">' + steps + '</div>' +
+        '<div class="domain-actions">' + (isPending ? '<button type="button" class="domain-action verify">Check DNS</button>' : '') +
+        '<button type="button" class="domain-action remove">Remove</button></div></article>';
+    }).join('');
+  }
+
+  async function load() {
+    var res = await fetch(API);
+    var data = await res.json();
+    if (!res.ok) throw new Error(data.message || 'Could not load domains');
+    render(data.custom_domains || []);
+  }
+
+  form.addEventListener('submit', async function(event) {
+    event.preventDefault();
+    setStatus('Creating verification record…');
+    try {
+      var res = await fetch(API, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({hostname:input.value.trim()})});
+      var data = await res.json();
+      if (!res.ok) throw new Error(data.message || 'Could not connect domain');
+      input.value = '';
+      setStatus('Domain added. Add the TXT record below.');
+      await load();
+    } catch (err) { setStatus(err.message, true); }
+  });
+
+  list.addEventListener('click', async function(event) {
+    var copyButton = event.target.closest('[data-copy]');
+    if (copyButton) {
+      await navigator.clipboard.writeText(copyButton.dataset.copy);
+      copyButton.textContent = 'Copied';
+      setTimeout(function() { copyButton.textContent = 'Copy'; }, 1200);
+      return;
+    }
+    var card = event.target.closest('[data-domain-id]');
+    if (!card) return;
+    var id = card.dataset.domainId;
+    try {
+      if (event.target.closest('.verify')) {
+        setStatus('Checking DNS…');
+        var verifyRes = await fetch(API + '/' + id + '/verify', {method:'POST'});
+        var verifyData = await verifyRes.json();
+        if (!verifyRes.ok) throw new Error(verifyData.message || 'DNS is not ready');
+        setStatus('Ownership verified.');
+        await load();
+      } else if (event.target.closest('.remove')) {
+        if (!window.confirm('Remove this custom domain from the wiki?')) return;
+        var removeRes = await fetch(API + '/' + id, {method:'DELETE'});
+        if (!removeRes.ok) {
+          var removeData = await removeRes.json();
+          throw new Error(removeData.message || 'Could not remove domain');
+        }
+        setStatus('Domain removed.');
+        await load();
+      }
+    } catch (err) { setStatus(err.message, true); }
+  });
+
+  load().catch(function(err) { setStatus(err.message, true); });
+})();
+</script>
 
 <script>
 (function() {

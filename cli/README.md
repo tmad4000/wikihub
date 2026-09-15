@@ -75,6 +75,27 @@ mirror. Other `.wikihub/*` paths are rejected by the generic page API and are
 excluded from `ls`, `read`, search/discovery, history, zip exports, agent
 context, and public git mirrors.
 
+## Custom domains and table sources
+
+These owner-only management operations are currently REST-only; the CLI command
+registry does not expose dedicated subcommands for them:
+
+```text
+GET|POST /api/v1/wikis/{owner}/{slug}/custom-domains
+POST /api/v1/wikis/{owner}/{slug}/custom-domains/{domain_id}/verify
+DELETE /api/v1/wikis/{owner}/{slug}/custom-domains/{domain_id}
+
+GET|PUT|DELETE /api/v1/wikis/{owner}/{slug}/data-sources/{table_path}
+POST /api/v1/wikis/{owner}/{slug}/data-sources/{table_path}/refresh
+```
+
+Custom-domain creation returns the TXT verification record and DNS target. An
+operator activates one canonical hostname per wiki only after HTTPS is ready;
+public readers use it while signed-in reads stay on `*.wikihub.md` to preserve
+session-based ACL access.
+Table-source `PUT` accepts a public Google Sheets URL as `source_url`; refresh
+commits the exported CSV/TSV and private source metadata to the wiki repository.
+
 `read` uses the REST page-read endpoint's access semantics: a missing page is
 `404 not_found`, while an existing page outside the active profile's read access
 is `403 forbidden` for authenticated callers or `401 authentication_required`

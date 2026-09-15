@@ -31,7 +31,7 @@ os.environ["SESSION_COOKIE_SECURE"] = "0"
 
 from app import create_app, db
 from app.auth_utils import _ip_write_timestamps, _write_timestamps
-from app.models import Page, User, Wiki, utcnow
+from app.models import CustomDomain, Page, User, Wiki, utcnow
 
 
 def setup():
@@ -51,6 +51,7 @@ def teardown():
 
 def reset_database():
     for table in [
+        "custom_domains",
         "proposal_comments",
         "proposal_page_patches",
         "proposal_revisions",
@@ -894,6 +895,19 @@ def test_agent_surfaces(client):
     for url in ["/llms.txt", "/AGENTS.md", "/agents", "/.well-known/mcp/server-card.json", "/.well-known/wikihub.json", "/mcp"]:
         r = client.get(url)
         assert r.status_code == 200, f"{url} returned {r.status_code}"
+    for url in ["/llms.txt", "/AGENTS.md", "/agents"]:
+        body = client.get(url).get_data(as_text=True)
+        assert "custom-domains" in body
+        assert "data-sources" in body
+        assert "table_path" in body
+    server_card = client.get("/.well-known/mcp/server-card.json").get_json()
+    assert "custom-domains" in server_card["rest_api"]["custom_domains"]
+    assert "data-sources" in server_card["rest_api"]["table_source"]
+    assert "table_path" in server_card["rest_api"]["table_source"]
+    manifest = client.get("/.well-known/wikihub.json").get_json()
+    assert "custom-domains" in manifest["endpoints"]["custom_domains"]
+    assert "data-sources" in manifest["endpoints"]["table_source"]
+    assert "table_path" in manifest["endpoints"]["table_source"]
 
 
 def test_a2hs_banner_gated_to_mobile(client):
@@ -4641,6 +4655,430 @@ def test_subdomain_routing(client):
     assert "wikihub.wikihub.md" in r.headers["Location"]
 
 
+def test_custom_domain_lifecycle_and_routing(client, api_key):
+    """Owners verify external domains before they route; active domains become canonical."""
+    from unittest.mock import patch
+    from app.custom_domains import verification_value
+
+    h = {"Authorization": f"Bearer {api_key}"}
+    r = client.post("/api/v1/wikis", json={"slug": "domain-wiki", "title": "Domain Wiki"}, headers=h)
+    assert r.status_code == 201
+    r = client.put("/api/v1/wikis/agent1/domain-wiki/pages/index.md", json={
+        "content": "---\ntitle: Domain Home\nvisibility: public\n---\n\n# Domain Home\n",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 200
+
+    r = client.post(
+        "/api/v1/wikis/agent1/domain-wiki/custom-domains",
+        json={"hostname": "Notes.Example.NET."},
+        headers=h,
+    )
+    assert r.status_code == 201, r.get_data(as_text=True)
+    domain = r.get_json()
+    assert domain["hostname"] == "notes.example.net"
+    assert domain["status"] == "pending"
+    assert domain["verification"]["name"] == "_wikihub.notes.example.net"
+
+    r = client.post(
+        f"/api/v1/wikis/agent1/domain-wiki/custom-domains/{domain['id']}/verify",
+        headers=h,
+    )
+    assert r.status_code in (409, 503), "unproven domains must not verify"
+
+    expected = verification_value(
+        CustomDomain.query.filter_by(id=domain["id"]).first().verification_token
+    )
+    with patch("app.custom_domains._txt_answers", return_value=[expected]):
+        r = client.post(
+            f"/api/v1/wikis/agent1/domain-wiki/custom-domains/{domain['id']}/verify",
+            headers=h,
+        )
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert r.get_json()["status"] == "verified"
+
+    # Ownership verification alone must not route content. The hostname only
+    # becomes a public wiki surface after operations confirms HTTPS is live.
+    r = client.get("/", headers={"Host": "notes.example.net", "Accept": "text/html"})
+    assert "Domain Home" not in r.get_data(as_text=True)
+
+    from app.git_sync import read_file_from_repo, sync_page_to_repo
+    sync_page_to_repo(
+        "agent1",
+        "domain-wiki",
+        ".wikihub/redirects.json",
+        json.dumps({"old-home": "index.md#top"}),
+    )
+    runner = client.application.test_cli_runner()
+    result = runner.invoke(args=[
+        "wikihub",
+        "activate-custom-domain",
+        "notes.example.net",
+        "--tls-status",
+        "pending",
+    ])
+    assert result.exit_code != 0
+    assert "TLS must be active" in result.output
+    db.session.expire_all()
+    row = CustomDomain.query.filter_by(id=domain["id"]).first()
+    assert row.status == "verified"
+    assert row.tls_status == "pending"
+
+    # Canonical selection remains safe even if an inconsistent row bypasses
+    # the CLI (for example, from a partial/manual migration).
+    row.status = "active"
+    db.session.commit()
+    anonymous = client.application.test_client()
+    r = anonymous.get("/@agent1/domain-wiki", headers={"Host": "wikihub.md"})
+    assert r.status_code == 301
+    assert r.headers["Location"] != "https://notes.example.net/"
+    r = anonymous.get("/", headers={"Host": "notes.example.net"})
+    assert "Domain Home" not in r.get_data(as_text=True)
+    row.status = "verified"
+    db.session.commit()
+
+    result = runner.invoke(args=[
+        "wikihub",
+        "activate-custom-domain",
+        "notes.example.net",
+        "--tls-status",
+        "active",
+    ])
+    assert result.exit_code == 0, result.output
+    events = [
+        json.loads(line)
+        for line in read_file_from_repo(
+            "agent1", "domain-wiki", ".wikihub/events.jsonl"
+        ).splitlines()
+    ]
+    activation = [event for event in events if event["type"] == "custom_domain.activate"][-1]
+    assert activation["hostname"] == "notes.example.net"
+    assert activation["tls_status"] == "active"
+
+    with patch("app.custom_domains._txt_answers", return_value=[expected]):
+        r = client.post(
+            f"/api/v1/wikis/agent1/domain-wiki/custom-domains/{domain['id']}/verify",
+            headers=h,
+        )
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert r.get_json()["status"] == "active"
+
+    r = client.get("/@agent1/domain-wiki", headers={"Host": "wikihub.md"})
+    assert r.status_code == 301
+    assert r.headers["Location"] == "https://notes.example.net/"
+
+    r = client.get("/old-home", headers={"Host": "notes.example.net"})
+    assert r.status_code == 301
+    assert r.headers["Location"] == "/#top"
+
+    # A custom host also strips verbose /@owner/wiki paths to a clean URL.
+    r = client.get(
+        "/@agent1/domain-wiki",
+        headers={"Host": "notes.example.net"},
+    )
+    assert r.status_code == 301
+    assert r.headers["Location"] == "https://notes.example.net/"
+
+    # Only one external hostname per wiki is canonical at a time. Activating a
+    # replacement demotes the previous hostname deterministically.
+    r = client.post(
+        "/api/v1/wikis/agent1/domain-wiki/custom-domains",
+        json={"hostname": "www.example.net"},
+        headers=h,
+    )
+    assert r.status_code == 201, r.get_data(as_text=True)
+    replacement = r.get_json()
+    replacement_value = verification_value(
+        CustomDomain.query.filter_by(id=replacement["id"]).first().verification_token
+    )
+    with patch("app.custom_domains._txt_answers", return_value=[replacement_value]):
+        r = client.post(
+            f"/api/v1/wikis/agent1/domain-wiki/custom-domains/{replacement['id']}/verify",
+            headers=h,
+        )
+    assert r.status_code == 200
+    result = runner.invoke(args=[
+        "wikihub",
+        "activate-custom-domain",
+        "www.example.net",
+        "--tls-status",
+        "active",
+    ])
+    assert result.exit_code == 0, result.output
+    db.session.expire_all()
+    assert CustomDomain.query.filter_by(id=domain["id"]).first().status == "verified"
+    assert CustomDomain.query.filter_by(id=replacement["id"]).first().status == "active"
+    anonymous = client.application.test_client()
+    r = anonymous.get("/@agent1/domain-wiki", headers={"Host": "wikihub.md"})
+    assert r.headers["Location"] == "https://www.example.net/", r.headers.get("Location")
+
+    # Signed-in owners/collaborators keep a *.wikihub.md URL so the WikiHub
+    # session cookie is preserved instead of becoming anonymous externally.
+    signed_in = client.application.test_client()
+    owner_user = User.query.filter_by(username="agent1").first()
+    with signed_in.session_transaction(base_url="https://wikihub.md") as signed_in_session:
+        signed_in_session["_user_id"] = str(owner_user.id)
+        signed_in_session["_fresh"] = True
+    r = signed_in.get(
+        "https://wikihub.md/@agent1/domain-wiki",
+        follow_redirects=False,
+    )
+    assert r.status_code == 301
+    assert "www.example.net" not in r.headers["Location"]
+    assert r.headers["Location"].endswith(".wikihub.md/domain-wiki")
+    with signed_in.session_transaction(base_url="https://wikihub.md") as signed_in_session:
+        signed_in_session.clear()
+    # run_all keeps one outer app context; clear Flask-Login's request cache so
+    # this authenticated regression cannot leak into later independent flows.
+    from flask import g as _g
+    _g.pop("_login_user", None)
+
+    # Arbitrary fetch targets and WikiHub-owned hosts are rejected.
+    r = client.post(
+        "/api/v1/wikis/agent1/domain-wiki/custom-domains",
+        json={"hostname": "https://evil.example/path"},
+        headers=h,
+    )
+    assert r.status_code == 400
+    r = client.post(
+        "/api/v1/wikis/agent1/domain-wiki/custom-domains",
+        json={"hostname": "other.wikihub.md"},
+        headers=h,
+    )
+    assert r.status_code == 400
+
+    r = client.delete(
+        f"/api/v1/wikis/agent1/domain-wiki/custom-domains/{domain['id']}",
+        headers=h,
+    )
+    assert r.status_code == 204
+    assert CustomDomain.query.filter_by(id=domain["id"]).first() is None
+    r = client.delete(
+        f"/api/v1/wikis/agent1/domain-wiki/custom-domains/{replacement['id']}",
+        headers=h,
+    )
+    assert r.status_code == 204
+
+
+def test_data_table_render_and_sheet_refresh(client, api_key):
+    """CSV is a searchable/sortable reader page and refreshes safely into Git."""
+    import hashlib
+    from unittest.mock import patch
+    import requests as requests_lib
+    from app.git_sync import read_file_from_repo, sync_page_to_repo
+
+    h = {"Authorization": f"Bearer {api_key}"}
+    r = client.post("/api/v1/wikis", json={"slug": "table-wiki", "title": "Table Wiki"}, headers=h)
+    assert r.status_code == 201
+    sync_page_to_repo("agent1", "table-wiki", ".wikihub/acl", "* private\ndata/** public\n")
+    csv_content = "Name,City,Score\nAlice,Oakland,9\n<script>alert(1)</script>,SF,7\n"
+    r = client.post("/api/v1/wikis/agent1/table-wiki/pages", json={
+        "path": "data/body_masters.csv",
+        "content": csv_content,
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201, r.get_data(as_text=True)
+    assert read_file_from_repo("agent1", "table-wiki", "data/body_masters.csv") == csv_content
+
+    r = client.get(
+        "/@agent1/table-wiki/data/body_masters.csv",
+        headers={"Accept": "text/html"},
+    )
+    assert r.status_code == 200, r.get_data(as_text=True)[:300]
+    body = r.get_data(as_text=True)
+    assert 'data-table-view' in body
+    assert 'data-sort-column="2"' in body
+    assert "Filter rows" in body
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in body
+    assert "<script>alert(1)</script>" not in body
+
+    r = client.get("/@agent1/table-wiki/data/body_masters.csv?raw=1")
+    assert r.status_code == 200
+    assert r.data.startswith(b"Name,City,Score")
+
+    from app.data_tables import parse_delimited_bytes
+    titled = parse_delimited_bytes(b"A title,,\nName,City,Score\nAlice,Oakland,9\n", ".csv")
+    assert titled["headers"] == ["Name", "City", "Score"]
+    assert titled["header_row"] == 2
+    sparse_header = parse_delimited_bytes(b"Name,,Score\nAlice,Oakland,9\n", ".csv")
+    assert sparse_header["headers"] == ["Name", "Column 2", "Score"]
+    assert sparse_header["header_row"] == 1
+
+    browser = client.application.test_client()
+    r = browser.post("/auth/login", data={"api_key": api_key}, follow_redirects=False)
+    assert r.status_code == 302
+    r = browser.get("/@agent1/table-wiki/data/body_masters.csv/history")
+    assert r.status_code == 200
+    assert "Create data/body_masters.csv" in r.get_data(as_text=True)
+
+    source_api = "/api/v1/wikis/agent1/table-wiki/data-sources/data/body_masters.csv"
+    r = client.put(source_api, json={"source_url": "http://127.0.0.1/private"}, headers=h)
+    assert r.status_code == 400, "remote table sources must not become a generic SSRF surface"
+
+    sheet_url = "https://docs.google.com/spreadsheets/d/abc123/edit#gid=42"
+    r = client.put(source_api, json={"source_url": sheet_url}, headers=h)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert r.get_json()["source"]["csv_url"].endswith("export?format=csv&gid=42")
+    config = read_file_from_repo("agent1", "table-wiki", ".wikihub/data-sources.json")
+    assert "data/body_masters.csv" in config and sheet_url in config
+    assert read_file_from_repo("agent1", "table-wiki", ".wikihub/data-sources.json", public=True) is None
+
+    # Literal spaces in a table filename must be percent-encoded in the source
+    # API URL, not converted to Wikipedia-style underscores. This is the path
+    # used by the migrated `health/Body Masters.csv` table.
+    spaced_csv = "Name,City\nAlice,Oakland\n"
+    r = client.post("/api/v1/wikis/agent1/table-wiki/pages", json={
+        "path": "health/Body Masters.csv",
+        "content": spaced_csv,
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201, r.get_data(as_text=True)
+    r = browser.get(
+        "/@agent1/table-wiki/health/Body_Masters.csv",
+        headers={"Accept": "text/html"},
+    )
+    assert r.status_code == 200
+    assert "data-sources/health/Body%20Masters.csv" in r.get_data(as_text=True)
+    assert "data-sources/health/Body_Masters.csv" not in r.get_data(as_text=True)
+    spaced_source_api = "/api/v1/wikis/agent1/table-wiki/data-sources/health/Body%20Masters.csv"
+    r = client.put(spaced_source_api, json={"source_url": sheet_url}, headers=h)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert "health/Body Masters.csv" in read_file_from_repo(
+        "agent1", "table-wiki", ".wikihub/data-sources.json"
+    )
+
+    response = requests_lib.Response()
+    response.status_code = 200
+    response._content = b"Name,City,Score\nAlice,Oakland,10\nBob,Berkeley,8\n"
+    response._content_consumed = True
+    response.headers["Content-Type"] = "text/csv; charset=utf-8"
+    response.url = "https://docs.google.com/spreadsheets/d/abc123/export?format=csv&gid=42"
+    with patch("app.data_tables.requests.get", return_value=response) as get_sheet:
+        r = client.post(source_api + "/refresh", headers=h)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert get_sheet.call_args.kwargs["stream"] is True
+    assert r.get_json()["changed"] is True
+    saved = read_file_from_repo("agent1", "table-wiki", "data/body_masters.csv")
+    assert "Bob,Berkeley,8" in saved
+    assert "last_synced_at" in read_file_from_repo("agent1", "table-wiki", ".wikihub/data-sources.json")
+
+    page_api = "/api/v1/wikis/agent1/table-wiki/pages/data/body_masters.csv"
+    r = client.get(page_api + "?meta=1", headers=h)
+    assert r.status_code == 200
+    first_meta = r.get_json()
+    assert first_meta["content_hash"] == hashlib.sha256(saved.encode("utf-8")).hexdigest()
+
+    response = requests_lib.Response()
+    response.status_code = 200
+    response._content = b"Name,City,Score\nAlice,Oakland,11\nCharlie,Richmond,6\n"
+    response._content_consumed = True
+    response.headers["Content-Type"] = "text/csv; charset=utf-8"
+    response.url = "https://docs.google.com/spreadsheets/d/abc123/export?format=csv&gid=42"
+    with patch("app.data_tables.requests.get", return_value=response):
+        r = client.post(source_api + "/refresh", headers=h)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    second_saved = read_file_from_repo("agent1", "table-wiki", "data/body_masters.csv")
+    r = client.get(page_api + "?meta=1", headers=h)
+    assert r.status_code == 200
+    second_meta = r.get_json()
+    assert second_meta["content_hash"] == hashlib.sha256(second_saved.encode("utf-8")).hexdigest()
+    assert second_meta["content_hash"] != first_meta["content_hash"]
+    assert second_meta["updated_at"] != first_meta["updated_at"]
+    r = client.put(
+        page_api,
+        json={"content": second_saved, "visibility": "public"},
+        headers={**h, "If-Match": f'"{first_meta["content_hash"]}"'},
+    )
+    assert r.status_code == 409
+
+    r = client.get(
+        "/@agent1/table-wiki/data/body_masters.csv",
+        headers={"Accept": "text/html"},
+    )
+    assert r.status_code == 200
+    assert "Charlie" in r.get_data(as_text=True)
+
+    refreshed_csv = read_file_from_repo("agent1", "table-wiki", "data/body_masters.csv")
+    r = client.post(
+        "/api/v1/wikis/agent1/table-wiki/pages/data/body_masters.csv/visibility",
+        json={"visibility": "private"},
+        headers=h,
+    )
+    assert r.status_code == 200
+    assert read_file_from_repo("agent1", "table-wiki", "data/body_masters.csv") == refreshed_csv
+
+    tsv_content = "Name\tCity\tScore\nAlice\tOakland\t9\n"
+    r = client.post("/api/v1/wikis/agent1/table-wiki/pages", json={
+        "path": "data/body_masters.tsv",
+        "content": tsv_content,
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201, r.get_data(as_text=True)
+    assert read_file_from_repo("agent1", "table-wiki", "data/body_masters.tsv") == tsv_content
+
+    tsv_source_api = "/api/v1/wikis/agent1/table-wiki/data-sources/data/body_masters.tsv"
+    r = client.put(tsv_source_api, json={"source_url": sheet_url}, headers=h)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    response = requests_lib.Response()
+    response.status_code = 200
+    response._content = b"Name,City,Score\nAlice,Oakland,10\nBob,Berkeley,8\n"
+    response._content_consumed = True
+    response.headers["Content-Type"] = "text/csv; charset=utf-8"
+    response.url = "https://docs.google.com/spreadsheets/d/abc123/export?format=csv&gid=42"
+    with patch("app.data_tables.requests.get", return_value=response):
+        r = client.post(tsv_source_api + "/refresh", headers=h)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert read_file_from_repo(
+        "agent1", "table-wiki", "data/body_masters.tsv"
+    ) == "Name\tCity\tScore\nAlice\tOakland\t10\nBob\tBerkeley\t8\n"
+
+    r = browser.get(
+        "/@agent1/table-wiki/data/body_masters.tsv",
+        headers={"Accept": "text/html"},
+    )
+    assert r.status_code == 200
+    assert "data-source-form" in r.get_data(as_text=True)
+    assert "Git-backed TSV" in r.get_data(as_text=True)
+
+    with patch("app.data_tables.requests.get", side_effect=requests_lib.Timeout("timed out")):
+        r = client.post(source_api + "/refresh", headers=h)
+    assert r.status_code == 422
+    assert "could not be downloaded" in r.get_json()["message"]
+
+    unsafe_redirect = requests_lib.Response()
+    unsafe_redirect.status_code = 302
+    unsafe_redirect._content_consumed = True
+    unsafe_redirect.headers["Location"] = "http://docs.googleusercontent.com/export.csv"
+    with patch("app.data_tables.requests.get", return_value=unsafe_redirect):
+        r = client.post(source_api + "/refresh", headers=h)
+    assert r.status_code == 422
+    assert "unsafe destination" in r.get_json()["message"]
+
+    from app.data_tables import MAX_SOURCE_BYTES
+
+    class OversizedStream:
+        status_code = 200
+        headers = {"Content-Type": "text/csv"}
+        closed = False
+
+        def raise_for_status(self):
+            return None
+
+        def iter_content(self, chunk_size):
+            yield b"x" * MAX_SOURCE_BYTES
+            yield b"y"
+            raise AssertionError("oversized downloads must stop immediately")
+
+        def close(self):
+            self.closed = True
+
+    oversized = OversizedStream()
+    with patch("app.data_tables.requests.get", return_value=oversized):
+        r = client.post(source_api + "/refresh", headers=h)
+    assert r.status_code == 422
+    assert "larger than" in r.get_json()["message"]
+    assert oversized.closed is True
+
 def test_cli(client):
     """CLI end-to-end: credential handling + every subcommand against a
     real app via a requests→flask-test-client shim."""
@@ -6079,7 +6517,6 @@ def test_history_route_acl_gated_for_private_wiki(client, api_key):
         "visibility": "private",
     }, headers=h)
     assert r.status_code == 201
-
     # Clear any leaked login from prior tests.
     from flask_login import logout_user
     app = client.application
@@ -6094,6 +6531,17 @@ def test_history_route_acl_gated_for_private_wiki(client, api_key):
     )
     anon_body = r.data.decode("utf-8", errors="replace")
     assert "secret.md" not in anon_body, "anon history leaked private filename"
+    r = client.post("/api/v1/wikis/agent1/acl-hist-priv/pages", json={
+        "path": "public.md",
+        "content": "---\ntitle: Public\nvisibility: public\n---\n\npublic history marker",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201
+    r = anon.get("/@agent1/acl-hist-priv/secret/history")
+    assert r.status_code in (401, 403, 404), (
+        f"anon got {r.status_code} on private page history — expected 4xx"
+    )
+    assert "secret.md" not in r.get_data(as_text=True), "anon page history leaked private filename"
 
     # Now exercise the owner branch.
     owner = app.test_client()
@@ -7274,14 +7722,14 @@ def test_empty_sidebar_copy(app, client, api_key):
     """wikihub-l3z2: a wiki with no visible pages shows explicit copy, not blankness."""
     # fresh owner with a password so we can drive a logged-in browser session
     r = client.post("/api/v1/accounts", json={"username": "hollowowner", "password": "testpass12345"})
-    assert r.status_code == 201
+    assert r.status_code == 201, f"hollow owner creation: {r.status_code} {r.get_data(as_text=True)}"
     oh = {"Authorization": f"Bearer {r.get_json()['api_key']}"}
     r = client.post("/api/v1/wikis", json={"slug": "hollow", "title": "Hollow"}, headers=oh)
-    assert r.status_code == 201
+    assert r.status_code == 201, f"hollow wiki creation: {r.status_code} {r.get_data(as_text=True)}"
 
     browser = app.test_client()
     login = browser.post("/auth/login", data={"username": "hollowowner", "password": "testpass12345"}, follow_redirects=False)
-    assert login.status_code == 302
+    assert login.status_code == 302, f"hollow owner login: {login.status_code} {login.get_data(as_text=True)}"
     # owner views the brand-new empty wiki (folder.html render, empty sidebar)
     r = browser.get("/@hollowowner/hollow")
     assert r.status_code == 200, f"owner empty-wiki view: {r.status_code}"
@@ -7422,6 +7870,8 @@ def run_all():
             ("private surface offers request access", lambda: test_permission_error_offers_request_access(client, key)),
             ("access requests stay ambiguous + notify existing target", lambda: test_access_request_constant_response_and_notify_existing_target(client)),
             ("subdomain routing", lambda: test_subdomain_routing(client)),
+            ("custom domain lifecycle + routing (wikihub-9nfh)", lambda: test_custom_domain_lifecycle_and_routing(client, key)),
+            ("data table render + Sheet refresh (wikihub-291.1)", lambda: test_data_table_render_and_sheet_refresh(client, key)),
             ("agent chat blocks cross-user private read (wikihub-7w40)", lambda: test_agent_chat_blocks_cross_user_private_read(client, key)),
             ("agent chat anon session blocked (wikihub-7w40)", lambda: test_agent_chat_anon_session_blocked(client)),
             ("agent chat session locked to creator (wikihub-7w40)", lambda: test_agent_chat_session_locked_to_creator(client, key)),

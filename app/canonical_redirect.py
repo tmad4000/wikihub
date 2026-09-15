@@ -1,12 +1,13 @@
-"""Redirect /@user/... URLs to the canonical subdomain when one exists.
+"""Redirect /@user/... URLs to the canonical host when one exists.
 
-Runs as a Flask before_request handler. Only fires on the apex host
-(not when the request is already on a user/wiki subdomain — that's already
-handled by subdomain_middleware).
+Runs as a Flask before_request handler. On the apex host it chooses the active
+custom domain, wiki subdomain, or user subdomain. On a recognized mapped host it
+only strips a redundant /@user/wiki prefix left in an internal URL.
 
 Scope of redirects (intentionally narrow for safety):
 - /@<user>                          -> https://<user>.wikihub.md/
-- /@<user>/<slug>                   -> https://<sub>.wikihub.md/  (if wiki has subdomain)
+- /@<user>/<slug>                   -> https://<custom-domain>/  (if active with HTTPS)
+                                    -> https://<sub>.wikihub.md/  (if wiki has subdomain)
                                     -> https://<user>.wikihub.md/<slug>  (fallback to user profile subdomain)
 - /@<user>/<slug>/<path>            -> same rules, with /<path> appended
 
@@ -19,9 +20,9 @@ We DO NOT redirect:
 """
 
 import re
-from flask import request, redirect
+from flask import redirect, request, session
 
-from app.models import User, Wiki
+from app.models import CustomDomain, User, Wiki
 from app.subdomains import CANONICAL_SUFFIX, is_reserved, SYSTEM_SUBDOMAIN_USERS
 
 _USER_PATH_RE = re.compile(r"^/@([a-z0-9_-]+)(?:/([^/]+)(?:/(.*))?)?$")
@@ -72,8 +73,9 @@ def maybe_redirect():
         return None
 
     host = (request.host or "").lower().split(":")[0]
-    only_wikihub_md = host == "wikihub.md" or host.endswith(".wikihub.md")
-    if not only_wikihub_md:
+    host_kind = request.environ.get("wikihub.host_kind")
+    is_wikihub_host = host == "wikihub.md" or host.endswith(".wikihub.md")
+    if not is_wikihub_host and host_kind != "custom":
         return None
 
     m = _USER_PATH_RE.match(path)
@@ -81,9 +83,8 @@ def maybe_redirect():
         return None
     username, slug, rest = m.group(1), m.group(2), m.group(3)
 
-    # Case 2: we're on a subdomain and the path redundantly includes /@<user>/<slug>.
+    # Case 2: we're on a mapped host and the path redundantly includes /@<user>/<slug>.
     # Rewrite to the short canonical form on the same host so URL bar stays pretty.
-    host_kind = request.environ.get("wikihub.host_kind")
     host_name = request.environ.get("wikihub.host_name")
     if host_kind == "user" and host_name == username:
         # on <user>.wikihub.md, strip "/@<user>" prefix
@@ -98,8 +99,14 @@ def maybe_redirect():
             short_tail = "/" + rest if rest else "/"
             qs = "?" + request.query_string.decode() if request.query_string else ""
             return redirect(f"https://{host}{short_tail}{qs}", code=301)
+    if host_kind == "custom":
+        domain = CustomDomain.query.filter_by(hostname=host_name).first()
+        if domain and domain.wiki.owner.username == username and domain.wiki.slug == slug:
+            short_tail = "/" + rest if rest else "/"
+            qs = "?" + request.query_string.decode() if request.query_string else ""
+            return redirect(f"https://{host}{short_tail}{qs}", code=301)
     if host_kind is not None:
-        # we're on a subdomain but the /@path doesn't match; leave alone
+        # we're on a mapped host but the /@path doesn't match; leave alone
         return None
 
     # Case 1: we're on apex wikihub.md (or www). Redirect to canonical subdomain.
@@ -129,7 +136,18 @@ def maybe_redirect():
         return None
 
     tail = ("/" + rest) if rest else "/"
-    if wiki.subdomain:
+    # WikiHub's session cookie intentionally covers *.wikihub.md, not arbitrary
+    # customer domains. Keep authenticated reads on a WikiHub hostname so an
+    # owner or collaborator is never redirected into an anonymous session.
+    custom_domain = None
+    if not session.get("_user_id"):
+        custom_domain = wiki.custom_domains.filter_by(
+            status="active",
+            tls_status="active",
+        ).order_by(CustomDomain.id.asc()).first()
+    if custom_domain:
+        target = f"{scheme}://{custom_domain.hostname}{tail}{qs}"
+    elif wiki.subdomain:
         target = f"{scheme}://{wiki.subdomain}{CANONICAL_SUFFIX}{tail}{qs}"
     else:
         # fall back to user profile subdomain (reserved non-system users skip)
