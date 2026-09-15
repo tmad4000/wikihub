@@ -6298,7 +6298,6 @@ def test_history_route_acl_gated_for_private_wiki(client, api_key):
         "visibility": "private",
     }, headers=h)
     assert r.status_code == 201
-
     # Clear any leaked login from prior tests.
     from flask_login import logout_user
     app = client.application
@@ -6313,6 +6312,17 @@ def test_history_route_acl_gated_for_private_wiki(client, api_key):
     )
     anon_body = r.data.decode("utf-8", errors="replace")
     assert "secret.md" not in anon_body, "anon history leaked private filename"
+    r = client.post("/api/v1/wikis/agent1/acl-hist-priv/pages", json={
+        "path": "public.md",
+        "content": "---\ntitle: Public\nvisibility: public\n---\n\npublic history marker",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201
+    r = anon.get("/@agent1/acl-hist-priv/secret/history")
+    assert r.status_code in (401, 403, 404), (
+        f"anon got {r.status_code} on private page history — expected 4xx"
+    )
+    assert "secret.md" not in r.get_data(as_text=True), "anon page history leaked private filename"
 
     # Now exercise the owner branch.
     owner = app.test_client()

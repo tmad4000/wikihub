@@ -1598,13 +1598,28 @@ def page_history(username, slug, folder_path):
     raw_folder_path = folder_path
     folder_path = page_path_from_url_path(folder_path)
     owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
-    page = Page.query.filter_by(wiki_id=wiki.id, path=raw_folder_path).first()
-    if page is None and raw_folder_path != folder_path:
-        page = Page.query.filter_by(wiki_id=wiki.id, path=folder_path).first()
-    if page is not None:
-        path = page.path
-    else:
-        path = raw_folder_path if raw_folder_path.endswith(".md") else f"{raw_folder_path}.md"
+    candidates = list(dict.fromkeys((raw_folder_path, folder_path)))
+    page = next(
+        (
+            match
+            for candidate in candidates
+            if (match := Page.query.filter_by(wiki_id=wiki.id, path=candidate).first()) is not None
+        ),
+        None,
+    )
+    if page is None:
+        markdown_candidates = [candidate if candidate.endswith(".md") else f"{candidate}.md" for candidate in candidates]
+        page = next(
+            (
+                match
+                for candidate in markdown_candidates
+                if (match := Page.query.filter_by(wiki_id=wiki.id, path=candidate).first()) is not None
+            ),
+            None,
+        )
+    path = page.path if page is not None else (
+        raw_folder_path if raw_folder_path.endswith(".md") else f"{raw_folder_path}.md"
+    )
     if _is_wikihub_plumbing_path(path):
         abort(404)
     acl_rules = load_acl_rules(owner.username, wiki.slug)
