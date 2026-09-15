@@ -53,7 +53,7 @@
       <span class="data-source-state">{{ 'Connected' if source else 'Optional' }}</span>
     </summary>
     <div class="data-source-body">
-      <p>Keep this Git-backed CSV refreshable from a public Google Sheet. Readers always see the saved WikiHub copy.</p>
+      <p>Keep this Git-backed {{ extension[1:]|upper }} refreshable from a public Google Sheet. Readers always see the saved WikiHub copy.</p>
       <form data-source-form>
         <label for="data-source-url">Public Google Sheets URL</label>
         <div class="data-source-input-row">
@@ -210,7 +210,7 @@
   });
   var remove = root.querySelector('[data-source-remove]');
   if (remove) remove.addEventListener('click', async function() {
-    if (!window.confirm('Disconnect this source? The saved CSV stays in the wiki.')) return;
+    if (!window.confirm('Disconnect this source? The saved table stays in the wiki.')) return;
     var response = await fetch(sourceApi, {method:'DELETE'});
     if (response.ok) window.location.reload();
     else setSourceStatus('Could not disconnect source.', true);

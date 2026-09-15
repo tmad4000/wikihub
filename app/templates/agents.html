@@ -133,9 +133,9 @@ POST /api/v1/wikis/{owner}/{slug}/custom-domains/{domain_id}/verify
 DELETE /api/v1/wikis/{owner}/{slug}/custom-domains/{domain_id}</pre></div>
 
   <h2>CSV, TSV, and published Google Sheets</h2>
-  <p>Committed <code>.csv</code> and <code>.tsv</code> files render as first-class browser tables and remain available byte-for-byte with <code>?raw=1</code>. Owners can connect a public Google Sheet to a CSV path and commit refreshed exports to Git while retaining the page's ACL visibility.</p>
-  <div class="code-block"><pre>GET|PUT|DELETE /api/v1/wikis/{owner}/{slug}/data-sources/{csv_path}
-POST /api/v1/wikis/{owner}/{slug}/data-sources/{csv_path}/refresh
+  <p>Committed <code>.csv</code> and <code>.tsv</code> files render as first-class browser tables and remain available byte-for-byte with <code>?raw=1</code>. Owners can connect a public Google Sheet to a CSV or TSV path and commit refreshed exports to Git while retaining the page's ACL visibility.</p>
+  <div class="code-block"><pre>GET|PUT|DELETE /api/v1/wikis/{owner}/{slug}/data-sources/{table_path}
+POST /api/v1/wikis/{owner}/{slug}/data-sources/{table_path}/refresh
 
 PUT body: {"source_url":"https://docs.google.com/spreadsheets/d/..."}</pre></div>
 

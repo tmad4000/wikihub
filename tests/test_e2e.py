@@ -899,12 +899,15 @@ def test_agent_surfaces(client):
         body = client.get(url).get_data(as_text=True)
         assert "custom-domains" in body
         assert "data-sources" in body
+        assert "table_path" in body
     server_card = client.get("/.well-known/mcp/server-card.json").get_json()
     assert "custom-domains" in server_card["rest_api"]["custom_domains"]
     assert "data-sources" in server_card["rest_api"]["table_source"]
+    assert "table_path" in server_card["rest_api"]["table_source"]
     manifest = client.get("/.well-known/wikihub.json").get_json()
     assert "custom-domains" in manifest["endpoints"]["custom_domains"]
     assert "data-sources" in manifest["endpoints"]["table_source"]
+    assert "table_path" in manifest["endpoints"]["table_source"]
 
 
 def test_a2hs_banner_gated_to_mobile(client):
@@ -4700,7 +4703,7 @@ def test_custom_domain_lifecycle_and_routing(client, api_key):
     assert r.status_code == 200, r.get_data(as_text=True)[:300]
     assert "Domain Home" in r.get_data(as_text=True)
 
-    from app.git_sync import sync_page_to_repo
+    from app.git_sync import read_file_from_repo, sync_page_to_repo
     sync_page_to_repo(
         "agent1",
         "domain-wiki",
@@ -4711,10 +4714,49 @@ def test_custom_domain_lifecycle_and_routing(client, api_key):
     assert r.status_code == 301
     assert r.headers["Location"] == "/#top"
 
+    runner = client.application.test_cli_runner()
+    result = runner.invoke(args=[
+        "wikihub",
+        "activate-custom-domain",
+        "notes.example.net",
+        "--tls-status",
+        "pending",
+    ])
+    assert result.exit_code != 0
+    assert "TLS must be active" in result.output
+    db.session.expire_all()
     row = CustomDomain.query.filter_by(id=domain["id"]).first()
+    assert row.status == "verified"
+    assert row.tls_status == "pending"
+
+    # Canonical selection remains safe even if an inconsistent row bypasses
+    # the CLI (for example, from a partial/manual migration).
     row.status = "active"
-    row.tls_status = "active"
     db.session.commit()
+    r = client.get("/@agent1/domain-wiki", headers={"Host": "wikihub.md"})
+    assert r.status_code == 301
+    assert r.headers["Location"] != "https://notes.example.net/"
+    row.status = "verified"
+    db.session.commit()
+
+    result = runner.invoke(args=[
+        "wikihub",
+        "activate-custom-domain",
+        "notes.example.net",
+        "--tls-status",
+        "active",
+    ])
+    assert result.exit_code == 0, result.output
+    events = [
+        json.loads(line)
+        for line in read_file_from_repo(
+            "agent1", "domain-wiki", ".wikihub/events.jsonl"
+        ).splitlines()
+    ]
+    activation = [event for event in events if event["type"] == "custom_domain.activate"][-1]
+    assert activation["hostname"] == "notes.example.net"
+    assert activation["tls_status"] == "active"
+
     r = client.get("/@agent1/domain-wiki", headers={"Host": "wikihub.md"})
     assert r.status_code == 301
     assert r.headers["Location"] == "https://notes.example.net/"
@@ -4759,11 +4801,14 @@ def test_data_table_render_and_sheet_refresh(client, api_key):
     r = client.post("/api/v1/wikis", json={"slug": "table-wiki", "title": "Table Wiki"}, headers=h)
     assert r.status_code == 201
     sync_page_to_repo("agent1", "table-wiki", ".wikihub/acl", "* private\ndata/** public\n")
+    csv_content = "Name,City,Score\nAlice,Oakland,9\n<script>alert(1)</script>,SF,7\n"
     r = client.post("/api/v1/wikis/agent1/table-wiki/pages", json={
         "path": "data/body_masters.csv",
-        "content": "Name,City,Score\nAlice,Oakland,9\n<script>alert(1)</script>,SF,7\n",
+        "content": csv_content,
+        "visibility": "public",
     }, headers=h)
     assert r.status_code == 201, r.get_data(as_text=True)
+    assert read_file_from_repo("agent1", "table-wiki", "data/body_masters.csv") == csv_content
 
     r = client.get(
         "/@agent1/table-wiki/data/body_masters.csv",
@@ -4829,6 +4874,48 @@ def test_data_table_render_and_sheet_refresh(client, api_key):
     )
     assert r.status_code == 200
     assert "Bob" in r.get_data(as_text=True)
+
+    refreshed_csv = read_file_from_repo("agent1", "table-wiki", "data/body_masters.csv")
+    r = client.post(
+        "/api/v1/wikis/agent1/table-wiki/pages/data/body_masters.csv/visibility",
+        json={"visibility": "private"},
+        headers=h,
+    )
+    assert r.status_code == 200
+    assert read_file_from_repo("agent1", "table-wiki", "data/body_masters.csv") == refreshed_csv
+
+    tsv_content = "Name\tCity\tScore\nAlice\tOakland\t9\n"
+    r = client.post("/api/v1/wikis/agent1/table-wiki/pages", json={
+        "path": "data/body_masters.tsv",
+        "content": tsv_content,
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201, r.get_data(as_text=True)
+    assert read_file_from_repo("agent1", "table-wiki", "data/body_masters.tsv") == tsv_content
+
+    tsv_source_api = "/api/v1/wikis/agent1/table-wiki/data-sources/data/body_masters.tsv"
+    r = client.put(tsv_source_api, json={"source_url": sheet_url}, headers=h)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    response = requests_lib.Response()
+    response.status_code = 200
+    response._content = b"Name,City,Score\nAlice,Oakland,10\nBob,Berkeley,8\n"
+    response._content_consumed = True
+    response.headers["Content-Type"] = "text/csv; charset=utf-8"
+    response.url = "https://docs.google.com/spreadsheets/d/abc123/export?format=csv&gid=42"
+    with patch("app.data_tables.requests.get", return_value=response):
+        r = client.post(tsv_source_api + "/refresh", headers=h)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert read_file_from_repo(
+        "agent1", "table-wiki", "data/body_masters.tsv"
+    ) == "Name\tCity\tScore\nAlice\tOakland\t10\nBob\tBerkeley\t8\n"
+
+    r = browser.get(
+        "/@agent1/table-wiki/data/body_masters.tsv",
+        headers={"Accept": "text/html"},
+    )
+    assert r.status_code == 200
+    assert "data-source-form" in r.get_data(as_text=True)
+    assert "Git-backed TSV" in r.get_data(as_text=True)
 
     with patch("app.data_tables.requests.get", side_effect=requests_lib.Timeout("timed out")):
         r = client.post(source_api + "/refresh", headers=h)

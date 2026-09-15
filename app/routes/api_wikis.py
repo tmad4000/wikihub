@@ -180,6 +180,24 @@ def _stored_page_visibility(*candidates):
     return "private"
 
 
+def _is_delimited_table_path(path):
+    return os.path.splitext(path or "")[1].lower() in {".csv", ".tsv"}
+
+
+def _set_page_visibility_in_content(path, content, visibility):
+    """Keep CSV/TSV bytes valid; their visibility lives in Page metadata."""
+    if _is_delimited_table_path(path):
+        return content
+    return set_visibility_in_content(content, visibility)
+
+
+def _page_frontmatter(path, content):
+    if _is_delimited_table_path(path):
+        return {}
+    frontmatter, _ = parse_markdown_document(content)
+    return frontmatter
+
+
 # --- wiki endpoints ---
 
 @api_bp.route("/wikis", methods=["GET"])
@@ -511,9 +529,9 @@ def delete_custom_domain(owner, slug, domain_id):
 def _data_source_path(raw_path):
     from app.page_utils import normalize_repo_path
     # Data files are addressed by their literal repo path. Unlike Markdown
-    # reader URLs, underscores in CSV filenames must not become spaces.
+    # reader URLs, underscores in CSV/TSV filenames must not become spaces.
     path = normalize_repo_path(raw_path)
-    if not path.lower().endswith(".csv") or _is_wikihub_plumbing_path(path):
+    if os.path.splitext(path)[1].lower() not in {".csv", ".tsv"} or _is_wikihub_plumbing_path(path):
         return None
     return path
 
@@ -528,7 +546,7 @@ def get_data_source(owner, slug, page_path):
         return {"error": "forbidden", "message": "Only the owner can manage data sources"}, 403
     path = _data_source_path(page_path)
     if not path:
-        return {"error": "bad_request", "message": "Published Sheet sources must target a .csv file"}, 400
+        return {"error": "bad_request", "message": "Published Sheet sources must target a .csv or .tsv file"}, 400
     from app.data_tables import load_data_sources
     source = load_data_sources(owner_user.username, wiki.slug).get(path)
     return jsonify({"path": path, "source": source})
@@ -545,7 +563,7 @@ def put_data_source(owner, slug, page_path):
         return {"error": "forbidden", "message": "Only the owner can manage data sources"}, 403
     path = _data_source_path(page_path)
     if not path:
-        return {"error": "bad_request", "message": "Published Sheet sources must target a .csv file"}, 400
+        return {"error": "bad_request", "message": "Published Sheet sources must target a .csv or .tsv file"}, 400
 
     from app.data_tables import DATA_SOURCES_PATH, TableSourceError, dump_data_sources, load_data_sources, source_record
     data = request.get_json(silent=True) or {}
@@ -578,7 +596,7 @@ def delete_data_source(owner, slug, page_path):
         return {"error": "forbidden", "message": "Only the owner can manage data sources"}, 403
     path = _data_source_path(page_path)
     if not path:
-        return {"error": "bad_request", "message": "Published Sheet sources must target a .csv file"}, 400
+        return {"error": "bad_request", "message": "Published Sheet sources must target a .csv or .tsv file"}, 400
     from app.data_tables import DATA_SOURCES_PATH, dump_data_sources, load_data_sources
     sources = load_data_sources(owner_user.username, wiki.slug)
     if path not in sources:
@@ -608,7 +626,7 @@ def refresh_data_source(owner, slug, page_path):
         return {"error": "forbidden", "message": "Only the owner can refresh data sources"}, 403
     path = _data_source_path(page_path)
     if not path:
-        return {"error": "bad_request", "message": "Published Sheet sources must target a .csv file"}, 400
+        return {"error": "bad_request", "message": "Published Sheet sources must target a .csv or .tsv file"}, 400
 
     from app.data_tables import (
         DATA_SOURCES_PATH,
@@ -623,7 +641,10 @@ def refresh_data_source(owner, slug, page_path):
     if not source:
         return {"error": "not_found", "message": "No published Sheet source is configured for this table"}, 404
     try:
-        csv_bytes = fetch_sheet_csv(source.get("source_url"))
+        table_bytes = fetch_sheet_csv(
+            source.get("source_url"),
+            destination_extension=os.path.splitext(path)[1],
+        )
     except TableSourceError as exc:
         return {"error": "source_error", "message": str(exc)}, 422
 
@@ -633,7 +654,7 @@ def refresh_data_source(owner, slug, page_path):
         owner_user.username,
         wiki.slug,
         [
-            {"action": "write", "path": path, "content": csv_bytes},
+            {"action": "write", "path": path, "content": table_bytes},
             {"action": "write", "path": DATA_SOURCES_PATH, "content": dump_data_sources(sources)},
         ],
         f"Refresh {path} from published Google Sheet",
@@ -647,7 +668,7 @@ def refresh_data_source(owner, slug, page_path):
     return jsonify({
         "path": path,
         "changed": bool(changed),
-        "bytes": len(csv_bytes),
+        "bytes": len(table_bytes),
         "source": sources[path],
         "url": f"/@{owner_user.username}/{wiki.slug}/{url_path_from_page_path(path, strip_md=False)}",
     })
@@ -854,7 +875,7 @@ def create_page(owner, slug):
     data = request.get_json(silent=True) or {}
     path = data.get("path", "").strip()
     content = data.get("content", "")
-    visibility = data.get("visibility")
+    requested_visibility = data.get("visibility")
     anonymous = bool(data.get("anonymous", False))
     # when anonymous, claimable defaults to True per wikihub-7b2r spec
     claimable = bool(data.get("claimable", True)) if anonymous else False
@@ -886,14 +907,18 @@ def create_page(owner, slug):
         if not can_write(path, acl_rules, _current_username(), inherited_visibility):
             return {"error": "forbidden", "message": "You need edit access to this page"}, 403
 
-    if is_owner and visibility:
-        content = set_visibility_in_content(content, visibility)
+    if is_owner and requested_visibility:
+        content = _set_page_visibility_in_content(path, content, requested_visibility)
 
-    frontmatter, _ = parse_markdown_document(content)
-    visibility = frontmatter.get("visibility") or resolve_visibility(path, acl_rules)
+    frontmatter = _page_frontmatter(path, content)
+    visibility = (
+        frontmatter.get("visibility")
+        or (requested_visibility if is_owner else None)
+        or resolve_visibility(path, acl_rules)
+    )
     if not is_owner and visibility != resolve_visibility(path, acl_rules):
         visibility = resolve_visibility(path, acl_rules)
-        content = set_visibility_in_content(content, visibility)
+        content = _set_page_visibility_in_content(path, content, visibility)
 
     # Store the page-level enum, not an ACL-file token. resolve_visibility() can
     # return `unlisted-view`/`public-view`; persist `unlisted`/`public` so the DB
@@ -1154,11 +1179,11 @@ def replace_page(owner, slug, page_path):
     if new_visibility and not is_owner:
         return {"error": "forbidden", "message": "Only the owner can change visibility"}, 403
     if is_owner and new_visibility:
-        content = set_visibility_in_content(content, new_visibility)
+        content = _set_page_visibility_in_content(page.path, content, new_visibility)
     elif not is_owner:
-        content = set_visibility_in_content(content, page.visibility)
+        content = _set_page_visibility_in_content(page.path, content, page.visibility)
 
-    frontmatter, _ = parse_markdown_document(content)
+    frontmatter = _page_frontmatter(page.path, content)
     page.visibility = _stored_page_visibility(frontmatter.get("visibility"), new_visibility, page.visibility, resolve_visibility(page.path, acl_rules))
     update_page_metadata(page, content, frontmatter)
     page.author = _current_username()
@@ -1236,10 +1261,11 @@ def patch_page(owner, slug, page_path):
             return {"error": "bad_request", "message": "append_section requires heading and content"}, 400
         updated_content = current_content.rstrip() + f"\n\n## {heading}\n\n{section_content}\n"
 
+    visibility_path = new_path or page.path
     if is_owner and requested_visibility:
-        updated_content = set_visibility_in_content(updated_content, requested_visibility)
+        updated_content = _set_page_visibility_in_content(visibility_path, updated_content, requested_visibility)
     elif not is_owner:
-        updated_content = set_visibility_in_content(updated_content, page.visibility)
+        updated_content = _set_page_visibility_in_content(visibility_path, updated_content, page.visibility)
 
     author_name, author_email = _current_author()
 
@@ -1278,7 +1304,7 @@ def patch_page(owner, slug, page_path):
 
         for candidate, target_path, rewritten in rewritten_pages:
             candidate.path = target_path
-            frontmatter, _ = parse_markdown_document(rewritten)
+            frontmatter = _page_frontmatter(target_path, rewritten)
             candidate.visibility = _stored_page_visibility(frontmatter.get("visibility"), resolve_visibility(target_path, acl_rules))
             candidate.author = _current_username() if candidate.id == page.id else candidate.author
             update_page_metadata(candidate, rewritten, frontmatter)
@@ -1286,7 +1312,7 @@ def patch_page(owner, slug, page_path):
         for candidate, _, rewritten in rewritten_pages:
             refresh_wikilinks_for_page(candidate, rewritten)
     else:
-        frontmatter, _ = parse_markdown_document(updated_content)
+        frontmatter = _page_frontmatter(page.path, updated_content)
         page.visibility = _stored_page_visibility(frontmatter.get("visibility"), requested_visibility, page.visibility, resolve_visibility(page.path, acl_rules))
         page.author = _current_username()
         update_page_metadata(page, updated_content, frontmatter)
@@ -1371,8 +1397,8 @@ def set_page_visibility(owner, slug, page_path):
         return {"error": "bad_request", "message": "visibility is required"}, 400
 
     content = read_file_from_repo(owner_user.username, wiki.slug, page.path, public=False) or ""
-    content = set_visibility_in_content(content, visibility)
-    frontmatter, _ = parse_markdown_document(content)
+    content = _set_page_visibility_in_content(page.path, content, visibility)
+    frontmatter = _page_frontmatter(page.path, content)
     page.visibility = _stored_page_visibility(frontmatter.get("visibility"), visibility)
     update_page_metadata(page, content, frontmatter)
     refresh_wikilinks_for_page(page, content)
@@ -1422,8 +1448,8 @@ def bulk_visibility(owner, slug):
         if not page:
             continue
         content = read_file_from_repo(owner_user.username, wiki.slug, page.path, public=False) or ""
-        content = set_visibility_in_content(content, visibility)
-        frontmatter, _ = parse_markdown_document(content)
+        content = _set_page_visibility_in_content(page.path, content, visibility)
+        frontmatter = _page_frontmatter(page.path, content)
         page.visibility = _stored_page_visibility(frontmatter.get("visibility"), visibility)
         update_page_metadata(page, content, frontmatter)
         refresh_wikilinks_for_page(page, content)
@@ -2186,8 +2212,7 @@ def revert_page(owner, slug):
     # update DB
     page = Page.query.filter_by(wiki_id=wiki.id, path=path).first()
     if page:
-        from app.content_utils import parse_markdown_document
-        frontmatter, _ = parse_markdown_document(content)
+        frontmatter = _page_frontmatter(path, content)
         acl_rules = load_acl_rules(owner_user.username, wiki.slug)
         page.visibility = _stored_page_visibility(frontmatter.get("visibility"), page.visibility, resolve_visibility(page.path, acl_rules))
         update_page_metadata(page, content, frontmatter)

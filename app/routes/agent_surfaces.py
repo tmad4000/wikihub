@@ -58,7 +58,7 @@ def llms_txt():
         "- Magic sign-in: POST /api/v1/auth/magic-link with Bearer OR {username,password} — returns a one-time browser login URL",
         "- Git: clone/push with https://username:wh_KEY@host/@user/wiki.git",
         "- Custom domains: GET/POST /api/v1/wikis/{owner}/{slug}/custom-domains; verify or delete by domain ID",
-        "- Published Sheet tables: GET/PUT/DELETE /api/v1/wikis/{owner}/{slug}/data-sources/{csv_path}; POST the /refresh suffix",
+        "- Published Sheet tables: GET/PUT/DELETE /api/v1/wikis/{owner}/{slug}/data-sources/{table_path}; POST the /refresh suffix for CSV or TSV",
         "- MCP: /mcp (add to your agent's mcpServers config)",
         "- CLI: `pipx install wikihub-cli` then `wikihub signup`, `wikihub write`, `wikihub read`, `wikihub search` (see /AGENTS.md)",
         "",
@@ -369,15 +369,15 @@ ownership; an operator activates HTTPS after the certificate is ready.
 
 Committed `.csv` and `.tsv` files render as tables in the browser and remain
 available byte-for-byte with `?raw=1`. Owners can connect a public Google Sheet
-to a CSV path and commit refreshed exports to Git:
+to a CSV or TSV path and commit refreshed exports to Git:
 
 ```
-GET|PUT|DELETE /api/v1/wikis/{owner}/{slug}/data-sources/{csv_path}
-POST /api/v1/wikis/{owner}/{slug}/data-sources/{csv_path}/refresh
+GET|PUT|DELETE /api/v1/wikis/{owner}/{slug}/data-sources/{table_path}
+POST /api/v1/wikis/{owner}/{slug}/data-sources/{table_path}/refresh
 ```
 
 `PUT` accepts `{"source_url":"https://docs.google.com/spreadsheets/d/..."}`.
-Source configuration is private wiki plumbing; refreshed CSV data keeps the
+Source configuration is private wiki plumbing; refreshed table data keeps the
 target page's existing ACL visibility.
 
 ## poll page metadata
@@ -657,8 +657,8 @@ def mcp_server_card():
         "documentation": request.host_url.rstrip("/") + "/agents",
         "rest_api": {
             "custom_domains": "/api/v1/wikis/{owner}/{slug}/custom-domains",
-            "table_source": "/api/v1/wikis/{owner}/{slug}/data-sources/{csv_path}",
-            "refresh_table_source": "/api/v1/wikis/{owner}/{slug}/data-sources/{csv_path}/refresh",
+            "table_source": "/api/v1/wikis/{owner}/{slug}/data-sources/{table_path}",
+            "refresh_table_source": "/api/v1/wikis/{owner}/{slug}/data-sources/{table_path}/refresh",
         },
         "tools": MCP_TOOLS,
     })
@@ -707,8 +707,8 @@ def wikihub_bootstrap():
         "llms_txt": base + "/llms.txt",
         "endpoints": {
             "custom_domains": base + "/api/v1/wikis/{owner}/{slug}/custom-domains",
-            "table_source": base + "/api/v1/wikis/{owner}/{slug}/data-sources/{csv_path}",
-            "refresh_table_source": base + "/api/v1/wikis/{owner}/{slug}/data-sources/{csv_path}/refresh",
+            "table_source": base + "/api/v1/wikis/{owner}/{slug}/data-sources/{table_path}",
+            "refresh_table_source": base + "/api/v1/wikis/{owner}/{slug}/data-sources/{table_path}/refresh",
         },
         "cli": {
             "name": "wikihub-cli",

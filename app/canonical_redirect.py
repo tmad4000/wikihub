@@ -135,7 +135,10 @@ def maybe_redirect():
         return None
 
     tail = ("/" + rest) if rest else "/"
-    custom_domain = wiki.custom_domains.filter_by(status="active").order_by(CustomDomain.id.asc()).first()
+    custom_domain = wiki.custom_domains.filter_by(
+        status="active",
+        tls_status="active",
+    ).order_by(CustomDomain.id.asc()).first()
     if custom_domain:
         target = f"{scheme}://{custom_domain.hostname}{tail}{qs}"
     elif wiki.subdomain:

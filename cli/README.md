@@ -85,13 +85,13 @@ GET|POST /api/v1/wikis/{owner}/{slug}/custom-domains
 POST /api/v1/wikis/{owner}/{slug}/custom-domains/{domain_id}/verify
 DELETE /api/v1/wikis/{owner}/{slug}/custom-domains/{domain_id}
 
-GET|PUT|DELETE /api/v1/wikis/{owner}/{slug}/data-sources/{csv_path}
-POST /api/v1/wikis/{owner}/{slug}/data-sources/{csv_path}/refresh
+GET|PUT|DELETE /api/v1/wikis/{owner}/{slug}/data-sources/{table_path}
+POST /api/v1/wikis/{owner}/{slug}/data-sources/{table_path}/refresh
 ```
 
 Custom-domain creation returns the TXT verification record and DNS target.
 Table-source `PUT` accepts a public Google Sheets URL as `source_url`; refresh
-commits the exported CSV and private source metadata to the wiki repository.
+commits the exported CSV/TSV and private source metadata to the wiki repository.
 
 `read` uses the REST page-read endpoint's access semantics: a missing page is
 `404 not_found`, while an existing page outside the active profile's read access

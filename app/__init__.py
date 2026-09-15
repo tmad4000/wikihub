@@ -217,6 +217,7 @@ def create_app(config_class="config.Config"):
     def activate_custom_domain_command(hostname, tls_status):
         """Mark an ownership-verified domain ready after the TLS/DNS cutover."""
         from app.custom_domains import normalize_custom_hostname
+        from app.git_sync import append_event_to_repo
         from app.models import CustomDomain, utcnow
 
         try:
@@ -228,10 +229,20 @@ def create_app(config_class="config.Config"):
             raise click.ClickException(f"unknown custom domain: {normalized}")
         if not domain.verified_at:
             raise click.ClickException("domain ownership must be verified before activation")
+        if tls_status != "active":
+            raise click.ClickException("TLS must be active before custom-domain activation")
         domain.status = "active"
         domain.tls_status = tls_status
         domain.updated_at = utcnow()
         db.session.commit()
+        append_event_to_repo(
+            domain.wiki.owner.username,
+            domain.wiki.slug,
+            "custom_domain.activate",
+            hostname=normalized,
+            tls_status=tls_status,
+            actor="wikihub-cli",
+        )
         click.echo(f"active: {normalized} (tls={tls_status})")
 
     @wikihub_cli.command("rebuild-mirrors")

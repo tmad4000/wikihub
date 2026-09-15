@@ -107,7 +107,7 @@ def _allowed_google_response_host(hostname):
     return host == "docs.google.com" or host == "docs.googleusercontent.com" or host.endswith(".googleusercontent.com")
 
 
-def fetch_sheet_csv(source_url, timeout=12):
+def fetch_sheet_csv(source_url, timeout=12, destination_extension=".csv"):
     """Fetch a public sheet without allowing redirects outside Google hosts."""
     current = normalize_sheet_csv_url(source_url)
     for _ in range(MAX_REDIRECTS + 1):
@@ -154,6 +154,12 @@ def fetch_sheet_csv(source_url, timeout=12):
             raise TableSourceError("Google returned a sign-in page; publish the sheet or enable link access")
         # Parse once before persisting so a broken export cannot replace a good table.
         parse_delimited_bytes(data, ".csv")
+        if destination_extension.lower() == ".tsv":
+            source = io.StringIO(data.decode("utf-8-sig"), newline="")
+            output = io.StringIO(newline="")
+            writer = csv.writer(output, delimiter="\t", lineterminator="\n")
+            writer.writerows(csv.reader(source))
+            data = output.getvalue().encode("utf-8")
         return data
     raise TableSourceError("Google redirected too many times")
 
