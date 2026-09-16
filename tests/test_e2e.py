@@ -4860,6 +4860,89 @@ def test_custom_domain_lifecycle_and_routing(client, api_key):
     assert r.status_code == 204
 
 
+def test_custom_domain_migration_preserves_app_owner():
+    import uuid
+
+    import psycopg2
+    from psycopg2 import sql
+    from sqlalchemy.engine import make_url
+
+    suffix = uuid.uuid4().hex[:12]
+    app_role = f"wikihub_app_{suffix}"
+    database_name = f"wikihub_migration_{suffix}"
+    source_url = make_url(
+        os.environ.get("TEST_DATABASE_ADMIN_URL", os.environ["DATABASE_URL"])
+    ).set(drivername="postgresql")
+    admin_dsn = source_url.set(database="postgres").render_as_string(
+        hide_password=False
+    )
+    migration_dsn = source_url.set(database=database_name).render_as_string(
+        hide_password=False
+    )
+    migration_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "migrations",
+        "2026-09-15_custom_domains.sql",
+    )
+    with open(migration_path, encoding="utf-8") as migration_file:
+        migration_sql = migration_file.read()
+
+    admin_connection = psycopg2.connect(admin_dsn)
+    admin_connection.autocommit = True
+    migration_connection = None
+    try:
+        with admin_connection.cursor() as cursor:
+            cursor.execute(sql.SQL("CREATE ROLE {}").format(sql.Identifier(app_role)))
+            cursor.execute(
+                sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database_name))
+            )
+
+        migration_connection = psycopg2.connect(migration_dsn)
+        with migration_connection.cursor() as cursor:
+            cursor.execute("CREATE TABLE public.wikis (id SERIAL PRIMARY KEY)")
+            cursor.execute(
+                sql.SQL("ALTER TABLE public.wikis OWNER TO {}").format(
+                    sql.Identifier(app_role)
+                )
+            )
+            cursor.execute(migration_sql)
+            cursor.execute(migration_sql)
+            cursor.execute(
+                """
+                SELECT c.relname, pg_get_userbyid(c.relowner)
+                  FROM pg_class AS c
+                  JOIN pg_namespace AS n ON n.oid = c.relnamespace
+                 WHERE n.nspname = 'public'
+                   AND c.relname IN (
+                       'wikis',
+                       'custom_domains',
+                       'custom_domains_id_seq'
+                   )
+                """
+            )
+            owners = dict(cursor.fetchall())
+        migration_connection.commit()
+
+        assert owners == {
+            "wikis": app_role,
+            "custom_domains": app_role,
+            "custom_domains_id_seq": app_role,
+        }
+    finally:
+        if migration_connection is not None:
+            migration_connection.close()
+        with admin_connection.cursor() as cursor:
+            cursor.execute(
+                sql.SQL("DROP DATABASE IF EXISTS {}").format(
+                    sql.Identifier(database_name)
+                )
+            )
+            cursor.execute(
+                sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(app_role))
+            )
+        admin_connection.close()
+
+
 def test_data_table_render_and_sheet_refresh(client, api_key):
     """CSV is a searchable/sortable reader page and refreshes safely into Git."""
     import hashlib
@@ -7870,6 +7953,7 @@ def run_all():
             ("private surface offers request access", lambda: test_permission_error_offers_request_access(client, key)),
             ("access requests stay ambiguous + notify existing target", lambda: test_access_request_constant_response_and_notify_existing_target(client)),
             ("subdomain routing", lambda: test_subdomain_routing(client)),
+            ("custom-domain migration preserves app ownership (wikihub-h7qk)", test_custom_domain_migration_preserves_app_owner),
             ("custom domain lifecycle + routing (wikihub-9nfh)", lambda: test_custom_domain_lifecycle_and_routing(client, key)),
             ("data table render + Sheet refresh (wikihub-291.1)", lambda: test_data_table_render_and_sheet_refresh(client, key)),
             ("agent chat blocks cross-user private read (wikihub-7w40)", lambda: test_agent_chat_blocks_cross_user_private_read(client, key)),
