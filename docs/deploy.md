@@ -137,3 +137,8 @@ Each migration header must state why it exists and include the exact production
 apply command. Extensions such as `pg_trgm` are created by `app/__init__.py` on
 startup when the DB user has permission; otherwise create them manually as the
 PostgreSQL superuser.
+
+When a migration creates tables as the PostgreSQL superuser, it must transfer
+the new table and any owned sequences to the application role. Derive that role
+from an existing application table such as `public.wikis`; do not hard-code a
+deployment-specific username.
