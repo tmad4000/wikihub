@@ -105,6 +105,7 @@ host (`ubuntu@54.145.123.7`) — that's historical. Production is GCP now.
 - **empty nav/sidebar surfaces show explicit unconditional copy, never blankness.** A profile with no visible wikis/pages shows "No public pages here — this account may have unlisted content reachable by direct link."; a wiki sidebar with no visible pages shows "No listed pages visible to you." The wording is **identical whether or not unlisted content exists** — no information leak (same no-leak rule as the 403-vs-404 distinction). Zero-case profile wiki count reads "No public wikis". Regressions: `test_empty_sidebar_copy`, `test_empty_profile_copy_no_leak`.
 - **API keys start with `wh_`**, SHA-256 hashed in DB, shown once on creation.
 - **wiki caps resolve per user.** `User.wiki_limit` overrides `MAX_WIKIS_PER_USER`; enforcement and `/api/v1/me/capabilities` must use `User.effective_wiki_limit()`.
+- **Ideaflow ID sign-in:** user-facing setup and account-linking behavior live in [README.md](README.md#sign-in-with-ideaflow-id); `.env.example` owns the configuration reference and `migrations/2026-09-17_external_identities.sql` owns migration operations.
 
 ## core product principles
 

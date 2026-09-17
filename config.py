@@ -13,6 +13,21 @@ class Config:
     REPOS_DIR = os.environ.get("REPOS_DIR", os.path.join(os.path.dirname(__file__), "repos"))
     GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
     GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
+    # Ideaflow ID OIDC relying party (wikihub-39pe). WikiHub is an independent
+    # confidential client of the Ideaflow ID authority — see
+    # ~/memory/research/global-identity-architecture-2026-09-16.md. Provider
+    # (client id/secret) registration is owned by another team; this app only
+    # ever reads it from the environment. IDEAFLOW_OIDC_ENABLED is the kill
+    # switch: the button and routes vanish (404) unless it's true AND both
+    # client id/secret are set — see app.routes.auth.ideaflow_oidc_enabled().
+    IDEAFLOW_OIDC_ENABLED = os.environ.get("IDEAFLOW_OIDC_ENABLED", "").lower() in ("1", "true", "yes")
+    IDEAFLOW_OIDC_ISSUER = os.environ.get("IDEAFLOW_OIDC_ISSUER", "https://id.ideaflow.app/api/auth")
+    IDEAFLOW_OIDC_DISCOVERY_URL = os.environ.get(
+        "IDEAFLOW_OIDC_DISCOVERY_URL",
+        f"{IDEAFLOW_OIDC_ISSUER}/.well-known/openid-configuration",
+    )
+    IDEAFLOW_OIDC_CLIENT_ID = os.environ.get("IDEAFLOW_OIDC_CLIENT_ID")
+    IDEAFLOW_OIDC_CLIENT_SECRET = os.environ.get("IDEAFLOW_OIDC_CLIENT_SECRET")
     SERVER_NAME = os.environ.get("SERVER_NAME")  # e.g. wikihub.md
     BASE_URL = os.environ.get("BASE_URL", "http://localhost:5000")
     CUSTOM_DOMAIN_TARGET = os.environ.get("CUSTOM_DOMAIN_TARGET", "domains.wikihub.md")

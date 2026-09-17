@@ -7,7 +7,7 @@ from app import db
 from app.acl import grants_for_user, list_all_grants, parse_acl
 from app.discovery import discoverable_page_for_wiki, discoverable_wiki_ids, visible_wikis_for_owner
 from app.git_sync import read_file_from_repo
-from app.models import Wiki, Page, ApiKey, User, Star, Fork, MagicLoginToken, UsernameRedirect, utcnow
+from app.models import Wiki, Page, ApiKey, User, Star, Fork, MagicLoginToken, UsernameRedirect, ExternalIdentity, utcnow
 from app.page_utils import content_page_path_filter, is_content_page_path
 from app.routes import main_bp
 import os
@@ -212,11 +212,15 @@ def settings():
         Wiki.query.filter(Wiki.owner_id == current_user.id, Wiki.slug != current_user.username)
         .count()
     )
+    ideaflow_identity = ExternalIdentity.query.filter_by(
+        user_id=current_user.id, issuer=current_app.config["IDEAFLOW_OIDC_ISSUER"]
+    ).first()
     return render_template(
         "settings.html",
         api_keys=api_keys,
         personal_wiki=personal_wiki,
         project_count=project_count,
+        ideaflow_identity=ideaflow_identity,
     )
 
 

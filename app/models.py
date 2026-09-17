@@ -53,6 +53,30 @@ class User(UserMixin, db.Model):
         return current_app.config["MAX_WIKIS_PER_USER"]
 
 
+class ExternalIdentity(db.Model):
+    """Immutable link from an external OIDC identity to a local WikiHub user
+    (wikihub-39pe). The global identity key is the pair (issuer, subject) —
+    never email. One subject maps to exactly one local user; one local user
+    has at most one linked subject per issuer. Rows are created once by the
+    sign-in or explicit-linking flow and never updated in place — to change
+    a link, delete the row and re-link."""
+    __tablename__ = "external_identities"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    issuer = db.Column(db.String(256), nullable=False)
+    subject = db.Column(db.String(256), nullable=False)
+    email = db.Column(db.String(256), nullable=True)  # snapshot at link time, informational only
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
+
+    user = db.relationship("User", backref=db.backref("external_identities", lazy="dynamic"))
+
+    __table_args__ = (
+        db.UniqueConstraint("issuer", "subject", name="uq_external_identity_issuer_subject"),
+        db.UniqueConstraint("user_id", "issuer", name="uq_external_identity_user_issuer"),
+    )
+
+
 class Wiki(db.Model):
     __tablename__ = "wikis"
 

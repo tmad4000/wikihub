@@ -48,6 +48,9 @@
   </p>
   {% endif %}
   <a href="{{ url_for('auth.google_login', next=next_value or None, email=prefill_email or None, it=invite_token or None) }}" class="btn btn-google">Sign in with Google</a>
+  {% if ideaflow_login_enabled %}
+  <a href="{{ url_for('auth.ideaflow_login', next=next_value or None) }}" class="btn btn-google">Continue with Ideaflow</a>
+  {% endif %}
   <div class="divider">or</div>
 
   <form method="POST">
