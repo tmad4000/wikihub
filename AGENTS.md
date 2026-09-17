@@ -105,6 +105,7 @@ host (`ubuntu@54.145.123.7`) — that's historical. Production is GCP now.
 - **empty nav/sidebar surfaces show explicit unconditional copy, never blankness.** A profile with no visible wikis/pages shows "No public pages here — this account may have unlisted content reachable by direct link."; a wiki sidebar with no visible pages shows "No listed pages visible to you." The wording is **identical whether or not unlisted content exists** — no information leak (same no-leak rule as the 403-vs-404 distinction). Zero-case profile wiki count reads "No public wikis". Regressions: `test_empty_sidebar_copy`, `test_empty_profile_copy_no_leak`.
 - **API keys start with `wh_`**, SHA-256 hashed in DB, shown once on creation.
 - **wiki caps resolve per user.** `User.wiki_limit` overrides `MAX_WIKIS_PER_USER`; enforcement and `/api/v1/me/capabilities` must use `User.effective_wiki_limit()`.
+- **Ideaflow ID identity is (issuer, subject), never email (wikihub-39pe).** `ExternalIdentity` rows are immutable and race-safe via two DB uniqueness constraints: `(issuer, subject)` → one local user, `(user_id, issuer)` → one subject. A fresh Ideaflow subject never auto-links to an existing account by email, even verified — existing users link only through the explicit signed-in flow at `GET /auth/ideaflow/link`. See "Ideaflow ID login (OIDC)" below.
 
 ## core product principles
 
@@ -282,6 +283,47 @@ when changing agent-facing docs or setup instructions, ALL of these must be upda
 | CLI subcommand registry | `cli/wikihub_cli/__main__.py` (`build_parser`) | Actual CLI surface — keep in sync with docs |
 
 **rule:** if you add a new API endpoint or change auth flow, update ALL surfaces above.
+
+## Ideaflow ID login (OIDC)
+
+WikiHub is an independent confidential OIDC relying party for the Ideaflow ID
+authority (`https://id.ideaflow.app/api/auth`), implementing wikihub-39pe of
+the cross-product plan in `~/memory/research/global-identity-architecture-2026-09-16.md`.
+Authlib does authorization-code + S256 PKCE discovery against
+`IDEAFLOW_OIDC_DISCOVERY_URL` (defaults to `{issuer}/.well-known/openid-configuration`).
+Production callback: `https://wikihub.md/auth/ideaflow/callback`.
+
+- **Env vars** (see `.env.example`): `IDEAFLOW_OIDC_ENABLED`, `IDEAFLOW_OIDC_ISSUER`,
+  `IDEAFLOW_OIDC_DISCOVERY_URL`, `IDEAFLOW_OIDC_CLIENT_ID`, `IDEAFLOW_OIDC_CLIENT_SECRET`.
+  Client registration (the id/secret pair) is owned by another team — this
+  repo only ever reads it from the environment; never hardcode or request it.
+- **Kill switch:** `app.routes.auth.ideaflow_oidc_enabled()` — true only when
+  `IDEAFLOW_OIDC_ENABLED` is set AND both client id/secret are present. When
+  off, `/auth/ideaflow*` routes `abort(404)` and the login/signup/settings
+  buttons don't render (`ideaflow_login_enabled` context flag in `app/__init__.py`).
+- **Routes:** `GET /auth/ideaflow` (sign-in/sign-up), `GET /auth/ideaflow/link`
+  (`@login_required` — explicit account linking), `GET /auth/ideaflow/callback`
+  (shared callback; behavior branches on a `mode` stashed in the session at
+  authorize time, mirroring the existing `google_oauth_contexts` pattern).
+- **Identity model:** `ExternalIdentity(user_id, issuer, subject, email)` with
+  uniqueness on `(issuer, subject)` and `(user_id, issuer)`. Exact-subject
+  match always logs the existing linked user in — email is never consulted
+  on that path. A brand-new subject with no existing link never auto-attaches
+  to an existing WikiHub account by email (verified or not); if the email
+  collides with an existing account, sign-in fails closed with a message
+  pointing at the explicit linking flow. Both sign-up and linking catch
+  `IntegrityError` on commit rather than relying on pre-checks, so concurrent
+  requests for the same subject can never attach to two different accounts.
+- **No global logout.** `/auth/logout` is unchanged — it only ever clears the
+  local WikiHub session, same as it always has.
+- **Migration:** `migrations/2026-09-17_external_identities.sql` — additive
+  only, doesn't touch `users` or any other table.
+- **Tests:** `tests/test_e2e.py` — search for `ideaflow` for the full set
+  (feature-off 404s, new sign-up, repeat exact-subject login, explicit
+  linking, link conflicts, and that Google/password/API-key logins are
+  unaffected). This is a monolithic process and the login limiter state is
+  global; auth fixtures must preserve the exact `_login_attempts` queues they
+  find so adding a login regression cannot exhaust later tests' shared budget.
 
 ## design system
 

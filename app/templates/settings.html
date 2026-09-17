@@ -422,6 +422,31 @@
     </div>
 
     <div class="settings-stack">
+      {% if ideaflow_login_enabled %}
+      <section class="settings-card">
+        <div class="settings-card-header">
+          <h2>Connected accounts</h2>
+          <p>Link your Ideaflow ID so it can sign you into this WikiHub account.</p>
+        </div>
+        <div class="settings-card-body">
+          {% if ideaflow_identity %}
+          <div class="settings-meta-row">
+            <div>
+              <label>Ideaflow ID</label>
+            </div>
+            <div class="settings-meta-value">Linked</div>
+          </div>
+          {% else %}
+          <div class="settings-cta-grid">
+            <a href="{{ url_for('auth.ideaflow_link') }}" class="settings-link-card">
+              <strong>Link Ideaflow ID</strong>
+              <span>Sign in with Ideaflow ID once to connect it to this account. This does not change how you sign in today.</span>
+            </a>
+          </div>
+          {% endif %}
+        </div>
+      </section>
+      {% endif %}
       <section class="settings-card">
         <div class="settings-card-header">
           <h2>Agent access</h2>

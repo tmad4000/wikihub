@@ -138,8 +138,10 @@ def create_app(config_class="config.Config"):
     @app.context_processor
     def inject_feature_flags():
         # Expose feature flags to all templates (e.g. reader.html curator panel). wikihub-2jn.2
+        from app.routes.auth import ideaflow_oidc_enabled
         return {
             "curator_enabled": bool(app.config.get("CURATOR_ENABLED", False)),
+            "ideaflow_login_enabled": ideaflow_oidc_enabled(app.config),
         }
 
     os.makedirs(app.config["REPOS_DIR"], exist_ok=True)

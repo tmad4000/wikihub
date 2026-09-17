@@ -6,11 +6,21 @@ from urllib.parse import urlparse, quote, parse_qs
 from flask import render_template, redirect, url_for, flash, request, session, current_app, abort
 from flask_login import login_user, logout_user, login_required, current_user
 from authlib.integrations.flask_client import OAuth
+from sqlalchemy.exc import IntegrityError
 
 from datetime import timedelta
 
 from app import db
-from app.models import User, ApiKey, MagicLoginToken, PendingInvite, EmailVerificationToken, PasswordResetToken, utcnow
+from app.models import (
+    User,
+    ApiKey,
+    MagicLoginToken,
+    PendingInvite,
+    EmailVerificationToken,
+    PasswordResetToken,
+    ExternalIdentity,
+    utcnow,
+)
 from app.auth_utils import (
     hash_password,
     check_password,
@@ -217,6 +227,18 @@ def _get_valid_password_reset(raw_token):
     return row, user
 
 
+def ideaflow_oidc_enabled(config):
+    """The Ideaflow ID kill switch (wikihub-39pe): the login button and the
+    /auth/ideaflow* routes are only live when explicitly turned on AND a
+    client id/secret are configured. Off or half-configured both mean off —
+    fail closed rather than registering a broken OAuth client."""
+    return bool(
+        config.get("IDEAFLOW_OIDC_ENABLED")
+        and config.get("IDEAFLOW_OIDC_CLIENT_ID")
+        and config.get("IDEAFLOW_OIDC_CLIENT_SECRET")
+    )
+
+
 def init_oauth(app):
     oauth.init_app(app)
     if app.config.get("GOOGLE_CLIENT_ID"):
@@ -226,6 +248,25 @@ def init_oauth(app):
             client_id=app.config["GOOGLE_CLIENT_ID"],
             client_secret=app.config["GOOGLE_CLIENT_SECRET"],
             client_kwargs={"scope": "openid email profile"},
+        )
+    if ideaflow_oidc_enabled(app.config):
+        oauth.register(
+            name="ideaflow",
+            server_metadata_url=app.config["IDEAFLOW_OIDC_DISCOVERY_URL"],
+            client_id=app.config["IDEAFLOW_OIDC_CLIENT_ID"],
+            client_secret=app.config["IDEAFLOW_OIDC_CLIENT_SECRET"],
+            client_kwargs={
+                "scope": "openid email profile",
+                # The provider registers this confidential client for HTTP
+                # Basic authentication at the token endpoint. Pin the method
+                # so discovery/default changes cannot move the secret into
+                # the request body.
+                "token_endpoint_auth_method": "client_secret_basic",
+                # Confidential client with S256 PKCE (wikihub-39pe design doc).
+                # Authlib auto-generates and stores the code_verifier in the
+                # Flask session and replays it on the token exchange.
+                "code_challenge_method": "S256",
+            },
         )
 
 
@@ -621,6 +662,25 @@ def google_callback():
     return redirect(_safe_redirect_target(oauth_context.get("next")))
 
 
+def _generate_unique_username(*, email, name):
+    """Derive a safe, collision-free username from an OAuth/OIDC identity's
+    email or display name. Shared by Google and Ideaflow ID sign-in."""
+    base_username = (email.split("@")[0] if email else (name or "").lower().replace(" ", ""))[:32]
+    # sanitize to allowed charset, then ensure it doesn't collide with reserved names or wiki subdomains
+    base_username = re.sub(r"[^a-z0-9_-]", "", base_username.lower()) or "user"
+    if len(base_username) < 2:
+        base_username = base_username + "user"
+    username = base_username
+    counter = 1
+    while (
+        User.query.filter_by(username=username).first()
+        or validate_username(username) is not None
+    ):
+        username = f"{base_username}{counter}"
+        counter += 1
+    return username
+
+
 def _resolve_or_create_google_user(*, google_id, email, email_verified, name):
     """Look up-or-create a User for a Google sign-in.
 
@@ -640,19 +700,7 @@ def _resolve_or_create_google_user(*, google_id, email, email_verified, name):
             user = candidate
 
     if not user:
-        base_username = (email.split("@")[0] if email else name.lower().replace(" ", ""))[:32]
-        # sanitize to allowed charset, then ensure it doesn't collide with reserved names or wiki subdomains
-        base_username = re.sub(r"[^a-z0-9_-]", "", base_username.lower()) or "user"
-        if len(base_username) < 2:
-            base_username = base_username + "user"
-        username = base_username
-        counter = 1
-        while (
-            User.query.filter_by(username=username).first()
-            or validate_username(username) is not None
-        ):
-            username = f"{base_username}{counter}"
-            counter += 1
+        username = _generate_unique_username(email=email, name=name)
 
         user = User(
             username=username,
@@ -679,3 +727,258 @@ def _resolve_or_create_google_user(*, google_id, email, email_verified, name):
         if applied:
             db.session.commit()
     return user
+
+
+# --- Ideaflow ID (OIDC relying party — wikihub-39pe) ---
+#
+# WikiHub is an independent confidential OIDC client of the Ideaflow ID
+# authority (https://id.ideaflow.app/api/auth). See
+# ~/memory/research/global-identity-architecture-2026-09-16.md for the
+# cross-product architecture. Key rules enforced below:
+#
+#   - The immutable identity key is (issuer, subject), stored in
+#     ExternalIdentity — never email.
+#   - A brand new Ideaflow subject NEVER auto-links to an existing WikiHub
+#     account, even when the Ideaflow email is verified and matches. Existing
+#     users must explicitly link while signed in (GET /auth/ideaflow/link).
+#   - Linking and first-time account creation both fail closed on conflict:
+#     no operation ever silently attaches an identity to the "wrong" account,
+#     including under a concurrent-request race — that's enforced by the two
+#     DB uniqueness constraints on ExternalIdentity plus try/except around
+#     the commit, not by pre-checks alone.
+#   - No global logout: /auth/logout only ever clears the local WikiHub
+#     session, exactly as it does today for every other login method.
+
+_IDEAFLOW_OAUTH_CONTEXTS_SESSION_KEY = "ideaflow_oauth_contexts"
+
+
+def _ideaflow_callback_url():
+    """Resolve the Ideaflow ID OAuth callback from the app's single
+    configured BASE_URL, never the current request's Host header.
+
+    A login started on a user/wiki subdomain (jacobcole.wikihub.md) or an
+    active custom domain must still send the OIDC provider the one
+    redirect_uri registered for this client — https://wikihub.md/auth/ideaflow/callback
+    in production. `url_for(..., _external=True)` builds off `request.host`,
+    which would drift with the originating host and be rejected by the
+    provider as a redirect_uri mismatch. BASE_URL defaults to
+    http://localhost:5000 locally, so dev/test flows are unaffected."""
+    base_url = (current_app.config.get("BASE_URL") or "").rstrip("/")
+    if not base_url:
+        return url_for("auth.ideaflow_callback", _external=True)
+    return base_url + url_for("auth.ideaflow_callback")
+
+
+def _ideaflow_enabled():
+    return ideaflow_oidc_enabled(current_app.config)
+
+
+def _ideaflow_client():
+    """Return the registered 'ideaflow' Authlib client, or None if the kill
+    switch is off / it was never registered. Routes must abort(404) rather
+    than error when this is None — the feature is meant to disappear
+    entirely, not degrade."""
+    if not _ideaflow_enabled():
+        return None
+    return getattr(oauth, "ideaflow", None)
+
+
+def _stash_ideaflow_oauth_context(state, context):
+    if not state:
+        return
+    pending = dict(session.get(_IDEAFLOW_OAUTH_CONTEXTS_SESSION_KEY, {}))
+    pending[state] = context
+    session[_IDEAFLOW_OAUTH_CONTEXTS_SESSION_KEY] = pending
+
+
+def _pop_ideaflow_oauth_context():
+    state = request.args.get("state", "").strip()
+    if not state:
+        return {}
+    pending = dict(session.get(_IDEAFLOW_OAUTH_CONTEXTS_SESSION_KEY, {}))
+    context = pending.pop(state, {})
+    if pending:
+        session[_IDEAFLOW_OAUTH_CONTEXTS_SESSION_KEY] = pending
+    else:
+        session.pop(_IDEAFLOW_OAUTH_CONTEXTS_SESSION_KEY, None)
+    return context
+
+
+@auth_bp.route("/ideaflow")
+def ideaflow_login():
+    """Start a plain sign-in/sign-up flow. May resolve to an existing linked
+    user, or mint a brand new one — never auto-links to an existing account
+    found only by email."""
+    client = _ideaflow_client()
+    if not client:
+        abort(404)
+    redirect_uri = _ideaflow_callback_url()
+    response = client.authorize_redirect(redirect_uri)
+    location = response.headers.get("Location", "")
+    state = parse_qs(urlparse(location).query).get("state", [""])[0]
+    context = {"next": _safe_next_url(), "mode": "signin"}
+    _stash_ideaflow_oauth_context(state, context)
+    return response
+
+
+@auth_bp.route("/ideaflow/link")
+@login_required
+def ideaflow_link():
+    """Explicit signed-in linking flow (wikihub-39pe): the only way an
+    existing WikiHub account gains an Ideaflow ID link in this rollout. The
+    linking user's id is captured now and re-checked at the callback so a
+    logout/login swap mid-flow can't attach the identity to a different
+    account (wikihub-39pe race safety)."""
+    client = _ideaflow_client()
+    if not client:
+        abort(404)
+    redirect_uri = _ideaflow_callback_url()
+    response = client.authorize_redirect(redirect_uri)
+    location = response.headers.get("Location", "")
+    state = parse_qs(urlparse(location).query).get("state", [""])[0]
+    context = {"next": url_for("main.settings"), "mode": "link", "user_id": current_user.id}
+    _stash_ideaflow_oauth_context(state, context)
+    return response
+
+
+@auth_bp.route("/ideaflow/callback")
+def ideaflow_callback():
+    client = _ideaflow_client()
+    if not client:
+        abort(404)
+
+    oauth_context = _pop_ideaflow_oauth_context()
+    try:
+        token = client.authorize_access_token()
+    except Exception:
+        flash("Ideaflow ID sign-in failed or was cancelled.")
+        return redirect(url_for("auth.login"))
+
+    userinfo = token.get("userinfo") or {}
+    subject = userinfo.get("sub")
+    # `iss` must come from Authlib's cryptographically-validated ID-token
+    # claims (parse_id_token requires it as an essential claim and checks it
+    # against the discovered issuer already). Never substitute the
+    # configured issuer for a missing one here — that would turn an absent
+    # or malformed claim into an unverified assumption of authenticity.
+    issuer = userinfo.get("iss")
+    email = (userinfo.get("email") or "").strip().lower() or None
+    email_verified = bool(userinfo.get("email_verified"))
+    name = userinfo.get("name") or userinfo.get("preferred_username") or ""
+
+    if not subject or not issuer:
+        flash("Could not get Ideaflow ID user info.")
+        return redirect(url_for("auth.login"))
+
+    if issuer != current_app.config["IDEAFLOW_OIDC_ISSUER"]:
+        # Defense in depth: Authlib already validates the id_token's iss
+        # against the discovered issuer, but a configured-vs-asserted
+        # mismatch here would mean the two have drifted apart. Refuse rather
+        # than silently trusting an unexpected authority.
+        flash("Unexpected Ideaflow ID issuer.")
+        return redirect(url_for("auth.login"))
+
+    mode = oauth_context.get("mode", "signin")
+    if mode == "link":
+        return _handle_ideaflow_link_callback(oauth_context, issuer=issuer, subject=subject, email=email)
+    return _handle_ideaflow_signin_callback(
+        oauth_context, issuer=issuer, subject=subject, email=email, email_verified=email_verified, name=name
+    )
+
+
+def _login_via_ideaflow_identity(identity, oauth_context):
+    user = db.session.get(User, identity.user_id)
+    if not user:
+        flash("This Ideaflow ID is linked to a WikiHub account that no longer exists.")
+        return redirect(url_for("auth.login"))
+    login_user(user)
+    _apply_pending_invites_on_login(user)
+    return redirect(_safe_redirect_target(oauth_context.get("next")))
+
+
+def _handle_ideaflow_signin_callback(oauth_context, *, issuer, subject, email, email_verified, name):
+    # Exact (issuer, subject) match is the whole ballgame — the returning-
+    # user path never looks at email at all.
+    existing_identity = ExternalIdentity.query.filter_by(issuer=issuer, subject=subject).first()
+    if existing_identity:
+        return _login_via_ideaflow_identity(existing_identity, oauth_context)
+
+    # No link yet. wikihub-39pe: never auto-link a fresh Ideaflow subject to
+    # an existing WikiHub account by email, verified or not — fail closed
+    # and point the person at the explicit linking flow instead.
+    if email:
+        conflict = User.query.filter(db.func.lower(User.email) == email).first()
+        if conflict:
+            flash(
+                "An account with this email already exists on WikiHub. "
+                "Sign in to that account, then link Ideaflow ID from Settings."
+            )
+            return redirect(url_for("auth.login"))
+
+    username = _generate_unique_username(email=email, name=name)
+    user = User(
+        username=username,
+        email=email,
+        email_verified_at=utcnow() if email and email_verified else None,
+        display_name=name or None,
+    )
+    db.session.add(user)
+    try:
+        db.session.flush()
+        ensure_personal_wiki(user)
+        db.session.add(ExternalIdentity(user_id=user.id, issuer=issuer, subject=subject, email=email))
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        # Lost a race against a concurrent sign-in for the same (issuer,
+        # subject) — the other request's ExternalIdentity row now exists.
+        # Self-heal into that account instead of surfacing an error.
+        healed = ExternalIdentity.query.filter_by(issuer=issuer, subject=subject).first()
+        if healed:
+            return _login_via_ideaflow_identity(healed, oauth_context)
+        flash("Ideaflow ID sign-in conflict — please try again.")
+        return redirect(url_for("auth.login"))
+
+    login_user(user)
+    if email and email_verified:
+        applied = materialize_pending_invites_for(user)
+        if applied:
+            db.session.commit()
+    return redirect(_safe_redirect_target(oauth_context.get("next")))
+
+
+def _handle_ideaflow_link_callback(oauth_context, *, issuer, subject, email):
+    linking_user_id = oauth_context.get("user_id")
+    if not linking_user_id or not current_user.is_authenticated or current_user.id != linking_user_id:
+        # The flow must finish in the same signed-in session that started
+        # it (wikihub-39pe race safety) — a logout, a different login, or an
+        # expired session in between all land here rather than guessing.
+        flash("Ideaflow ID linking must be completed in the same signed-in session that started it.")
+        return redirect(url_for("main.settings") if current_user.is_authenticated else url_for("auth.login"))
+
+    existing_identity = ExternalIdentity.query.filter_by(issuer=issuer, subject=subject).first()
+    if existing_identity:
+        if existing_identity.user_id == current_user.id:
+            flash("This Ideaflow ID is already linked to your account.")
+        else:
+            flash("This Ideaflow ID is already linked to a different WikiHub account.")
+        return redirect(url_for("main.settings"))
+
+    already_linked = ExternalIdentity.query.filter_by(user_id=current_user.id, issuer=issuer).first()
+    if already_linked:
+        flash("Your account is already linked to a different Ideaflow ID.")
+        return redirect(url_for("main.settings"))
+
+    db.session.add(ExternalIdentity(user_id=current_user.id, issuer=issuer, subject=subject, email=email))
+    try:
+        db.session.commit()
+    except IntegrityError:
+        # Someone else linked this exact subject (or this account got a
+        # different link) between our checks above and the commit — fail
+        # closed rather than attaching to the wrong account.
+        db.session.rollback()
+        flash("This Ideaflow ID was just linked elsewhere — please try again.")
+        return redirect(url_for("main.settings"))
+
+    flash("Ideaflow ID linked to your account.")
+    return redirect(url_for("main.settings"))

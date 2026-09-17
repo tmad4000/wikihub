@@ -5,10 +5,12 @@ minimal and intentional — each test verifies a real user flow,
 not individual functions. run with: python3 tests/test_e2e.py
 """
 
+import contextlib
 import io
 import inspect
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -31,7 +33,7 @@ os.environ["SESSION_COOKIE_SECURE"] = "0"
 
 from app import create_app, db
 from app.auth_utils import _ip_write_timestamps, _write_timestamps
-from app.models import CustomDomain, Page, User, Wiki, utcnow
+from app.models import CustomDomain, ExternalIdentity, Page, User, Wiki, utcnow
 
 
 def setup():
@@ -70,6 +72,7 @@ def reset_database():
         "feedback",
         "audit_log",
         "sessions",
+        "external_identities",
         "users",
     ]:
         try:
@@ -1324,6 +1327,586 @@ def test_google_oauth_preserves_next_and_invite_context(app, client, api_key):
             auth_routes.oauth.google = original_google
         else:
             delattr(auth_routes.oauth, "google")
+
+
+# --- Ideaflow ID OIDC (wikihub-39pe) ---
+
+
+@contextlib.contextmanager
+def _preserve_login_rate_limit_state():
+    """Keep OIDC regression logins from consuming the process-global login
+    limiter budget used by later, unrelated auth tests in this monolithic
+    harness. Production rate limiting is unchanged; each OIDC test restores
+    the exact attempt queues it found."""
+    from app.routes.auth import _login_attempts
+
+    snapshot = {ip: tuple(attempts) for ip, attempts in _login_attempts.items()}
+    try:
+        yield
+    finally:
+        _login_attempts.clear()
+        for ip, attempts in snapshot.items():
+            _login_attempts[ip].extend(attempts)
+
+
+@contextlib.contextmanager
+def _ideaflow_oauth(app, userinfo, state="fake-ideaflow-state"):
+    """Turn on the Ideaflow OIDC kill switch and install a fake Authlib
+    client for the duration of the block, mirroring the FakeGoogleClient
+    pattern used above for Google OAuth tests. Like those, this stops at the
+    boundary of our own callback logic — PKCE and discovery are Authlib's
+    job, exercised for real in production once the client is registered."""
+    import app.routes.auth as auth_routes
+    from flask import redirect
+
+    class FakeIdeaflowClient:
+        def authorize_redirect(self, redirect_uri):
+            return redirect(f"https://id.ideaflow.test/authorize?state={state}&redirect_uri={redirect_uri}")
+
+        def authorize_access_token(self):
+            return {"userinfo": userinfo}
+
+    prev = {
+        k: app.config.get(k)
+        for k in ("IDEAFLOW_OIDC_ENABLED", "IDEAFLOW_OIDC_CLIENT_ID", "IDEAFLOW_OIDC_CLIENT_SECRET")
+    }
+    app.config["IDEAFLOW_OIDC_ENABLED"] = True
+    app.config["IDEAFLOW_OIDC_CLIENT_ID"] = "test-client-id"
+    app.config["IDEAFLOW_OIDC_CLIENT_SECRET"] = "test-client-secret"
+
+    try:
+        original = auth_routes.oauth.ideaflow
+        had_original = True
+    except AttributeError:
+        original = None
+        had_original = False
+    auth_routes.oauth.ideaflow = FakeIdeaflowClient()
+
+    try:
+        with _preserve_login_rate_limit_state():
+            yield state
+    finally:
+        for k, v in prev.items():
+            app.config[k] = v
+        if had_original:
+            auth_routes.oauth.ideaflow = original
+        else:
+            delattr(auth_routes.oauth, "ideaflow")
+
+
+def test_ideaflow_oidc_feature_flag_off(app, client):
+    """wikihub-39pe: with the kill switch off, the new routes disappear (404)
+    and the button doesn't render — same contract as other feature flags in
+    this repo (e.g. curator_enabled)."""
+    assert not app.config.get("IDEAFLOW_OIDC_ENABLED"), "flag must default off"
+
+    r = client.post("/api/v1/accounts", json={"username": "flagoffuser", "password": "flagoffpass1"})
+    assert r.status_code == 201
+    browser = app.test_client()
+    with _preserve_login_rate_limit_state():
+        r = browser.post("/auth/login", data={"username": "flagoffuser", "password": "flagoffpass1"}, follow_redirects=False)
+    assert r.status_code == 302
+
+    r = browser.get("/auth/ideaflow")
+    assert r.status_code == 404
+    r = browser.get("/auth/ideaflow/link")
+    assert r.status_code == 404
+    r = browser.get("/auth/ideaflow/callback?state=x&code=y")
+    assert r.status_code == 404
+
+    login_html = client.get("/auth/login").get_data(as_text=True)
+    assert "/auth/ideaflow" not in login_html
+    assert "Continue with Ideaflow" not in login_html
+
+    settings_html = browser.get("/settings").get_data(as_text=True)
+    assert "Connected accounts" not in settings_html
+    assert "Link Ideaflow ID" not in settings_html
+
+
+def test_ideaflow_oidc_new_login_creates_local_session(app, client):
+    """wikihub-39pe: a brand-new Ideaflow subject with no existing link mints
+    a fresh local user + ExternalIdentity row and signs them in."""
+    issuer = app.config["IDEAFLOW_OIDC_ISSUER"]
+    userinfo = {
+        "sub": "idfw-sub-newuser",
+        "iss": issuer,
+        "email": "newideaflow@example.com",
+        "email_verified": True,
+        "name": "New Ideaflow User",
+    }
+    with _ideaflow_oauth(app, userinfo):
+        login_html = client.get("/auth/login").get_data(as_text=True)
+        assert "/auth/ideaflow?next=" in login_html
+
+        browser = app.test_client()
+        r = browser.get("/auth/ideaflow?next=/settings", follow_redirects=False)
+        assert r.status_code == 302
+        assert "state=fake-ideaflow-state" in r.headers["Location"]
+
+        with browser.session_transaction() as sess:
+            pending = sess.get("ideaflow_oauth_contexts", {})
+            assert pending["fake-ideaflow-state"]["mode"] == "signin"
+            assert pending["fake-ideaflow-state"]["next"] == "/settings"
+
+        r = browser.get("/auth/ideaflow/callback?state=fake-ideaflow-state&code=fake", follow_redirects=False)
+        assert r.status_code == 302
+        assert r.headers["Location"].endswith("/settings")
+
+        with browser.session_transaction() as sess:
+            assert "ideaflow_oauth_contexts" not in sess
+
+        user = User.query.filter_by(email="newideaflow@example.com").first()
+        assert user is not None
+        assert user.email_verified_at is not None, "Ideaflow-verified email should mark the account verified"
+        assert re.match(r"^[a-z0-9_-]{2,}$", user.username), f"unsafe generated username: {user.username!r}"
+
+        identity = ExternalIdentity.query.filter_by(issuer=issuer, subject="idfw-sub-newuser").first()
+        assert identity is not None
+        assert identity.user_id == user.id
+
+        settings_html = browser.get("/settings").get_data(as_text=True)
+        assert "Linked" in settings_html
+
+
+def test_ideaflow_oidc_repeat_exact_subject_login(app, client):
+    """wikihub-39pe: signing in again with the exact same (issuer, subject)
+    logs into the SAME local user — no duplicate account, no duplicate link."""
+    issuer = app.config["IDEAFLOW_OIDC_ISSUER"]
+    userinfo = {
+        "sub": "idfw-sub-repeat",
+        "iss": issuer,
+        "email": "repeatideaflow@example.com",
+        "email_verified": True,
+        "name": "Repeat Ideaflow User",
+    }
+    with _ideaflow_oauth(app, userinfo):
+        first = app.test_client()
+        r = first.get("/auth/ideaflow", follow_redirects=False)
+        r = first.get("/auth/ideaflow/callback?state=fake-ideaflow-state&code=fake", follow_redirects=False)
+        assert r.status_code == 302
+
+        first_user = User.query.filter_by(email="repeatideaflow@example.com").first()
+        assert first_user is not None
+
+        second = app.test_client()
+        r = second.get("/auth/ideaflow", follow_redirects=False)
+        r = second.get("/auth/ideaflow/callback?state=fake-ideaflow-state&code=fake", follow_redirects=False)
+        assert r.status_code == 302
+
+        assert User.query.filter_by(email="repeatideaflow@example.com").count() == 1
+        assert ExternalIdentity.query.filter_by(issuer=issuer, subject="idfw-sub-repeat").count() == 1
+
+        with second.session_transaction() as sess:
+            assert str(sess.get("_user_id")) == str(first_user.id), "second login must resolve to the same user"
+
+
+def test_ideaflow_oidc_signed_in_linking_to_existing_user(app, client):
+    """wikihub-39pe: explicit signed-in linking attaches an Ideaflow subject
+    to an existing password-based account, and future exact-subject sign-ins
+    then resolve to that same account."""
+    r = client.post("/api/v1/accounts", json={
+        "username": "linkowner", "password": "linkownerpass1", "email": "linkowner@example.com",
+    })
+    assert r.status_code == 201
+    owner_id = User.query.filter_by(username="linkowner").first().id
+
+    issuer = app.config["IDEAFLOW_OIDC_ISSUER"]
+    userinfo = {
+        "sub": "idfw-sub-link",
+        "iss": issuer,
+        "email": "linkowner-ideaflow@example.com",
+        "email_verified": True,
+        "name": "Link Owner",
+    }
+    with _ideaflow_oauth(app, userinfo):
+        browser = app.test_client()
+        r = browser.post("/auth/login", data={"username": "linkowner", "password": "linkownerpass1"}, follow_redirects=False)
+        assert r.status_code == 302
+
+        settings_html = browser.get("/settings").get_data(as_text=True)
+        assert "Link Ideaflow ID" in settings_html
+
+        r = browser.get("/auth/ideaflow/link", follow_redirects=False)
+        assert r.status_code == 302
+        with browser.session_transaction() as sess:
+            pending = sess.get("ideaflow_oauth_contexts", {})
+            assert pending["fake-ideaflow-state"]["mode"] == "link"
+            assert pending["fake-ideaflow-state"]["user_id"] == owner_id
+
+        r = browser.get("/auth/ideaflow/callback?state=fake-ideaflow-state&code=fake", follow_redirects=False)
+        assert r.status_code == 302
+        assert r.headers["Location"].endswith("/settings")
+
+        identity = ExternalIdentity.query.filter_by(issuer=issuer, subject="idfw-sub-link").first()
+        assert identity is not None
+        assert identity.user_id == owner_id
+
+        settings_html = browser.get("/settings").get_data(as_text=True)
+        assert "Linked" in settings_html
+
+        # A fresh, signed-out sign-in with the same subject must now resolve
+        # to linkowner's existing account, not mint a new one.
+        browser.get("/auth/logout")
+        second = app.test_client()
+        second.get("/auth/ideaflow", follow_redirects=False)
+        r = second.get("/auth/ideaflow/callback?state=fake-ideaflow-state&code=fake", follow_redirects=False)
+        assert r.status_code == 302
+        with second.session_transaction() as sess:
+            assert str(sess.get("_user_id")) == str(owner_id)
+
+        assert User.query.filter_by(username="linkowner").count() == 1
+        assert ExternalIdentity.query.filter_by(issuer=issuer, subject="idfw-sub-link").count() == 1
+
+
+def test_ideaflow_oidc_new_signin_email_conflict_fails_closed(app, client):
+    """wikihub-39pe: a fresh Ideaflow subject must NEVER auto-link to an
+    existing WikiHub account by email, even when Ideaflow reports the email
+    verified. Fail closed — no login, no new duplicate-email account."""
+    r = client.post("/api/v1/accounts", json={
+        "username": "conflictowner", "password": "conflictownerpass1", "email": "conflictuser@example.com",
+    })
+    assert r.status_code == 201
+
+    issuer = app.config["IDEAFLOW_OIDC_ISSUER"]
+    userinfo = {
+        "sub": "idfw-sub-conflict",
+        "iss": issuer,
+        "email": "conflictuser@example.com",
+        "email_verified": True,
+        "name": "Conflict Person",
+    }
+    with _ideaflow_oauth(app, userinfo):
+        browser = app.test_client()
+        browser.get("/auth/ideaflow", follow_redirects=False)
+        r = browser.get("/auth/ideaflow/callback?state=fake-ideaflow-state&code=fake", follow_redirects=False)
+        assert r.status_code == 302
+        assert r.headers["Location"].endswith("/auth/login")
+
+        with browser.session_transaction() as sess:
+            assert "_user_id" not in sess, "must not be signed in after a conflicting email"
+
+        assert User.query.filter_by(email="conflictuser@example.com").count() == 1, "no duplicate account"
+        assert ExternalIdentity.query.filter_by(issuer=issuer, subject="idfw-sub-conflict").count() == 0
+
+
+def test_ideaflow_oidc_link_conflict_fails_closed(app, client):
+    """wikihub-39pe: linking must fail closed under conflicts — a subject
+    already linked to one account can't attach to a different one, and an
+    account already linked to one subject can't silently get a second."""
+    r = client.post("/api/v1/accounts", json={"username": "linka", "password": "linkapass123"})
+    assert r.status_code == 201
+    r = client.post("/api/v1/accounts", json={"username": "linkb", "password": "linkbpass123"})
+    assert r.status_code == 201
+    a_id = User.query.filter_by(username="linka").first().id
+    b_id = User.query.filter_by(username="linkb").first().id
+
+    issuer = app.config["IDEAFLOW_OIDC_ISSUER"]
+    shared_userinfo = {
+        "sub": "idfw-sub-shared",
+        "iss": issuer,
+        "email": "shared-ideaflow@example.com",
+        "email_verified": True,
+        "name": "Shared Identity",
+    }
+
+    with _ideaflow_oauth(app, shared_userinfo):
+        browser_a = app.test_client()
+        browser_a.post("/auth/login", data={"username": "linka", "password": "linkapass123"}, follow_redirects=False)
+        browser_a.get("/auth/ideaflow/link", follow_redirects=False)
+        r = browser_a.get("/auth/ideaflow/callback?state=fake-ideaflow-state&code=fake", follow_redirects=False)
+        assert r.status_code == 302
+
+        identity = ExternalIdentity.query.filter_by(issuer=issuer, subject="idfw-sub-shared").first()
+        assert identity is not None and identity.user_id == a_id
+
+        # linkb tries to link the SAME subject — must fail closed, not steal it.
+        browser_b = app.test_client()
+        browser_b.post("/auth/login", data={"username": "linkb", "password": "linkbpass123"}, follow_redirects=False)
+        browser_b.get("/auth/ideaflow/link", follow_redirects=False)
+        r = browser_b.get("/auth/ideaflow/callback?state=fake-ideaflow-state&code=fake", follow_redirects=False)
+        assert r.status_code == 302
+        assert r.headers["Location"].endswith("/settings")
+
+        assert ExternalIdentity.query.filter_by(user_id=b_id).count() == 0
+        still = ExternalIdentity.query.filter_by(issuer=issuer, subject="idfw-sub-shared").first()
+        assert still.user_id == a_id, "conflicting link must not reassign the existing identity"
+
+    # linka tries to link a SECOND, different subject — must also fail closed
+    # (one subject per account per issuer).
+    other_userinfo = {
+        "sub": "idfw-sub-second",
+        "iss": issuer,
+        "email": "second-ideaflow@example.com",
+        "email_verified": True,
+        "name": "Second Identity",
+    }
+    with _ideaflow_oauth(app, other_userinfo):
+        browser_a2 = app.test_client()
+        browser_a2.post("/auth/login", data={"username": "linka", "password": "linkapass123"}, follow_redirects=False)
+        browser_a2.get("/auth/ideaflow/link", follow_redirects=False)
+        r = browser_a2.get("/auth/ideaflow/callback?state=fake-ideaflow-state&code=fake", follow_redirects=False)
+        assert r.status_code == 302
+
+        assert ExternalIdentity.query.filter_by(user_id=a_id).count() == 1
+        assert ExternalIdentity.query.filter_by(issuer=issuer, subject="idfw-sub-second").count() == 0
+
+
+def test_ideaflow_oidc_legacy_logins_unaffected(app, client, api_key):
+    """wikihub-39pe: enabling Ideaflow OIDC must not disturb Google, password,
+    or API-key login — they coexist on the same login page and keep working."""
+    issuer = app.config["IDEAFLOW_OIDC_ISSUER"]
+    userinfo = {"sub": "idfw-sub-coexist", "iss": issuer, "email": None, "email_verified": False, "name": ""}
+    with _ideaflow_oauth(app, userinfo):
+        login_html = client.get("/auth/login").get_data(as_text=True)
+        assert "/auth/google?next=" in login_html
+        assert "/auth/ideaflow?next=" in login_html
+
+        r = client.post("/api/v1/accounts", json={"username": "legacyuser", "password": "legacypass123"})
+        assert r.status_code == 201
+        browser = app.test_client()
+        r = browser.post("/auth/login", data={"username": "legacyuser", "password": "legacypass123"}, follow_redirects=False)
+        assert r.status_code == 302
+        assert browser.get("/settings").status_code == 200
+
+        # Use an isolated browser so this regression check cannot leave the
+        # shared full-suite client authenticated and invalidate later tests
+        # that intentionally exercise anonymous ACL behavior.
+        api_browser = app.test_client()
+        r = api_browser.post("/auth/login", data={"api_key": api_key}, follow_redirects=False)
+        assert r.status_code == 302
+
+
+def test_ideaflow_oidc_real_ed25519_id_token_verification(app):
+    """wikihub-39pe: exercise the ACTUAL Authlib verifier path — not the
+    FakeIdeaflowClient userinfo shortcut used by the tests above — with a
+    real ephemeral Ed25519 keypair and a real EdDSA/OKP JWKS, matching what
+    the live Ideaflow ID provider advertises. Registers a genuine
+    `FlaskOAuth2App` via the production `init_oauth`, pre-seeds its
+    server_metadata (issuer/jwks/alg) so zero network I/O happens, then
+    calls `client.parse_id_token` — the exact method
+    `FlaskOAuth2App.authorize_access_token` invokes internally — to prove it
+    accepts a validly-signed token and rejects a forged signature, a wrong
+    issuer, and a wrong audience. No production key is used or fetched."""
+    import time
+    import app.routes.auth as auth_routes
+    from authlib.jose import jwt as jose_jwt, JsonWebKey
+    from authlib.jose.errors import JoseError, BadSignatureError, InvalidClaimError
+
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives import serialization
+
+    def _ephemeral_ed25519_jwk(kid):
+        private_key = Ed25519PrivateKey.generate()
+        pem = private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+        return JsonWebKey.import_key(pem, {"kty": "OKP", "crv": "Ed25519", "kid": kid})
+
+    kid = "wikihub-39pe-test-kid"
+    signing_key = _ephemeral_ed25519_jwk(kid)
+    public_jwk = JsonWebKey.import_key(signing_key.as_dict(is_private=False)).as_dict()
+    jwk_set = {"keys": [public_jwk]}
+
+    issuer = app.config["IDEAFLOW_OIDC_ISSUER"]
+    client_id = "test-client-id-ed25519"
+    nonce = "test-nonce-ed25519"
+
+    def _sign(claims_overrides=None, key=signing_key):
+        now = int(time.time())
+        payload = {
+            "iss": issuer,
+            "sub": "idfw-sub-real-crypto",
+            "aud": client_id,
+            "exp": now + 300,
+            "iat": now,
+            "nonce": nonce,
+            "email": "realcrypto@example.com",
+            "email_verified": True,
+        }
+        if claims_overrides:
+            payload.update(claims_overrides)
+        return jose_jwt.encode({"alg": "EdDSA", "kid": kid}, payload, key).decode("ascii")
+
+    prev_config = {
+        k: app.config.get(k)
+        for k in ("IDEAFLOW_OIDC_ENABLED", "IDEAFLOW_OIDC_CLIENT_ID", "IDEAFLOW_OIDC_CLIENT_SECRET")
+    }
+    app.config["IDEAFLOW_OIDC_ENABLED"] = True
+    app.config["IDEAFLOW_OIDC_CLIENT_ID"] = client_id
+    app.config["IDEAFLOW_OIDC_CLIENT_SECRET"] = "test-client-secret-ed25519"
+
+    had_registry_entry = "ideaflow" in auth_routes.oauth._registry
+    had_client_cached = "ideaflow" in auth_routes.oauth._clients
+
+    try:
+        auth_routes.init_oauth(app)
+        client = auth_routes.oauth.ideaflow
+        assert client is not None, "real FlaskOAuth2App must register when the kill switch is on"
+        assert client.client_kwargs["token_endpoint_auth_method"] == "client_secret_basic"
+
+        # Exercise Authlib's actual token-endpoint client-auth preparation,
+        # rather than only checking registration metadata. The confidential
+        # secret must travel in HTTP Basic and never in the form body.
+        oauth_session = client._get_oauth_client()
+        client_auth = oauth_session.client_auth(oauth_session.token_endpoint_auth_method)
+        _uri, token_headers, token_body = client_auth.prepare(
+            "POST",
+            "https://id.ideaflow.app/api/auth/oauth2/token",
+            {},
+            "grant_type=authorization_code&code=test-code",
+        )
+        assert token_headers["Authorization"].startswith("Basic ")
+        assert "client_secret" not in token_body
+
+        # Pre-seed metadata so parse_id_token does zero network I/O (no
+        # discovery fetch, no jwks_uri fetch) while still running Authlib's
+        # real signature + claims verification against our JWKS. The live
+        # provider advertises EdDSA-only, so mirror that here.
+        client.server_metadata.clear()
+        client.server_metadata.update({
+            "_loaded_at": time.time(),
+            "issuer": issuer,
+            "jwks": jwk_set,
+            "id_token_signing_alg_values_supported": ["EdDSA"],
+        })
+
+        # --- accepts a validly-signed token ---
+        valid_token = {"access_token": "fake-at", "id_token": _sign()}
+        userinfo = client.parse_id_token(valid_token, nonce=nonce)
+        assert userinfo["sub"] == "idfw-sub-real-crypto"
+        assert userinfo["email"] == "realcrypto@example.com"
+        assert userinfo["iss"] == issuer
+
+        # --- rejects an invalid signature (forged by an unrelated key, same kid) ---
+        attacker_key = _ephemeral_ed25519_jwk(kid)
+        bad_sig_token = {"access_token": "fake-at", "id_token": _sign(key=attacker_key)}
+        try:
+            client.parse_id_token(bad_sig_token, nonce=nonce)
+            assert False, "forged-signature ID token must be rejected"
+        except JoseError as e:
+            assert isinstance(e, BadSignatureError), f"expected BadSignatureError, got {type(e)}: {e}"
+
+        # --- rejects a wrong issuer (validly signed, but iss != configured issuer) ---
+        wrong_iss_token = {"access_token": "fake-at", "id_token": _sign({"iss": "https://evil.example.com"})}
+        try:
+            client.parse_id_token(wrong_iss_token, nonce=nonce)
+            assert False, "ID token with an unexpected issuer must be rejected"
+        except JoseError as e:
+            assert isinstance(e, InvalidClaimError) and "iss" in str(e), f"expected iss InvalidClaimError, got {type(e)}: {e}"
+
+        # --- rejects a wrong audience (validly signed, but aud != our client_id) ---
+        # parse_id_token's claims_options only pins `iss` explicitly (mirrors
+        # production: see ideaflow_oidc's registration). Audience enforcement
+        # for a single-string `aud` instead comes from OIDC's validate_azp():
+        # when aud != client_id and no azp claim vouches for us, Authlib
+        # raises MissingClaimError("azp"). That's the real production
+        # behavior of this exact code path, so assert on it rather than an
+        # imagined "invalid aud" shape.
+        wrong_aud_token = {"access_token": "fake-at", "id_token": _sign({"aud": "someone-elses-client-id"})}
+        try:
+            client.parse_id_token(wrong_aud_token, nonce=nonce)
+            assert False, "ID token minted for a different client_id must be rejected"
+        except JoseError as e:
+            assert "azp" in str(e), f"expected an azp/audience-shaped rejection, got {type(e)}: {e}"
+    finally:
+        for k, v in prev_config.items():
+            app.config[k] = v
+        if not had_client_cached:
+            auth_routes.oauth._clients.pop("ideaflow", None)
+        if not had_registry_entry:
+            auth_routes.oauth._registry.pop("ideaflow", None)
+
+
+def test_ideaflow_oidc_callback_uses_canonical_base_url(app):
+    """wikihub-39pe: the redirect_uri sent to the Ideaflow ID authorize
+    endpoint must always be the app's configured BASE_URL callback
+    (https://wikihub.md/auth/ideaflow/callback in production), even when the
+    login flow starts on a user/wiki subdomain or an active custom domain.
+    Before this fix, `url_for(..., _external=True)` derived the callback
+    from the current request's Host header, which would send the provider a
+    redirect_uri it never registered — breaking sign-in from any host other
+    than the apex. Locally BASE_URL defaults to localhost, so dev/test flows
+    (asserted below too) are unaffected."""
+    issuer = app.config["IDEAFLOW_OIDC_ISSUER"]
+    userinfo = {"sub": "idfw-sub-baseurl", "iss": issuer, "email": None, "email_verified": False, "name": ""}
+
+    prev_base_url = app.config.get("BASE_URL")
+    try:
+        app.config["BASE_URL"] = "https://wikihub.md"
+        with _ideaflow_oauth(app, userinfo):
+            browser = app.test_client()
+
+            # started on a user subdomain
+            r = browser.get("/auth/ideaflow", base_url="https://jacobcole.wikihub.md", follow_redirects=False)
+            assert r.status_code == 302
+            location = r.headers["Location"]
+            assert "redirect_uri=https://wikihub.md/auth/ideaflow/callback" in location, location
+            assert "jacobcole.wikihub.md" not in location, location
+
+            # started on an active custom domain
+            r = browser.get("/auth/ideaflow", base_url="https://docs.example.com", follow_redirects=False)
+            assert r.status_code == 302
+            location = r.headers["Location"]
+            assert "redirect_uri=https://wikihub.md/auth/ideaflow/callback" in location, location
+            assert "docs.example.com" not in location, location
+
+            # /auth/ideaflow/link (signed-in linking) uses the same helper
+            r = browser.post("/api/v1/accounts", json={"username": "baseurllinker", "password": "baseurlpass123"})
+            assert r.status_code == 201
+            login_browser = app.test_client()
+            login_browser.post(
+                "/auth/login",
+                data={"username": "baseurllinker", "password": "baseurlpass123"},
+                base_url="https://jacobcole.wikihub.md",
+                follow_redirects=False,
+            )
+            r = login_browser.get("/auth/ideaflow/link", base_url="https://jacobcole.wikihub.md", follow_redirects=False)
+            assert r.status_code == 302
+            location = r.headers["Location"]
+            assert "redirect_uri=https://wikihub.md/auth/ideaflow/callback" in location, location
+            assert "jacobcole.wikihub.md" not in location, location
+    finally:
+        app.config["BASE_URL"] = prev_base_url
+
+    # local/dev/test default: BASE_URL unset (or localhost) still works —
+    # falls through to the app's real default rather than erroring.
+    assert (app.config.get("BASE_URL") or "").startswith("http://localhost"), \
+        "config.py's BASE_URL default must stay localhost for this assertion to be meaningful"
+    userinfo2 = {"sub": "idfw-sub-baseurl-local", "iss": issuer, "email": None, "email_verified": False, "name": ""}
+    with _ideaflow_oauth(app, userinfo2):
+        browser = app.test_client()
+        r = browser.get("/auth/ideaflow", follow_redirects=False)
+        assert r.status_code == 302
+        assert "redirect_uri=http://localhost" in r.headers["Location"], r.headers["Location"]
+
+
+def test_ideaflow_oidc_missing_issuer_claim_fails_closed(app):
+    """wikihub-39pe: if the validated userinfo somehow lacks `iss` (malformed
+    or unexpected Authlib/provider response), the callback must fail closed
+    — not silently substitute the app's configured issuer and proceed as if
+    that issuer had been cryptographically proven. Regression for a prior
+    `userinfo.get("iss") or current_app.config["IDEAFLOW_OIDC_ISSUER"]`
+    fallback that made the issuer check a no-op whenever `iss` was absent."""
+    userinfo_without_iss = {
+        "sub": "idfw-sub-no-iss",
+        "email": "noiss@example.com",
+        "email_verified": True,
+        "name": "No Iss",
+    }
+    with _ideaflow_oauth(app, userinfo_without_iss):
+        browser = app.test_client()
+        browser.get("/auth/ideaflow", follow_redirects=False)
+        r = browser.get("/auth/ideaflow/callback?state=fake-ideaflow-state&code=fake", follow_redirects=False)
+        assert r.status_code == 302
+        assert r.headers["Location"].endswith("/auth/login"), r.headers["Location"]
+
+        with browser.session_transaction() as sess:
+            assert "_user_id" not in sess, "must not be signed in when the ID token has no validated issuer"
+
+        assert User.query.filter_by(email="noiss@example.com").count() == 0, "no account should be created"
+        assert ExternalIdentity.query.filter_by(subject="idfw-sub-no-iss").count() == 0
 
 
 def test_sidebar_json_preserves_current_path_and_acl_shares(app, client, api_key):
@@ -7915,6 +8498,16 @@ def run_all():
             ("password reset flow (wikihub-ks5t.5)", lambda: test_password_reset_lifecycle(client)),
             ("Google auto-link security (wikihub-ks5t.4)", lambda: test_google_auto_link_security(app)),
             ("Google OAuth preserves next + invite context (wikihub-gtrq)", lambda: test_google_oauth_preserves_next_and_invite_context(app, client, key)),
+            ("Ideaflow OIDC feature flag off removes routes+UI (wikihub-39pe)", lambda: test_ideaflow_oidc_feature_flag_off(app, client)),
+            ("Ideaflow OIDC new login creates local session (wikihub-39pe)", lambda: test_ideaflow_oidc_new_login_creates_local_session(app, client)),
+            ("Ideaflow OIDC repeat exact subject login (wikihub-39pe)", lambda: test_ideaflow_oidc_repeat_exact_subject_login(app, client)),
+            ("Ideaflow OIDC signed-in linking to existing user (wikihub-39pe)", lambda: test_ideaflow_oidc_signed_in_linking_to_existing_user(app, client)),
+            ("Ideaflow OIDC new-signin email conflict fails closed (wikihub-39pe)", lambda: test_ideaflow_oidc_new_signin_email_conflict_fails_closed(app, client)),
+            ("Ideaflow OIDC link conflict fails closed (wikihub-39pe)", lambda: test_ideaflow_oidc_link_conflict_fails_closed(app, client)),
+            ("Ideaflow OIDC legacy logins unaffected (wikihub-39pe)", lambda: test_ideaflow_oidc_legacy_logins_unaffected(app, client, key)),
+            ("Ideaflow OIDC real Ed25519/EdDSA ID-token verification (wikihub-39pe)", lambda: test_ideaflow_oidc_real_ed25519_id_token_verification(app)),
+            ("Ideaflow OIDC callback uses canonical BASE_URL (wikihub-39pe)", lambda: test_ideaflow_oidc_callback_uses_canonical_base_url(app)),
+            ("Ideaflow OIDC missing issuer claim fails closed (wikihub-39pe)", lambda: test_ideaflow_oidc_missing_issuer_claim_fails_closed(app)),
             ("login redirects back (?next + Referer fallback)", lambda: test_login_redirect_back(client)),
             ("URL login (GET ?api_key / ?password)", lambda: test_url_login(client)),
             ("URL login — log redaction", lambda: test_url_login_log_redaction()),
