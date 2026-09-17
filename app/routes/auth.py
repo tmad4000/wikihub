@@ -1,5 +1,6 @@
 import re
 from collections import defaultdict, deque
+from functools import wraps
 from time import time
 from urllib.parse import urlparse, quote, parse_qs
 
@@ -773,6 +774,16 @@ def _ideaflow_enabled():
     return ideaflow_oidc_enabled(current_app.config)
 
 
+def _ideaflow_enabled_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not _ideaflow_enabled():
+            abort(404)
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
 def _ideaflow_client():
     """Return the registered 'ideaflow' Authlib client, or None if the kill
     switch is off / it was never registered. Routes must abort(404) rather
@@ -822,6 +833,7 @@ def ideaflow_login():
 
 
 @auth_bp.route("/ideaflow/link")
+@_ideaflow_enabled_required
 @login_required
 def ideaflow_link():
     """Explicit signed-in linking flow (wikihub-39pe): the only way an

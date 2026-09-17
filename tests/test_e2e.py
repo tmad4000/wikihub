@@ -1414,6 +1414,10 @@ def test_ideaflow_oidc_feature_flag_off(app, client):
     r = browser.get("/auth/ideaflow/callback?state=x&code=y")
     assert r.status_code == 404
 
+    anonymous = app.test_client()
+    r = anonymous.get("/auth/ideaflow/link", follow_redirects=False)
+    assert r.status_code == 404
+
     login_html = client.get("/auth/login").get_data(as_text=True)
     assert "/auth/ideaflow" not in login_html
     assert "Continue with Ideaflow" not in login_html
