@@ -32,6 +32,18 @@ SECRET_KEY=dev DATABASE_URL=postgresql://localhost/wikihub \
   flask --app wsgi.py run
 ```
 
+### Sign in with Ideaflow ID
+
+Password, Google, and API-key sign-in continue to work as before. To offer
+Ideaflow ID sign-in, configure the confidential OIDC client values in
+[`.env.example`](.env.example) and enable `IDEAFLOW_OIDC_ENABLED`; the login
+and signup pages will then show **Continue with Ideaflow**.
+
+An Ideaflow ID that has not been linked creates a new WikiHub account. To add
+Ideaflow sign-in to an existing WikiHub account, first sign in to that account
+and choose **Link Ideaflow ID** in Settings. WikiHub never combines accounts
+automatically from an email address.
+
 ## Agent API
 
 Register and get an API key in one call:
