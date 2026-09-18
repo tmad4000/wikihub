@@ -1913,6 +1913,206 @@ def test_ideaflow_oidc_missing_issuer_claim_fails_closed(app):
         assert ExternalIdentity.query.filter_by(subject="idfw-sub-no-iss").count() == 0
 
 
+def test_login_last_used_hint(app, client):
+    """code-v8l: the login page marks the last method that SUCCEEDED in this
+    browser. The hint is a server-set cookie written only by the handler that
+    established the session; failures, cancelled flows, ideaflow linking and
+    restored/magic-link sessions never write it, and stale or no-longer-enabled
+    values are ignored."""
+    import app.routes.auth as auth_routes
+    from flask import redirect
+
+    cookie_name = auth_routes._LAST_LOGIN_METHOD_COOKIE
+
+    def hint(browser):
+        c = browser.get_cookie(cookie_name)
+        return c.value if c else None
+
+    def marked(browser):
+        r = browser.get("/auth/login")
+        assert r.status_code == 200
+        html = r.get_data(as_text=True)
+        return [
+            m.group(2)
+            for m in re.finditer(r'<(a|button)\b[^>]*data-login-method="(\w+)"[^>]*>(.*?)</\1>', html, re.S)
+            if "Last used" in m.group(3)
+        ]
+
+    def writes_hint(response):
+        return any(cookie_name in h for h in response.headers.getlist("Set-Cookie"))
+
+    r = client.post("/api/v1/accounts", json={"username": "lasthint", "password": "lasthintpass1"})
+    assert r.status_code == 201
+    hint_key = r.get_json()["api_key"]
+    pw = {"username": "lasthint", "password": "lasthintpass1"}
+
+    issuer = app.config["IDEAFLOW_OIDC_ISSUER"]
+    ideaflow_userinfo = {
+        "sub": "idfw-sub-lasthint",
+        "iss": issuer,
+        "email": "lasthint-ideaflow@example.com",
+        "email_verified": True,
+        "name": "Last Hint Ideaflow",
+    }
+    google_userinfo = {
+        "sub": "google-sub-lasthint",
+        "email": "lasthint-google@example.com",
+        "email_verified": True,
+        "name": "Last Hint Google",
+    }
+
+    class FakeGoogleClient:
+        def __init__(self):
+            self.userinfo = google_userinfo
+
+        def authorize_redirect(self, redirect_uri):
+            return redirect(f"https://accounts.google.test/o/oauth2/auth?state=hint-state&redirect_uri={redirect_uri}")
+
+        def authorize_access_token(self):
+            return {"userinfo": self.userinfo}
+
+    google = FakeGoogleClient()
+    try:
+        original_google = auth_routes.oauth.google
+        had_google = True
+    except AttributeError:
+        original_google = None
+        had_google = False
+    prev_google_id = app.config.get("GOOGLE_CLIENT_ID")
+    app.config["GOOGLE_CLIENT_ID"] = "test-google-client"
+    auth_routes.oauth.google = google
+
+    def google_signin(browser):
+        browser.get("/auth/google", follow_redirects=False)
+        return browser.get("/auth/google/callback?state=hint-state&code=fake", follow_redirects=False)
+
+    def ideaflow_signin(browser):
+        browser.get("/auth/ideaflow", follow_redirects=False)
+        return browser.get("/auth/ideaflow/callback?state=fake-ideaflow-state&code=fake", follow_redirects=False)
+
+    try:
+        with _preserve_login_rate_limit_state():
+            auth_routes._login_attempts.clear()
+            with _ideaflow_oauth(app, ideaflow_userinfo):
+                # (a) each verified success records its own method, and the
+                # marker sits next to that method only.
+                browser = app.test_client()
+                assert hint(browser) is None and marked(browser) == []
+
+                # (b) failures and cancellations never write the hint.
+                r = browser.post("/auth/login", data={"username": "lasthint", "password": "wrong"})
+                assert r.status_code == 401 and not writes_hint(r)
+                r = browser.post("/auth/login", data={"api_key": "wh_not_a_real_key"})
+                assert r.status_code == 401 and not writes_hint(r)
+                assert hint(browser) is None and marked(browser) == []
+
+                r = browser.post("/auth/login", data=pw, follow_redirects=False)
+                assert r.status_code == 302
+                assert hint(browser) == "password"
+                assert marked(browser) == ["password"]
+
+                # ...nor overwrite or clear an existing one.
+                r = browser.post("/auth/login", data={"username": "lasthint", "password": "wrong"})
+                assert r.status_code == 401 and not writes_hint(r)
+                r = browser.post("/auth/login", data={"api_key": "wh_not_a_real_key"})
+                assert r.status_code == 401 and not writes_hint(r)
+                google.userinfo = {"email": "no-sub@example.com"}
+                r = google_signin(browser)
+                assert r.headers["Location"].endswith("/auth/login") and not writes_hint(r)
+                google.userinfo = google_userinfo
+                original_token = auth_routes.oauth.ideaflow.authorize_access_token
+
+                def cancelled():
+                    raise RuntimeError("access_denied")
+
+                auth_routes.oauth.ideaflow.authorize_access_token = cancelled
+                r = ideaflow_signin(browser)
+                assert r.headers["Location"].endswith("/auth/login") and not writes_hint(r)
+                auth_routes.oauth.ideaflow.authorize_access_token = original_token
+                assert hint(browser) == "password"
+                assert marked(browser) == ["password"]
+
+                r = google_signin(browser)
+                assert r.status_code == 302 and hint(browser) == "google"
+                assert marked(browser) == ["google"]
+
+                r = ideaflow_signin(browser)
+                assert r.status_code == 302 and hint(browser) == "ideaflow"
+                assert marked(browser) == ["ideaflow"]
+
+                r = browser.post("/auth/login", data={"api_key": hint_key}, follow_redirects=False)
+                assert r.status_code == 302 and hint(browser) == "api_key"
+                assert marked(browser) == ["api_key"]
+
+                # Linking Ideaflow from Settings is not a sign-in, so it must
+                # not change the hint of an already-signed-in browser.
+                linker = app.test_client()
+                linker.post("/auth/login", data=pw, follow_redirects=False)
+                assert hint(linker) == "password"
+                auth_routes.oauth.ideaflow.authorize_access_token = lambda: {
+                    "userinfo": {**ideaflow_userinfo, "sub": "idfw-sub-lasthint-link", "email": None}
+                }
+                linker.get("/auth/ideaflow/link", follow_redirects=False)
+                r = linker.get("/auth/ideaflow/callback?state=fake-ideaflow-state&code=fake", follow_redirects=False)
+                assert r.headers["Location"].endswith("/settings") and not writes_hint(r)
+                assert ExternalIdentity.query.filter_by(subject="idfw-sub-lasthint-link").count() == 1
+                assert hint(linker) == "password"
+                auth_routes.oauth.ideaflow.authorize_access_token = original_token
+
+                # (c) restoring a session, or a magic-link sign-in whose method
+                # this screen doesn't offer, is not a fresh login: no hint.
+                r = client.post(
+                    "/api/v1/auth/magic-link", json={"next": "/settings"}, headers={"Authorization": f"Bearer {hint_key}"}
+                )
+                assert r.status_code == 201
+                restored = app.test_client()
+                r = restored.get(r.get_json()["login_url"], follow_redirects=False)
+                assert r.status_code == 302 and not writes_hint(r)
+                for path in ("/settings", "/", "/auth/login"):
+                    r = restored.get(path)
+                    assert not writes_hint(r), path
+                assert restored.get("/settings").status_code == 200, "session is restored and usable"
+                assert hint(restored) is None
+
+                # (f) the marker only renders while 2+ methods are enabled.
+                assert len(auth_routes._enabled_login_methods()) == 4
+                real_enabled = auth_routes._enabled_login_methods
+                auth_routes._enabled_login_methods = lambda: ["password"]
+                try:
+                    assert marked(browser) == []
+                finally:
+                    auth_routes._enabled_login_methods = real_enabled
+
+                # (e) stale / unknown stored values are ignored.
+                for stale in ("bogus", "GOOGLE", "", "x" * 3000):
+                    browser.set_cookie(cookie_name, stale)
+                    assert marked(browser) == [], stale
+
+            # (e) a stored method that is no longer enabled is ignored: the
+            # Ideaflow switch is off again here, and then Google too.
+            browser.set_cookie(cookie_name, "ideaflow")
+            assert marked(browser) == []
+            browser.set_cookie(cookie_name, "google")
+            assert marked(browser) == ["google"]
+            app.config["GOOGLE_CLIENT_ID"] = None
+            assert marked(browser) == []
+            app.config["GOOGLE_CLIENT_ID"] = "test-google-client"
+
+            # (d) storage unavailable (cookies refused): sign-in and the page
+            # keep working and simply show no hint.
+            nocookies = app.test_client(use_cookies=False)
+            r = nocookies.post("/auth/login", data=pw, follow_redirects=False)
+            assert r.status_code == 302
+            r = nocookies.get("/auth/login")
+            assert r.status_code == 200 and b"Last used" not in r.data
+    finally:
+        app.config["GOOGLE_CLIENT_ID"] = prev_google_id
+        if had_google:
+            auth_routes.oauth.google = original_google
+        else:
+            delattr(auth_routes.oauth, "google")
+
+
 def test_sidebar_json_preserves_current_path_and_acl_shares(app, client, api_key):
     """wikihub-oud7 + wikihub-aozp: async sidebar keeps current branch and ACL-shared pages."""
     import app.routes.wiki as wiki_routes
@@ -8512,6 +8712,7 @@ def run_all():
             ("Ideaflow OIDC real Ed25519/EdDSA ID-token verification (wikihub-39pe)", lambda: test_ideaflow_oidc_real_ed25519_id_token_verification(app)),
             ("Ideaflow OIDC callback uses canonical BASE_URL (wikihub-39pe)", lambda: test_ideaflow_oidc_callback_uses_canonical_base_url(app)),
             ("Ideaflow OIDC missing issuer claim fails closed (wikihub-39pe)", lambda: test_ideaflow_oidc_missing_issuer_claim_fails_closed(app)),
+            ("login page marks last successfully used method (code-v8l)", lambda: test_login_last_used_hint(app, client)),
             ("login redirects back (?next + Referer fallback)", lambda: test_login_redirect_back(client)),
             ("URL login (GET ?api_key / ?password)", lambda: test_url_login(client)),
             ("URL login — log redaction", lambda: test_url_login_log_redaction()),
