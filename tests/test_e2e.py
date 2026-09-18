@@ -2094,8 +2094,15 @@ def test_login_last_used_hint(app, client):
             assert marked(browser) == []
             browser.set_cookie(cookie_name, "google")
             assert marked(browser) == ["google"]
+            configured = browser.get("/auth/login").get_data(as_text=True)
+            assert 'data-login-method="google"' in configured
+            # Screen readers hear "Sign in with Google, Last used".
+            assert '<span class="sr-only">, </span>Last used' in configured
             app.config["GOOGLE_CLIENT_ID"] = None
             assert marked(browser) == []
+            # The Google button itself is rendered regardless of configuration
+            # (existing behaviour); the marker just never shows without it.
+            assert 'data-login-method="google"' in browser.get("/auth/login").get_data(as_text=True)
             app.config["GOOGLE_CLIENT_ID"] = "test-google-client"
 
             # (d) storage unavailable (cookies refused): sign-in and the page

@@ -21,7 +21,8 @@
   .btn-primary:hover { background: var(--accent-hover); }
   .btn-google { background: transparent; border: 1px solid var(--border-emphasis); color: var(--text-secondary); margin-bottom: 16px; }
   .btn-google:hover { border-color: var(--border-accent); color: var(--text-primary); }
-  .last-used { display: inline-block; margin-left: 8px; padding: 1px 7px; border: 1px solid currentColor; border-radius: 999px; font-size: 0.6875rem; font-weight: 500; line-height: 1.4; opacity: 0.85; vertical-align: middle; white-space: nowrap; }
+  .last-used { display: inline-block; margin: 2px 4px; padding: 1px 7px; border: 1px solid currentColor; border-radius: 999px; font-size: 0.6875rem; font-weight: 500; line-height: 1.4; opacity: 0.85; vertical-align: middle; white-space: nowrap; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
   .divider { text-align: center; color: var(--text-muted); font-size: 0.75rem; margin: 16px 0; position: relative; }
   .divider::before, .divider::after { content: ''; position: absolute; top: 50%; width: 40%; height: 1px; background: var(--border-default); }
   .divider::before { left: 0; }
@@ -43,7 +44,7 @@
   {% endif %}
   {% endwith %}
 
-  {% macro last_used(method) %}{% if last_login_method == method %}<span class="last-used">Last used</span>{% endif %}{% endmacro %}
+  {% macro last_used(method) %}{% if last_login_method == method %}<span class="last-used"><span class="sr-only">, </span>Last used</span>{% endif %}{% endmacro %}
   {% if prefill_email %}
   <p style="font-size:0.875rem;color:var(--text-muted);background:var(--accent-subtle);padding:0.6rem 0.75rem;border-radius:var(--radius-sm);margin-bottom:1rem;">
     You were invited at <strong>{{ prefill_email }}</strong>. Sign in below and your invite will apply automatically.
