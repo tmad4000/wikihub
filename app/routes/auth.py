@@ -41,6 +41,14 @@ _EMAIL_VERIFY_TTL_HOURS = 24
 _PASSWORD_RESET_TTL_MINUTES = 30
 _GOOGLE_OAUTH_CONTEXTS_SESSION_KEY = "google_oauth_contexts"
 
+# "Last used" sign-in hint (code-v8l). The hint is the last login method that
+# SUCCEEDED in this browser, recorded server-side by the handler that actually
+# established the session, so a click, a failure or a cancelled flow can never
+# write it. It holds only a short method id and is validated against the
+# methods enabled right now before it is shown.
+_LAST_LOGIN_METHOD_COOKIE = "wikihub_last_login_method"
+_LAST_LOGIN_METHOD_MAX_AGE = 365 * 24 * 60 * 60
+
 
 def send_verification_if_needed(user):
     """Mint a verification token and email a verify link to the user's email,
@@ -173,8 +181,44 @@ def _check_login_rate_limit():
     return None
 
 
+def _enabled_login_methods():
+    """Method ids of the sign-in methods enabled right now, in display order."""
+    methods = []
+    if current_app.config.get("GOOGLE_CLIENT_ID"):
+        methods.append("google")
+    if _ideaflow_enabled():
+        methods.append("ideaflow")
+    methods.extend(["password", "api_key"])
+    return methods
+
+
+def _last_login_method():
+    """The remembered method, or None unless the login screen offers 2+
+    methods and the stored value is one of them (ignores stale/unknown ids)."""
+    methods = _enabled_login_methods()
+    value = request.cookies.get(_LAST_LOGIN_METHOD_COOKIE)
+    if len(methods) >= 2 and value in methods:
+        return value
+    return None
+
+
+def _remember_login_method(response, method):
+    """Record `method` as last used. Call only after login_user() succeeded."""
+    response.set_cookie(
+        _LAST_LOGIN_METHOD_COOKIE,
+        method,
+        max_age=_LAST_LOGIN_METHOD_MAX_AGE,
+        secure=current_app.config.get("SESSION_COOKIE_SECURE", False),
+        httponly=True,
+        samesite="Lax",
+        domain=current_app.config.get("SESSION_COOKIE_DOMAIN"),
+    )
+    return response
+
+
 def _login_template_context():
     return {
+        "last_login_method": _last_login_method(),
         "testing_login": current_app.debug and current_app.config.get("TESTING_LOGIN"),
         "prefill_email": request.values.get("email", "").strip().lower(),
         "invite_token": request.values.get("it", "").strip(),
@@ -302,7 +346,7 @@ def login():
         login_user(user)
         if request.method == "GET":
             flash("Signed in via URL. Rotate this key if the link was shared.")
-        return redirect(_safe_next_url())
+        return _remember_login_method(redirect(_safe_next_url()), "api_key")
 
     user = User.query.filter_by(username=username).first()
     if not user or not user.password_hash or not check_password(password, user.password_hash):
@@ -313,7 +357,7 @@ def login():
     _apply_pending_invites_on_login(user)
     if request.method == "GET":
         flash("Signed in via URL. Rotate credentials if the link was shared.")
-    return redirect(_safe_next_url())
+    return _remember_login_method(redirect(_safe_next_url()), "password")
 
 
 def _apply_pending_invites_on_login(user, *, invite_email=None, invite_token=None):
@@ -433,7 +477,7 @@ def signup():
         send_verification_if_needed(user)
 
         login_user(user)
-        return redirect(url_for("wiki.user_profile", username=user.username))
+        return _remember_login_method(redirect(url_for("wiki.user_profile", username=user.username)), "password")
 
     # GET — prefill email + invite token from the invite-link query params
     prefill_email = request.args.get("email", "").strip().lower()
@@ -660,7 +704,7 @@ def google_callback():
         invite_email=oauth_context.get("email"),
         invite_token=oauth_context.get("it"),
     )
-    return redirect(_safe_redirect_target(oauth_context.get("next")))
+    return _remember_login_method(redirect(_safe_redirect_target(oauth_context.get("next"))), "google")
 
 
 def _generate_unique_username(*, email, name):
@@ -905,7 +949,7 @@ def _login_via_ideaflow_identity(identity, oauth_context):
         return redirect(url_for("auth.login"))
     login_user(user)
     _apply_pending_invites_on_login(user)
-    return redirect(_safe_redirect_target(oauth_context.get("next")))
+    return _remember_login_method(redirect(_safe_redirect_target(oauth_context.get("next"))), "ideaflow")
 
 
 def _handle_ideaflow_signin_callback(oauth_context, *, issuer, subject, email, email_verified, name):
@@ -956,7 +1000,7 @@ def _handle_ideaflow_signin_callback(oauth_context, *, issuer, subject, email, e
         applied = materialize_pending_invites_for(user)
         if applied:
             db.session.commit()
-    return redirect(_safe_redirect_target(oauth_context.get("next")))
+    return _remember_login_method(redirect(_safe_redirect_target(oauth_context.get("next"))), "ideaflow")
 
 
 def _handle_ideaflow_link_callback(oauth_context, *, issuer, subject, email):
