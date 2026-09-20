@@ -39,10 +39,28 @@ Ideaflow ID sign-in, configure the confidential OIDC client values in
 [`.env.example`](.env.example) and enable `IDEAFLOW_OIDC_ENABLED`; the login
 and signup pages will then show **Continue with Ideaflow**.
 
-An Ideaflow ID that has not been linked creates a new WikiHub account. To add
-Ideaflow sign-in to an existing WikiHub account, first sign in to that account
-and choose **Link Ideaflow ID** in Settings. WikiHub never combines accounts
-automatically from an email address.
+Signing in with Ideaflow resolves to the right WikiHub account automatically:
+
+- A returning Ideaflow ID goes straight to its linked account (matched by its
+  immutable issuer + subject, never by email).
+- A new Ideaflow ID whose email Ideaflow has verified links to the one existing
+  WikiHub account that uses that email **only if** WikiHub had already verified
+  that email itself (the same two-sided proof Google sign-in requires). No
+  Connect click is needed, and Settings shows the account as **Connected**.
+- If the matching WikiHub account's email was never verified (an older typed
+  email), or the account has extra access, WikiHub asks for that account's
+  password **once** before connecting. A typed email alone never proves
+  ownership.
+- Otherwise a new Ideaflow ID creates one new WikiHub account.
+- Anything ambiguous or conflicting (two matching accounts, an account already
+  connected to a different Ideaflow ID, an email Ideaflow did not verify) is
+  refused rather than guessed. **Connect Ideaflow** in Settings remains as a
+  fallback for accounts whose email differs; it always asks Ideaflow to sign in
+  again so a shared IdP session can't be attached by accident.
+
+**Use another Ideaflow account** on the login page sends `prompt=login` so
+Ideaflow shows its sign-in page even when it already has a session. WikiHub
+never merges accounts and never rewrites a WikiHub user id.
 
 ## Agent API
 
