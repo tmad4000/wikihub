@@ -39,13 +39,16 @@
   {% endif %}
   {% endwith %}
 
-  {% if reason == "privileged" %}
+  {% if reason == "choose" %}
+  <p>Ideaflow confirmed <strong>{{ email }}</strong>. WikiHub already has an account using that address that was never verified, so it can't be matched to you automatically. If it's yours, sign in to it another way and choose Connect Ideaflow in Settings. Otherwise you can create a new WikiHub account.</p>
+  {% elif reason == "privileged" %}
   <p>Ideaflow confirmed <strong>{{ email }}</strong>. This WikiHub account (<strong>{{ username }}</strong>) has extra access, so please confirm it's yours once before connecting.</p>
   {% else %}
   <p>Ideaflow confirmed <strong>{{ email }}</strong>, and a WikiHub account (<strong>{{ username }}</strong>) already uses that address but was never verified. Confirm it's yours once and you won't be asked again.</p>
   {% endif %}
 
-  {% if has_password %}
+  {% if reason == "choose" %}
+  {% elif has_password %}
   <form method="POST" action="{{ url_for('auth.ideaflow_confirm') }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label for="password">Password for {{ username }}</label>
@@ -55,6 +58,15 @@
   <div class="links"><a href="{{ url_for('auth.forgot_password') }}">Forgot password?</a></div>
   {% else %}
   <p>This account has no password to confirm with. Sign in to <strong>{{ username }}</strong> with its usual method, then choose Connect Ideaflow in Settings.</p>
+  {% endif %}
+
+  {% if reason == "unverified" or reason == "choose" %}
+  <div class="divider" style="text-align:center;color:var(--text-muted);font-size:0.75rem;margin:16px 0 12px;">or</div>
+  <p style="font-size:0.8125rem;">Not your account? Someone else may have typed your address, or you may have forgotten the password.</p>
+  <form method="POST" action="{{ url_for('auth.ideaflow_confirm_new') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button type="submit" class="btn btn-quiet" data-ideaflow-action="new-account">Create a new WikiHub account</button>
+  </form>
   {% endif %}
 
   <form method="POST" action="{{ url_for('auth.ideaflow_confirm_cancel') }}" style="margin-top:16px;">

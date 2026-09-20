@@ -52,11 +52,18 @@ Signing in with Ideaflow resolves to the right WikiHub account automatically:
   password **once** before connecting. A typed email alone never proves
   ownership.
 - Otherwise a new Ideaflow ID creates one new WikiHub account.
-- Anything ambiguous or conflicting (two matching accounts, an account already
-  connected to a different Ideaflow ID, an email Ideaflow did not verify) is
-  refused rather than guessed. **Connect Ideaflow** in Settings remains as a
-  fallback for accounts whose email differs; it always asks Ideaflow to sign in
-  again so a shared IdP session can't be attached by accident.
+- If the only matching account(s) were never verified, the confirmation page
+  also offers **Create a new WikiHub account** (someone else may have typed your
+  address, or you forgot the password). It leaves the unverified account
+  untouched, gives the new account no privileges, and is never offered when a
+  verified account already uses the address. Several unverified matches, or an
+  unverified match already connected to a different Ideaflow ID, show only that
+  way out (plus "sign in another way, then Connect Ideaflow in Settings").
+- Anything else ambiguous or conflicting (an account with a verified email
+  already connected to a different Ideaflow ID, an email Ideaflow did not
+  verify) is refused rather than guessed. **Connect Ideaflow** in Settings
+  remains as a fallback for accounts whose email differs; it always asks Ideaflow
+  to sign in again so a shared IdP session can't be attached by accident.
 
 **Use another Ideaflow account** on the login page sends `prompt=login` so
 Ideaflow shows its sign-in page even when it already has a session. WikiHub

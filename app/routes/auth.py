@@ -87,6 +87,9 @@ _signup_attempts = defaultdict(deque)
 _LOGIN_WINDOW_SECONDS = 300
 _LOGIN_MAX_PER_IP = 20
 _login_attempts = defaultdict(deque)
+# Separate from the per-IP dict: its keys come from a client-supplied
+# X-Forwarded-For value, so sharing would let anyone poison a user's counter.
+_ideaflow_confirm_failures = defaultdict(deque)
 
 _FORGOT_PASSWORD_WINDOW_SECONDS = 3600
 _FORGOT_PASSWORD_MAX_PER_EMAIL = 5
@@ -559,10 +562,28 @@ def reset_password(token):
         return render_template("auth/reset_password.html", username=user.username), 400
 
     user.password_hash = hash_password(password)
-    user.email_verified_at = utcnow()
     row.used_at = utcnow()
-    materialize_pending_invites_for(user)
-    db.session.commit()
+    # Claiming the email is skipped when another account already verified it
+    # (e.g. that person chose "not your account" at Ideaflow sign-in); the reset
+    # itself still completes.
+    email_taken = bool(user.email) and (
+        User.query.filter(
+            User.email == user.email,
+            User.email_verified_at.isnot(None),
+            User.id != user.id,
+        ).first()
+        is not None
+    )
+    if not email_taken:
+        user.email_verified_at = utcnow()
+    try:
+        materialize_pending_invites_for(user)
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        user.password_hash = hash_password(password)
+        row.used_at = utcnow()
+        db.session.commit()
 
     login_user(user)
     flash("Password reset. You're signed in.")
@@ -738,8 +759,12 @@ def _resolve_or_create_google_user(*, google_id, email, email_verified, name):
     """
     user = User.query.filter_by(google_id=google_id).first()
     if not user and email and email_verified:
-        candidate = User.query.filter_by(email=email).first()
-        if candidate and candidate.email_verified_at is not None:
+        # Only a VERIFIED row can ever be a link target; picking it directly also
+        # keeps an unverified duplicate of the same address from shadowing it.
+        candidate = User.query.filter(
+            User.email == email, User.email_verified_at.isnot(None)
+        ).first()
+        if candidate:
             candidate.google_id = google_id
             db.session.commit()
             user = candidate
@@ -825,6 +850,10 @@ _IDEAFLOW_PENDING_LINK_MAX_ATTEMPTS = 5
 # An explicit link flow forces a fresh IdP sign-in; accept an `auth_time` no
 # older than the request start minus this allowance for clock skew.
 _IDEAFLOW_FRESH_AUTH_SKEW_SECONDS = 120
+# Server-side cap on wrong passwords per local account across all pending
+# checks (the per-check counter lives in the client-held session cookie and
+# can be replayed), counted in the shared login-attempt window.
+_IDEAFLOW_CONFIRM_MAX_FAILURES_PER_USER = 10
 
 
 def _ideaflow_callback_url():
@@ -986,7 +1015,13 @@ def ideaflow_callback():
     mode = oauth_context.get("mode", "signin")
     if mode == "link":
         return _handle_ideaflow_link_callback(
-            oauth_context, issuer=issuer, subject=subject, email=email, auth_time=auth_time
+            oauth_context,
+            issuer=issuer,
+            subject=subject,
+            # The stored snapshot is display-only, but never keep an email the
+            # provider did not verify.
+            email=email if email_verified else None,
+            auth_time=auth_time,
         )
     return _handle_ideaflow_signin_callback(
         oauth_context, issuer=issuer, subject=subject, email=email, email_verified=email_verified, name=name
@@ -1048,12 +1083,16 @@ def _link_ideaflow_identity(user, *, issuer, subject, email, mark_email_verified
     return True
 
 
-def _start_ideaflow_ownership_check(user, *, issuer, subject, email, oauth_context, reason):
+def _start_ideaflow_ownership_check(user, *, issuer, subject, email, oauth_context, reason, name=""):
+    """`user` is None for reason "choose": every matching row is unverified and
+    cannot be matched safely (several rows, or it is already bound to someone
+    else's Ideaflow identity), so the person is offered only the way out."""
     session[_IDEAFLOW_PENDING_LINK_SESSION_KEY] = {
-        "user_id": user.id,
+        "user_id": user.id if user else None,
         "issuer": issuer,
         "subject": subject,
         "email": email,
+        "name": name,
         "next": oauth_context.get("next"),
         "reason": reason,
         "exp": int(time()) + _IDEAFLOW_PENDING_LINK_TTL_SECONDS,
@@ -1097,8 +1136,14 @@ def _handle_ideaflow_signin_callback(oauth_context, *, issuer, subject, email, e
                 )
             verified = [u for u in candidates if u.email_verified_at is not None]
             unverified = [u for u in candidates if u.email_verified_at is None]
-            if len(verified) > 1 or (not verified and len(unverified) > 1):
-                # Never guess between accounts.
+            if not verified and len(unverified) > 1:
+                # Never guess between accounts. Nobody has proven any of them,
+                # so the person may still create a fresh one.
+                return _start_ideaflow_ownership_check(
+                    None, issuer=issuer, subject=subject, email=email,
+                    oauth_context=oauth_context, reason="choose", name=name,
+                )
+            if len(verified) > 1:
                 return _ideaflow_conflict(
                     "More than one WikiHub account uses this email, so Ideaflow can't be matched "
                     "automatically. Sign in to the right account, then connect Ideaflow from Settings."
@@ -1106,7 +1151,14 @@ def _handle_ideaflow_signin_callback(oauth_context, *, issuer, subject, email, e
             target = verified[0] if verified else unverified[0]
             if ExternalIdentity.query.filter_by(user_id=target.id, issuer=issuer).first():
                 # Already connected to a DIFFERENT Ideaflow subject: never
-                # rebind, never merge.
+                # rebind, never merge. An unverified row may be someone else's
+                # squat (they connected their own identity to it), so the
+                # verified owner of this Ideaflow email still gets the way out.
+                if not verified:
+                    return _start_ideaflow_ownership_check(
+                        None, issuer=issuer, subject=subject, email=email,
+                        oauth_context=oauth_context, reason="choose", name=name,
+                    )
                 return _ideaflow_conflict(
                     "The WikiHub account with this email is already connected to a different Ideaflow "
                     "account. Sign in to it with its usual method."
@@ -1127,37 +1179,52 @@ def _handle_ideaflow_signin_callback(oauth_context, *, issuer, subject, email, e
                 email=email,
                 oauth_context=oauth_context,
                 reason="privileged" if verified else "unverified",
+                name=name,
             )
 
-        # 3. No local account claims this email: a brand new person. Only a
-        # provider-verified email is stored; storing an unverified one would
-        # let anyone squat a victim's address on a local row.
-        trusted_email = email if email_verified else None
-        username = _generate_unique_username(email=trusted_email, name=name)
-        user = User(
-            username=username,
-            email=trusted_email,
-            email_verified_at=utcnow() if trusted_email else None,
-            display_name=name or None,
+        # 3. No local account claims this email: a brand new person.
+        user = _create_ideaflow_account(
+            issuer=issuer, subject=subject, email=email, email_verified=email_verified, name=name
         )
-        db.session.add(user)
-        try:
-            db.session.flush()
-            ensure_personal_wiki(user)
-            db.session.add(ExternalIdentity(user_id=user.id, issuer=issuer, subject=subject, email=trusted_email))
-            db.session.commit()
-        except IntegrityError:
-            db.session.rollback()
+        if user is None:
             continue
-
-        login_user(user)
-        if trusted_email:
-            applied = materialize_pending_invites_for(user)
-            if applied:
-                db.session.commit()
-        return _remember_login_method(redirect(_safe_redirect_target(oauth_context.get("next"))), "ideaflow")
+        return _login_new_ideaflow_account(user, oauth_context)
 
     return _ideaflow_conflict("Ideaflow ID sign-in conflict — please try again.")
+
+
+def _create_ideaflow_account(*, issuer, subject, email, email_verified, name):
+    """Create the one local account (plus its (issuer, subject) link) for a
+    brand-new Ideaflow person, or return None on a lost race. Only a
+    provider-verified email is stored; storing an unverified one would let
+    anyone squat a victim's address on a local row."""
+    trusted_email = email if email_verified else None
+    username = _generate_unique_username(email=trusted_email, name=name)
+    user = User(
+        username=username,
+        email=trusted_email,
+        email_verified_at=utcnow() if trusted_email else None,
+        display_name=name or None,
+    )
+    db.session.add(user)
+    try:
+        db.session.flush()
+        ensure_personal_wiki(user)
+        db.session.add(ExternalIdentity(user_id=user.id, issuer=issuer, subject=subject, email=trusted_email))
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return None
+    return user
+
+
+def _login_new_ideaflow_account(user, oauth_context):
+    login_user(user)
+    if user.email:
+        applied = materialize_pending_invites_for(user)
+        if applied:
+            db.session.commit()
+    return _remember_login_method(redirect(_safe_redirect_target(oauth_context.get("next"))), "ideaflow")
 
 
 @auth_bp.route("/ideaflow/confirm", methods=["GET", "POST"])
@@ -1172,8 +1239,8 @@ def ideaflow_confirm():
     if pending is None:
         flash("That Ideaflow confirmation expired. Please continue with Ideaflow again.")
         return redirect(url_for("auth.login"))
-    user = db.session.get(User, pending["user_id"])
-    if not user:
+    user = db.session.get(User, pending["user_id"]) if pending["user_id"] else None
+    if pending["reason"] != "choose" and not user:
         session.pop(_IDEAFLOW_PENDING_LINK_SESSION_KEY, None)
         flash("That WikiHub account no longer exists.")
         return redirect(url_for("auth.login"))
@@ -1181,22 +1248,34 @@ def ideaflow_confirm():
     def _render(status=200):
         return render_template(
             "auth/ideaflow_confirm.html",
-            username=user.username,
+            username=user.username if user else "",
             email=pending["email"],
-            has_password=bool(user.password_hash),
+            has_password=bool(user and user.password_hash),
             reason=pending["reason"],
         ), status
 
     if request.method == "GET":
         return _render()
 
+    if user is None:
+        # "choose" offers no password check, only /ideaflow/confirm/new.
+        return _render(400)
     rate_limited = _check_login_rate_limit()
     if rate_limited:
         return rate_limited
     if not user.password_hash:
         return _render(400)
 
+    failures = _ideaflow_confirm_failures[user.id]
+    now = time()
+    while failures and now - failures[0] > _LOGIN_WINDOW_SECONDS:
+        failures.popleft()
+    if len(failures) >= _IDEAFLOW_CONFIRM_MAX_FAILURES_PER_USER:
+        flash("Too many incorrect attempts for this account. Try again in a few minutes.")
+        return _render(429)
+
     if not check_password(request.form.get("password", ""), user.password_hash):
+        failures.append(now)
         pending["attempts"] += 1
         if pending["attempts"] >= _IDEAFLOW_PENDING_LINK_MAX_ATTEMPTS:
             session.pop(_IDEAFLOW_PENDING_LINK_SESSION_KEY, None)
@@ -1237,6 +1316,40 @@ def ideaflow_confirm_cancel():
     return redirect(url_for("auth.login"))
 
 
+@auth_bp.route("/ideaflow/confirm/new", methods=["POST"])
+@_ideaflow_enabled_required
+def ideaflow_confirm_new():
+    """"Not your account?" escape hatch. Only offered when the ONLY local
+    account using this email is an UNVERIFIED one: nobody has proven that row
+    is theirs, so a person whose Ideaflow email is provider-verified must not
+    be blocked by it (a squatter, a typo, or a forgotten legacy password).
+    Mirrors what Google sign-in already does in the same situation: a fresh
+    account is created and the unverified row is left untouched. A verified or
+    privileged account is never bypassed this way."""
+    pending = _load_ideaflow_pending_link()
+    session.pop(_IDEAFLOW_PENDING_LINK_SESSION_KEY, None)
+    if pending is None or pending["reason"] not in ("unverified", "choose"):
+        flash("That Ideaflow confirmation expired. Please continue with Ideaflow again.")
+        return redirect(url_for("auth.login"))
+
+    issuer, subject, email = pending["issuer"], pending["subject"], pending["email"]
+    oauth_context = {"next": pending.get("next")}
+    existing = ExternalIdentity.query.filter_by(issuer=issuer, subject=subject).first()
+    if existing:
+        return _login_via_ideaflow_identity(existing, oauth_context)
+    if any(u.email_verified_at is not None for u in _ideaflow_email_candidates(email)):
+        # A verified owner appeared since the callback; automatic resolution
+        # (not this escape hatch) must decide.
+        return _ideaflow_conflict("A verified WikiHub account now uses this email. Please continue with Ideaflow again.")
+    # `pending` is only ever created for a strictly verified Ideaflow email.
+    user = _create_ideaflow_account(
+        issuer=issuer, subject=subject, email=email, email_verified=True, name=pending.get("name") or ""
+    )
+    if user is None:
+        return _ideaflow_conflict("Ideaflow sign-in conflicted with another request. Please try again.")
+    return _login_new_ideaflow_account(user, oauth_context)
+
+
 def _handle_ideaflow_link_callback(oauth_context, *, issuer, subject, email, auth_time=None):
     linking_user_id = oauth_context.get("user_id")
     if not linking_user_id or not current_user.is_authenticated or current_user.id != linking_user_id:
@@ -1255,6 +1368,9 @@ def _handle_ideaflow_link_callback(oauth_context, *, issuer, subject, email, aut
         or isinstance(auth_time, bool)
         or not isinstance(auth_time, (int, float))
         or auth_time < started_at - _IDEAFLOW_FRESH_AUTH_SKEW_SECONDS
+        # No far-future / wrong-unit (e.g. milliseconds) values: a claim that
+        # can never be stale would silently defeat this check.
+        or auth_time > int(time()) + _IDEAFLOW_FRESH_AUTH_SKEW_SECONDS
     ):
         flash("Ideaflow needs a fresh sign-in to connect an account. Please try connecting again.")
         return redirect(url_for("main.settings"))
