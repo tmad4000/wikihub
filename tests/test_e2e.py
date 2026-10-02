@@ -1360,8 +1360,9 @@ def _ideaflow_oauth(app, userinfo, state="fake-ideaflow-state"):
     from flask import redirect
 
     class FakeIdeaflowClient:
-        def authorize_redirect(self, redirect_uri):
-            return redirect(f"https://id.ideaflow.test/authorize?state={state}&redirect_uri={redirect_uri}")
+        def authorize_redirect(self, redirect_uri, **params):
+            extra = "".join(f"&{key}={value}" for key, value in sorted(params.items()))
+            return redirect(f"https://id.ideaflow.test/authorize?state={state}&redirect_uri={redirect_uri}{extra}")
 
         def authorize_access_token(self):
             return {"userinfo": userinfo}
@@ -1446,6 +1447,8 @@ def test_ideaflow_oidc_new_login_creates_local_session(app, client):
         r = browser.get("/auth/ideaflow?next=/settings", follow_redirects=False)
         assert r.status_code == 302
         assert "state=fake-ideaflow-state" in r.headers["Location"]
+        # Plain sign-in stays silent single sign-on: no prompt.
+        assert "prompt=" not in r.headers["Location"]
 
         with browser.session_transaction() as sess:
             pending = sess.get("ideaflow_oauth_contexts", {})
@@ -1532,6 +1535,9 @@ def test_ideaflow_oidc_signed_in_linking_to_existing_user(app, client):
 
         r = browser.get("/auth/ideaflow/link", follow_redirects=False)
         assert r.status_code == 302
+        # code-ww6: the provider is silent SSO, so linking must ask it to show
+        # which Ideaflow account is being linked.
+        assert "prompt=select_account" in r.headers["Location"]
         with browser.session_transaction() as sess:
             pending = sess.get("ideaflow_oauth_contexts", {})
             assert pending["fake-ideaflow-state"]["mode"] == "link"

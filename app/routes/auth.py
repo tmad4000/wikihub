@@ -889,7 +889,11 @@ def ideaflow_link():
     if not client:
         abort(404)
     redirect_uri = _ideaflow_callback_url()
-    response = client.authorize_redirect(redirect_uri)
+    # Ideaflow ID is single sign-on: without a prompt it silently returns the
+    # browser's current provider account. Linking binds that identity to this
+    # WikiHub account permanently, so ask the provider to show which Ideaflow
+    # account is being linked (with "Use another account") first.
+    response = client.authorize_redirect(redirect_uri, prompt="select_account")
     location = response.headers.get("Location", "")
     state = parse_qs(urlparse(location).query).get("state", [""])[0]
     context = {"next": url_for("main.settings"), "mode": "link", "user_id": current_user.id}
