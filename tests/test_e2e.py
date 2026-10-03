@@ -1538,7 +1538,6 @@ def test_ideaflow_oidc_signed_in_linking_to_existing_user(app, client):
         "email": "linkowner-ideaflow@example.com",
         "email_verified": True,
         "name": "Link Owner",
-        "auth_time": _fresh_auth_time(),
     }
     with _ideaflow_oauth(app, userinfo):
         browser = app.test_client()
@@ -1585,14 +1584,6 @@ def test_ideaflow_oidc_signed_in_linking_to_existing_user(app, client):
         assert ExternalIdentity.query.filter_by(issuer=issuer, subject="idfw-sub-link").count() == 1
 
 
-def _fresh_auth_time():
-    """An `auth_time` claim for a sign-in that just happened (the provider's
-    prompt=login flow creates a brand new session)."""
-    import time as _time
-
-    return int(_time.time())
-
-
 def _ideaflow_seed_user(username, email, *, password="localpass-12345", verified=False, wiki_limit=None):
     """Create a local account directly (test-only) and return its id."""
     from app.auth_utils import hash_password
@@ -1628,10 +1619,10 @@ def _ideaflow_last_method(browser):
     return c.value if c else None
 
 
-def test_ideaflow_oidc_switch_account_prompts_login_only_when_allowlisted(app, client):
-    """code-d96: normal sign-in is fast SSO (no prompt). The explicit "Use
-    another account" action (?switch=1) sends prompt=login so the provider shows
-    its sign-in page even with an IdP session. Only that one allowlisted flag is
+def test_ideaflow_oidc_switch_account_prompts_chooser_only_when_allowlisted(app, client):
+    """code-d96 / code-xbh.5: normal sign-in is silent SSO (no prompt). The
+    explicit "Switch account" action (?switch=1) sends prompt=select_account so
+    the provider shows its account chooser. Only that one allowlisted flag is
     honoured -- arbitrary prompt/max_age/login_hint query parameters are never
     forwarded to the provider."""
     import app.routes.auth as auth_routes
@@ -1641,9 +1632,7 @@ def test_ideaflow_oidc_switch_account_prompts_login_only_when_allowlisted(app, c
     with _ideaflow_oauth(app, userinfo):
         fake = auth_routes.oauth.ideaflow
         login_html = app.test_client().get("/auth/login").get_data(as_text=True)
-        assert 'data-login-action="ideaflow-switch"' in login_html
-        assert "Use another Ideaflow account" in login_html
-        assert re.search(r'href="/auth/ideaflow\?[^"]*switch=1"', login_html)
+        assert "Use another" not in login_html, "the single-button page has no separate account-switch link"
 
         app.test_client().get("/auth/ideaflow", follow_redirects=False)
         assert fake.calls[-1] == {}, "plain sign-in must stay fast SSO: no prompt"
@@ -1651,7 +1640,8 @@ def test_ideaflow_oidc_switch_account_prompts_login_only_when_allowlisted(app, c
         browser = app.test_client()
         r = browser.get("/auth/ideaflow?switch=1", follow_redirects=False)
         assert r.status_code == 302
-        assert fake.calls[-1] == {"prompt": "login"}
+        assert fake.calls[-1] == {"prompt": "select_account"}
+        assert "prompt=select_account" in r.headers["Location"]
         with browser.session_transaction() as sess:
             assert sess["ideaflow_oauth_contexts"]["fake-ideaflow-state"]["switch"] is True
 
@@ -1946,37 +1936,28 @@ def test_ideaflow_oidc_new_person_gets_one_account_and_race_self_heals(app, clie
     assert User.query.filter(db.func.lower(User.email) == "race@example.com").count() == 1
 
 
-def test_ideaflow_oidc_link_flow_forces_fresh_signin(app, client):
-    """code-d96: the explicit link flow always sends prompt=login and requires
-    a fresh auth_time, so a logged-in local session can never silently bind the
-    person who happens to hold the IdP session."""
-    import time as _time
+def test_ideaflow_oidc_link_flow_asks_which_account(app, client):
+    """PR #31 (code-ww6): the explicit link flow always sends
+    prompt=select_account, so the provider shows which Ideaflow account is
+    being connected and a signed-in WikiHub session never silently binds the
+    provider session it happens to find. The chooser's "Continue as X" does
+    not re-authenticate, so no fresh auth_time is required."""
     import app.routes.auth as auth_routes
 
     issuer = app.config["IDEAFLOW_OIDC_ISSUER"]
     uid = _ideaflow_seed_user("fresh-linker", "fresh-linker-local@example.com", password="fresh-pass-12345", verified=True)
-    now = int(_time.time())
-    for label, extra, should_link in (
-        ("missing auth_time", {}, False),
-        ("stale auth_time", {"auth_time": now - 3600}, False),
-        ("boolean auth_time", {"auth_time": True}, False),
-        ("fresh auth_time", {"auth_time": now}, True),
-    ):
-        sub = f"idfw-sub-fresh-{label.replace(' ', '-')}"
-        userinfo = {"sub": sub, "iss": issuer, "email": "someone-else@example.com", "email_verified": True, "name": "F", **extra}
-        with _ideaflow_oauth(app, userinfo):
-            fake = auth_routes.oauth.ideaflow
-            browser = app.test_client()
-            browser.post("/auth/login", data={"username": "fresh-linker", "password": "fresh-pass-12345"}, follow_redirects=False)
-            browser.get("/auth/ideaflow/link", follow_redirects=False)
-            assert fake.calls[-1] == {"prompt": "login"}, "link must always force a fresh Ideaflow sign-in"
-            r = browser.get("/auth/ideaflow/callback?state=fake-ideaflow-state&code=fake", follow_redirects=False)
-            assert r.status_code == 302 and r.headers["Location"].endswith("/settings")
-            linked = ExternalIdentity.query.filter_by(issuer=issuer, subject=sub).count()
-            assert linked == (1 if should_link else 0), label
-            if should_link:
-                ExternalIdentity.query.filter_by(user_id=uid).delete()
-                db.session.commit()
+    userinfo = {"sub": "idfw-sub-chooser-link", "iss": issuer, "email": "someone-else@example.com", "email_verified": True, "name": "F"}
+    with _ideaflow_oauth(app, userinfo):
+        fake = auth_routes.oauth.ideaflow
+        browser = app.test_client()
+        browser.post("/auth/login", data={"username": "fresh-linker", "password": "fresh-pass-12345"}, follow_redirects=False)
+        r = browser.get("/auth/ideaflow/link", follow_redirects=False)
+        assert fake.calls[-1] == {"prompt": "select_account"}, "link must always show the provider's account chooser"
+        assert "prompt=select_account" in r.headers["Location"]
+        r = browser.get("/auth/ideaflow/callback?state=fake-ideaflow-state&code=fake", follow_redirects=False)
+        assert r.status_code == 302 and r.headers["Location"].endswith("/settings")
+        row = ExternalIdentity.query.filter_by(issuer=issuer, subject="idfw-sub-chooser-link").first()
+        assert row is not None and row.user_id == uid
 
 
 def test_ideaflow_oidc_canceled_flow_changes_nothing(app, client):
@@ -2225,36 +2206,25 @@ def test_ideaflow_oidc_confirm_cap_is_not_poisonable_and_google_prefers_verified
         assert db.session.get(User, squatter_id).google_id is None
 
 
-def test_ideaflow_oidc_link_auth_time_has_upper_bound_and_email_stored_only_when_verified(app, client):
-    import time as _time
-    import app.routes.auth as auth_routes
-
+def test_ideaflow_oidc_link_stores_email_only_when_verified(app, client):
     issuer = app.config["IDEAFLOW_OIDC_ISSUER"]
     uid = _ideaflow_seed_user("bound-linker", "bound-linker@example.com", password="bound-pass-12345", verified=True)
-    now = int(_time.time())
-    cases = (
-        ("milliseconds", {"auth_time": now * 1000, "email_verified": True}, False),
-        ("far future", {"auth_time": now + 36000, "email_verified": True}, False),
-        ("unverified email", {"auth_time": now, "email_verified": False}, True),
-        ("verified email", {"auth_time": now, "email_verified": True}, True),
-    )
-    for label, extra, should_link in cases:
+    for label, verified in (("unverified email", False), ("verified email", True)):
         sub = f"idfw-sub-bound-{label.replace(' ', '-')}"
-        userinfo = {"sub": sub, "iss": issuer, "email": "shown@example.com", "name": "B", **extra}
+        userinfo = {"sub": sub, "iss": issuer, "email": "shown@example.com", "name": "B", "email_verified": verified}
         with _ideaflow_oauth(app, userinfo):
             browser = app.test_client()
             browser.post("/auth/login", data={"username": "bound-linker", "password": "bound-pass-12345"}, follow_redirects=False)
             browser.get("/auth/ideaflow/link", follow_redirects=False)
             browser.get("/auth/ideaflow/callback?state=fake-ideaflow-state&code=fake", follow_redirects=False)
             row = ExternalIdentity.query.filter_by(issuer=issuer, subject=sub).first()
-            assert (row is not None) == should_link, label
-            if row is not None:
-                if label == "unverified email":
-                    assert row.email is None, "an email the provider did not verify is never stored"
-                else:
-                    assert row.email == "shown@example.com"
-                ExternalIdentity.query.filter_by(user_id=uid).delete()
-                db.session.commit()
+            assert row is not None, label
+            if verified:
+                assert row.email == "shown@example.com"
+            else:
+                assert row.email is None, "an email the provider did not verify is never stored"
+            ExternalIdentity.query.filter_by(user_id=uid).delete()
+            db.session.commit()
 
 
 def test_ideaflow_oidc_link_conflict_fails_closed(app, client):
@@ -2275,7 +2245,6 @@ def test_ideaflow_oidc_link_conflict_fails_closed(app, client):
         "email": "shared-ideaflow@example.com",
         "email_verified": True,
         "name": "Shared Identity",
-        "auth_time": _fresh_auth_time(),
     }
 
     with _ideaflow_oauth(app, shared_userinfo):
@@ -2308,7 +2277,6 @@ def test_ideaflow_oidc_link_conflict_fails_closed(app, client):
         "email": "second-ideaflow@example.com",
         "email_verified": True,
         "name": "Second Identity",
-        "auth_time": _fresh_auth_time(),
     }
     with _ideaflow_oauth(app, other_userinfo):
         browser_a2 = app.test_client()
@@ -2327,9 +2295,15 @@ def test_ideaflow_oidc_legacy_logins_unaffected(app, client, api_key):
     issuer = app.config["IDEAFLOW_OIDC_ISSUER"]
     userinfo = {"sub": "idfw-sub-coexist", "iss": issuer, "email": None, "email_verified": False, "name": ""}
     with _ideaflow_oauth(app, userinfo):
+        # code-xbh.5: the default page is Ideaflow-only; the legacy methods
+        # live on the password page and the credential POSTs keep working.
         login_html = client.get("/auth/login").get_data(as_text=True)
-        assert "/auth/google?next=" in login_html
-        assert "/auth/ideaflow?next=" in login_html
+        assert "/auth/google" not in login_html
+        assert "/auth/ideaflow" in login_html
+        legacy_html = client.get("/auth/login/password").get_data(as_text=True)
+        assert "/auth/google?next=" in legacy_html
+        assert 'name="password"' in legacy_html and 'name="api_key"' in legacy_html
+        assert 'action="/auth/login"' in legacy_html
 
         r = client.post("/api/v1/accounts", json={"username": "legacyuser", "password": "legacypass123"})
         assert r.status_code == 201
@@ -2579,6 +2553,137 @@ def test_ideaflow_oidc_missing_issuer_claim_fails_closed(app):
         assert ExternalIdentity.query.filter_by(subject="idfw-sub-no-iss").count() == 0
 
 
+def _visible_login_controls(html):
+    """Interactive controls inside the login card, ignoring the logo link."""
+    body = html.split("<body>", 1)[1]
+    controls = re.findall(r'<(a|button|input)\b([^>]*)>(.*?)(?:</\1>|$)', body, re.S | re.M)
+    out = []
+    for tag, attrs, inner in controls:
+        if 'class="logo"' in attrs or 'type="hidden"' in attrs:
+            continue
+        out.append((tag, attrs, re.sub(r"<[^>]+>", "", inner).strip()))
+    return out
+
+
+def test_ideaflow_only_login_page(app, client):
+    """code-xbh.5: with Ideaflow ID enabled the login page shows exactly one
+    control, "Sign in with Ideaflow" -- no Google, password, API-key, sign-up
+    or account-switch controls -- plus the one helper line. Invite context is
+    forwarded to the Ideaflow flow. With the kill switch off the legacy
+    options are the login page."""
+    issuer = app.config["IDEAFLOW_OIDC_ISSUER"]
+    userinfo = {"sub": "idfw-sub-onlypage", "iss": issuer, "email": None, "email_verified": False, "name": ""}
+    with _ideaflow_oauth(app, userinfo):
+        html = app.test_client().get("/auth/login?next=/explore").get_data(as_text=True)
+        controls = _visible_login_controls(html)
+        assert [c[2] for c in controls] == ["Sign in with Ideaflow"], controls
+        assert 'href="/auth/ideaflow?next=/explore"' in html
+        assert "New here? You can create an account on the next screen." in html
+        for banned in ("Google", 'name="password"', 'name="api_key"', "Sign up", "Use another", "Other sign-in", "IdeaFlow"):
+            assert banned not in html, banned
+
+        invited = app.test_client().get("/auth/login?email=inv@example.com&it=tok123").get_data(as_text=True)
+        assert re.search(r'href="/auth/ideaflow\?[^"]*email=inv(%40|@)example.com[^"]*it=tok123', invited), invited
+        assert "You were invited at" in invited
+
+        browser = app.test_client()
+        browser.get("/auth/ideaflow?email=inv@example.com&it=tok123&next=/shared", follow_redirects=False)
+        with browser.session_transaction() as sess:
+            ctx = sess["ideaflow_oauth_contexts"]["fake-ideaflow-state"]
+        assert ctx["email"] == "inv@example.com" and ctx["it"] == "tok123" and ctx["next"] == "/shared"
+
+    # Kill switch off: the legacy methods are the login page again.
+    off_html = app.test_client().get("/auth/login").get_data(as_text=True)
+    assert 'name="password"' in off_html and 'name="api_key"' in off_html
+    assert "Sign in with Ideaflow" not in off_html
+
+
+def test_ideaflow_only_signup_routes_to_ideaflow(app, client):
+    """code-xbh.5: /auth/signup is the same Ideaflow flow, carrying invite
+    context; with the kill switch off the signup form still renders."""
+    issuer = app.config["IDEAFLOW_OIDC_ISSUER"]
+    userinfo = {"sub": "idfw-sub-signup", "iss": issuer, "email": None, "email_verified": False, "name": ""}
+    with _ideaflow_oauth(app, userinfo):
+        r = app.test_client().get("/auth/signup", follow_redirects=False)
+        assert r.status_code == 302 and r.headers["Location"].startswith("/auth/ideaflow")
+        r = app.test_client().get("/auth/signup?email=new@example.com&it=tokx", follow_redirects=False)
+        loc = r.headers["Location"]
+        assert loc.startswith("/auth/ideaflow") and re.search(r"email=new(%40|@)example.com", loc) and "it=tokx" in loc
+    r = app.test_client().get("/auth/signup")
+    assert r.status_code == 200 and b'name="username"' in r.data
+
+
+def test_ideaflow_chooser_after_explicit_signout(app, client):
+    """code-xbh.5: silent SSO normally; after an explicit WikiHub sign-out the
+    next Ideaflow sign-in sends prompt=select_account; a completed sign-in
+    returns to silent SSO. "Switch account" signs out locally and starts the
+    chooser flow immediately."""
+    import app.routes.auth as auth_routes
+
+    issuer = app.config["IDEAFLOW_OIDC_ISSUER"]
+    userinfo = {"sub": "idfw-sub-chooser", "iss": issuer, "email": "chooser@example.com", "email_verified": True, "name": "Chooser"}
+    with _ideaflow_oauth(app, userinfo):
+        fake = auth_routes.oauth.ideaflow
+        browser, r = _ideaflow_signin_browser(app)
+        assert fake.calls[-1] == {}, "first sign-in is silent SSO"
+        assert r.status_code == 302 and _ideaflow_session_user_id(browser)
+        uid = _ideaflow_session_user_id(browser)
+
+        nav = browser.get("/settings").get_data(as_text=True)
+        assert 'data-account-action="sign-out"' in nav and ">Sign out<" in nav
+        assert 'href="/auth/switch-account"' in nav
+
+        r = browser.get("/auth/logout", follow_redirects=False)
+        assert r.status_code == 302 and not _ideaflow_session_user_id(browser)
+        assert browser.get_cookie(auth_routes._CHOOSE_ACCOUNT_COOKIE) is not None
+
+        r = browser.get("/auth/ideaflow", follow_redirects=False)
+        assert fake.calls[-1] == {"prompt": "select_account"}, "after sign-out the provider must show its chooser"
+        assert "prompt=select_account" in r.headers["Location"]
+        r = browser.get("/auth/ideaflow/callback?state=fake-ideaflow-state&code=fake", follow_redirects=False)
+        assert r.status_code == 302 and str(_ideaflow_session_user_id(browser)) == str(uid)
+        assert browser.get_cookie(auth_routes._CHOOSE_ACCOUNT_COOKIE) is None, "a completed sign-in clears it"
+
+        browser.get("/auth/ideaflow", follow_redirects=False)
+        assert fake.calls[-1] == {}, "back to silent SSO after signing in again"
+
+        # Switch account: local sign-out, then straight into the chooser.
+        browser.get("/auth/ideaflow/callback?state=fake-ideaflow-state&code=fake", follow_redirects=False)
+        r = browser.get("/auth/switch-account?next=/explore", follow_redirects=False)
+        assert r.status_code == 302 and not _ideaflow_session_user_id(browser)
+        assert r.headers["Location"].startswith("/auth/ideaflow?") and "switch=1" in r.headers["Location"]
+        r = browser.get(r.headers["Location"], follow_redirects=False)
+        assert fake.calls[-1] == {"prompt": "select_account"}
+        with browser.session_transaction() as sess:
+            assert sess["ideaflow_oauth_contexts"]["fake-ideaflow-state"]["next"] == "/explore"
+
+
+def test_ideaflow_conflict_offers_password_fallback(app, client):
+    """code-xbh.5: nobody is locked out by the single-button page. When an
+    Ideaflow sign-in cannot be matched to an existing WikiHub account, the
+    login page shows the error plus a way into that account with its WikiHub
+    password; the default page never shows that link."""
+    issuer = app.config["IDEAFLOW_OIDC_ISSUER"]
+    _ideaflow_seed_user("fallback-owner", "fallback@example.com", password="fallback-pass-1", verified=True)
+    userinfo = {"sub": "idfw-sub-fallback", "iss": issuer, "email": "fallback@example.com", "email_verified": False, "name": "F"}
+    with _ideaflow_oauth(app, userinfo):
+        assert 'data-login-action="password-fallback"' not in app.test_client().get("/auth/login").get_data(as_text=True)
+        browser, r = _ideaflow_signin_browser(app)
+        assert r.status_code == 302 and r.headers["Location"].endswith("/auth/login")
+        html = browser.get("/auth/login").get_data(as_text=True)
+        assert "Ideaflow did not verify this email address" in html
+        assert 'href="/auth/login/password' in html and 'data-login-action="password-fallback"' in html
+        legacy = browser.get("/auth/login/password").get_data(as_text=True)
+        assert 'name="password"' in legacy
+        with _preserve_login_rate_limit_state():
+            r = browser.post("/auth/login", data={"username": "fallback-owner", "password": "fallback-pass-1"}, follow_redirects=False)
+        assert r.status_code == 302 and _ideaflow_session_user_id(browser)
+        # Failed credential posts re-render the password page, not the button page.
+        with _preserve_login_rate_limit_state():
+            bad = app.test_client().post("/auth/login", data={"username": "fallback-owner", "password": "nope"})
+        assert bad.status_code == 401 and b'name="password"' in bad.data
+
+
 def test_login_last_used_hint(app, client):
     """code-v8l: the login page marks the last method that SUCCEEDED in this
     browser. The hint is a server-set cookie written only by the handler that
@@ -2595,7 +2700,9 @@ def test_login_last_used_hint(app, client):
         return c.value if c else None
 
     def marked(browser):
-        r = browser.get("/auth/login")
+        # code-xbh.5: the hint lives on the multi-method password page; the
+        # default Ideaflow-only page has a single control and no hint.
+        r = browser.get("/auth/login/password")
         assert r.status_code == 200
         html = r.get_data(as_text=True)
         return [
@@ -2704,7 +2811,8 @@ def test_login_last_used_hint(app, client):
 
                 r = ideaflow_signin(browser)
                 assert r.status_code == 302 and hint(browser) == "ideaflow"
-                assert marked(browser) == ["ideaflow"]
+                # Ideaflow is not a control on the password page.
+                assert marked(browser) == []
 
                 r = browser.post("/auth/login", data={"api_key": hint_key}, follow_redirects=False)
                 assert r.status_code == 302 and hint(browser) == "api_key"
@@ -2716,7 +2824,7 @@ def test_login_last_used_hint(app, client):
                 linker.post("/auth/login", data=pw, follow_redirects=False)
                 assert hint(linker) == "password"
                 auth_routes.oauth.ideaflow.authorize_access_token = lambda: {
-                    "userinfo": {**ideaflow_userinfo, "sub": "idfw-sub-lasthint-link", "email": None, "auth_time": _fresh_auth_time()}
+                    "userinfo": {**ideaflow_userinfo, "sub": "idfw-sub-lasthint-link", "email": None}
                 }
                 linker.get("/auth/ideaflow/link", follow_redirects=False)
                 r = linker.get("/auth/ideaflow/callback?state=fake-ideaflow-state&code=fake", follow_redirects=False)
@@ -9379,7 +9487,7 @@ def run_all():
             ("Ideaflow OIDC new login creates local session (wikihub-39pe)", lambda: test_ideaflow_oidc_new_login_creates_local_session(app, client)),
             ("Ideaflow OIDC repeat exact subject login (wikihub-39pe)", lambda: test_ideaflow_oidc_repeat_exact_subject_login(app, client)),
             ("Ideaflow OIDC signed-in linking to existing user (wikihub-39pe)", lambda: test_ideaflow_oidc_signed_in_linking_to_existing_user(app, client)),
-            ("Ideaflow OIDC 'Use another account' sends prompt=login only for the allowlisted flag (code-d96)", lambda: test_ideaflow_oidc_switch_account_prompts_login_only_when_allowlisted(app, client)),
+            ("Ideaflow OIDC 'Switch account' sends prompt=select_account only for the allowlisted flag (code-xbh.5)", lambda: test_ideaflow_oidc_switch_account_prompts_chooser_only_when_allowlisted(app, client)),
             ("Ideaflow OIDC auto-links a verified matching account (code-d96)", lambda: test_ideaflow_oidc_auto_links_verified_matching_account(app, client)),
             ("Ideaflow OIDC unverified local email needs a one-time password check (code-d96)", lambda: test_ideaflow_oidc_unverified_local_email_needs_one_time_password_check(app, client)),
             ("Ideaflow OIDC password check is capped, expires, cancellable (code-d96)", lambda: test_ideaflow_oidc_password_check_is_capped_expires_and_can_be_cancelled(app, client)),
@@ -9387,19 +9495,23 @@ def run_all():
             ("Ideaflow OIDC privileged/passwordless accounts never link silently (code-d96)", lambda: test_ideaflow_oidc_privileged_or_passwordless_account_never_links_silently(app, client)),
             ("Ideaflow OIDC conflicting binding and ambiguous email refuse (code-d96)", lambda: test_ideaflow_oidc_conflicting_binding_and_ambiguous_email_refuse(app, client)),
             ("Ideaflow OIDC new person gets one account; lost race self-heals (code-d96)", lambda: test_ideaflow_oidc_new_person_gets_one_account_and_race_self_heals(app, client)),
-            ("Ideaflow OIDC link flow forces a fresh sign-in (code-d96)", lambda: test_ideaflow_oidc_link_flow_forces_fresh_signin(app, client)),
+            ("Ideaflow OIDC link flow asks which account (PR #31)", lambda: test_ideaflow_oidc_link_flow_asks_which_account(app, client)),
             ("Ideaflow OIDC cancelled flow changes nothing (code-d96)", lambda: test_ideaflow_oidc_canceled_flow_changes_nothing(app, client)),
             ("Ideaflow OIDC verified owner beats unverified squatter (code-d96)", lambda: test_ideaflow_oidc_verified_owner_beats_unverified_squatter(app, client)),
             ("Ideaflow OIDC 'not your account' creates a fresh account, squatter untouched (code-d96)", lambda: test_ideaflow_oidc_not_your_account_creates_fresh_account_and_leaves_squatter(app, client)),
             ("Ideaflow OIDC confirm: next, CSRF, re-check, other session (code-d96)", lambda: test_ideaflow_oidc_confirm_next_csrf_recheck_and_other_session(app, client)),
             ("Ideaflow OIDC password failures capped server-side per account (code-d96)", lambda: test_ideaflow_oidc_password_failures_are_capped_server_side_per_account(app, client)),
             ("Ideaflow OIDC confirm cap not poisonable via X-Forwarded-For; Google prefers verified row (code-d96)", lambda: test_ideaflow_oidc_confirm_cap_is_not_poisonable_and_google_prefers_verified(app, client)),
-            ("Ideaflow OIDC link auth_time upper bound + verified-only email (code-d96)", lambda: test_ideaflow_oidc_link_auth_time_has_upper_bound_and_email_stored_only_when_verified(app, client)),
+            ("Ideaflow OIDC link stores provider email only when verified (code-d96)", lambda: test_ideaflow_oidc_link_stores_email_only_when_verified(app, client)),
             ("Ideaflow OIDC link conflict fails closed (wikihub-39pe)", lambda: test_ideaflow_oidc_link_conflict_fails_closed(app, client)),
             ("Ideaflow OIDC legacy logins unaffected (wikihub-39pe)", lambda: test_ideaflow_oidc_legacy_logins_unaffected(app, client, key)),
             ("Ideaflow OIDC real Ed25519/EdDSA ID-token verification (wikihub-39pe)", lambda: test_ideaflow_oidc_real_ed25519_id_token_verification(app)),
             ("Ideaflow OIDC callback uses canonical BASE_URL (wikihub-39pe)", lambda: test_ideaflow_oidc_callback_uses_canonical_base_url(app)),
             ("Ideaflow OIDC missing issuer claim fails closed (wikihub-39pe)", lambda: test_ideaflow_oidc_missing_issuer_claim_fails_closed(app)),
+            ("Ideaflow-only login page: one control, invite context, kill switch (code-xbh.5)", lambda: test_ideaflow_only_login_page(app, client)),
+            ("Ideaflow-only signup routes to Ideaflow (code-xbh.5)", lambda: test_ideaflow_only_signup_routes_to_ideaflow(app, client)),
+            ("Ideaflow chooser after explicit sign-out + Switch account (code-xbh.5)", lambda: test_ideaflow_chooser_after_explicit_signout(app, client)),
+            ("Ideaflow conflict offers WikiHub password fallback (code-xbh.5)", lambda: test_ideaflow_conflict_offers_password_fallback(app, client)),
             ("login page marks last successfully used method (code-v8l)", lambda: test_login_last_used_hint(app, client)),
             ("login redirects back (?next + Referer fallback)", lambda: test_login_redirect_back(client)),
             ("URL login (GET ?api_key / ?password)", lambda: test_url_login(client)),

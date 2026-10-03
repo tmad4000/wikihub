@@ -34,10 +34,22 @@ SECRET_KEY=dev DATABASE_URL=postgresql://localhost/wikihub \
 
 ### Sign in with Ideaflow ID
 
-Password, Google, and API-key sign-in continue to work as before. To offer
-Ideaflow ID sign-in, configure the confidential OIDC client values in
-[`.env.example`](.env.example) and enable `IDEAFLOW_OIDC_ENABLED`; the login
-and signup pages will then show **Continue with Ideaflow**.
+Configure the confidential OIDC client values in [`.env.example`](.env.example)
+and enable `IDEAFLOW_OIDC_ENABLED`. The login page then shows exactly one
+control, **Sign in with Ideaflow**; `/auth/signup` goes to the same flow.
+Google, email/password, sign-up and password reset all happen on
+id.ideaflow.app. With the switch off, the login page shows the legacy password,
+API-key and Google options.
+
+- A normal sign-in sends no `prompt` (silent single sign-on). After an explicit
+  WikiHub sign-out, the next sign-in sends `prompt=select_account` so Ideaflow
+  shows its account chooser. **Switch account** in the account menu signs out
+  locally and starts that chooser flow immediately.
+- Existing accounts that Ideaflow cannot reach (for example an account with no
+  email) sign in at `/auth/login/password`, which keeps the password, API-key
+  and Google forms. It is linked from the Ideaflow account-match errors and the
+  For Agents page, not from the default login page. `POST /auth/login` with
+  `username`+`password` or `api_key` keeps working for scripts.
 
 Signing in with Ideaflow resolves to the right WikiHub account automatically:
 
@@ -58,16 +70,15 @@ Signing in with Ideaflow resolves to the right WikiHub account automatically:
   untouched, gives the new account no privileges, and is never offered when a
   verified account already uses the address. Several unverified matches, or an
   unverified match already connected to a different Ideaflow ID, show only that
-  way out (plus "sign in another way, then Connect Ideaflow in Settings").
+  way out (plus a link to sign in with the WikiHub password, then Connect Ideaflow in Settings).
 - Anything else ambiguous or conflicting (an account with a verified email
   already connected to a different Ideaflow ID, an email Ideaflow did not
   verify) is refused rather than guessed. **Connect Ideaflow** in Settings
-  remains as a fallback for accounts whose email differs; it always asks Ideaflow
-  to sign in again so a shared IdP session can't be attached by accident.
+  remains as a fallback for accounts whose email differs; it always sends
+  `prompt=select_account` so Ideaflow shows which account is being connected
+  and a shared IdP session can't be attached by accident.
 
-**Use another Ideaflow account** on the login page sends `prompt=login` so
-Ideaflow shows its sign-in page even when it already has a session. WikiHub
-never merges accounts and never rewrites a WikiHub user id.
+WikiHub never merges accounts and never rewrites a WikiHub user id.
 
 ## Agent API
 

@@ -40,7 +40,7 @@
   {% endwith %}
 
   {% if reason == "choose" %}
-  <p>Ideaflow confirmed <strong>{{ email }}</strong>. WikiHub already has an account using that address that was never verified, so it can't be matched to you automatically. If it's yours, sign in to it another way and choose Connect Ideaflow in Settings. Otherwise you can create a new WikiHub account.</p>
+  <p>Ideaflow confirmed <strong>{{ email }}</strong>. WikiHub already has an account using that address that was never verified, so it can't be matched to you automatically. If it's yours, <a href="{{ url_for('auth.login_password') }}" data-login-action="password-fallback">sign in to it with its WikiHub password</a> and choose Connect Ideaflow in Settings. Otherwise you can create a new WikiHub account.</p>
   {% elif reason == "privileged" %}
   <p>Ideaflow confirmed <strong>{{ email }}</strong>. This WikiHub account (<strong>{{ username }}</strong>) has extra access, so please confirm it's yours once before connecting.</p>
   {% else %}
@@ -57,7 +57,7 @@
   </form>
   <div class="links"><a href="{{ url_for('auth.forgot_password') }}">Forgot password?</a></div>
   {% else %}
-  <p>This account has no password to confirm with. Sign in to <strong>{{ username }}</strong> with its usual method, then choose Connect Ideaflow in Settings.</p>
+  <p>This account has no password to confirm with. <a href="{{ url_for('auth.login_password') }}" data-login-action="password-fallback">Sign in to <strong>{{ username }}</strong> with its usual method</a>, then choose Connect Ideaflow in Settings.</p>
   {% endif %}
 
   {% if reason == "unverified" or reason == "choose" %}

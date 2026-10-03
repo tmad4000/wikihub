@@ -72,8 +72,14 @@
           <span>Settings</span>
           <span class="menu-hint">account</span>
         </a>
-        <a href="/auth/logout" class="nav-account-item logout" role="menuitem">
-          <span>Logout</span>
+        {% if ideaflow_login_enabled %}
+        <a href="/auth/switch-account" class="nav-account-item" role="menuitem" data-account-action="switch">
+          <span>Switch account</span>
+          <span class="menu-hint">ideaflow</span>
+        </a>
+        {% endif %}
+        <a href="/auth/logout" class="nav-account-item logout" role="menuitem" data-account-action="sign-out">
+          <span>Sign out</span>
           <span class="menu-hint">exit</span>
         </a>
       </div>
@@ -99,7 +105,8 @@
       <a href="/@{{ current_user.username }}" class="nav-mobile-item" role="menuitem">My Wiki</a>
       <a href="/shared" class="nav-mobile-item" role="menuitem">Shared</a>
       <a href="/settings" class="nav-mobile-item" role="menuitem">Settings</a>
-      <a href="/auth/logout" class="nav-mobile-item nav-mobile-item-danger" role="menuitem">Logout</a>
+      {% if ideaflow_login_enabled %}<a href="/auth/switch-account" class="nav-mobile-item" role="menuitem">Switch account</a>{% endif %}
+      <a href="/auth/logout" class="nav-mobile-item nav-mobile-item-danger" role="menuitem">Sign out</a>
     {% else %}
       <a href="/auth/login?next={{ request.path|urlencode }}" class="nav-mobile-item" role="menuitem">Sign in</a>
     {% endif %}
