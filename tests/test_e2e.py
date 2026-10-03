@@ -1360,7 +1360,13 @@ def _ideaflow_oauth(app, userinfo, state="fake-ideaflow-state"):
     from flask import redirect
 
     class FakeIdeaflowClient:
+        def __init__(self):
+            # Extra authorization params each start-of-flow passed to the
+            # provider (e.g. {"prompt": "select_account"}); {} for plain SSO.
+            self.calls = []
+
         def authorize_redirect(self, redirect_uri, **params):
+            self.calls.append(dict(params))
             extra = "".join(f"&{key}={value}" for key, value in sorted(params.items()))
             return redirect(f"https://id.ideaflow.test/authorize?state={state}&redirect_uri={redirect_uri}{extra}")
 
@@ -1412,6 +1418,12 @@ def test_ideaflow_oidc_feature_flag_off(app, client):
     assert r.status_code == 404
     r = browser.get("/auth/ideaflow/link")
     assert r.status_code == 404
+    r = browser.get("/auth/ideaflow/confirm")
+    assert r.status_code == 404
+    r = browser.post("/auth/ideaflow/confirm/cancel")
+    assert r.status_code == 404
+    r = browser.post("/auth/ideaflow/confirm/new")
+    assert r.status_code == 404
     r = browser.get("/auth/ideaflow/callback?state=x&code=y")
     assert r.status_code == 404
 
@@ -1422,10 +1434,11 @@ def test_ideaflow_oidc_feature_flag_off(app, client):
     login_html = client.get("/auth/login").get_data(as_text=True)
     assert "/auth/ideaflow" not in login_html
     assert "Continue with Ideaflow" not in login_html
+    assert "Use another Ideaflow account" not in login_html
 
     settings_html = browser.get("/settings").get_data(as_text=True)
     assert "Connected accounts" not in settings_html
-    assert "Link Ideaflow ID" not in settings_html
+    assert "Connect Ideaflow" not in settings_html
 
 
 def test_ideaflow_oidc_new_login_creates_local_session(app, client):
@@ -1472,7 +1485,8 @@ def test_ideaflow_oidc_new_login_creates_local_session(app, client):
         assert identity.user_id == user.id
 
         settings_html = browser.get("/settings").get_data(as_text=True)
-        assert "Linked" in settings_html
+        assert 'data-ideaflow-status="connected"' in settings_html
+        assert "Connect Ideaflow" not in settings_html, "a connected account must not show a Connect action"
 
 
 def test_ideaflow_oidc_repeat_exact_subject_login(app, client):
@@ -1524,6 +1538,7 @@ def test_ideaflow_oidc_signed_in_linking_to_existing_user(app, client):
         "email": "linkowner-ideaflow@example.com",
         "email_verified": True,
         "name": "Link Owner",
+        "auth_time": _fresh_auth_time(),
     }
     with _ideaflow_oauth(app, userinfo):
         browser = app.test_client()
@@ -1531,7 +1546,8 @@ def test_ideaflow_oidc_signed_in_linking_to_existing_user(app, client):
         assert r.status_code == 302
 
         settings_html = browser.get("/settings").get_data(as_text=True)
-        assert "Link Ideaflow ID" in settings_html
+        assert "Connect Ideaflow" in settings_html
+        assert 'data-ideaflow-status="not-connected"' in settings_html
 
         r = browser.get("/auth/ideaflow/link", follow_redirects=False)
         assert r.status_code == 302
@@ -1552,7 +1568,8 @@ def test_ideaflow_oidc_signed_in_linking_to_existing_user(app, client):
         assert identity.user_id == owner_id
 
         settings_html = browser.get("/settings").get_data(as_text=True)
-        assert "Linked" in settings_html
+        assert 'data-ideaflow-status="connected"' in settings_html
+        assert "Connect Ideaflow" not in settings_html, "a connected account must not show a Connect action"
 
         # A fresh, signed-out sign-in with the same subject must now resolve
         # to linkowner's existing account, not mint a new one.
@@ -1568,35 +1585,676 @@ def test_ideaflow_oidc_signed_in_linking_to_existing_user(app, client):
         assert ExternalIdentity.query.filter_by(issuer=issuer, subject="idfw-sub-link").count() == 1
 
 
-def test_ideaflow_oidc_new_signin_email_conflict_fails_closed(app, client):
-    """wikihub-39pe: a fresh Ideaflow subject must NEVER auto-link to an
-    existing WikiHub account by email, even when Ideaflow reports the email
-    verified. Fail closed — no login, no new duplicate-email account."""
-    r = client.post("/api/v1/accounts", json={
-        "username": "conflictowner", "password": "conflictownerpass1", "email": "conflictuser@example.com",
-    })
-    assert r.status_code == 201
+def _fresh_auth_time():
+    """An `auth_time` claim for a sign-in that just happened (the provider's
+    prompt=login flow creates a brand new session)."""
+    import time as _time
+
+    return int(_time.time())
+
+
+def _ideaflow_seed_user(username, email, *, password="localpass-12345", verified=False, wiki_limit=None):
+    """Create a local account directly (test-only) and return its id."""
+    from app.auth_utils import hash_password
+
+    user = User(
+        username=username,
+        email=email,
+        password_hash=hash_password(password) if password else None,
+        email_verified_at=utcnow() if verified else None,
+        wiki_limit=wiki_limit,
+    )
+    db.session.add(user)
+    db.session.commit()
+    return user.id
+
+
+def _ideaflow_signin_browser(app, path="/auth/ideaflow", browser=None):
+    browser = browser or app.test_client()
+    browser.get(path, follow_redirects=False)
+    r = browser.get("/auth/ideaflow/callback?state=fake-ideaflow-state&code=fake", follow_redirects=False)
+    return browser, r
+
+
+def _ideaflow_session_user_id(browser):
+    with browser.session_transaction() as sess:
+        return sess.get("_user_id")
+
+
+def _ideaflow_last_method(browser):
+    import app.routes.auth as auth_routes
+
+    c = browser.get_cookie(auth_routes._LAST_LOGIN_METHOD_COOKIE)
+    return c.value if c else None
+
+
+def test_ideaflow_oidc_switch_account_prompts_login_only_when_allowlisted(app, client):
+    """code-d96: normal sign-in is fast SSO (no prompt). The explicit "Use
+    another account" action (?switch=1) sends prompt=login so the provider shows
+    its sign-in page even with an IdP session. Only that one allowlisted flag is
+    honoured -- arbitrary prompt/max_age/login_hint query parameters are never
+    forwarded to the provider."""
+    import app.routes.auth as auth_routes
 
     issuer = app.config["IDEAFLOW_OIDC_ISSUER"]
+    userinfo = {"sub": "idfw-sub-switch", "iss": issuer, "email": None, "email_verified": False, "name": "Switch"}
+    with _ideaflow_oauth(app, userinfo):
+        fake = auth_routes.oauth.ideaflow
+        login_html = app.test_client().get("/auth/login").get_data(as_text=True)
+        assert 'data-login-action="ideaflow-switch"' in login_html
+        assert "Use another Ideaflow account" in login_html
+        assert re.search(r'href="/auth/ideaflow\?[^"]*switch=1"', login_html)
+
+        app.test_client().get("/auth/ideaflow", follow_redirects=False)
+        assert fake.calls[-1] == {}, "plain sign-in must stay fast SSO: no prompt"
+
+        browser = app.test_client()
+        r = browser.get("/auth/ideaflow?switch=1", follow_redirects=False)
+        assert r.status_code == 302
+        assert fake.calls[-1] == {"prompt": "login"}
+        with browser.session_transaction() as sess:
+            assert sess["ideaflow_oauth_contexts"]["fake-ideaflow-state"]["switch"] is True
+
+        for evil in ("switch=0", "switch=true", "switch=login", "prompt=none", "prompt=login", "max_age=0", "login_hint=x@y.z"):
+            app.test_client().get(f"/auth/ideaflow?{evil}", follow_redirects=False)
+            assert fake.calls[-1] == {}, f"{evil} must never reach the provider"
+
+
+def test_ideaflow_oidc_auto_links_verified_matching_account(app, client):
+    """code-d96: a fresh Ideaflow subject whose strictly-verified email matches
+    exactly one local account with an independently PROVEN email links
+    automatically -- no Connect click, same immutable local id, last-method hint
+    set, Settings shows Connected (not a misleading Connect), and the next
+    sign-in is by subject alone."""
+    issuer = app.config["IDEAFLOW_OIDC_ISSUER"]
+    uid = _ideaflow_seed_user("autolink-verified", "autolink@example.com", verified=True)
     userinfo = {
-        "sub": "idfw-sub-conflict",
-        "iss": issuer,
-        "email": "conflictuser@example.com",
-        "email_verified": True,
-        "name": "Conflict Person",
+        "sub": "idfw-sub-autolink", "iss": issuer, "email": "AutoLink@Example.com",
+        "email_verified": True, "name": "Auto Link",
     }
     with _ideaflow_oauth(app, userinfo):
-        browser = app.test_client()
-        browser.get("/auth/ideaflow", follow_redirects=False)
-        r = browser.get("/auth/ideaflow/callback?state=fake-ideaflow-state&code=fake", follow_redirects=False)
-        assert r.status_code == 302
-        assert r.headers["Location"].endswith("/auth/login")
+        browser, r = _ideaflow_signin_browser(app)
+        assert r.status_code == 302 and not r.headers["Location"].endswith("/auth/login")
+        assert str(_ideaflow_session_user_id(browser)) == str(uid), "must land on the existing account, same id"
+        assert _ideaflow_last_method(browser) == "ideaflow"
+        identity = ExternalIdentity.query.filter_by(issuer=issuer, subject="idfw-sub-autolink").first()
+        assert identity is not None and identity.user_id == uid
+        assert User.query.filter(db.func.lower(User.email) == "autolink@example.com").count() == 1, "no duplicate account"
 
+        settings_html = browser.get("/settings").get_data(as_text=True)
+        assert 'data-ideaflow-status="connected"' in settings_html
+        assert "Connect Ideaflow" not in settings_html, "a linked account must not show a Connect action"
+
+        # The returning path is by subject: change the local email and it still works.
+        user = db.session.get(User, uid)
+        user.email = "renamed-autolink@example.com"
+        db.session.commit()
+        browser.get("/auth/logout")
+        second, r = _ideaflow_signin_browser(app)
+        assert str(_ideaflow_session_user_id(second)) == str(uid)
+        assert ExternalIdentity.query.filter_by(issuer=issuer, subject="idfw-sub-autolink").count() == 1
+
+
+def test_ideaflow_oidc_unverified_local_email_needs_one_time_password_check(app, client):
+    """code-d96: a legacy local account whose typed email was never verified is
+    NOT proof of ownership (its creator may be a squatter who knows the
+    password). Sign-in asks once for that account's password -- not a Settings
+    detour -- and only then binds the identity and marks the email verified."""
+    issuer = app.config["IDEAFLOW_OIDC_ISSUER"]
+    uid = _ideaflow_seed_user("legacy-unverified", "legacyperson@example.com", password="legacy-pass-123")
+    userinfo = {
+        "sub": "idfw-sub-legacy", "iss": issuer, "email": "legacyperson@example.com",
+        "email_verified": True, "name": "Legacy Person",
+    }
+    with _ideaflow_oauth(app, userinfo):
+        browser, r = _ideaflow_signin_browser(app)
+        assert r.status_code == 302 and r.headers["Location"].endswith("/auth/ideaflow/confirm")
+        assert _ideaflow_session_user_id(browser) is None, "no session before the ownership check"
+        assert ExternalIdentity.query.filter_by(issuer=issuer, subject="idfw-sub-legacy").count() == 0
+
+        page = browser.get("/auth/ideaflow/confirm")
+        assert page.status_code == 200
+        html = page.get_data(as_text=True)
+        assert "legacy-unverified" in html and "legacyperson@example.com" in html
+
+        # Wrong password: no link, no session.
+        r = browser.post("/auth/ideaflow/confirm", data={"password": "wrong-password"})
+        assert r.status_code == 401
+        assert _ideaflow_session_user_id(browser) is None
+        assert ExternalIdentity.query.filter_by(issuer=issuer, subject="idfw-sub-legacy").count() == 0
+
+        # Correct password: bound to THAT account, email proven, signed in, hint set.
+        r = browser.post("/auth/ideaflow/confirm", data={"password": "legacy-pass-123"}, follow_redirects=False)
+        assert r.status_code == 302 and not r.headers["Location"].endswith("/auth/login")
+        assert str(_ideaflow_session_user_id(browser)) == str(uid)
+        assert _ideaflow_last_method(browser) == "ideaflow"
+        identity = ExternalIdentity.query.filter_by(issuer=issuer, subject="idfw-sub-legacy").first()
+        assert identity is not None and identity.user_id == uid
+        assert db.session.get(User, uid).email_verified_at is not None
+
+        # Single use: replaying the confirmation after success does nothing.
+        r = browser.post("/auth/ideaflow/confirm", data={"password": "legacy-pass-123"}, follow_redirects=False)
+        assert r.status_code == 302 and r.headers["Location"].endswith("/auth/login")
+
+        # Later sign-ins are automatic by subject.
+        browser.get("/auth/logout")
+        second, r = _ideaflow_signin_browser(app)
+        assert str(_ideaflow_session_user_id(second)) == str(uid)
+
+
+def test_ideaflow_oidc_password_check_is_capped_expires_and_can_be_cancelled(app, client):
+    issuer = app.config["IDEAFLOW_OIDC_ISSUER"]
+    _ideaflow_seed_user("cap-unverified", "cap@example.com", password="cap-pass-12345")
+    userinfo = {"sub": "idfw-sub-cap", "iss": issuer, "email": "cap@example.com", "email_verified": True, "name": "Cap"}
+    import app.routes.auth as auth_routes
+
+    with _ideaflow_oauth(app, userinfo):
+        browser, _ = _ideaflow_signin_browser(app)
+        for _ in range(auth_routes._IDEAFLOW_PENDING_LINK_MAX_ATTEMPTS - 1):
+            assert browser.post("/auth/ideaflow/confirm", data={"password": "nope"}).status_code == 401
+        r = browser.post("/auth/ideaflow/confirm", data={"password": "nope"}, follow_redirects=False)
+        assert r.status_code == 302 and r.headers["Location"].endswith("/auth/login")
+        # The cap consumed the pending check: even the right password can't finish it now.
+        r = browser.post("/auth/ideaflow/confirm", data={"password": "cap-pass-12345"}, follow_redirects=False)
+        assert r.status_code == 302 and r.headers["Location"].endswith("/auth/login")
+        assert ExternalIdentity.query.filter_by(issuer=issuer, subject="idfw-sub-cap").count() == 0
+
+        # Expiry.
+        browser, _ = _ideaflow_signin_browser(app)
         with browser.session_transaction() as sess:
-            assert "_user_id" not in sess, "must not be signed in after a conflicting email"
+            pending = dict(sess["ideaflow_pending_link"])
+            pending["exp"] = 1
+            sess["ideaflow_pending_link"] = pending
+        r = browser.post("/auth/ideaflow/confirm", data={"password": "cap-pass-12345"}, follow_redirects=False)
+        assert r.status_code == 302 and r.headers["Location"].endswith("/auth/login")
+        assert ExternalIdentity.query.filter_by(issuer=issuer, subject="idfw-sub-cap").count() == 0
 
-        assert User.query.filter_by(email="conflictuser@example.com").count() == 1, "no duplicate account"
-        assert ExternalIdentity.query.filter_by(issuer=issuer, subject="idfw-sub-conflict").count() == 0
+        # Cancel clears the pending check.
+        browser, _ = _ideaflow_signin_browser(app)
+        r = browser.post("/auth/ideaflow/confirm/cancel", follow_redirects=False)
+        assert r.status_code == 302 and r.headers["Location"].endswith("/auth/login")
+        with browser.session_transaction() as sess:
+            assert "ideaflow_pending_link" not in sess
+
+    # Without a pending check the page redirects rather than rendering anything.
+    with _ideaflow_oauth(app, userinfo):
+        r = app.test_client().get("/auth/ideaflow/confirm", follow_redirects=False)
+        assert r.status_code == 302 and r.headers["Location"].endswith("/auth/login")
+
+
+def test_ideaflow_oidc_email_claim_must_be_strict_true_to_match(app, client):
+    """code-d96: only the JSON boolean true vouches for the email. The string
+    "false" is truthy in Python, "true" is a string, 1 is not a boolean --
+    none may link to or claim an existing account, and a brand-new person's
+    unverified email is never stored on a local row (no squatting)."""
+    issuer = app.config["IDEAFLOW_OIDC_ISSUER"]
+    uid = _ideaflow_seed_user("strict-verified", "strict@example.com", verified=True)
+    for i, claim in enumerate([False, "false", "true", 1, None, "yes"]):
+        userinfo = {
+            "sub": f"idfw-sub-strict-{i}", "iss": issuer, "email": "strict@example.com",
+            "email_verified": claim, "name": "Strict",
+        }
+        with _ideaflow_oauth(app, userinfo):
+            browser, r = _ideaflow_signin_browser(app)
+            assert r.headers["Location"].endswith("/auth/login"), f"claim {claim!r} must not match"
+            assert _ideaflow_session_user_id(browser) is None
+            assert ExternalIdentity.query.filter_by(issuer=issuer, subject=f"idfw-sub-strict-{i}").count() == 0
+    assert ExternalIdentity.query.filter_by(user_id=uid).count() == 0
+    assert User.query.filter(db.func.lower(User.email) == "strict@example.com").count() == 1
+
+    # No local match: a new account is created, but a non-true claim's email is not stored.
+    userinfo = {
+        "sub": "idfw-sub-strict-new", "iss": issuer, "email": "brandnew-strict@example.com",
+        "email_verified": "true", "name": "Brand New",
+    }
+    with _ideaflow_oauth(app, userinfo):
+        browser, r = _ideaflow_signin_browser(app)
+        assert _ideaflow_session_user_id(browser) is not None
+        created = User.query.filter_by(id=int(_ideaflow_session_user_id(browser))).first()
+        assert created.email is None and created.email_verified_at is None
+        assert User.query.filter(db.func.lower(User.email) == "brandnew-strict@example.com").count() == 0
+
+
+def test_ideaflow_oidc_privileged_or_passwordless_account_never_links_silently(app, client):
+    issuer = app.config["IDEAFLOW_OIDC_ISSUER"]
+    # Verified email + privilege grant: needs the local password once.
+    priv_id = _ideaflow_seed_user("priv-owner", "priv@example.com", password="priv-pass-12345", verified=True, wiki_limit=1000)
+    userinfo = {"sub": "idfw-sub-priv", "iss": issuer, "email": "priv@example.com", "email_verified": True, "name": "Priv"}
+    with _ideaflow_oauth(app, userinfo):
+        browser, r = _ideaflow_signin_browser(app)
+        assert r.headers["Location"].endswith("/auth/ideaflow/confirm")
+        assert ExternalIdentity.query.filter_by(issuer=issuer, subject="idfw-sub-priv").count() == 0
+        html = browser.get("/auth/ideaflow/confirm").get_data(as_text=True)
+        assert "extra access" in html
+        r = browser.post("/auth/ideaflow/confirm", data={"password": "priv-pass-12345"}, follow_redirects=False)
+        assert r.status_code == 302 and str(_ideaflow_session_user_id(browser)) == str(priv_id)
+        assert ExternalIdentity.query.filter_by(issuer=issuer, subject="idfw-sub-priv", user_id=priv_id).count() == 1
+
+    # Privileged with no password at all: no form is offered and nothing links.
+    nopw_id = _ideaflow_seed_user("priv-nopw", "privnopw@example.com", password=None, verified=True, wiki_limit=50)
+    userinfo = {"sub": "idfw-sub-privnopw", "iss": issuer, "email": "privnopw@example.com", "email_verified": True, "name": "P"}
+    with _ideaflow_oauth(app, userinfo):
+        browser, r = _ideaflow_signin_browser(app)
+        assert r.headers["Location"].endswith("/auth/ideaflow/confirm")
+        html = browser.get("/auth/ideaflow/confirm").get_data(as_text=True)
+        assert 'name="password"' not in html
+        assert browser.post("/auth/ideaflow/confirm", data={"password": "anything"}).status_code == 400
+        assert _ideaflow_session_user_id(browser) is None
+        assert ExternalIdentity.query.filter_by(user_id=nopw_id).count() == 0
+
+
+def test_ideaflow_oidc_conflicting_binding_and_ambiguous_email_refuse(app, client):
+    issuer = app.config["IDEAFLOW_OIDC_ISSUER"]
+    # A verified local account already connected to a DIFFERENT subject is never rebound.
+    bound_id = _ideaflow_seed_user("bound-verified", "bound@example.com", verified=True)
+    db.session.add(ExternalIdentity(user_id=bound_id, issuer=issuer, subject="idfw-sub-original", email="bound@example.com"))
+    db.session.commit()
+    userinfo = {"sub": "idfw-sub-intruder", "iss": issuer, "email": "bound@example.com", "email_verified": True, "name": "X"}
+    with _ideaflow_oauth(app, userinfo):
+        browser, r = _ideaflow_signin_browser(app)
+        assert r.headers["Location"].endswith("/auth/login")
+        assert _ideaflow_session_user_id(browser) is None
+        assert ExternalIdentity.query.filter_by(issuer=issuer, subject="idfw-sub-intruder").count() == 0
+        assert ExternalIdentity.query.filter_by(user_id=bound_id).one().subject == "idfw-sub-original"
+
+    # Two verified accounts whose emails differ only by case: ambiguous, never guessed.
+    a_id = _ideaflow_seed_user("ambig-a", "Ambig@Example.com", verified=True)
+    b_id = _ideaflow_seed_user("ambig-b", "ambig@example.com", verified=True)
+    userinfo = {"sub": "idfw-sub-ambig", "iss": issuer, "email": "ambig@example.com", "email_verified": True, "name": "A"}
+    with _ideaflow_oauth(app, userinfo):
+        browser, r = _ideaflow_signin_browser(app)
+        assert r.headers["Location"].endswith("/auth/login")
+        assert ExternalIdentity.query.filter_by(issuer=issuer, subject="idfw-sub-ambig").count() == 0
+        assert ExternalIdentity.query.filter(ExternalIdentity.user_id.in_([a_id, b_id])).count() == 0
+
+    # Two unverified duplicates and no verified owner: ambiguous, never guessed, and
+    # nobody has proven either row -- so no password page, only the way out.
+    dupe1 = _ideaflow_seed_user("dupe-u1", "dupe@example.com")
+    dupe2 = _ideaflow_seed_user("dupe-u2", "dupe@example.com")
+    userinfo = {"sub": "idfw-sub-dupe", "iss": issuer, "email": "dupe@example.com", "email_verified": True, "name": "D"}
+    with _ideaflow_oauth(app, userinfo):
+        browser, r = _ideaflow_signin_browser(app)
+        assert r.headers["Location"].endswith("/auth/ideaflow/confirm")
+        html = browser.get("/auth/ideaflow/confirm").get_data(as_text=True)
+        assert 'name="password"' not in html and "Create a new WikiHub account" in html
+        assert browser.post("/auth/ideaflow/confirm", data={"password": "anything-at-all"}).status_code == 400
+        assert ExternalIdentity.query.filter_by(issuer=issuer, subject="idfw-sub-dupe").count() == 0
+        r = browser.post("/auth/ideaflow/confirm/new", follow_redirects=False)
+        assert r.status_code == 302 and not r.headers["Location"].endswith("/auth/login")
+        fresh = db.session.get(User, int(_ideaflow_session_user_id(browser)))
+        assert fresh.id not in (dupe1, dupe2) and fresh.email_verified_at is not None
+        assert ExternalIdentity.query.filter(ExternalIdentity.user_id.in_([dupe1, dupe2])).count() == 0
+
+    # A squatter registered the victim's address (unverified) and then connected
+    # THEIR OWN Ideaflow identity to it. The victim's verified sign-in must not be
+    # stranded: they get the way out, and the squatter's binding is untouched.
+    squat_id = _ideaflow_seed_user("squat-bound", "victim-bound@example.com", password="squat-bound-pass")
+    db.session.add(ExternalIdentity(user_id=squat_id, issuer=issuer, subject="idfw-sub-squatter", email=None))
+    db.session.commit()
+    userinfo = {"sub": "idfw-sub-victim2", "iss": issuer, "email": "victim-bound@example.com", "email_verified": True, "name": "V"}
+    with _ideaflow_oauth(app, userinfo):
+        browser, r = _ideaflow_signin_browser(app)
+        assert r.headers["Location"].endswith("/auth/ideaflow/confirm")
+        assert _ideaflow_session_user_id(browser) is None
+        assert 'name="password"' not in browser.get("/auth/ideaflow/confirm").get_data(as_text=True)
+        r = browser.post("/auth/ideaflow/confirm/new", follow_redirects=False)
+        assert r.status_code == 302 and not r.headers["Location"].endswith("/auth/login")
+        assert str(_ideaflow_session_user_id(browser)) != str(squat_id)
+        assert ExternalIdentity.query.filter_by(user_id=squat_id).one().subject == "idfw-sub-squatter"
+
+
+def test_ideaflow_oidc_new_person_gets_one_account_and_race_self_heals(app, client):
+    """code-d96: a person with no local account gets exactly one, keyed by
+    (issuer, subject); a repeat sign-in resolves to it; and a lost link race
+    (another request bound the subject first) re-resolves to that account
+    instead of erroring or creating a duplicate."""
+    import app.routes.auth as auth_routes
+
+    issuer = app.config["IDEAFLOW_OIDC_ISSUER"]
+    userinfo = {"sub": "idfw-sub-newone", "iss": issuer, "email": "newone@example.com", "email_verified": True, "name": "New One"}
+    with _ideaflow_oauth(app, userinfo):
+        first, _ = _ideaflow_signin_browser(app)
+        second, _ = _ideaflow_signin_browser(app)
+        assert _ideaflow_session_user_id(first) == _ideaflow_session_user_id(second)
+        assert User.query.filter_by(email="newone@example.com").count() == 1
+        created = User.query.filter_by(email="newone@example.com").one()
+        assert created.email_verified_at is not None
+
+    # Lost race on the auto-link: a concurrent request links the same subject
+    # to the same account between our checks and our commit.
+    uid = _ideaflow_seed_user("race-verified", "race@example.com", verified=True)
+    userinfo = {"sub": "idfw-sub-race", "iss": issuer, "email": "race@example.com", "email_verified": True, "name": "Race"}
+    real = auth_routes._link_ideaflow_identity
+    state = {"calls": 0}
+
+    def racing_link(user, **kwargs):
+        state["calls"] += 1
+        if state["calls"] == 1:
+            db.session.add(ExternalIdentity(user_id=user.id, issuer=kwargs["issuer"], subject=kwargs["subject"], email=kwargs["email"]))
+            db.session.commit()
+            return False
+        return real(user, **kwargs)
+
+    auth_routes._link_ideaflow_identity = racing_link
+    try:
+        with _ideaflow_oauth(app, userinfo):
+            browser, r = _ideaflow_signin_browser(app)
+            assert str(_ideaflow_session_user_id(browser)) == str(uid)
+    finally:
+        auth_routes._link_ideaflow_identity = real
+    assert ExternalIdentity.query.filter_by(issuer=issuer, subject="idfw-sub-race").count() == 1
+    assert User.query.filter(db.func.lower(User.email) == "race@example.com").count() == 1
+
+
+def test_ideaflow_oidc_link_flow_forces_fresh_signin(app, client):
+    """code-d96: the explicit link flow always sends prompt=login and requires
+    a fresh auth_time, so a logged-in local session can never silently bind the
+    person who happens to hold the IdP session."""
+    import time as _time
+    import app.routes.auth as auth_routes
+
+    issuer = app.config["IDEAFLOW_OIDC_ISSUER"]
+    uid = _ideaflow_seed_user("fresh-linker", "fresh-linker-local@example.com", password="fresh-pass-12345", verified=True)
+    now = int(_time.time())
+    for label, extra, should_link in (
+        ("missing auth_time", {}, False),
+        ("stale auth_time", {"auth_time": now - 3600}, False),
+        ("boolean auth_time", {"auth_time": True}, False),
+        ("fresh auth_time", {"auth_time": now}, True),
+    ):
+        sub = f"idfw-sub-fresh-{label.replace(' ', '-')}"
+        userinfo = {"sub": sub, "iss": issuer, "email": "someone-else@example.com", "email_verified": True, "name": "F", **extra}
+        with _ideaflow_oauth(app, userinfo):
+            fake = auth_routes.oauth.ideaflow
+            browser = app.test_client()
+            browser.post("/auth/login", data={"username": "fresh-linker", "password": "fresh-pass-12345"}, follow_redirects=False)
+            browser.get("/auth/ideaflow/link", follow_redirects=False)
+            assert fake.calls[-1] == {"prompt": "login"}, "link must always force a fresh Ideaflow sign-in"
+            r = browser.get("/auth/ideaflow/callback?state=fake-ideaflow-state&code=fake", follow_redirects=False)
+            assert r.status_code == 302 and r.headers["Location"].endswith("/settings")
+            linked = ExternalIdentity.query.filter_by(issuer=issuer, subject=sub).count()
+            assert linked == (1 if should_link else 0), label
+            if should_link:
+                ExternalIdentity.query.filter_by(user_id=uid).delete()
+                db.session.commit()
+
+
+def test_ideaflow_oidc_canceled_flow_changes_nothing(app, client):
+    """code-d96: a cancelled/failed Ideaflow round trip creates no session, no
+    identity, no account, and never touches the last-method hint."""
+    import app.routes.auth as auth_routes
+
+    issuer = app.config["IDEAFLOW_OIDC_ISSUER"]
+    uid = _ideaflow_seed_user("cancel-user", "cancel@example.com", password="cancel-pass-12345", verified=True)
+    userinfo = {"sub": "idfw-sub-cancel", "iss": issuer, "email": "cancel@example.com", "email_verified": True, "name": "C"}
+    with _ideaflow_oauth(app, userinfo):
+        browser = app.test_client()
+        with _preserve_login_rate_limit_state():
+            browser.post("/auth/login", data={"username": "cancel-user", "password": "cancel-pass-12345"}, follow_redirects=False)
+        assert _ideaflow_last_method(browser) == "password"
+        before_users = User.query.count()
+
+        def cancelled():
+            raise RuntimeError("access_denied")
+
+        original = auth_routes.oauth.ideaflow.authorize_access_token
+        auth_routes.oauth.ideaflow.authorize_access_token = cancelled
+        try:
+            browser.get("/auth/ideaflow?switch=1", follow_redirects=False)
+            r = browser.get("/auth/ideaflow/callback?state=fake-ideaflow-state&error=access_denied", follow_redirects=False)
+        finally:
+            auth_routes.oauth.ideaflow.authorize_access_token = original
+        assert r.status_code == 302 and r.headers["Location"].endswith("/auth/login")
+        assert str(_ideaflow_session_user_id(browser)) == str(uid), "an existing local session survives a cancelled attempt"
+        assert _ideaflow_last_method(browser) == "password"
+        assert ExternalIdentity.query.filter_by(issuer=issuer, subject="idfw-sub-cancel").count() == 0
+        assert User.query.count() == before_users
+
+
+def test_ideaflow_oidc_verified_owner_beats_unverified_squatter(app, client):
+    """code-d96: when one VERIFIED account and one unverified duplicate share
+    the email, the verified one is the owner: auto-link picks it (no password
+    page) and the squatter row is left untouched."""
+    issuer = app.config["IDEAFLOW_OIDC_ISSUER"]
+    squatter_id = _ideaflow_seed_user("squatter-row", "owner-sq@example.com", password="squatter-pass-1")
+    owner_id = _ideaflow_seed_user("real-owner", "owner-sq@example.com", verified=True)
+    userinfo = {"sub": "idfw-sub-owner-sq", "iss": issuer, "email": "owner-sq@example.com", "email_verified": True, "name": "O"}
+    with _ideaflow_oauth(app, userinfo):
+        browser, r = _ideaflow_signin_browser(app)
+        assert r.status_code == 302 and not r.headers["Location"].endswith("/auth/ideaflow/confirm")
+        assert str(_ideaflow_session_user_id(browser)) == str(owner_id)
+        assert ExternalIdentity.query.filter_by(user_id=squatter_id).count() == 0
+        assert db.session.get(User, squatter_id).email_verified_at is None
+
+
+def test_ideaflow_oidc_not_your_account_creates_fresh_account_and_leaves_squatter(app, client):
+    """code-d96: an unverified typed email must never lock out the person whose
+    Ideaflow email is provider-verified. 'Not your account?' creates a fresh
+    account (as Google sign-in does), leaves the unverified row alone, is
+    unavailable for privileged accounts, and a later password reset on the
+    unverified row cannot 500 on the verified-email unique index."""
+    from app.models import PasswordResetToken
+    from app.auth_utils import hash_one_time_token, check_password
+    from datetime import timedelta
+
+    issuer = app.config["IDEAFLOW_OIDC_ISSUER"]
+    squatter_id = _ideaflow_seed_user("squat-typed", "victim-real@example.com", password="squat-pass-12345")
+    userinfo = {"sub": "idfw-sub-victim", "iss": issuer, "email": "victim-real@example.com", "email_verified": True, "name": "Victim Real"}
+    with _ideaflow_oauth(app, userinfo):
+        browser, r = _ideaflow_signin_browser(app)
+        assert r.headers["Location"].endswith("/auth/ideaflow/confirm")
+        html = browser.get("/auth/ideaflow/confirm").get_data(as_text=True)
+        assert "Create a new WikiHub account" in html
+        r = browser.post("/auth/ideaflow/confirm/new", follow_redirects=False)
+        assert r.status_code == 302 and not r.headers["Location"].endswith("/auth/login")
+        new_id = _ideaflow_session_user_id(browser)
+        assert new_id is not None and str(new_id) != str(squatter_id)
+        fresh = db.session.get(User, int(new_id))
+        assert fresh.email == "victim-real@example.com" and fresh.email_verified_at is not None
+        assert ExternalIdentity.query.filter_by(issuer=issuer, subject="idfw-sub-victim").one().user_id == fresh.id
+        squatter = db.session.get(User, squatter_id)
+        assert squatter.email_verified_at is None and ExternalIdentity.query.filter_by(user_id=squatter_id).count() == 0
+        assert _ideaflow_last_method(browser) == "ideaflow"
+
+        # The pending check is single use.
+        r = browser.post("/auth/ideaflow/confirm/new", follow_redirects=False)
+        assert r.status_code == 302 and r.headers["Location"].endswith("/auth/login")
+
+    # Resetting the unverified row's password now must not 500 (its email is
+    # already verified on the fresh account) and must not claim the email.
+    db.session.add(PasswordResetToken(
+        user_id=squatter_id, token_hash=hash_one_time_token("reset-tok-d96-a"),
+        expires_at=utcnow() + timedelta(minutes=10),
+    ))
+    db.session.commit()
+    resetter = app.test_client()
+    r = resetter.post("/auth/reset/reset-tok-d96-a", data={"password": "brand-new-pass-1", "confirm_password": "brand-new-pass-1"}, follow_redirects=False)
+    assert r.status_code == 302, r.status_code
+    db.session.expire_all()
+    squatter = db.session.get(User, squatter_id)
+    assert check_password("brand-new-pass-1", squatter.password_hash)
+    assert squatter.email_verified_at is None, "reset must not claim an email another account already verified"
+
+    # Never offered for a privileged VERIFIED account (its verified email is taken;
+    # the route also refuses, and the verified-email unique index backs both).
+    _ideaflow_seed_user("priv-noescape", "priv-noescape@example.com", password="priv-noescape-1", verified=True, wiki_limit=100)
+    userinfo = {"sub": "idfw-sub-noescape", "iss": issuer, "email": "priv-noescape@example.com", "email_verified": True, "name": "P"}
+    with _ideaflow_oauth(app, userinfo):
+        browser, r = _ideaflow_signin_browser(app)
+        html = browser.get("/auth/ideaflow/confirm").get_data(as_text=True)
+        assert "Create a new WikiHub account" not in html
+        r = browser.post("/auth/ideaflow/confirm/new", follow_redirects=False)
+        assert r.status_code == 302 and r.headers["Location"].endswith("/auth/login")
+        assert _ideaflow_session_user_id(browser) is None
+        assert ExternalIdentity.query.filter_by(issuer=issuer, subject="idfw-sub-noescape").count() == 0
+
+    # A privileged but UNVERIFIED row (nobody proved it is theirs) may be bypassed
+    # too: the fresh account carries no privilege and the row is untouched.
+    priv_id = _ideaflow_seed_user("priv-unverified", "priv-unv@example.com", password="priv-unv-pass-1", wiki_limit=100)
+    userinfo = {"sub": "idfw-sub-priv-unv", "iss": issuer, "email": "priv-unv@example.com", "email_verified": True, "name": "PU"}
+    with _ideaflow_oauth(app, userinfo):
+        browser, r = _ideaflow_signin_browser(app)
+        assert r.headers["Location"].endswith("/auth/ideaflow/confirm")
+        assert "Create a new WikiHub account" in browser.get("/auth/ideaflow/confirm").get_data(as_text=True)
+        r = browser.post("/auth/ideaflow/confirm/new", follow_redirects=False)
+        assert r.status_code == 302 and not r.headers["Location"].endswith("/auth/login")
+        fresh = db.session.get(User, int(_ideaflow_session_user_id(browser)))
+        assert fresh.id != priv_id and fresh.wiki_limit is None, "no privilege is inherited"
+        privileged = db.session.get(User, priv_id)
+        assert privileged.wiki_limit == 100 and privileged.email_verified_at is None
+        assert ExternalIdentity.query.filter_by(user_id=priv_id).count() == 0
+
+
+def test_ideaflow_oidc_confirm_next_csrf_recheck_and_other_session(app, client):
+    issuer = app.config["IDEAFLOW_OIDC_ISSUER"]
+    target_id = _ideaflow_seed_user("confirm-target", "confirm-t@example.com", password="confirm-pass-123")
+    other_id = _ideaflow_seed_user("confirm-other", "confirm-o@example.com", password="other-pass-123456", verified=True)
+    userinfo = {"sub": "idfw-sub-confirm-t", "iss": issuer, "email": "confirm-t@example.com", "email_verified": True, "name": "T"}
+
+    def _reset_target():
+        # A successful password check marks the local email verified, so put the
+        # legacy-unverified starting state back before each scenario.
+        ExternalIdentity.query.filter_by(user_id=target_id).delete()
+        db.session.get(User, target_id).email_verified_at = None
+        db.session.commit()
+
+    with _ideaflow_oauth(app, userinfo):
+        # `next` survives the confirmation; an external one never does.
+        browser, _ = _ideaflow_signin_browser(app, path="/auth/ideaflow?next=/settings")
+        r = browser.post("/auth/ideaflow/confirm", data={"password": "confirm-pass-123"}, follow_redirects=False)
+        assert r.status_code == 302 and r.headers["Location"].endswith("/settings")
+        _reset_target()
+        browser.get("/auth/logout")
+
+        browser, _ = _ideaflow_signin_browser(app, path="/auth/ideaflow?next=https://evil.example/steal")
+        r = browser.post("/auth/ideaflow/confirm", data={"password": "confirm-pass-123"}, follow_redirects=False)
+        assert r.status_code == 302 and "evil.example" not in r.headers["Location"]
+        _reset_target()
+
+        # CSRF is enforced on all three confirmation POSTs (the fixture disables it globally).
+        app.config["WTF_CSRF_ENABLED"] = True
+        try:
+            browser, _ = _ideaflow_signin_browser(app)
+            for path in ("/auth/ideaflow/confirm", "/auth/ideaflow/confirm/new", "/auth/ideaflow/confirm/cancel"):
+                r = browser.post(path, data={"password": "confirm-pass-123"})
+                assert r.status_code == 400, f"{path} must require a CSRF token"
+            assert _ideaflow_session_user_id(browser) is None
+            assert ExternalIdentity.query.filter_by(user_id=target_id).count() == 0
+        finally:
+            app.config["WTF_CSRF_ENABLED"] = False
+
+        # Re-check under the proven password: the subject got bound elsewhere in the window.
+        _reset_target()
+        browser, _ = _ideaflow_signin_browser(app)
+        db.session.add(ExternalIdentity(user_id=other_id, issuer=issuer, subject="idfw-sub-confirm-t", email=None))
+        db.session.commit()
+        r = browser.post("/auth/ideaflow/confirm", data={"password": "confirm-pass-123"}, follow_redirects=False)
+        assert r.status_code == 302 and r.headers["Location"].endswith("/auth/login")
+        assert _ideaflow_session_user_id(browser) is None
+        assert ExternalIdentity.query.filter_by(user_id=target_id).count() == 0
+        ExternalIdentity.query.filter_by(user_id=other_id).delete()
+        db.session.commit()
+
+        # Confirming while signed in as a DIFFERENT local account binds only the proven target.
+        _reset_target()
+        browser = app.test_client()
+        browser.post("/auth/login", data={"username": "confirm-other", "password": "other-pass-123456"}, follow_redirects=False)
+        assert str(_ideaflow_session_user_id(browser)) == str(other_id)
+        _ideaflow_signin_browser(app, browser=browser)
+        r = browser.post("/auth/ideaflow/confirm", data={"password": "confirm-pass-123"}, follow_redirects=False)
+        assert r.status_code == 302
+        assert str(_ideaflow_session_user_id(browser)) == str(target_id)
+        assert ExternalIdentity.query.filter_by(user_id=other_id).count() == 0
+        assert ExternalIdentity.query.filter_by(user_id=target_id, subject="idfw-sub-confirm-t").count() == 1
+
+
+def test_ideaflow_oidc_password_failures_are_capped_server_side_per_account(app, client):
+    """code-d96: the per-check attempt counter lives in a client-held cookie, so
+    the cap that actually stops guessing is server-side and per local account."""
+    import app.routes.auth as auth_routes
+
+    issuer = app.config["IDEAFLOW_OIDC_ISSUER"]
+    _ideaflow_seed_user("cap-server", "capserver@example.com", password="capserver-pass-1")
+    userinfo = {"sub": "idfw-sub-capserver", "iss": issuer, "email": "capserver@example.com", "email_verified": True, "name": "C"}
+    limit = auth_routes._IDEAFLOW_CONFIRM_MAX_FAILURES_PER_USER
+    with _ideaflow_oauth(app, userinfo):
+        for i in range(limit):
+            browser, _ = _ideaflow_signin_browser(app)  # a fresh pending check resets the cookie counter
+            assert browser.post("/auth/ideaflow/confirm", data={"password": f"wrong-{i}"}).status_code == 401
+        browser, _ = _ideaflow_signin_browser(app)
+        r = browser.post("/auth/ideaflow/confirm", data={"password": "capserver-pass-1"})
+        assert r.status_code == 429, "even the right password is refused while the account is over its failure cap"
+        assert ExternalIdentity.query.filter_by(issuer=issuer, subject="idfw-sub-capserver").count() == 0
+
+
+def test_ideaflow_oidc_confirm_cap_is_not_poisonable_and_google_prefers_verified(app, client):
+    """code-d96 re-review: (1) the per-account confirm counter must not share
+    keys with the per-IP limiter (its key is a client-supplied X-Forwarded-For
+    value); (2) once 'not your account' has created a verified row next to an
+    unverified duplicate, Google sign-in must link the VERIFIED row, not 500."""
+    import app.routes.auth as auth_routes
+    from app.routes.auth import _resolve_or_create_google_user
+
+    issuer = app.config["IDEAFLOW_OIDC_ISSUER"]
+    victim_id = _ideaflow_seed_user("poison-target", "poison-t@example.com", password="poison-pass-123")
+    attacker = app.test_client()
+    for _ in range(auth_routes._IDEAFLOW_CONFIRM_MAX_FAILURES_PER_USER + 2):
+        attacker.post(
+            "/auth/login", data={"username": "nobody", "password": "wrong-wrong"},
+            headers={"X-Forwarded-For": f"ideaflow-confirm:{victim_id}"},
+        )
+    userinfo = {"sub": "idfw-sub-poison", "iss": issuer, "email": "poison-t@example.com", "email_verified": True, "name": "P"}
+    with _ideaflow_oauth(app, userinfo):
+        browser, _ = _ideaflow_signin_browser(app)
+        r = browser.post("/auth/ideaflow/confirm", data={"password": "poison-pass-123"}, follow_redirects=False)
+        assert r.status_code == 302, f"the owner must not be locked out by forged limiter keys (got {r.status_code})"
+        assert ExternalIdentity.query.filter_by(user_id=victim_id).count() == 1
+
+    squatter_id = _ideaflow_seed_user("g-squatter", "g-shared@example.com", password="g-squatter-pass1")
+    userinfo = {"sub": "idfw-sub-g", "iss": issuer, "email": "g-shared@example.com", "email_verified": True, "name": "G"}
+    with _ideaflow_oauth(app, userinfo):
+        browser, _ = _ideaflow_signin_browser(app)
+        browser.post("/auth/ideaflow/confirm/new", follow_redirects=False)
+        fresh_id = int(_ideaflow_session_user_id(browser))
+    assert fresh_id != squatter_id
+    for _ in range(3):  # row order must not matter
+        linked = _resolve_or_create_google_user(
+            google_id="google-sub-g", email="g-shared@example.com", email_verified=True, name="G",
+        )
+        assert linked.id == fresh_id
+        assert db.session.get(User, squatter_id).google_id is None
+
+
+def test_ideaflow_oidc_link_auth_time_has_upper_bound_and_email_stored_only_when_verified(app, client):
+    import time as _time
+    import app.routes.auth as auth_routes
+
+    issuer = app.config["IDEAFLOW_OIDC_ISSUER"]
+    uid = _ideaflow_seed_user("bound-linker", "bound-linker@example.com", password="bound-pass-12345", verified=True)
+    now = int(_time.time())
+    cases = (
+        ("milliseconds", {"auth_time": now * 1000, "email_verified": True}, False),
+        ("far future", {"auth_time": now + 36000, "email_verified": True}, False),
+        ("unverified email", {"auth_time": now, "email_verified": False}, True),
+        ("verified email", {"auth_time": now, "email_verified": True}, True),
+    )
+    for label, extra, should_link in cases:
+        sub = f"idfw-sub-bound-{label.replace(' ', '-')}"
+        userinfo = {"sub": sub, "iss": issuer, "email": "shown@example.com", "name": "B", **extra}
+        with _ideaflow_oauth(app, userinfo):
+            browser = app.test_client()
+            browser.post("/auth/login", data={"username": "bound-linker", "password": "bound-pass-12345"}, follow_redirects=False)
+            browser.get("/auth/ideaflow/link", follow_redirects=False)
+            browser.get("/auth/ideaflow/callback?state=fake-ideaflow-state&code=fake", follow_redirects=False)
+            row = ExternalIdentity.query.filter_by(issuer=issuer, subject=sub).first()
+            assert (row is not None) == should_link, label
+            if row is not None:
+                if label == "unverified email":
+                    assert row.email is None, "an email the provider did not verify is never stored"
+                else:
+                    assert row.email == "shown@example.com"
+                ExternalIdentity.query.filter_by(user_id=uid).delete()
+                db.session.commit()
 
 
 def test_ideaflow_oidc_link_conflict_fails_closed(app, client):
@@ -1617,6 +2275,7 @@ def test_ideaflow_oidc_link_conflict_fails_closed(app, client):
         "email": "shared-ideaflow@example.com",
         "email_verified": True,
         "name": "Shared Identity",
+        "auth_time": _fresh_auth_time(),
     }
 
     with _ideaflow_oauth(app, shared_userinfo):
@@ -1649,6 +2308,7 @@ def test_ideaflow_oidc_link_conflict_fails_closed(app, client):
         "email": "second-ideaflow@example.com",
         "email_verified": True,
         "name": "Second Identity",
+        "auth_time": _fresh_auth_time(),
     }
     with _ideaflow_oauth(app, other_userinfo):
         browser_a2 = app.test_client()
@@ -2056,7 +2716,7 @@ def test_login_last_used_hint(app, client):
                 linker.post("/auth/login", data=pw, follow_redirects=False)
                 assert hint(linker) == "password"
                 auth_routes.oauth.ideaflow.authorize_access_token = lambda: {
-                    "userinfo": {**ideaflow_userinfo, "sub": "idfw-sub-lasthint-link", "email": None}
+                    "userinfo": {**ideaflow_userinfo, "sub": "idfw-sub-lasthint-link", "email": None, "auth_time": _fresh_auth_time()}
                 }
                 linker.get("/auth/ideaflow/link", follow_redirects=False)
                 r = linker.get("/auth/ideaflow/callback?state=fake-ideaflow-state&code=fake", follow_redirects=False)
@@ -8719,7 +9379,22 @@ def run_all():
             ("Ideaflow OIDC new login creates local session (wikihub-39pe)", lambda: test_ideaflow_oidc_new_login_creates_local_session(app, client)),
             ("Ideaflow OIDC repeat exact subject login (wikihub-39pe)", lambda: test_ideaflow_oidc_repeat_exact_subject_login(app, client)),
             ("Ideaflow OIDC signed-in linking to existing user (wikihub-39pe)", lambda: test_ideaflow_oidc_signed_in_linking_to_existing_user(app, client)),
-            ("Ideaflow OIDC new-signin email conflict fails closed (wikihub-39pe)", lambda: test_ideaflow_oidc_new_signin_email_conflict_fails_closed(app, client)),
+            ("Ideaflow OIDC 'Use another account' sends prompt=login only for the allowlisted flag (code-d96)", lambda: test_ideaflow_oidc_switch_account_prompts_login_only_when_allowlisted(app, client)),
+            ("Ideaflow OIDC auto-links a verified matching account (code-d96)", lambda: test_ideaflow_oidc_auto_links_verified_matching_account(app, client)),
+            ("Ideaflow OIDC unverified local email needs a one-time password check (code-d96)", lambda: test_ideaflow_oidc_unverified_local_email_needs_one_time_password_check(app, client)),
+            ("Ideaflow OIDC password check is capped, expires, cancellable (code-d96)", lambda: test_ideaflow_oidc_password_check_is_capped_expires_and_can_be_cancelled(app, client)),
+            ("Ideaflow OIDC email claim must be strict true (code-d96)", lambda: test_ideaflow_oidc_email_claim_must_be_strict_true_to_match(app, client)),
+            ("Ideaflow OIDC privileged/passwordless accounts never link silently (code-d96)", lambda: test_ideaflow_oidc_privileged_or_passwordless_account_never_links_silently(app, client)),
+            ("Ideaflow OIDC conflicting binding and ambiguous email refuse (code-d96)", lambda: test_ideaflow_oidc_conflicting_binding_and_ambiguous_email_refuse(app, client)),
+            ("Ideaflow OIDC new person gets one account; lost race self-heals (code-d96)", lambda: test_ideaflow_oidc_new_person_gets_one_account_and_race_self_heals(app, client)),
+            ("Ideaflow OIDC link flow forces a fresh sign-in (code-d96)", lambda: test_ideaflow_oidc_link_flow_forces_fresh_signin(app, client)),
+            ("Ideaflow OIDC cancelled flow changes nothing (code-d96)", lambda: test_ideaflow_oidc_canceled_flow_changes_nothing(app, client)),
+            ("Ideaflow OIDC verified owner beats unverified squatter (code-d96)", lambda: test_ideaflow_oidc_verified_owner_beats_unverified_squatter(app, client)),
+            ("Ideaflow OIDC 'not your account' creates a fresh account, squatter untouched (code-d96)", lambda: test_ideaflow_oidc_not_your_account_creates_fresh_account_and_leaves_squatter(app, client)),
+            ("Ideaflow OIDC confirm: next, CSRF, re-check, other session (code-d96)", lambda: test_ideaflow_oidc_confirm_next_csrf_recheck_and_other_session(app, client)),
+            ("Ideaflow OIDC password failures capped server-side per account (code-d96)", lambda: test_ideaflow_oidc_password_failures_are_capped_server_side_per_account(app, client)),
+            ("Ideaflow OIDC confirm cap not poisonable via X-Forwarded-For; Google prefers verified row (code-d96)", lambda: test_ideaflow_oidc_confirm_cap_is_not_poisonable_and_google_prefers_verified(app, client)),
+            ("Ideaflow OIDC link auth_time upper bound + verified-only email (code-d96)", lambda: test_ideaflow_oidc_link_auth_time_has_upper_bound_and_email_stored_only_when_verified(app, client)),
             ("Ideaflow OIDC link conflict fails closed (wikihub-39pe)", lambda: test_ideaflow_oidc_link_conflict_fails_closed(app, client)),
             ("Ideaflow OIDC legacy logins unaffected (wikihub-39pe)", lambda: test_ideaflow_oidc_legacy_logins_unaffected(app, client, key)),
             ("Ideaflow OIDC real Ed25519/EdDSA ID-token verification (wikihub-39pe)", lambda: test_ideaflow_oidc_real_ed25519_id_token_verification(app)),

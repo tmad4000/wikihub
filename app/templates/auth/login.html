@@ -52,7 +52,8 @@
   {% endif %}
   <a href="{{ url_for('auth.google_login', next=next_value or None, email=prefill_email or None, it=invite_token or None) }}" class="btn btn-google" data-login-method="google">Sign in with Google {{ last_used('google') }}</a>
   {% if ideaflow_login_enabled %}
-  <a href="{{ url_for('auth.ideaflow_login', next=next_value or None) }}" class="btn btn-google" data-login-method="ideaflow">Continue with Ideaflow {{ last_used('ideaflow') }}</a>
+  <a href="{{ url_for('auth.ideaflow_login', next=next_value or None) }}" class="btn btn-google" data-login-method="ideaflow" style="margin-bottom:6px;">Continue with Ideaflow {{ last_used('ideaflow') }}</a>
+  <div style="text-align:center;margin-bottom:16px;"><a href="{{ url_for('auth.ideaflow_login', next=next_value or None, switch=1) }}" data-login-action="ideaflow-switch" style="font-size:0.8125rem;color:var(--text-tertiary);text-decoration:underline;">Use another Ideaflow account</a></div>
   {% endif %}
   <div class="divider">or</div>
 

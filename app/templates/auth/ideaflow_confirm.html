@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Confirm your account — wikihub</title>
+{% include '_theme.html' %}
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--font-body); background: var(--bg-base); color: var(--text-primary); min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px; }
+  .card { background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-md); padding: 32px 28px; width: 100%; max-width: 400px; }
+  .logo { font-family: var(--font-mono); font-size: 1.125rem; text-align: center; margin-bottom: 24px; }
+  .logo .bracket { color: var(--text-tertiary); } .logo:hover .bracket { color: var(--accent); } .logo { display: block; transition: opacity 0.15s; } .logo:hover { opacity: 0.8; }
+  h1 { font-size: 1.25rem; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 16px; text-align: center; }
+  p { font-size: 0.875rem; color: var(--text-secondary); line-height: 1.5; margin-bottom: 16px; }
+  .flash { background: rgba(var(--rgb-private), 0.1); border: 1px solid rgba(var(--rgb-private), 0.3); color: var(--color-error); padding: 8px 12px; border-radius: var(--radius-sm); font-size: 0.8125rem; margin-bottom: 16px; }
+  label { display: block; font-size: 0.8125rem; color: var(--text-secondary); margin-bottom: 6px; font-weight: 500; }
+  input[type="password"] { width: 100%; background: var(--control-bg); border: 1px solid var(--control-border); border-radius: var(--radius-sm); color: var(--text-primary); font-family: var(--font-body); font-size: 0.9375rem; padding: 10px 12px; margin-bottom: 16px; outline: none; }
+  input:focus { border-color: var(--border-accent); }
+  .btn { display: block; width: 100%; padding: 12px; border: none; border-radius: var(--radius-sm); font-family: var(--font-body); font-size: 0.9375rem; font-weight: 600; cursor: pointer; text-align: center; text-decoration: none; min-height: 44px; }
+  .btn-primary { background: var(--accent); color: var(--text-on-accent); margin-bottom: 12px; }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-quiet { background: transparent; border: 1px solid var(--border-emphasis); color: var(--text-secondary); margin-bottom: 12px; }
+  .btn-quiet:hover { border-color: var(--border-accent); color: var(--text-primary); }
+  .links { text-align: center; font-size: 0.8125rem; color: var(--text-tertiary); margin-top: 8px; }
+  .links a { color: var(--accent); text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="card">
+  <a href="/" class="logo" style="text-decoration:none;color:inherit;"><span class="bracket">[[</span>wikihub<span class="bracket">]]</span></a>
+  <h1>Confirm it's your account</h1>
+
+  {% with messages = get_flashed_messages() %}
+  {% if messages %}
+  {% for msg in messages %}
+  <div class="flash">{{ msg }}</div>
+  {% endfor %}
+  {% endif %}
+  {% endwith %}
+
+  {% if reason == "choose" %}
+  <p>Ideaflow confirmed <strong>{{ email }}</strong>. WikiHub already has an account using that address that was never verified, so it can't be matched to you automatically. If it's yours, sign in to it another way and choose Connect Ideaflow in Settings. Otherwise you can create a new WikiHub account.</p>
+  {% elif reason == "privileged" %}
+  <p>Ideaflow confirmed <strong>{{ email }}</strong>. This WikiHub account (<strong>{{ username }}</strong>) has extra access, so please confirm it's yours once before connecting.</p>
+  {% else %}
+  <p>Ideaflow confirmed <strong>{{ email }}</strong>, and a WikiHub account (<strong>{{ username }}</strong>) already uses that address but was never verified. Confirm it's yours once and you won't be asked again.</p>
+  {% endif %}
+
+  {% if reason == "choose" %}
+  {% elif has_password %}
+  <form method="POST" action="{{ url_for('auth.ideaflow_confirm') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label for="password">Password for {{ username }}</label>
+    <input type="password" id="password" name="password" autocomplete="current-password" autofocus required>
+    <button type="submit" class="btn btn-primary">Confirm and connect Ideaflow</button>
+  </form>
+  <div class="links"><a href="{{ url_for('auth.forgot_password') }}">Forgot password?</a></div>
+  {% else %}
+  <p>This account has no password to confirm with. Sign in to <strong>{{ username }}</strong> with its usual method, then choose Connect Ideaflow in Settings.</p>
+  {% endif %}
+
+  {% if reason == "unverified" or reason == "choose" %}
+  <div class="divider" style="text-align:center;color:var(--text-muted);font-size:0.75rem;margin:16px 0 12px;">or</div>
+  <p style="font-size:0.8125rem;">Not your account? Someone else may have typed your address, or you may have forgotten the password.</p>
+  <form method="POST" action="{{ url_for('auth.ideaflow_confirm_new') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button type="submit" class="btn btn-quiet" data-ideaflow-action="new-account">Create a new WikiHub account</button>
+  </form>
+  {% endif %}
+
+  <form method="POST" action="{{ url_for('auth.ideaflow_confirm_cancel') }}" style="margin-top:16px;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button type="submit" class="btn btn-quiet">Cancel</button>
+  </form>
+</div>
+</body>
+</html>
