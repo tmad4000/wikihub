@@ -300,6 +300,11 @@ Response: `{"login_url": "https://wikihub.md/auth/magic/wl_...", "expires_at": "
 The link is short-lived (15 min default) and single-use. Open it in a browser to
 establish a normal web session. The raw API key never ends up in the URL.
 
+People sign in to the website with Ideaflow (`/auth/login`). Existing accounts
+that need a WikiHub password or API key in the browser can use
+`/auth/login/password`; `POST /auth/login` with `username`+`password` or
+`api_key` still works.
+
 ## create a wiki
 
 ```

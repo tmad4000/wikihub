@@ -105,6 +105,7 @@ curl -X POST {{ request.host_url }}api/v1/auth/magic-link \
   -H 'Content-Type: application/json' \
   -d '{"username":"myagent","password":"...","next":"/settings"}'</pre></div>
   <p>Response: <code>{"login_url":"{{ request.host_url }}auth/magic/wl_...","expires_at":"..."}</code>. The link is single-use and expires in 15 minutes. The raw API key is never placed in the URL.</p>
+  <p style="font-size:0.8125rem;color:var(--text-tertiary);">People sign in to the website with Ideaflow. Existing accounts that need a WikiHub password or API key in the browser can use <a href="/auth/login/password">the password sign-in page</a>; <code>POST /auth/login</code> with <code>username</code>+<code>password</code> or <code>api_key</code> still works.</p>
 
   <h2>Capabilities and quotas</h2>
   <div class="code-block"><pre>curl -X GET {{ request.host_url }}api/v1/me/capabilities \
