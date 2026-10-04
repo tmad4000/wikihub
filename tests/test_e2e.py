@@ -2684,6 +2684,281 @@ def test_ideaflow_conflict_offers_password_fallback(app, client):
         assert bad.status_code == 401 and b'name="password"' in bad.data
 
 
+# --- Automatic cross-app sign-in (code-xbh.21.6) ---
+
+_AUTO_NAV_HEADERS = {
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Site": "cross-site",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+}
+
+
+def _auto_nav(browser, path, *, headers=None, **kwargs):
+    merged = dict(_AUTO_NAV_HEADERS)
+    merged.update(headers or {})
+    return browser.get(path, headers={k: v for k, v in merged.items() if v is not None}, follow_redirects=False, **kwargs)
+
+
+def _auto_is_silent_redirect(r):
+    return r.status_code == 302 and r.headers["Location"].startswith("https://id.ideaflow.test/authorize") \
+        and "prompt=none" in r.headers["Location"]
+
+
+def _auto_flashes(browser):
+    with browser.session_transaction() as sess:
+        return list(sess.get("_flashes", []))
+
+
+def test_auto_signin_round_trips(app, client):
+    """code-xbh.21.6: a signed-out browser opening a page makes ONE top-level
+    prompt=none round trip. login_required brings it back to the exact URL,
+    signed out, no error, and it never tries again in that browser session;
+    a provider session signs it in on the same URL. A brand-new Ideaflow
+    person gets the same account explicit sign-in would create (no extra page)."""
+    import app.routes.auth as auth_routes
+    from app.auto_signin import AUTO_SIGNIN_COOKIE
+
+    issuer = app.config["IDEAFLOW_OIDC_ISSUER"]
+    userinfo = {"sub": "idfw-sub-auto", "iss": issuer, "email": "auto-signin@example.com", "email_verified": True, "name": "Auto"}
+    with _ideaflow_oauth(app, userinfo):
+        fake = auth_routes.oauth.ideaflow
+
+        # 1. No provider session: one hop out, one hop back, no error, no loop.
+        browser = app.test_client()
+        r = _auto_nav(browser, "/explore?sort=new&q=a%20b")
+        assert _auto_is_silent_redirect(r), (r.status_code, r.headers.get("Location"))
+        assert fake.calls[-1] == {"prompt": "none"}
+        assert "no-store" in r.headers.get("Cache-Control", "")
+        marker = browser.get_cookie(AUTO_SIGNIN_COOKIE)
+        assert marker is not None and marker.value == "1"
+        assert marker.expires is None, "the marker must be a browser-session cookie"
+        set_cookie = [h for h in r.headers.getlist("Set-Cookie") if h.startswith(AUTO_SIGNIN_COOKIE + "=")][0]
+        assert "HttpOnly" in set_cookie and "SameSite=Lax" in set_cookie and "Path=/" in set_cookie
+        assert "Max-Age" not in set_cookie and "Expires" not in set_cookie
+        with browser.session_transaction() as sess:
+            ctx = sess["ideaflow_oauth_contexts"]["fake-ideaflow-state"]
+        assert ctx["silent"] is True and ctx["mode"] == "signin"
+        assert ctx["return_url"] == "/explore?sort=new&q=a%20b", ctx
+
+        r = browser.get("/auth/ideaflow/callback?error=login_required&state=fake-ideaflow-state&iss=x", follow_redirects=False)
+        assert r.status_code == 302 and r.headers["Location"] == "/explore?sort=new&q=a%20b", r.headers.get("Location")
+        assert _ideaflow_session_user_id(browser) is None
+        assert _auto_flashes(browser) == [], "a silent miss shows no message"
+        with browser.session_transaction() as sess:
+            assert "ideaflow_oauth_contexts" not in sess
+        r = _auto_nav(browser, "/explore?sort=new&q=a%20b")
+        assert r.status_code == 200, "a reload after login_required must not redirect again"
+        r = _auto_nav(browser, "/")
+        assert not _auto_is_silent_redirect(r), "nor any other page in the same browser session"
+
+        # consent_required / interaction_required / anything else behave the same.
+        for err in ("consent_required", "interaction_required", "server_error"):
+            b = app.test_client()
+            assert _auto_is_silent_redirect(_auto_nav(b, "/explore"))
+            r = b.get(f"/auth/ideaflow/callback?error={err}&state=fake-ideaflow-state", follow_redirects=False)
+            assert r.status_code == 302 and r.headers["Location"] == "/explore", (err, r.headers.get("Location"))
+            assert _auto_flashes(b) == [] and _ideaflow_session_user_id(b) is None
+
+        # 2. Provider session: signed in on the same URL; a new person gets an account.
+        assert User.query.filter_by(email="auto-signin@example.com").first() is None
+        browser = app.test_client()
+        r = _auto_nav(browser, "/explore?sort=new")
+        assert _auto_is_silent_redirect(r)
+        r = browser.get("/auth/ideaflow/callback?state=fake-ideaflow-state&code=fake", follow_redirects=False)
+        assert r.status_code == 302 and r.headers["Location"] == "/explore?sort=new", r.headers.get("Location")
+        user = User.query.filter_by(email="auto-signin@example.com").first()
+        assert user is not None and str(_ideaflow_session_user_id(browser)) == str(user.id)
+        assert _ideaflow_last_method(browser) == "ideaflow"
+        r = _auto_nav(browser, "/explore?sort=new")
+        assert r.status_code == 200
+
+        # A signed-in browser without the marker never redirects.
+        browser.delete_cookie(AUTO_SIGNIN_COOKIE)
+        assert _auto_nav(browser, "/explore").status_code == 200
+
+        # 3. Explicit sign-out: reload stays signed out, and the next manual
+        # sign-in asks the provider for its chooser.
+        browser.get("/auth/logout", follow_redirects=False)
+        browser.delete_cookie(AUTO_SIGNIN_COOKIE)  # even in a fresh browser session
+        r = _auto_nav(browser, "/explore")
+        assert r.status_code == 200 and _ideaflow_session_user_id(browser) is None
+        browser.get("/auth/ideaflow", follow_redirects=False)
+        assert fake.calls[-1] == {"prompt": "select_account"}
+
+        # 4. An error for a state this browser never started: signed out, no message.
+        stray = app.test_client()
+        r = stray.get("/auth/ideaflow/callback?error=login_required&state=unknown", follow_redirects=False)
+        assert r.status_code == 302 and r.headers["Location"].endswith("/auth/login")
+        assert _auto_flashes(stray) == []
+        # The login page itself never triggers, so a cookie-less browser cannot loop.
+        assert _auto_nav(stray, "/auth/login").status_code == 200
+
+        # 5. "Switch account" counts as an explicit sign-out too.
+        b = app.test_client()
+        _auto_nav(b, "/explore")
+        b.get("/auth/ideaflow/callback?state=fake-ideaflow-state&code=fake", follow_redirects=False)
+        assert _ideaflow_session_user_id(b)
+        b.get("/auth/switch-account", follow_redirects=False)
+        b.delete_cookie(AUTO_SIGNIN_COOKIE)
+        assert _auto_nav(b, "/explore").status_code == 200
+
+
+def test_auto_signin_guards(app, client):
+    """code-xbh.21.6: never redirect bots, scripts, webviews, prefetches,
+    fetch/XHR, non-HTML responses, API/agent/auth routes, custom domains, or
+    when the kill switch or Ideaflow sign-in is off."""
+    from app.auto_signin import AUTO_SIGNIN_COOKIE, safe_return_url
+
+    issuer = app.config["IDEAFLOW_OIDC_ISSUER"]
+    userinfo = {"sub": "idfw-sub-guards", "iss": issuer, "email": None, "email_verified": False, "name": ""}
+
+    def stays(path, *, headers=None, method="GET", **kwargs):
+        b = app.test_client()
+        merged = dict(_AUTO_NAV_HEADERS)
+        merged.update(headers or {})
+        merged = {k: v for k, v in merged.items() if v is not None}
+        r = b.open(path, method=method, headers=merged, follow_redirects=False, **kwargs)
+        assert not _auto_is_silent_redirect(r), (path, headers, r.status_code)
+        assert b.get_cookie(AUTO_SIGNIN_COOKIE) is None, (path, headers)
+        return r
+
+    with _ideaflow_oauth(app, userinfo):
+        assert _auto_is_silent_redirect(_auto_nav(app.test_client(), "/explore")), "control: a browser does redirect"
+
+        for ua in (
+            "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+            "Slackbot-LinkExpanding 1.0 (+https://api.slack.com/robots)",
+            "facebookexternalhit/1.1",
+            "Twitterbot/1.0",
+            "curl/8.7.1",
+            "python-requests/2.32.3",
+            "Wget/1.21",
+            "node-fetch/1.0",
+            "Claude-User/1.0",
+            "Mozilla/5.0 (Macintosh) AppleWebKit/537.36 (KHTML, like Gecko) WikiHub/0.1.0 Chrome/130 Electron/33.0.0 Safari/537.36",
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 [FBAN/FBIOS;FBAV/450.0]",
+            "Mozilla/5.0 (Linux; Android 14; Pixel 8; wv) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36",
+            "",
+        ):
+            stays("/explore", headers={"User-Agent": ua})
+        for headers in (
+            {"Sec-Fetch-Mode": None},
+            {"Sec-Fetch-Dest": None},
+            {"Sec-Fetch-Mode": "cors", "Sec-Fetch-Dest": "empty"},
+            {"Sec-Fetch-Dest": "iframe"},
+            {"Accept": "application/json"},
+            {"Accept": "*/*"},
+            {"X-Requested-With": "XMLHttpRequest"},
+            {"Sec-Purpose": "prefetch;prerender"},
+            {"Purpose": "prefetch"},
+        ):
+            stays("/explore", headers=headers)
+        stays("/explore", method="HEAD")
+        stays("/explore", method="POST")
+        for path in (
+            "/auth/login", "/auth/login/password", "/auth/signup", "/auth/ideaflow/confirm",
+            "/auth/switch-account", "/agents", "/AGENTS.md", "/llms.txt",
+            "/api/v1", "/.well-known/wikihub.json", "/static/css/style.css",
+        ):
+            stays(path)
+        # Customer custom domains do not share the session cookie.
+        stays("/explore", base_url="https://docs.example.com")
+
+        # Kill switch.
+        app.config["IDEAFLOW_AUTO_SIGNIN"] = False
+        try:
+            stays("/explore")
+        finally:
+            app.config["IDEAFLOW_AUTO_SIGNIN"] = True
+
+    # Ideaflow sign-in itself off: nothing to try.
+    stays("/explore")
+
+    # Return URLs: relative same-origin, or a WikiHub subdomain sharing the session only.
+    cfg = {"BASE_URL": "https://wikihub.md", "SESSION_COOKIE_DOMAIN": ".wikihub.md"}
+    assert safe_return_url("/explore?q=1", cfg) == "/explore?q=1"
+    assert safe_return_url("https://alice.wikihub.md/notes?x=1", cfg) == "https://alice.wikihub.md/notes?x=1"
+    for bad in ("//evil.com/x", "/\\evil.com", "https://evil.com/x", "https://wikihub.md.evil.com/x",
+                "javascript:alert(1)", "https://user@evil.com", "/auth/logout", "https://alice.wikihub.md/auth/logout", ""):
+        assert safe_return_url(bad, cfg) is None, bad
+
+
+def test_auto_signin_silent_never_half_finishes(app, client):
+    """code-xbh.21.6: a silent attempt that would need the person (password
+    ownership check, account conflict) returns to the page signed out with no
+    message, nothing pending and nothing created; the explicit button still
+    shows the full flow."""
+    from app.auto_signin import AUTO_SIGNIN_COOKIE
+
+    issuer = app.config["IDEAFLOW_OIDC_ISSUER"]
+    _ideaflow_seed_user("auto-legacy", "auto-legacy@example.com", password="legacy-pass-123")
+    userinfo = {"sub": "idfw-sub-auto-legacy", "iss": issuer, "email": "auto-legacy@example.com", "email_verified": True, "name": "L"}
+    with _ideaflow_oauth(app, userinfo):
+        browser = app.test_client()
+        assert _auto_is_silent_redirect(_auto_nav(browser, "/explore?tab=wikis"))
+        r = browser.get("/auth/ideaflow/callback?state=fake-ideaflow-state&code=fake", follow_redirects=False)
+        assert r.status_code == 302 and r.headers["Location"] == "/explore?tab=wikis", r.headers.get("Location")
+        assert _ideaflow_session_user_id(browser) is None
+        assert _auto_flashes(browser) == []
+        with browser.session_transaction() as sess:
+            assert "ideaflow_pending_link" not in sess
+        assert ExternalIdentity.query.filter_by(subject="idfw-sub-auto-legacy").count() == 0
+        assert User.query.filter_by(email="auto-legacy@example.com").count() == 1
+        assert browser.get_cookie(AUTO_SIGNIN_COOKIE) is not None
+
+        # The explicit button keeps the interactive ownership check.
+        r = browser.get("/auth/ideaflow", follow_redirects=False)
+        r = browser.get("/auth/ideaflow/callback?state=fake-ideaflow-state&code=fake", follow_redirects=False)
+        assert r.headers["Location"].endswith("/auth/ideaflow/confirm")
+
+    # Unverified-email conflict: silent miss, explicit shows the error.
+    _ideaflow_seed_user("auto-conflict", "auto-conflict@example.com", verified=True)
+    userinfo = {"sub": "idfw-sub-auto-conflict", "iss": issuer, "email": "auto-conflict@example.com", "email_verified": False, "name": "C"}
+    with _ideaflow_oauth(app, userinfo):
+        browser = app.test_client()
+        _auto_nav(browser, "/explore")
+        r = browser.get("/auth/ideaflow/callback?state=fake-ideaflow-state&code=fake", follow_redirects=False)
+        assert r.status_code == 302 and r.headers["Location"] == "/explore"
+        assert _auto_flashes(browser) == [] and _ideaflow_session_user_id(browser) is None
+
+
+def test_auto_signin_on_user_subdomain_returns_to_same_host(app, client):
+    """code-xbh.21.6: wiki pages live on user/wiki subdomains that share the
+    .wikihub.md session; a silent attempt started there returns to that exact
+    subdomain URL (the callback itself is always on BASE_URL)."""
+    issuer = app.config["IDEAFLOW_OIDC_ISSUER"]
+    _ideaflow_seed_user("autosub", "autosub-owner@example.com", verified=True)
+    userinfo = {"sub": "idfw-sub-autosub", "iss": issuer, "email": "autosub-reader@example.com", "email_verified": True, "name": "R"}
+    prev = {k: app.config.get(k) for k in ("BASE_URL", "SESSION_COOKIE_DOMAIN")}
+    app.config["BASE_URL"] = "https://wikihub.md"
+    app.config["SESSION_COOKIE_DOMAIN"] = ".wikihub.md"
+    try:
+        with _ideaflow_oauth(app, userinfo):
+            browser = app.test_client()
+            r = _auto_nav(browser, "/?view=all", base_url="https://autosub.wikihub.md")
+            assert _auto_is_silent_redirect(r), (r.status_code, r.headers.get("Location"))
+            assert "redirect_uri=https://wikihub.md/auth/ideaflow/callback" in r.headers["Location"]
+            r = browser.get("/auth/ideaflow/callback?error=login_required&state=fake-ideaflow-state",
+                            base_url="https://wikihub.md", follow_redirects=False)
+            assert r.status_code == 302 and r.headers["Location"] == "https://autosub.wikihub.md/?view=all", r.headers.get("Location")
+
+            browser = app.test_client()
+            _auto_nav(browser, "/?view=all", base_url="https://autosub.wikihub.md")
+            r = browser.get("/auth/ideaflow/callback?state=fake-ideaflow-state&code=fake",
+                            base_url="https://wikihub.md", follow_redirects=False)
+            assert r.headers["Location"] == "https://autosub.wikihub.md/?view=all", r.headers.get("Location")
+            with browser.session_transaction(base_url="https://autosub.wikihub.md") as sess:
+                assert sess.get("_user_id"), "the .wikihub.md session is signed in on the subdomain"
+            # Back on the subdomain: signed in, so no second attempt.
+            r = _auto_nav(browser, "/?view=all", base_url="https://autosub.wikihub.md")
+            assert r.status_code == 200, r.status_code
+    finally:
+        for k, v in prev.items():
+            app.config[k] = v
+
+
 def test_login_last_used_hint(app, client):
     """code-v8l: the login page marks the last method that SUCCEEDED in this
     browser. The hint is a server-set cookie written only by the handler that
@@ -9512,6 +9787,10 @@ def run_all():
             ("Ideaflow-only signup routes to Ideaflow (code-xbh.5)", lambda: test_ideaflow_only_signup_routes_to_ideaflow(app, client)),
             ("Ideaflow chooser after explicit sign-out + Switch account (code-xbh.5)", lambda: test_ideaflow_chooser_after_explicit_signout(app, client)),
             ("Ideaflow conflict offers WikiHub password fallback (code-xbh.5)", lambda: test_ideaflow_conflict_offers_password_fallback(app, client)),
+            ("Ideaflow automatic sign-in: silent round trips, no loop, sign-out respected (code-xbh.21.6)", lambda: test_auto_signin_round_trips(app, client)),
+            ("Ideaflow automatic sign-in: bots, scripts, webviews, API, kill switch skipped (code-xbh.21.6)", lambda: test_auto_signin_guards(app, client)),
+            ("Ideaflow automatic sign-in never half-finishes an interactive step (code-xbh.21.6)", lambda: test_auto_signin_silent_never_half_finishes(app, client)),
+            ("Ideaflow automatic sign-in returns to the user subdomain (code-xbh.21.6)", lambda: test_auto_signin_on_user_subdomain_returns_to_same_host(app, client)),
             ("login page marks last successfully used method (code-v8l)", lambda: test_login_last_used_hint(app, client)),
             ("login redirects back (?next + Referer fallback)", lambda: test_login_redirect_back(client)),
             ("URL login (GET ?api_key / ?password)", lambda: test_url_login(client)),

@@ -26,6 +26,11 @@ class Config:
         "IDEAFLOW_OIDC_DISCOVERY_URL",
         f"{IDEAFLOW_OIDC_ISSUER}/.well-known/openid-configuration",
     )
+    # Automatic cross-app sign-in (code-xbh.21.6): a signed-out browser that
+    # opens a page makes one silent prompt=none round trip to Ideaflow ID and
+    # comes back signed in if it has a provider session. Only active while
+    # Ideaflow sign-in itself is enabled. Kill switch: IDEAFLOW_AUTO_SIGNIN=false.
+    IDEAFLOW_AUTO_SIGNIN = os.environ.get("IDEAFLOW_AUTO_SIGNIN", "true").lower() in ("1", "true", "yes")
     IDEAFLOW_OIDC_CLIENT_ID = os.environ.get("IDEAFLOW_OIDC_CLIENT_ID")
     IDEAFLOW_OIDC_CLIENT_SECRET = os.environ.get("IDEAFLOW_OIDC_CLIENT_SECRET")
     SERVER_NAME = os.environ.get("SERVER_NAME")  # e.g. wikihub.md
