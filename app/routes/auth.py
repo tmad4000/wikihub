@@ -34,6 +34,7 @@ from app.routes import auth_bp
 from app.subdomains import validate_username
 from app.wiki_ops import ensure_personal_wiki, materialize_pending_invites_for
 from app.credentials_hint import resolve_server_url
+from app import auto_signin
 from app import email_service
 
 
@@ -725,7 +726,9 @@ def switch_account():
         logout_user()
     if not _ideaflow_enabled():
         return _mark_choose_account_next(redirect(url_for("auth.login", next=next_url)))
-    return redirect(url_for("auth.ideaflow_login", switch=1, next=next_url))
+    # Also an explicit sign-out: if the chooser is abandoned, automatic
+    # sign-in must not quietly put the previous account back (code-xbh.21.6).
+    return _mark_choose_account_next(redirect(url_for("auth.ideaflow_login", switch=1, next=next_url)))
 
 
 @auth_bp.route("/magic/<token>")
@@ -1059,6 +1062,156 @@ def ideaflow_link():
     return response
 
 
+# --- Automatic cross-app sign-in (code-xbh.21.6) ---
+#
+# A signed-out person who opens a WikiHub page in a real browser gets ONE
+# top-level redirect to Ideaflow ID with prompt=none (no iframe, no fetch).
+# With an Ideaflow session the provider returns a code and the normal callback
+# signs them in on the same URL; without one it returns login_required and they
+# land back on the same URL, signed out, with no error. The decision is made
+# after the page view ran, so only real HTML pages (including the 403/404 a
+# signed-out visitor gets for private content) can trigger it; raw markdown,
+# JSON, feeds, git and agent documents never do. Guards live in
+# app/auto_signin.py. State/nonce/PKCE are exactly those of a normal sign-in.
+#
+# Never attempted when: the kill switch (IDEAFLOW_AUTO_SIGNIN) or Ideaflow
+# sign-in is off; already tried in this browser session (session cookie
+# ideaflow_auto_signin); the person explicitly signed out or switched account
+# (the wikihub_choose_account marker, cleared by the next completed sign-in);
+# on /auth/*, API, asset and agent routes; for anything but a top-level GET
+# document navigation (Sec-Fetch-Mode/Dest required) asking for text/html;
+# for prefetch/prerender; for bots, scripted clients, webviews and Electron;
+# on customer custom domains (they do not share the session cookie, so the
+# callback could not finish the attempt).
+#
+# Brand-new Ideaflow people: WikiHub's explicit sign-in creates their account
+# with a generated username and no extra page, so a silent sign-in does the
+# same. Anything that needs the person (a password ownership check, an account
+# conflict) returns them to the page signed out, with no error and nothing
+# half-created; the explicit "Sign in with Ideaflow" button keeps those flows.
+
+def _auto_signin_should_attempt(response):
+    config = current_app.config
+    if not config.get("IDEAFLOW_AUTO_SIGNIN") or not _ideaflow_enabled():
+        return False
+    if not auto_signin.response_is_eligible(response):
+        return False
+    if not auto_signin.is_top_level_browser_navigation(request):
+        return False
+    if auto_signin.path_is_skipped(request.path):
+        return False
+    if request.environ.get("wikihub.host_kind") == "custom":
+        return False
+    if not auto_signin.host_shares_session(request.host, config):
+        return False
+    if request.cookies.get(auto_signin.AUTO_SIGNIN_COOKIE):
+        return False
+    if request.cookies.get(_CHOOSE_ACCOUNT_COOKIE) == "1":
+        return False
+    user_agent = request.headers.get("User-Agent", "")
+    if auto_signin.is_bot_or_scripted(user_agent) or auto_signin.is_embedded_webview(user_agent):
+        return False
+    # The session's user id is the signed-in signal (the same one the
+    # canonical-host redirect uses); WikiHub has no remember-me cookie and no
+    # request loader, so browser navigations cannot be signed in any other way.
+    if session.get("_user_id"):
+        return False
+    return _ideaflow_client() is not None
+
+
+def _auto_signin_original_url():
+    """The URL the person asked for, exactly: path + query as sent (the hash
+    never reaches the server; browsers carry it across the redirects because
+    no Location in the round trip has a fragment). On the BASE_URL host it is
+    a relative path; on a WikiHub user/wiki subdomain it is that absolute URL,
+    so the person returns to the host they were reading on."""
+    raw = request.environ.get("RAW_URI") or request.environ.get("REQUEST_URI") or ""
+    if not raw.startswith("/") or raw.startswith("//"):
+        path = request.environ.get("wikihub.rewritten_from") or request.path
+        query = request.query_string.decode("utf-8", "replace")
+        raw = quote(path, safe="/:@!$&'()*+,;=-._~%") + (f"?{query}" if query else "")
+    if auto_signin._host_only(request.host) == auto_signin.base_host(current_app.config):
+        return raw
+    return f"{request.scheme}://{request.host}{raw}"
+
+
+def _set_auto_signin_marker(response):
+    # Session cookie: no max_age/expires, so it ends with the browser session.
+    response.set_cookie(
+        auto_signin.AUTO_SIGNIN_COOKIE,
+        "1",
+        secure=current_app.config.get("SESSION_COOKIE_SECURE", False),
+        httponly=True,
+        samesite="Lax",
+        path="/",
+        domain=current_app.config.get("SESSION_COOKIE_DOMAIN"),
+    )
+    return response
+
+
+def _start_silent_ideaflow_signin():
+    client = _ideaflow_client()
+    return_url = auto_signin.safe_return_url(_auto_signin_original_url(), current_app.config)
+    if client is None or not return_url:
+        return None
+    response = client.authorize_redirect(_ideaflow_callback_url(), prompt="none")
+    location = response.headers.get("Location", "")
+    state = parse_qs(urlparse(location).query).get("state", [""])[0]
+    if not state:
+        return None
+    context = {
+        "mode": "signin",
+        "silent": True,
+        "return_url": return_url,
+        # Relative fallback for the normal return-path rule.
+        "next": return_url if return_url.startswith("/") else request.path,
+    }
+    _stash_ideaflow_oauth_context(state, context)
+    response.headers["Cache-Control"] = "no-store"
+    return _set_auto_signin_marker(response)
+
+
+@auth_bp.after_app_request
+def _auto_signin_after_request(response):
+    try:
+        if not _auto_signin_should_attempt(response):
+            return response
+        return _start_silent_ideaflow_signin() or response
+    except Exception:
+        # Automatic sign-in is a convenience; it must never break a page.
+        current_app.logger.exception("automatic Ideaflow sign-in skipped")
+        return response
+
+
+def _ideaflow_return_target(oauth_context):
+    if oauth_context.get("silent"):
+        target = auto_signin.safe_return_url(oauth_context.get("return_url"), current_app.config)
+        if target:
+            return target
+    return _safe_redirect_target(oauth_context.get("next"))
+
+
+def _silent_signin_return(oauth_context):
+    """End a silent attempt that did not sign anyone in: back to the page the
+    person was reading, signed out, with no message and nothing pending."""
+    session.pop(_IDEAFLOW_PENDING_LINK_SESSION_KEY, None)
+    response = redirect(_ideaflow_return_target(oauth_context))
+    response.headers["Cache-Control"] = "no-store"
+    return _set_auto_signin_marker(response)
+
+
+def _clear_ideaflow_state_data(client):
+    """Authlib keeps its state/nonce/PKCE record when the provider answers
+    with an error; drop it so failed silent attempts leave nothing behind."""
+    state = request.args.get("state", "").strip()
+    framework = getattr(client, "framework", None)
+    if state and framework is not None:
+        try:
+            framework.clear_state_data(session, state)
+        except Exception:
+            pass
+
+
 @auth_bp.route("/ideaflow/callback")
 def ideaflow_callback():
     client = _ideaflow_client()
@@ -1066,9 +1219,25 @@ def ideaflow_callback():
         abort(404)
 
     oauth_context = _pop_ideaflow_oauth_context()
+    silent = bool(oauth_context.get("silent"))
+    if request.args.get("error"):
+        if silent:
+            # login_required / consent_required / interaction_required (or
+            # any other provider error) on an automatic attempt: back to the
+            # page, signed out, no error, no query junk.
+            _clear_ideaflow_state_data(client)
+            return _silent_signin_return(oauth_context)
+        if not oauth_context:
+            # An error for a state this browser never started (stale tab,
+            # cookies blocked): stay signed out without an error. The login
+            # page never triggers automatic sign-in, so this cannot loop.
+            _clear_ideaflow_state_data(client)
+            return redirect(url_for("auth.login"))
     try:
         token = client.authorize_access_token()
     except Exception:
+        if silent:
+            return _silent_signin_return(oauth_context)
         flash("Ideaflow ID sign-in failed or was cancelled.")
         return redirect(url_for("auth.login"))
 
@@ -1088,6 +1257,8 @@ def ideaflow_callback():
     name = userinfo.get("name") or userinfo.get("preferred_username") or ""
 
     if not subject or not issuer:
+        if silent:
+            return _silent_signin_return(oauth_context)
         flash("Could not get Ideaflow ID user info.")
         return redirect(url_for("auth.login"))
 
@@ -1096,6 +1267,8 @@ def ideaflow_callback():
         # against the discovered issuer, but a configured-vs-asserted
         # mismatch here would mean the two have drifted apart. Refuse rather
         # than silently trusting an unexpected authority.
+        if silent:
+            return _silent_signin_return(oauth_context)
         flash("Unexpected Ideaflow ID issuer.")
         return redirect(url_for("auth.login"))
 
@@ -1117,11 +1290,13 @@ def ideaflow_callback():
 def _login_via_ideaflow_identity(identity, oauth_context):
     user = db.session.get(User, identity.user_id)
     if not user:
+        if oauth_context.get("silent"):
+            return _silent_signin_return(oauth_context)
         flash("This Ideaflow ID is linked to a WikiHub account that no longer exists.")
         return redirect(url_for("auth.login"))
     login_user(user)
     _apply_ideaflow_invite_context(user, oauth_context)
-    return _remember_login_method(redirect(_safe_redirect_target(oauth_context.get("next"))), "ideaflow")
+    return _remember_login_method(redirect(_ideaflow_return_target(oauth_context)), "ideaflow")
 
 
 def _ideaflow_email_candidates(email):
@@ -1141,11 +1316,14 @@ def _ideaflow_account_is_privileged(user):
     return user.wiki_limit is not None
 
 
-def _ideaflow_conflict(message):
+def _ideaflow_conflict(message, oauth_context=None):
     """An Ideaflow sign-in that could not be matched to a WikiHub account.
     The login page then offers the WikiHub-password page as the way into the
     existing account (category "ideaflow_fallback"), so nobody is locked out
-    by the single-button login page."""
+    by the single-button login page. An automatic (silent) attempt instead
+    returns to the page signed out with no message (code-xbh.21.6)."""
+    if oauth_context and oauth_context.get("silent"):
+        return _silent_signin_return(oauth_context)
     flash(message, "ideaflow_fallback")
     return redirect(url_for("auth.login"))
 
@@ -1161,7 +1339,7 @@ def _apply_ideaflow_invite_context(user, oauth_context):
 def _finish_ideaflow_login(user, oauth_context):
     login_user(user)
     _apply_ideaflow_invite_context(user, oauth_context)
-    return _remember_login_method(redirect(_safe_redirect_target(oauth_context.get("next"))), "ideaflow")
+    return _remember_login_method(redirect(_ideaflow_return_target(oauth_context)), "ideaflow")
 
 
 def _link_ideaflow_identity(user, *, issuer, subject, email, mark_email_verified=False):
@@ -1184,7 +1362,10 @@ def _link_ideaflow_identity(user, *, issuer, subject, email, mark_email_verified
 def _start_ideaflow_ownership_check(user, *, issuer, subject, email, oauth_context, reason, name=""):
     """`user` is None for reason "choose": every matching row is unverified and
     cannot be matched safely (several rows, or it is already bound to someone
-    else's Ideaflow identity), so the person is offered only the way out."""
+    else's Ideaflow identity), so the person is offered only the way out.
+    Needs the person, so an automatic attempt never starts it."""
+    if oauth_context.get("silent"):
+        return _silent_signin_return(oauth_context)
     session[_IDEAFLOW_PENDING_LINK_SESSION_KEY] = {
         "user_id": user.id if user else None,
         "issuer": issuer,
@@ -1228,7 +1409,7 @@ def _handle_ideaflow_signin_callback(oauth_context, *, issuer, subject, email, e
         candidates = _ideaflow_email_candidates(email)
         if candidates:
             if not email_verified:
-                return _ideaflow_conflict(
+                return _ideaflow_conflict(oauth_context=oauth_context, message=
                     "Ideaflow did not verify this email address, so it can't be matched to an existing "
                     "WikiHub account. Sign in to WikiHub another way, then connect Ideaflow from Settings."
                 )
@@ -1242,7 +1423,7 @@ def _handle_ideaflow_signin_callback(oauth_context, *, issuer, subject, email, e
                     oauth_context=oauth_context, reason="choose", name=name,
                 )
             if len(verified) > 1:
-                return _ideaflow_conflict(
+                return _ideaflow_conflict(oauth_context=oauth_context, message=
                     "More than one WikiHub account uses this email, so Ideaflow can't be matched "
                     "automatically. Sign in to the right account, then connect Ideaflow from Settings."
                 )
@@ -1257,7 +1438,7 @@ def _handle_ideaflow_signin_callback(oauth_context, *, issuer, subject, email, e
                         None, issuer=issuer, subject=subject, email=email,
                         oauth_context=oauth_context, reason="choose", name=name,
                     )
-                return _ideaflow_conflict(
+                return _ideaflow_conflict(oauth_context=oauth_context, message=
                     "The WikiHub account with this email is already connected to a different Ideaflow "
                     "account. Sign in to it with its usual method."
                 )
@@ -1288,7 +1469,7 @@ def _handle_ideaflow_signin_callback(oauth_context, *, issuer, subject, email, e
             continue
         return _login_new_ideaflow_account(user, oauth_context)
 
-    return _ideaflow_conflict("Ideaflow ID sign-in conflict — please try again.")
+    return _ideaflow_conflict(oauth_context=oauth_context, message="Ideaflow ID sign-in conflict — please try again.")
 
 
 def _create_ideaflow_account(*, issuer, subject, email, email_verified, name):
@@ -1322,7 +1503,7 @@ def _login_new_ideaflow_account(user, oauth_context):
         applied = materialize_pending_invites_for(user)
         if applied:
             db.session.commit()
-    return _remember_login_method(redirect(_safe_redirect_target(oauth_context.get("next"))), "ideaflow")
+    return _remember_login_method(redirect(_ideaflow_return_target(oauth_context)), "ideaflow")
 
 
 @auth_bp.route("/ideaflow/confirm", methods=["GET", "POST"])
