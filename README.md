@@ -45,6 +45,19 @@ API-key and Google options.
   WikiHub sign-out, the next sign-in sends `prompt=select_account` so Ideaflow
   shows its account chooser. **Switch account** in the account menu signs out
   locally and starts that chooser flow immediately.
+- **Automatic sign-in.** A signed-out person who opens a WikiHub page in a
+  browser and is already signed in to Ideaflow lands on the same page signed
+  in, with no click: the page answers with one top-level redirect to Ideaflow
+  using `prompt=none`. Without an Ideaflow session they come straight back to
+  the same page signed out, with no error, and it is not tried again in that
+  browser session (session cookie `ideaflow_auto_signin`). It never runs after
+  an explicit sign-out or Switch account, on `/auth/*`, API, raw markdown or
+  agent documents, for non-navigation requests, prefetches, bots and scripted
+  clients, in-app webviews or the Electron app, or on custom domains. A silent
+  sign-in that would need the person (a password check, an account conflict)
+  returns them signed out; the button keeps those flows. A brand-new Ideaflow
+  person gets the same account the button would create. Turn it off with
+  `IDEAFLOW_AUTO_SIGNIN=false`.
 - Existing accounts that Ideaflow cannot reach (for example an account with no
   email) sign in at `/auth/login/password`, which keeps the password, API-key
   and Google forms. It is linked from the Ideaflow account-match errors and the
