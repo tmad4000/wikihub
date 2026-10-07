@@ -11,9 +11,131 @@ import tempfile
 import time
 import unittest
 import urllib.request
+import urllib.error
+import urllib.parse
+import uuid
 
 
 class GunicornRuntimeTest(unittest.TestCase):
+    def test_database_backed_routes_under_concurrent_readers(self):
+        """Real startup pools, public reads and authenticated private reads over HTTP.
+
+        WORKER_TEST_DATABASE_URL must name a disposable PostgreSQL server whose
+        user can create databases. Each run owns and drops only its unique DB.
+        """
+        import psycopg2
+        from psycopg2 import sql
+
+        database_url = os.environ['WORKER_TEST_DATABASE_URL']
+        database_name = 'wikihub_runtime_' + uuid.uuid4().hex
+        admin = psycopg2.connect(database_url)
+        admin.autocommit = True
+        try:
+            with admin.cursor() as cursor:
+                cursor.execute(sql.SQL('CREATE DATABASE {}').format(sql.Identifier(database_name)))
+            with tempfile.TemporaryDirectory(prefix='wikihub-db-worker-test-') as directory:
+                root = Path(directory)
+                project = Path(__file__).resolve().parents[1]
+                env = {
+                    **os.environ,
+                    'DATABASE_URL': urllib.parse.urlsplit(database_url)._replace(path='/' + database_name).geturl(),
+                    'REPOS_DIR': str(root / 'repos'),
+                    'SECRET_KEY': 'runtime-test-secret',
+                    'PYTHONPATH': str(project),
+                    'IDEAFLOW_OIDC_ENABLED': 'false',
+                }
+                # Seed before worker startup to avoid testing concurrent first-install
+                # DDL instead of the existing production database recovery path.
+                seed = subprocess.run([sys.executable, '-c', '''
+import json
+from wsgi import app
+with app.test_client() as client:
+    response = client.post('/api/v1/accounts', json={'username': 'runtime-reader'})
+    assert response.status_code == 201, response.data
+    key = response.json['api_key']
+    headers = {'Authorization': 'Bearer ' + key}
+    response = client.post('/api/v1/wikis', json={'slug': 'load-test'}, headers=headers)
+    assert response.status_code == 201, response.data
+    for visibility in ('public', 'private'):
+        response = client.post('/api/v1/wikis/runtime-reader/load-test/pages', headers=headers,
+            json={'path': visibility + '.md', 'visibility': visibility,
+                  'content': '---\\nvisibility: ' + visibility + '\\n---\\n# Runtime ' + visibility})
+        assert response.status_code == 201, response.data
+    print(json.dumps({'api_key': key}))
+'''], cwd=project, env=env, capture_output=True, text=True, timeout=30)
+                self.assertEqual(seed.returncode, 0, seed.stderr)
+                key = json.loads(seed.stdout)['api_key']
+                root.joinpath('database_fixture.py').write_text('''
+import os
+from wsgi import app
+from app import db
+initialized_pid = os.getpid()
+with app.app_context():
+    initialized_backend = db.session.execute(db.text('SELECT pg_backend_pid()')).scalar()
+@app.after_request
+def worker_evidence(response):
+    response.headers['X-Worker-Pid'] = str(os.getpid())
+    response.headers['X-Initialized-Pid'] = str(initialized_pid)
+    response.headers['X-Initialized-Backend'] = str(initialized_backend)
+    return response
+''')
+                with socket.socket() as sock:
+                    sock.bind(('127.0.0.1', 0))
+                    port = sock.getsockname()[1]
+                command = [sys.executable, '-m', 'gunicorn', '-c', str(project / 'deploy/gunicorn.conf.py'),
+                           '--bind', f'127.0.0.1:{port}', 'database_fixture:app']
+                with root.joinpath('server.log').open('w') as log:
+                    process = subprocess.Popen(command, cwd=root, env=env, stdout=log, stderr=log)
+                    def read(case):
+                        path, authenticated, expected_status, expected_content = case
+                        headers = {'Authorization': 'Bearer ' + key} if authenticated else {}
+                        request = urllib.request.Request(f'http://127.0.0.1:{port}{path}', headers=headers)
+                        try:
+                            response = urllib.request.urlopen(request, timeout=5)
+                        except urllib.error.HTTPError as error:
+                            response = error
+                        with response:
+                            body = response.read().decode()
+                            self.assertEqual(response.status, expected_status, body)
+                            self.assertIn(expected_content, body)
+                            pid = int(response.headers['X-Worker-Pid'])
+                            self.assertEqual(pid, int(response.headers['X-Initialized-Pid']),
+                                             'application/database startup must happen in each worker')
+                            return pid, int(response.headers['X-Initialized-Backend'])
+                    try:
+                        deadline = time.monotonic() + 20
+                        while True:
+                            try:
+                                read(('/api/v1/accounts/me', True, 200, 'runtime-reader'))
+                                break
+                            except OSError:
+                                if process.poll() is not None or time.monotonic() > deadline:
+                                    self.fail(root.joinpath('server.log').read_text())
+                                time.sleep(.05)
+                        cases = [
+                            ('/', False, 200, 'wikihub'),
+                            ('/@runtime-reader/load-test/public', False, 200, 'Runtime public'),
+                            ('/api/v1/accounts/me', True, 200, 'runtime-reader'),
+                            ('/api/v1/wikis/runtime-reader/load-test/pages/private.md', False, 401, 'restricted'),
+                            ('/api/v1/wikis/runtime-reader/load-test/pages/private.md', True, 200, 'Runtime private'),
+                        ]
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+                            results = list(pool.map(read, cases * 8))
+                        self.assertEqual(len({pid for pid, backend in results}), 2)
+                        self.assertEqual(len({backend for pid, backend in results}), 2,
+                                         'workers must not inherit the same PostgreSQL socket')
+                    finally:
+                        process.terminate()
+                        try:
+                            process.wait(timeout=8)
+                        except subprocess.TimeoutExpired:
+                            process.kill()
+                            process.wait(timeout=3)
+        finally:
+            with admin.cursor() as cursor:
+                cursor.execute(sql.SQL('DROP DATABASE IF EXISTS {} WITH (FORCE)').format(sql.Identifier(database_name)))
+            admin.close()
+
     def test_reader_capacity_and_worker_local_initialization(self):
         with tempfile.TemporaryDirectory(prefix='wikihub-worker-test-') as directory:
             root = Path(directory)
