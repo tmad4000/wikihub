@@ -1,0 +1,14 @@
+name: Production worker runtime
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  worker-runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install gunicorn==23.0.0 packaging==24.2
+      - run: python tests/test_gunicorn_runtime.py
