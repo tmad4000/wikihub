@@ -466,13 +466,16 @@ def render_page(content, wiki_owner=None, wiki_slug=None, current_page_path=None
     current_page_path: the page's path in the repo (e.g. 'wiki/courses/cs224n.md')
     used to resolve relative markdown links like ../raw/foo.md"""
     from app.models import Page, User, Wiki
+    from app import db
     from app.page_utils import is_content_page_path
 
     known_pages = {}
     title_aliases = {}
     if wiki_owner and wiki_slug:
         pages = (
-            Page.query.join(Wiki, Page.wiki_id == Wiki.id)
+            # Resolution uses only path/title. Hydrating every Page also fetches
+            # its large full-text vector on each rendered reader request.
+            db.session.query(Page.path, Page.title).join(Wiki, Page.wiki_id == Wiki.id)
             .join(User, Wiki.owner_id == User.id)
             .filter(User.username == wiki_owner, Wiki.slug == wiki_slug)
             .all()

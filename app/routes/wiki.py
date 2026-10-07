@@ -3,6 +3,7 @@ import os
 import subprocess
 from datetime import timezone
 from urllib.parse import quote, unquote, urlparse
+from sqlalchemy.orm import defer
 
 from flask import Response, abort, jsonify, redirect, render_template, request, url_for
 
@@ -42,7 +43,21 @@ def _recently_updated_pages(wiki, limit=8, public_only=False):
     query = _content_pages_query(wiki)
     if public_only:
         query = query.filter(Page.visibility.in_(('public', 'public-view', 'public-edit')))
-    return _content_pages(query.order_by(Page.updated_at.desc()))[:limit]
+    # Reading a page must not hydrate the entire wiki just to show eight links.
+    # Keep the normalized plumbing check before limiting the visible results.
+    query = query.order_by(Page.updated_at.desc(), Page.id.desc())
+    pages = []
+    offset = 0
+    while len(pages) < limit:
+        batch_size = limit - len(pages)
+        batch = query.offset(offset).limit(batch_size).all()
+        if not batch:
+            break
+        pages.extend(page for page in batch if is_content_page_path(page.path))
+        offset += len(batch)
+        if len(batch) < batch_size:
+            break
+    return pages[:limit]
 
 
 def _is_wikihub_plumbing_path(path):
@@ -50,7 +65,8 @@ def _is_wikihub_plumbing_path(path):
 
 
 def _content_pages_query(wiki):
-    return Page.query.filter_by(wiki_id=wiki.id).filter(content_page_path_filter(Page.path))
+    # The search vector can dwarf all other metadata. Navigation never uses it.
+    return Page.query.options(defer(Page.search_vector)).filter_by(wiki_id=wiki.id).filter(content_page_path_filter(Page.path))
 
 
 def _content_pages(query):
@@ -58,7 +74,8 @@ def _content_pages(query):
 
 
 def _content_page_count(wiki):
-    return len(_content_pages(_content_pages_query(wiki)))
+    paths = db.session.query(Page.path).filter(Page.wiki_id == wiki.id).filter(content_page_path_filter(Page.path))
+    return sum(is_content_page_path(path) for (path,) in paths.yield_per(200))
 
 
 def _stored_page_visibility(*candidates):
@@ -298,7 +315,9 @@ def _viewer_can_see_any_page(wiki, acl_rules=None, owner=None):
         acl_rules = load_acl_rules(owner.username, wiki.slug)
     # Anyone can see public/public-view/public-edit and unlisted-* pages.
     public_visibilities = ("public", "public-view", "public-edit", "unlisted", "unlisted-view", "unlisted-edit")
-    has_public = bool(_content_pages(_content_pages_query(wiki).filter(Page.visibility.in_(public_visibilities))))
+    paths = db.session.query(Page.path).filter(Page.wiki_id == wiki.id).filter(
+        content_page_path_filter(Page.path), Page.visibility.in_(public_visibilities))
+    has_public = any(is_content_page_path(path) for (path,) in paths.yield_per(100))
     if has_public:
         return True
     # ACL grantee with a per-user grant against any page → can see authoritative

@@ -119,16 +119,24 @@ views. It checks private owner visibility, public-only discovery for other
 accounts, `index.md` precedence over `README.md`, directory counts and limit
 behavior, and anonymous `/explore` rendering without private excerpts.
 
+[The reader scaling regression](../tests/test_reader_scaling.py) seeds 4,000
+pages and exercises reader, history and sidebar routes. Ordinary reads hydrate
+only the requested page and bounded recent links; navigation and link resolution
+do not fetch the large full-text search vectors. Private pages remain denied,
+unlisted pages remain readable by link, and normalized plumbing stays hidden.
+
 Run these regressions with the existing project dependencies and a disposable
 PostgreSQL server. `WORKER_TEST_DATABASE_URL` must identify an existing database on that
 server, with a user allowed to create databases. Each regression creates and
-drops its own uniquely named database; never point either at production.
+drops its own uniquely named database; never point these tests at production.
 
 ```bash
 WORKER_TEST_DATABASE_URL=postgresql://localhost/postgres \
   .venv/bin/python tests/test_gunicorn_runtime.py
 WORKER_TEST_DATABASE_URL=postgresql://localhost/postgres \
   .venv/bin/python tests/test_directory_scaling.py
+WORKER_TEST_DATABASE_URL=postgresql://localhost/postgres \
+  .venv/bin/python tests/test_reader_scaling.py
 ```
 
 [Runtime CI](../.github/workflows/runtime.yml) supplies the disposable database
