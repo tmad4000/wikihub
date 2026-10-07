@@ -4,7 +4,8 @@
 
 ## Verified Ground Truth
 
-**WikiHub repo:** `/Users/jacobcole/code/wikihub/` — Python 3 / Flask / PostgreSQL / bare git. Deployed on Lightsail `wikihub-dev` (54.145.123.7), gunicorn port 5100, nginx + Cloudflare in front. **Not the same box as noos** (`3.216.129.34`).
+For current production infrastructure and worker configuration, see the
+[deployment guide](deploy.md).
 
 **WikiHub MCP endpoint already exists** at `wikihub.md/mcp` (GET + POST, JSON-RPC), implemented in `app/routes/agent_surfaces.py:539-570`. Thin internal proxy over the REST API (via Flask test client), stateless, registers 16 tools (`MCP_TOOLS` list, lines 21-38). **NOT built on `@modelcontextprotocol/sdk`** — it's a hand-rolled JSON-RPC dispatcher.
 
