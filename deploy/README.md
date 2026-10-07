@@ -22,12 +22,14 @@ startup runs the existing idempotent schema/bootstrap operations; initial setup
 of an empty database should be completed once before starting multiple workers.
 
 `python tests/test_gunicorn_runtime.py` launches actual Gunicorn workers and
-asserts worker-local initialization and a successful health response while two
-requests are held open. It fails with the previous two-worker preload command.
+asserts two independent worker initializations, a successful health response
+while three requests per worker are held open, and four concurrent request
+threads in each worker. It fails with the previous two-worker preload command.
 CI runs the same test with the existing Gunicorn 23 version.
 
-After deployment, verify public `/`, `/explore`, `/healthz`, `/auth/login` and a
-public wiki reader. Inspect worker/database errors and concurrent request
+After deployment, verify public `/`, `/explore`, `/auth/login` and a known
+public wiki reader URL; each must return HTTP 200 for an anonymous request.
+Inspect worker/database errors and concurrent request
 latencies. For rollback, restore the saved service drop-in and reload/restart;
 this change does not alter application data. The old configuration has known
 pool inheritance and saturation defects, so prefer correcting a failed rollout.
