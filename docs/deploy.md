@@ -128,6 +128,13 @@ Navigation queries defer full-text search vectors, and link resolution projects
 only paths and titles. Private pages remain denied,
 unlisted pages remain readable by link, and normalized plumbing stays hidden.
 
+[The reader ACL privacy regression](../tests/test_reader_acl_privacy.py) checks
+anonymous readers, unrelated members, partial grantees and owners. A grant for
+one page does not reveal another private index body or recent-link title. Root
+and folder readers use permitted index candidates, and recent links fill from
+older authorized pages when newer pages are denied. Explicit index grants and
+owner access remain supported.
+
 Run these regressions with the existing project dependencies and a disposable
 PostgreSQL server. `WORKER_TEST_DATABASE_URL` must identify an existing database on that
 server, with a user allowed to create databases. Each regression creates and
@@ -140,6 +147,8 @@ WORKER_TEST_DATABASE_URL=postgresql://localhost/postgres \
   .venv/bin/python tests/test_directory_scaling.py
 WORKER_TEST_DATABASE_URL=postgresql://localhost/postgres \
   .venv/bin/python tests/test_reader_scaling.py
+WORKER_TEST_DATABASE_URL=postgresql://localhost/postgres \
+  .venv/bin/python tests/test_reader_acl_privacy.py
 ```
 
 [Runtime CI](../.github/workflows/runtime.yml) supplies the disposable database

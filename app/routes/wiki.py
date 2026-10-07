@@ -43,17 +43,23 @@ def _recently_updated_pages(wiki, limit=8, public_only=False):
     query = _content_pages_query(wiki)
     if public_only:
         query = query.filter(Page.visibility.in_(('public', 'public-view', 'public-edit')))
+    # A grant for one path selects the authoritative repository, but does not
+    # authorize every other private page's title in the recent-links panel.
+    filter_grants = not public_only and not _is_owner(wiki)
+    owner = db.session.get(User, wiki.owner_id) if filter_grants else None
+    acl_rules = load_acl_rules(owner.username, wiki.slug) if owner else None
     # Reading a page must not hydrate the entire wiki just to show eight links.
     # Keep the normalized plumbing check before limiting the visible results.
     query = query.order_by(Page.updated_at.desc(), Page.id.desc())
     pages = []
     offset = 0
     while len(pages) < limit:
-        batch_size = limit - len(pages)
+        batch_size = max(64, limit - len(pages)) if filter_grants else limit - len(pages)
         batch = query.offset(offset).limit(batch_size).all()
         if not batch:
             break
-        pages.extend(page for page in batch if is_content_page_path(page.path))
+        pages.extend(page for page in batch if is_content_page_path(page.path)
+                     and (not filter_grants or _viewer_can_read_page(wiki, page, acl_rules=acl_rules, owner=owner)))
         offset += len(batch)
         if len(batch) < batch_size:
             break
@@ -845,7 +851,7 @@ def _folder_listing(username, slug, wiki, folder_path="", public=False, acl_filt
     return sorted(items, key=lambda item: (item["kind"] != "folder", item["name"].lower()))
 
 
-def _folder_index_content(username, slug, folder_path, public=False):
+def _folder_index_content(username, slug, folder_path, public=False, *, wiki, acl_rules=None):
     candidates = []
     clean = folder_path.strip("/")
     if clean:
@@ -853,7 +859,15 @@ def _folder_index_content(username, slug, folder_path, public=False):
     else:
         candidates = ["index.md", "README.md"]
 
+    filter_grants = not public and not _is_owner(wiki)
+    if filter_grants and acl_rules is None:
+        acl_rules = load_acl_rules(username, slug)
+    user_name = current_user.username if current_user.is_authenticated else None
     for candidate in candidates:
+        if filter_grants:
+            visibility = db.session.query(Page.visibility).filter_by(wiki_id=wiki.id, path=candidate).scalar()
+            if not can_read(candidate, acl_rules, user_name, visibility):
+                continue
         content = read_file_from_repo(username, slug, candidate, public=public)
         if content is not None:
             return candidate, content
@@ -988,7 +1002,7 @@ def user_profile(username):
 
     if personal_wiki:
         use_public = not is_owner
-        _, personal_content = _folder_index_content(owner.username, personal_wiki.slug, "", public=use_public)
+        _, personal_content = _folder_index_content(owner.username, personal_wiki.slug, "", public=use_public, wiki=personal_wiki)
         if personal_content:
             personal_rendered_html = render_page(personal_content, owner.username, personal_wiki.slug)
             personal_sidebar = _build_sidebar_tree(owner.username, personal_wiki.slug, personal_wiki, public=use_public, current_path="index.md")
@@ -1125,7 +1139,7 @@ def wiki_index(username, slug):
     acl_rules = load_acl_rules(owner.username, wiki.slug)
     use_public, acl_filter_user = _repo_access(wiki, acl_rules)
     recently_updated = _recently_updated_pages(wiki, public_only=use_public and not acl_filter_user)
-    page_path, content = _folder_index_content(owner.username, wiki.slug, "", public=use_public)
+    page_path, content = _folder_index_content(owner.username, wiki.slug, "", public=use_public, wiki=wiki, acl_rules=acl_rules)
     siblings = _sibling_wikis(owner, wiki)
     if content is None:
         items = _folder_listing(owner.username, wiki.slug, wiki, "", public=use_public, acl_filter_user=acl_filter_user)
@@ -1962,7 +1976,7 @@ def wiki_page(username, slug, page_path):
     if request.path.endswith("/"):
         acl_rules = load_acl_rules(owner.username, wiki.slug)
         use_public, acl_filter_user = _repo_access(wiki, acl_rules)
-        content_path, content = _folder_index_content(owner.username, wiki.slug, page_path, public=use_public)
+        content_path, content = _folder_index_content(owner.username, wiki.slug, page_path, public=use_public, wiki=wiki, acl_rules=acl_rules)
         items = _folder_listing(owner.username, wiki.slug, wiki, page_path, public=use_public, acl_filter_user=acl_filter_user)
         if use_public and not content and not items:
             # wikihub-dkp8: distinguish "folder exists but its pages are

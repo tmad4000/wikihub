@@ -30,3 +30,4 @@ jobs:
       - run: python tests/test_gunicorn_runtime.py
       - run: python tests/test_directory_scaling.py
       - run: python tests/test_reader_scaling.py
+      - run: python tests/test_reader_acl_privacy.py
