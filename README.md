@@ -225,6 +225,13 @@ Subcommands: `signup | login | logout | whoami | new | ls | read | write | publi
 
 `.wikihub/acl` uses glob patterns. Most specific wins. Private by default.
 
+Sharing a path grants access to that path, not other private pages in the wiki.
+Root and folder views use the first readable `index.md` or `README.md`. When
+neither is readable but other pages are, they show navigation instead.
+Recent links omit private pages the viewer cannot read and fill from older
+permitted pages. Owners retain access to all pages, and an explicit grant to
+an index path permits its content to appear in the root or folder view.
+
 ```
 * private
 wiki/**                   public-view
@@ -283,7 +290,7 @@ End-to-end tests cover account creation, wiki lifecycle, search, social, upload,
 activity feeds, agent surfaces, ACL permissions, reader behavior, live-update
 polling, and regression cases.
 
-Separate PostgreSQL-backed worker and directory scaling regressions are
+Separate PostgreSQL-backed runtime, scaling, and reader ACL regressions are
 documented in the [deployment guide](docs/deploy.md#production-workers).
 
 ## Architecture

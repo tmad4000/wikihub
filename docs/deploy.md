@@ -20,8 +20,12 @@ harness.
 
 For worker-runtime changes, also run the real HTTP regression described in
 [production workers](#production-workers). For directory/discovery changes,
-run the directory scaling regression described there. CI runs both against
-PostgreSQL 16.
+run the directory scaling regression described there; for reader/history/sidebar
+or link-resolution changes, run the reader scaling regression. For changes to
+reader access checks or per-path sharing, also run the reader ACL privacy
+regression. See
+[Runtime CI](../.github/workflows/runtime.yml) for the configured regression
+commands and PostgreSQL version.
 
 ### 2. commit everything that changed
 
@@ -119,16 +123,35 @@ views. It checks private owner visibility, public-only discovery for other
 accounts, `index.md` precedence over `README.md`, directory counts and limit
 behavior, and anonymous `/explore` rendering without private excerpts.
 
+[The reader scaling regression](../tests/test_reader_scaling.py) seeds 4,000
+pages and exercises reader, history and sidebar routes. It bounds page-object
+hydration for the anonymous reader and history flows, while the sidebar manifest
+includes all readable metadata. Recent links stream candidates in bounded
+batches; sparse grants can require scanning more candidates to fill the panel.
+Navigation queries defer full-text search vectors, and link resolution projects
+only paths and titles. Private pages remain denied,
+unlisted pages remain readable by link, and normalized plumbing stays hidden.
+
+[The reader ACL privacy regression](../tests/test_reader_acl_privacy.py) checks
+anonymous readers, unrelated members, partial grantees and owners against the
+[per-path access contract](../README.md#access-control). It covers private index
+and recent-title denial, fallback navigation, sparse recent-link grants, and
+explicit index grants.
+
 Run these regressions with the existing project dependencies and a disposable
 PostgreSQL server. `WORKER_TEST_DATABASE_URL` must identify an existing database on that
 server, with a user allowed to create databases. Each regression creates and
-drops its own uniquely named database; never point either at production.
+drops its own uniquely named database; never point these tests at production.
 
 ```bash
 WORKER_TEST_DATABASE_URL=postgresql://localhost/postgres \
   .venv/bin/python tests/test_gunicorn_runtime.py
 WORKER_TEST_DATABASE_URL=postgresql://localhost/postgres \
   .venv/bin/python tests/test_directory_scaling.py
+WORKER_TEST_DATABASE_URL=postgresql://localhost/postgres \
+  .venv/bin/python tests/test_reader_scaling.py
+WORKER_TEST_DATABASE_URL=postgresql://localhost/postgres \
+  .venv/bin/python tests/test_reader_acl_privacy.py
 ```
 
 [Runtime CI](../.github/workflows/runtime.yml) supplies the disposable database
