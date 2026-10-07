@@ -20,8 +20,10 @@ harness.
 
 For worker-runtime changes, also run the real HTTP regression described in
 [production workers](#production-workers). For directory/discovery changes,
-run the directory scaling regression described there. CI runs both against
-PostgreSQL 16.
+run the directory scaling regression described there; for reader/history/sidebar
+or link-resolution changes, run the reader scaling regression. See
+[Runtime CI](../.github/workflows/runtime.yml) for the configured regression
+commands and PostgreSQL version.
 
 ### 2. commit everything that changed
 
@@ -121,8 +123,9 @@ behavior, and anonymous `/explore` rendering without private excerpts.
 
 [The reader scaling regression](../tests/test_reader_scaling.py) seeds 4,000
 pages and exercises reader, history and sidebar routes. Ordinary reads hydrate
-only the requested page and bounded recent links; navigation and link resolution
-do not fetch the large full-text search vectors. Private pages remain denied,
+bounded page objects, while the sidebar manifest includes all readable metadata.
+Navigation queries defer full-text search vectors, and link resolution projects
+only paths and titles. Private pages remain denied,
 unlisted pages remain readable by link, and normalized plumbing stays hidden.
 
 Run these regressions with the existing project dependencies and a disposable
