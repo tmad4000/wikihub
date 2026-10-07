@@ -18,6 +18,9 @@ all e2e tests must pass. do not deploy with failing tests. For parallel or
 isolated runs, set `DATABASE_URL` and `REPOS_DIR` before invoking the test
 harness.
 
+For worker-runtime changes, also run the real HTTP regression described in
+[production workers](#production-workers); CI runs it against PostgreSQL 16.
+
 ### 2. commit everything that changed
 
 **check for unstaged files.** the most common deploy failure is forgetting to stage a file. if you changed `models.py` AND `renderer.py` AND `wiki.py`, all three must be committed. one missing file = import error = 502 on production.
@@ -31,6 +34,11 @@ git push origin main
 ```
 
 ### 3. deploy
+
+Preserve the live footer customization and untracked operational files when
+fast-forwarding the release checkout. For worker-runtime changes, apply the
+[production worker configuration](#production-workers) before restarting;
+pulling the source alone does not update systemd's command.
 
 ```bash
 gcloud compute ssh wikihub-prod --project=wikihub-prod --zone=us-east1-b \
@@ -73,6 +81,55 @@ after confirming the site is up (200), test the specific things you changed:
 | reverse proxy | nginx → gunicorn, Cloudflare in front (SSL) |
 | database | PostgreSQL 16 database `wikihub`, local to the instance |
 | git repos | `/opt/wikihub-app/repos/` |
+
+## production workers
+
+The versioned [Gunicorn configuration](../deploy/gunicorn.conf.py) owns the
+worker topology, bind address and timeout. Each worker must initialize the
+application and its PostgreSQL pool after fork: application startup opens live
+database connections that must never be inherited through preloading. Request
+threads keep capacity available when readers are slow.
+
+The systemd `ExecStart` must load that configuration:
+
+```text
+/opt/wikihub-app/.venv/bin/gunicorn -c /opt/wikihub-app/deploy/gunicorn.conf.py wsgi:app
+```
+
+Keep the existing service user, working directory and environment file. Remove
+old command-line worker/preload flags because they override the configuration.
+Use a systemd drop-in with an empty `ExecStart=` followed by the command above;
+back up the current unit/drop-ins before applying, then daemon-reload/restart.
+Application startup runs the existing idempotent schema/bootstrap operations;
+complete initial setup of an empty database once before starting multiple
+workers.
+
+[The runtime regression](../tests/test_gunicorn_runtime.py) launches actual
+Gunicorn workers using the versioned configuration. It checks independent
+worker initialization and PostgreSQL backends, concurrent public and
+authenticated private reads, denied anonymous private reads, and request
+capacity while readers are held open. It fails under the previous two-worker
+preload configuration.
+
+Run it with the existing project dependencies and a disposable PostgreSQL
+server. `WORKER_TEST_DATABASE_URL` must identify an existing database on that
+server, with a user allowed to create databases. The regression creates and
+drops its own uniquely named database; never point it at production.
+
+```bash
+WORKER_TEST_DATABASE_URL=postgresql://localhost/postgres \
+  .venv/bin/python tests/test_gunicorn_runtime.py
+```
+
+[Runtime CI](../.github/workflows/runtime.yml) supplies the disposable database
+and installs the dependencies from `requirements.txt`.
+
+After deployment, verify public `/`, `/explore`, `/auth/login` and a known
+public wiki reader URL; each must return HTTP 200 for an anonymous request.
+Inspect worker/database errors and concurrent request latencies. For rollback,
+restore the saved service drop-in and reload/restart; the worker configuration
+does not alter application data. The old configuration has known pool
+inheritance and saturation defects, so prefer correcting a failed rollout.
 
 ## useful commands
 
