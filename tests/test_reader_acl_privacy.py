@@ -15,6 +15,7 @@ class ReaderAclPrivacyTest(unittest.TestCase):
     def test_anonymous_member_partial_grantee_and_owner(self):
         import psycopg2
         from psycopg2 import sql
+        from sqlalchemy import event
         admin_url = os.environ['WORKER_TEST_DATABASE_URL']
         name = 'wikihub_reader_acl_' + uuid.uuid4().hex[:12]
         admin = psycopg2.connect(admin_url)
@@ -63,7 +64,7 @@ class ReaderAclPrivacyTest(unittest.TestCase):
                     # the grantee must receive older permitted links instead.
                     db.session.add_all([Page(wiki_id=wiki.id, path=f'denied/{i}.md',
                                               title=f'DENIED RECENT {i}', visibility='private',
-                                              updated_at=newer) for i in range(32)])
+                                              updated_at=newer) for i in range(4000)])
                     db.session.add_all([Page(wiki_id=wiki.id, path=f'authorized/{i}.md',
                                               title=f'AUTHORIZED RECENT {i}', visibility='private',
                                               updated_at=older) for i in range(8)])
@@ -83,7 +84,18 @@ class ReaderAclPrivacyTest(unittest.TestCase):
                             self.assertNotIn(b'UNSHARED FOLDER CONTENT', root.data)
                             self.assertNotIn(b'UNSHARED SECRET TITLE', root.data)
                             self.assertNotIn(b'DENIED RECENT', root.data)
-                        shared = client.get('/@acl-owner/shared/folder/allowed')
+                        queries = []
+                        def capture_query(conn, cursor, statement, parameters, context, executemany):
+                            queries.append(statement)
+                        with app.app_context():
+                            engine = db.engine
+                        event.listen(engine, 'before_cursor_execute', capture_query)
+                        try:
+                            shared = client.get('/@acl-owner/shared/folder/allowed')
+                        finally:
+                            event.remove(engine, 'before_cursor_execute', capture_query)
+                        if actor == 'acl-viewer':
+                            self.assertLess(len(queries), 30, 'Sparse grants must not repeat recent-page queries per batch')
                         folder = client.get('/@acl-owner/shared/folder/')
                         if actor in ('acl-owner', 'acl-viewer'):
                             self.assertEqual(shared.status_code, 200)

@@ -52,18 +52,15 @@ def _recently_updated_pages(wiki, limit=8, public_only=False):
     # Keep the normalized plumbing check before limiting the visible results.
     query = query.order_by(Page.updated_at.desc(), Page.id.desc())
     pages = []
-    offset = 0
-    while len(pages) < limit:
-        batch_size = max(64, limit - len(pages)) if filter_grants else limit - len(pages)
-        batch = query.offset(offset).limit(batch_size).all()
-        if not batch:
-            break
-        pages.extend(page for page in batch if is_content_page_path(page.path)
-                     and (not filter_grants or _viewer_can_read_page(wiki, page, acl_rules=acl_rules, owner=owner)))
-        offset += len(batch)
-        if len(batch) < batch_size:
-            break
-    return pages[:limit]
+    if limit <= 0:
+        return pages
+    batch_size = max(64, limit) if filter_grants else 1
+    for page in query.yield_per(batch_size):
+        if is_content_page_path(page.path) and (not filter_grants or _viewer_can_read_page(wiki, page, acl_rules=acl_rules, owner=owner)):
+            pages.append(page)
+            if len(pages) == limit:
+                break
+    return pages
 
 
 def _is_wikihub_plumbing_path(path):
