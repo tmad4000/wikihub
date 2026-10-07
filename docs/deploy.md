@@ -19,7 +19,9 @@ isolated runs, set `DATABASE_URL` and `REPOS_DIR` before invoking the test
 harness.
 
 For worker-runtime changes, also run the real HTTP regression described in
-[production workers](#production-workers); CI runs it against PostgreSQL 16.
+[production workers](#production-workers). For directory/discovery changes,
+run the directory scaling regression described there. CI runs both against
+PostgreSQL 16.
 
 ### 2. commit everything that changed
 
@@ -111,14 +113,22 @@ authenticated private reads, denied anonymous private reads, and request
 capacity while readers are held open. It fails under the previous two-worker
 preload configuration.
 
-Run it with the existing project dependencies and a disposable PostgreSQL
-server. `WORKER_TEST_DATABASE_URL` must identify an existing database on that
-server, with a user allowed to create databases. The regression creates and
-drops its own uniquely named database; never point it at production.
+[The directory scaling regression](../tests/test_directory_scaling.py) seeds
+120 accounts and bounds directory SELECT queries for anonymous and owner
+views. It checks private owner visibility, public-only discovery for other
+accounts, `index.md` precedence over `README.md`, directory counts and limit
+behavior, and anonymous `/explore` rendering without private excerpts.
+
+Run these regressions with the existing project dependencies and a disposable
+PostgreSQL server. `WORKER_TEST_DATABASE_URL` must identify an existing database on that
+server, with a user allowed to create databases. Each regression creates and
+drops its own uniquely named database; never point either at production.
 
 ```bash
 WORKER_TEST_DATABASE_URL=postgresql://localhost/postgres \
   .venv/bin/python tests/test_gunicorn_runtime.py
+WORKER_TEST_DATABASE_URL=postgresql://localhost/postgres \
+  .venv/bin/python tests/test_directory_scaling.py
 ```
 
 [Runtime CI](../.github/workflows/runtime.yml) supplies the disposable database

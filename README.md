@@ -283,6 +283,9 @@ End-to-end tests cover account creation, wiki lifecycle, search, social, upload,
 activity feeds, agent surfaces, ACL permissions, reader behavior, live-update
 polling, and regression cases.
 
+Separate PostgreSQL-backed worker and directory scaling regressions are
+documented in the [deployment guide](docs/deploy.md#production-workers).
+
 ## Architecture
 
 ```

@@ -1,11 +1,14 @@
 from types import SimpleNamespace
+from collections import defaultdict
+
+from sqlalchemy import or_
 
 from flask import current_app, flash, jsonify, redirect, render_template, request, url_for
 from flask_login import login_required, logout_user, current_user
 
 from app import db
 from app.acl import grants_for_user, list_all_grants, parse_acl
-from app.discovery import discoverable_page_for_wiki, discoverable_wiki_ids, visible_wikis_for_owner
+from app.discovery import DISCOVERABLE_VISIBILITIES, discoverable_page_for_wiki, discoverable_wiki_ids, visible_wikis_for_owner
 from app.git_sync import read_file_from_repo
 from app.models import Wiki, Page, ApiKey, User, Star, Fork, MagicLoginToken, UsernameRedirect, ExternalIdentity, utcnow
 from app.page_utils import content_page_path_filter, is_content_page_path
@@ -398,16 +401,21 @@ def get_user_llm_key(user):
 
 def _people_directory(limit=None):
     cards = []
+    viewer_id = current_user.id if current_user.is_authenticated else None
+    visible_ids = discoverable_wiki_ids()
+    visibility = Wiki.id.in_(visible_ids)
+    if viewer_id is not None:
+        visibility = or_(visibility, Wiki.owner_id == viewer_id)
+    # Compute public discovery once per request, then group the visible rows.
+    # The previous per-owner helper rescanned the entire page index for every user.
+    by_owner = defaultdict(list)
+    for wiki in Wiki.query.filter(visibility).order_by(Wiki.updated_at.desc()).all():
+        by_owner[wiki.owner_id].append(wiki)
 
     for user in User.query.order_by(User.created_at.asc()).all():
-        visible_wikis = visible_wikis_for_owner(user, current_user)
+        visible_wikis = by_owner[user.id]
         personal_wiki = next((wiki for wiki in visible_wikis if wiki.slug == user.username), None)
         project_wikis = [wiki for wiki in visible_wikis if wiki.slug != user.username]
-        profile_page = discoverable_page_for_wiki(
-            personal_wiki.id,
-            viewer_is_owner=bool(current_user.is_authenticated and current_user.id == user.id),
-        ) if personal_wiki else None
-
         cards.append(
             {
                 "user": user,
@@ -415,8 +423,8 @@ def _people_directory(limit=None):
                 "project_count": len(project_wikis),
                 "visible_wiki_count": len(visible_wikis),
                 "total_stars": sum(wiki.star_count for wiki in visible_wikis),
-                "profile_excerpt": profile_page.excerpt if profile_page else None,
-                "profile_is_public": bool(profile_page),
+                "profile_excerpt": None,
+                "profile_is_public": False,
                 "latest_wikis": project_wikis[:3],
             }
         )
@@ -430,5 +438,22 @@ def _people_directory(limit=None):
     )
 
     if limit is not None:
-        return cards[:limit]
+        cards = cards[:limit]
+    personal_ids = [card["personal_wiki"].id for card in cards if card["personal_wiki"]]
+    if personal_ids:
+        page_visibility = Page.visibility.in_(DISCOVERABLE_VISIBILITIES)
+        if viewer_id is not None:
+            page_visibility = or_(page_visibility, Wiki.owner_id == viewer_id)
+        pages = (Page.query.join(Wiki, Page.wiki_id == Wiki.id)
+                 .filter(Page.wiki_id.in_(personal_ids), Page.path.in_(("index.md", "README.md")),
+                         page_visibility).all())
+        by_wiki = defaultdict(dict)
+        for page in pages:
+            by_wiki[page.wiki_id][page.path] = page
+        for card in cards:
+            wiki = card["personal_wiki"]
+            candidates = by_wiki[wiki.id] if wiki else {}
+            page = candidates.get("index.md") or candidates.get("README.md")
+            card["profile_excerpt"] = page.excerpt if page else None
+            card["profile_is_public"] = bool(page)
     return cards
