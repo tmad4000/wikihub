@@ -21,7 +21,9 @@ harness.
 For worker-runtime changes, also run the real HTTP regression described in
 [production workers](#production-workers). For directory/discovery changes,
 run the directory scaling regression described there; for reader/history/sidebar
-or link-resolution changes, run the reader scaling regression. See
+or link-resolution changes, run the reader scaling regression. For changes to
+reader access checks or per-path sharing, also run the reader ACL privacy
+regression. See
 [Runtime CI](../.github/workflows/runtime.yml) for the configured regression
 commands and PostgreSQL version.
 
@@ -122,18 +124,19 @@ accounts, `index.md` precedence over `README.md`, directory counts and limit
 behavior, and anonymous `/explore` rendering without private excerpts.
 
 [The reader scaling regression](../tests/test_reader_scaling.py) seeds 4,000
-pages and exercises reader, history and sidebar routes. Ordinary reads hydrate
-bounded page objects, while the sidebar manifest includes all readable metadata.
+pages and exercises reader, history and sidebar routes. It bounds page-object
+hydration for the anonymous reader and history flows, while the sidebar manifest
+includes all readable metadata. Recent links stream candidates in bounded
+batches; sparse grants can require scanning more candidates to fill the panel.
 Navigation queries defer full-text search vectors, and link resolution projects
 only paths and titles. Private pages remain denied,
 unlisted pages remain readable by link, and normalized plumbing stays hidden.
 
 [The reader ACL privacy regression](../tests/test_reader_acl_privacy.py) checks
-anonymous readers, unrelated members, partial grantees and owners. A grant for
-one page does not reveal another private index body or recent-link title. Root
-and folder readers use permitted index candidates, and recent links fill from
-older authorized pages when newer pages are denied. Explicit index grants and
-owner access remain supported.
+anonymous readers, unrelated members, partial grantees and owners against the
+[per-path access contract](../README.md#access-control). It covers private index
+and recent-title denial, fallback navigation, sparse recent-link grants, and
+explicit index grants.
 
 Run these regressions with the existing project dependencies and a disposable
 PostgreSQL server. `WORKER_TEST_DATABASE_URL` must identify an existing database on that
