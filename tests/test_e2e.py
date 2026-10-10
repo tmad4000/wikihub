@@ -973,6 +973,57 @@ def test_magic_link_login(client):
     assert "/auth/login" in r.headers["Location"]
 
 
+def test_magic_link_concurrent_redeem_signs_in_once(client):
+    """code-ofe.13: two requests racing on one magic link must not both sign in.
+
+    Request A is paused after it looks the token up (inside the user lookup);
+    request B redeems the same link meanwhile; then A resumes. A read-then-write
+    redeem lets both through; an atomic consume lets exactly one through.
+    """
+    import threading
+    from app.models import User as _User
+
+    r = client.post("/api/v1/accounts", json={"username": "raceagent"})
+    api_key = r.get_json()["api_key"]
+    r = client.post("/api/v1/auth/magic-link", json={"next": "/settings"},
+                    headers={"Authorization": f"Bearer {api_key}"})
+    magic_path = urlparse(r.get_json()["login_url"]).path
+
+    app = client.application
+    first_lookup, release = threading.Event(), threading.Event()
+    original_get = _User.query_class.get
+    calls = {"n": 0}
+
+    def paused_get(self, ident):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            first_lookup.set()
+            release.wait(10)
+        return original_get(self, ident)
+
+    results = {}
+
+    def redeem(name):
+        browser = app.test_client()
+        resp = browser.get(magic_path, follow_redirects=False)
+        results[name] = resp.headers.get("Location", "")
+
+    _User.query_class.get = paused_get
+    try:
+        a = threading.Thread(target=redeem, args=("a",))
+        a.start()
+        first_lookup.wait(10)
+        redeem("b")
+        release.set()
+        a.join(10)
+    finally:
+        _User.query_class.get = original_get
+
+    signed_in = [name for name, location in results.items() if location.endswith("/settings")]
+    assert len(results) == 2, results
+    assert len(signed_in) == 1, results
+
+
 def test_signin_flow_redirects_back_to_target(app, client):
     """wikihub-kvwh: sign-in CTAs must round-trip back to the private target."""
     import app.routes.auth as auth_routes
@@ -9750,6 +9801,7 @@ def run_all():
             ("token + settings", lambda: test_token_and_settings(client)),
             ("client_config hint", lambda: test_client_config_hint(client)),
             ("magic link login", lambda: test_magic_link_login(client)),
+            ("magic link concurrent redeem signs in once (code-ofe.13)", lambda: test_magic_link_concurrent_redeem_signs_in_once(client)),
             ("sign-in flow redirects back to target (wikihub-kvwh)", lambda: test_signin_flow_redirects_back_to_target(app, client)),
             ("logout (wikihub-uq9)", lambda: test_logout(client)),
             ("unlisted page in sidebar but not discovery (wikihub #17)", lambda: test_unlisted_page_in_sidebar_but_not_discovery(app, client, key)),
