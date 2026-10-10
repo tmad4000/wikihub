@@ -7,6 +7,7 @@ from urllib.parse import urlparse, quote, parse_qs
 from flask import render_template, redirect, url_for, flash, request, session, current_app, abort
 from flask_login import login_user, logout_user, login_required, current_user
 from authlib.integrations.flask_client import OAuth
+from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 
 from datetime import timedelta
@@ -734,24 +735,31 @@ def switch_account():
 @auth_bp.route("/magic/<token>")
 def magic_login(token):
     token_hash = hash_one_time_token(token)
-    token_row = MagicLoginToken.query.filter_by(token_hash=token_hash).first()
-    if (
-        not token_row
-        or token_row.used_at is not None
-        or token_row.expires_at <= utcnow()
-    ):
+    now = utcnow()
+    # Consume in one conditional UPDATE so two concurrent requests for the same
+    # link cannot both pass a read-then-write check and both sign in.
+    consumed = db.session.execute(
+        update(MagicLoginToken)
+        .where(
+            MagicLoginToken.token_hash == token_hash,
+            MagicLoginToken.used_at.is_(None),
+            MagicLoginToken.expires_at > now,
+        )
+        .values(used_at=now)
+        .returning(MagicLoginToken.user_id, MagicLoginToken.redirect_path)
+    ).first()
+    db.session.commit()
+    if not consumed:
         flash("This magic sign-in link is invalid or expired.")
         return redirect(url_for("auth.login")), 302
 
-    user = User.query.get(token_row.user_id)
+    user = User.query.get(consumed.user_id)
     if not user:
         flash("This magic sign-in link is invalid.")
         return redirect(url_for("auth.login")), 302
 
-    token_row.used_at = utcnow()
-    db.session.commit()
     login_user(user)
-    return redirect(_safe_redirect_target(token_row.redirect_path))
+    return redirect(_safe_redirect_target(consumed.redirect_path))
 
 
 # --- Google OAuth ---
