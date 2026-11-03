@@ -10619,6 +10619,92 @@ def test_private_bands_agent_surface_docs(client):
         assert "<!-- private -->" in text or "&lt;!-- private --&gt;" in text, f"{url} documents private sections"
 
 
+def test_private_bands_fence_injection_rejected(client, api_key):
+    """Review CRITICAL 1: a contributor prepending an unclosed ``` fence must not
+    turn the owner's markers into literal code and publish the band."""
+    from app.models import Proposal
+    _band_fixture(client, api_key)
+    app = client.application
+    anon = app.test_client()
+    shown = _band_req(anon, "get", "/api/v1/wikis/agent1/bands/pages/notes.md").get_json()["content"]
+    attacked = shown.replace("# Notes\n", "# Notes\n\n```\n", 1)
+    before = Proposal.query.count()
+    r = _band_req(anon, "post", "/@agent1/bands/notes/edit", data={"content": attacked})
+    assert r.status_code == 409, f"fence injection via web edit must 409, got {r.status_code}"
+    he = {"Authorization": f"Bearer {_BAND_STATE['bandeditor']}"}
+    r = _band_req(app.test_client(), "put", "/api/v1/wikis/agent1/bands/pages/notes.md", headers=he, json={"content": attacked})
+    assert r.status_code == 409, f"fence injection via API must 409, got {r.status_code}"
+    assert Proposal.query.count() == before + 2, "both attempts saved as suggestions"
+    for url, kw in (("/@agent1/bands/notes", {}), ("/api/v1/wikis/agent1/bands/pages/notes.md", {})):
+        _assert_no_band(_band_req(anon, "get", url, **kw).get_data(as_text=True), f"after fence attack {url}")
+    from app.content_utils import strip_private_bands
+    from app.private_bands import PrivateBandConflict, merge_into_bands
+    try:
+        merge_into_bands(_BAND_NOTES, attacked)
+        raise AssertionError("merge_into_bands accepted a fence injection")
+    except PrivateBandConflict:
+        pass
+    assert "SECRETTOKEN" not in strip_private_bands(_band_owner_content(client, api_key)), "stored page still hides the band"
+
+
+def test_private_bands_normalized_merge_is_clean(client, api_key):
+    """Review 2: band at EOF + unsorted frontmatter; a non-owner editing only the
+    first paragraph must merge cleanly (base normalized like the submission)."""
+    h = _band_fixture(client, api_key)
+    app = client.application
+    body = ("---\nvisibility: public-edit\ntitle: Tail Band\nzeta: 1\nalpha: 2\n---\n"
+            "first paragraph\n\nmiddle paragraph\n\n<!-- private -->\nTAILSECRET\n<!-- /private -->\n")
+    r = _band_req(client, "post", "/api/v1/wikis/agent1/bands/pages", json={"path": "tail.md", "content": body, "visibility": "public-edit"}, headers=h)
+    if r.status_code == 409:
+        r = _band_req(client, "put", "/api/v1/wikis/agent1/bands/pages/tail.md", json={"content": body}, headers=h)
+    assert r.status_code in (200, 201), r.data
+    # The owner's stored file keeps its unsorted frontmatter.
+    from app.git_sync import sync_page_to_repo
+    sync_page_to_repo("agent1", "bands", "tail.md", body)
+    anon = app.test_client()
+    shown = _band_req(anon, "get", "/api/v1/wikis/agent1/bands/pages/tail.md").get_json()["content"]
+    assert "TAILSECRET" not in shown
+    r = _band_req(anon, "post", "/@agent1/bands/tail/edit", data={"content": shown.replace("first paragraph", "first paragraph edited")})
+    assert r.status_code == 302, f"web edit should merge cleanly, got {r.status_code}"
+    he = {"Authorization": f"Bearer {_BAND_STATE['bandeditor']}"}
+    shown = _band_req(anon, "get", "/api/v1/wikis/agent1/bands/pages/tail.md").get_json()["content"]
+    r = _band_req(app.test_client(), "put", "/api/v1/wikis/agent1/bands/pages/tail.md", headers=he,
+                  json={"content": shown.replace("first paragraph edited", "first paragraph edited twice")})
+    assert r.status_code == 200, f"API PUT should merge cleanly, got {r.status_code} {r.data[:200]}"
+    full = _band_req(app.test_client(), "get", "/api/v1/wikis/agent1/bands/pages/tail.md",
+                     headers={"Authorization": f"Bearer {api_key}", "Accept": "text/markdown"}).get_data(as_text=True)
+    assert "first paragraph edited twice" in full and "TAILSECRET" in full, full
+
+
+def test_private_bands_scanner_edge_cases(client, api_key):
+    """Review 3 + 4: non-\\n line separators must not shift code ranges, and a
+    leading '---' horizontal rule is not frontmatter."""
+    from app.content_utils import strip_private_bands
+    from app.renderer import render_page
+    # Extra str.splitlines() breaks (\x0b etc.) before a fence used to shift the
+    # fence's computed range back over the band, so both markers looked like
+    # "code" and nothing was stripped.
+    for sep in ("\x0b", "\x0c", "\x1c", "\x85", "\u2028", "\u2029"):
+        doc = f"a{sep}b{sep}c{sep}d\n<!-- private -->\nSEPSECRET\n<!-- /private -->\n```\ncode\n```\n"
+        assert "SEPSECRET" not in strip_private_bands(doc), repr(sep)
+        assert "SEPSECRET" not in render_page(doc), repr(sep)
+    hr = "---\n<!-- private -->\nHRSECRET\n<!-- /private -->\n---\nbody text\n"
+    assert "HRSECRET" not in strip_private_bands(hr), "band inside a leading hr block leaked"
+    hr2 = "---\n\nIntro line that is not yaml: really, it is prose\n\n<!-- private -->\nHR2SECRET\n<!-- /private -->\n\n---\nmore\n"
+    assert "HR2SECRET" not in strip_private_bands(hr2)
+    # Real frontmatter is still preserved byte-for-byte.
+    fm = "---\nzeta: 1\ntitle: X\n---\nA\n<!-- private -->\nS\n<!-- /private -->\n"
+    assert strip_private_bands(fm).startswith("---\nzeta: 1\ntitle: X\n---\n")
+    # And through the live API/mirror for a page whose body starts with an hr.
+    h = _band_fixture(client, api_key)
+    r = _band_req(client, "post", "/api/v1/wikis/agent1/bands/pages",
+                  json={"path": "hr.md", "content": "---\nvisibility: public\n---\n" + hr2, "visibility": "public"}, headers=h)
+    assert r.status_code in (201, 409), r.data
+    anon = client.application.test_client()
+    for url, kw in (("/@agent1/bands/hr", {}), ("/@agent1/bands/hr", {"headers": {"Accept": "text/markdown"}})):
+        assert "HR2SECRET" not in _band_req(anon, "get", url, **kw).get_data(as_text=True), url
+
+
 def run_all():
     app = setup()
 
@@ -10826,6 +10912,9 @@ def run_all():
             ("private bands: wikilinks hidden", lambda: test_private_bands_wikilinks_hidden(client, key)),
             ("private bands: unclosed + code-protected", lambda: test_private_bands_unclosed_and_protected(client, key)),
             ("private bands: agent surface docs", lambda: test_private_bands_agent_surface_docs(client)),
+            ("private bands: unclosed-fence injection rejected (review C1)", lambda: test_private_bands_fence_injection_rejected(client, key)),
+            ("private bands: normalized merge base is clean (review 2)", lambda: test_private_bands_normalized_merge_is_clean(client, key)),
+            ("private bands: scanner line breaks + leading hr (review 3/4)", lambda: test_private_bands_scanner_edge_cases(client, key)),
         ]
 
         passed = 1  # account creation already passed

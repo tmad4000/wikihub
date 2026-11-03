@@ -1309,7 +1309,8 @@ def proposal_detail(username, slug, proposal_id):
         # Owner-only: the diff3 text includes the owner's private bands.
         current_full = read_file_from_repo(owner.username, wiki.slug, current_page.path, public=False)
         try:
-            merge_into_bands(current_full, patch.proposed_content, base=patch.base_content)
+            merge_into_bands(current_full, patch.proposed_content, base=patch.base_content,
+                             normalize=lambda text: set_visibility_in_content(text, current_page.visibility))
         except PrivateBandConflict as conflict:
             band_conflict = conflict.diff3
     return render_template(
@@ -1352,7 +1353,8 @@ def accept_proposal(username, slug, proposal_id):
         # The author saw a band-stripped base (non-owner); merge their change
         # into the owner's full content so private bands survive.
         try:
-            proposed = merge_into_bands(current_full, proposed, base=patch.base_content)
+            proposed = merge_into_bands(current_full, proposed, base=patch.base_content,
+                                        normalize=lambda text: set_visibility_in_content(text, page.visibility))
         except PrivateBandConflict:
             return redirect(url_for("wiki.proposal_detail", username=owner.username, slug=wiki.slug, proposal_id=proposal.id, conflict="1"))
     content = set_visibility_in_content(proposed, page.visibility)
@@ -2248,7 +2250,9 @@ def edit_page(username, slug, page_path):
             # owner's private bands survive. Unmergeable -> 409 + suggestion.
             current_full = read_file_from_repo(owner.username, wiki.slug, file_path, public=False)
             try:
-                content = merge_into_bands(current_full, content)
+                # Same normalization the submission received above, applied to
+                # the merge base and owner content so only real edits differ.
+                content = merge_into_bands(current_full, content, normalize=lambda text: set_visibility_in_content(text, page.visibility))
             except PrivateBandConflict:
                 proposal = create_conflict_proposal(
                     wiki=wiki,

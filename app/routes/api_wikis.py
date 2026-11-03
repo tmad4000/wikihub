@@ -182,7 +182,11 @@ def _merge_non_owner_write(owner_user, wiki, page, submitted, current_full=None)
     if current_full is None:
         current_full = read_file_from_repo(owner_user.username, wiki.slug, page.path, public=False)
     try:
-        return merge_into_bands(current_full, submitted), None
+        return merge_into_bands(
+            current_full,
+            submitted,
+            normalize=lambda text: _set_page_visibility_in_content(page.path, text, page.visibility),
+        ), None
     except PrivateBandConflict:
         user = getattr(request, "current_user", None)
         proposal = create_conflict_proposal(

@@ -19,7 +19,7 @@ import os
 import subprocess
 import tempfile
 
-from app.content_utils import has_private_bands, strip_private_bands
+from app.content_utils import count_private_bands, has_private_bands, strip_private_bands
 
 
 class PrivateBandConflict(Exception):
@@ -49,12 +49,23 @@ def _git_merge_file(ours, base, theirs, diff3=False):
     return result.returncode == 0, result.stdout.decode("utf-8")
 
 
-def merge_into_bands(current_full, submitted, base=None):
+def _visible_signature(text):
+    """Whitespace-insensitive form of the band-stripped text."""
+    return "".join(strip_private_bands(text or "").split())
+
+
+def merge_into_bands(current_full, submitted, base=None, normalize=None):
     """Merge a non-owner submission into the owner's full content.
 
     ``base`` is what the submitter was shown (defaults to the band-stripped
-    current content). Returns the content to store. Raises
-    ``PrivateBandConflict`` when the edit cannot be merged cleanly.
+    current content). ``normalize`` is the transformation the caller already
+    applied to ``submitted`` (e.g. ``set_visibility_in_content``, which
+    re-serializes frontmatter and trims the body); it is applied to the base
+    and to the owner's content too so the merge only sees real edits.
+    Returns the content to store. Raises ``PrivateBandConflict`` when the edit
+    cannot be merged cleanly OR when the merged result would expose band text
+    (e.g. a contributor adds an unclosed code fence above the owner's markers,
+    which would turn the markers into literal code and publish the bands).
 
     Submissions that themselves contain new private markers are kept as-is
     (a contributor hiding their own text from the public is harmless; the
@@ -64,13 +75,26 @@ def merge_into_bands(current_full, submitted, base=None):
         return submitted
     if base is None:
         base = strip_private_bands(current_full)
+    ours = current_full
+    if normalize is not None:
+        base = normalize(base)
+        ours = normalize(current_full)
     if submitted == base:
-        return current_full
-    clean, merged = _git_merge_file(current_full, base, submitted)
-    if clean:
-        return merged
-    _, conflicted = _git_merge_file(current_full, base, submitted, diff3=True)
-    raise PrivateBandConflict(conflicted)
+        return ours
+    clean, merged = _git_merge_file(ours, base, submitted)
+    if not clean:
+        _, conflicted = _git_merge_file(ours, base, submitted, diff3=True)
+        raise PrivateBandConflict(conflicted)
+    # Integrity: everything that was private must still be private. The
+    # visible text of the merge must equal the visible text the contributor
+    # submitted, and no owner band may have been deactivated.
+    if (
+        _visible_signature(merged) != _visible_signature(submitted)
+        or count_private_bands(merged) < count_private_bands(ours)
+    ):
+        _, conflicted = _git_merge_file(ours, base, submitted, diff3=True)
+        raise PrivateBandConflict(conflicted)
+    return merged
 
 
 def create_conflict_proposal(*, wiki, page, file_path, base_content, proposed_content,

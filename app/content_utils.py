@@ -138,14 +138,17 @@ def rewrite_wikilinks(content, old_aliases, new_path):
     return WIKILINK_RE.sub(replacement, content)
 
 
+_LINE_BREAK_RE = re.compile(r"\r\n|\r|\n")
+
+
 def _line_offsets(text):
-    offsets = [0]
-    total = 0
-    for line in text.splitlines(keepends=True):
-        total += len(line)
-        offsets.append(total)
-    if not text.endswith("\n"):
-        offsets[-1] = len(text)
+    """Start offset of every line, using exactly the line breaks markdown-it
+    recognises (\r\n, \r, \n). str.splitlines() also splits on \x0b, \x0c,
+    \x1c-\x1e, \x85, \u2028 and \u2029, which shifted code-block ranges and let
+    a crafted page hide an open marker from the scanner."""
+    offsets = [0] + [match.end() for match in _LINE_BREAK_RE.finditer(text)]
+    if offsets[-1] != len(text):
+        offsets.append(len(text))
     return offsets
 
 
@@ -180,11 +183,27 @@ def _scan_private_markers(body):
 
 def _split_frontmatter_raw(content):
     """Split frontmatter WITHOUT re-serializing it, so band stripping never
-    changes the bytes outside the bands (keeps 3-way merges clean)."""
+    changes the bytes outside the bands (keeps 3-way merges clean).
+
+    Fails closed: a leading ``---`` that is really a horizontal rule (the
+    block is not a YAML mapping) or a block that contains a private marker is
+    treated as body, so bands there are still found and stripped."""
     match = _RAW_FRONTMATTER_RE.match(content)
     if not match:
         return "", content
-    return content[:match.end()], content[match.end():]
+    prefix = content[:match.end()]
+    if PRIVATE_OPEN_RE.search(prefix) or PRIVATE_CLOSE_RE.search(prefix):
+        return "", content
+    inner = _LINE_BREAK_RE.split(prefix, maxsplit=1)[1] if _LINE_BREAK_RE.search(prefix) else ""
+    inner = re.sub(r"(?:^|\r?\n|\r)(?:---|\.\.\.)[ \t]*(?:\r?\n|\r)?\Z", "", inner)
+    try:
+        import yaml
+        parsed = yaml.safe_load(inner) if inner.strip() else {}
+    except Exception:
+        return "", content
+    if not isinstance(parsed, dict):
+        return "", content
+    return prefix, content[match.end():]
 
 
 def has_private_bands(content):
