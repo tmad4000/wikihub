@@ -161,14 +161,28 @@ def create_app(config_class="config.Config"):
         db.session.execute(db.text(
             "ALTER TABLE wikis ADD COLUMN IF NOT EXISTS subdomain VARCHAR(63) UNIQUE"
         ))
-        # trust & safety columns (migrations/2026-11-03_spam_defenses.sql)
-        for ddl in (
-            "ALTER TABLE users ADD COLUMN IF NOT EXISTS trusted BOOLEAN NOT NULL DEFAULT false",
-            "ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_at TIMESTAMPTZ NULL",
-            "ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_reason TEXT NULL",
-        ):
-            db.session.execute(db.text(ddl))
         db.session.commit()
+        # trust & safety columns (migrations/2026-11-03_spam_defenses.sql).
+        # Only ALTER when a column is actually missing: ALTER TABLE takes an
+        # ACCESS EXCLUSIVE lock even when IF NOT EXISTS makes it a no-op, and
+        # gunicorn workers boot while siblings are already serving requests
+        # (a booting worker holding wikis while waiting on users can deadlock
+        # a reader that holds users and wants wikis). Commit per statement.
+        existing = {
+            name for (name,) in db.session.execute(db.text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = current_schema() AND table_name = 'users'"
+            ))
+        }
+        db.session.commit()
+        for column, ddl in (
+            ("trusted", "ALTER TABLE users ADD COLUMN IF NOT EXISTS trusted BOOLEAN NOT NULL DEFAULT false"),
+            ("suspended_at", "ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_at TIMESTAMPTZ NULL"),
+            ("suspended_reason", "ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_reason TEXT NULL"),
+        ):
+            if column not in existing:
+                db.session.execute(db.text(ddl))
+                db.session.commit()
         from app.wiki_ops import ensure_official_wiki
         ensure_official_wiki()
         db.session.commit()
