@@ -1,5 +1,6 @@
 import difflib
 import os
+import re
 import subprocess
 from datetime import timezone
 from urllib.parse import quote, unquote, urlparse
@@ -1195,6 +1196,40 @@ def wiki_index(username, slug):
     )
 
 
+_CONTENT_HASH_RE = re.compile(r"\A[0-9a-f]{64}\Z")
+
+
+def _build_suggested_content(current_content, posted_body, page):
+    """Contributor body + the CURRENT file's frontmatter (wikihub-k7k5 D6).
+
+    Suggestions never change frontmatter, visibility or path. The re-attached
+    block is kept byte-for-byte unless its visibility disagrees with the page.
+    """
+    proposed = replace_body_keep_frontmatter(current_content, posted_body)
+    fm_block, _ = split_frontmatter_block(proposed)
+    meta, _ = parse_markdown_document(proposed)
+    if fm_block and meta.get("visibility") == page.visibility:
+        return proposed
+    return set_visibility_in_content(proposed, page.visibility)
+
+
+def _started_base_hash(page):
+    """The page version the contributor's editor was opened on (posted by the form)."""
+    posted = (request.form.get("base_content_hash") or "").strip().lower()
+    if _CONTENT_HASH_RE.match(posted):
+        return posted
+    return page.content_hash
+
+
+def _proposal_base_changed(proposal, patch):
+    """True when the contributor started from an older version than the diff base."""
+    return bool(
+        proposal.base_content_hash
+        and patch.base_content_hash
+        and proposal.base_content_hash != patch.base_content_hash
+    )
+
+
 @wiki_bp.route("/@<username>/<slug>/-/suggest/<path:page_path>", methods=["GET", "POST"])
 def suggest_edit(username, slug, page_path):
     if _is_wikihub_plumbing_path(page_path):
@@ -1219,18 +1254,14 @@ def suggest_edit(username, slug, page_path):
         # The suggest editor only ever shows the page body; frontmatter is
         # held server-side and re-attached from the CURRENT file, so
         # contributors can neither see nor change it (wikihub-k7k5 D6).
-        proposed_content = replace_body_keep_frontmatter(content, request.form.get("content", ""))
-        posted_base_hash = (request.form.get("base_content_hash") or "").strip()
-        base_changed = bool(posted_base_hash and page.content_hash and posted_base_hash != page.content_hash)
+        proposed_content = _build_suggested_content(content, request.form.get("content", ""), page)
+        started_hash = _started_base_hash(page)
+        base_changed = bool(started_hash and page.content_hash and started_hash != page.content_hash)
         note = request.form.get("note", "").strip()
         title = request.form.get("title", "").strip() or f"Suggested edit to {page.title or file_path}"
         author_name = current_user.username if current_user.is_authenticated else (
             request.form.get("author_name", "").strip() or "anonymous"
         )
-
-        # Suggestions never change page visibility or path. Owners can still make
-        # those changes explicitly in the normal editor.
-        proposed_content = set_visibility_in_content(proposed_content, page.visibility)
 
         proposal = Proposal(
             wiki_id=wiki.id,
@@ -1240,7 +1271,10 @@ def suggest_edit(username, slug, page_path):
             author_name=author_name,
             title=title,
             status="pending",
-            base_content_hash=page.content_hash,
+            # The version the contributor started from; the patch below keeps
+            # the current hash as the diff base. A mismatch is shown to the
+            # owner and accept requires confirmation.
+            base_content_hash=started_hash,
         )
         db.session.add(proposal)
         db.session.flush()
@@ -1322,7 +1356,9 @@ def proposal_detail(username, slug, proposal_id):
         comments=proposal.comments.order_by(ProposalComment.created_at.asc()).all(),
         diff_lines=_proposal_diff(patch.base_content, patch.proposed_content, patch.page_path),
         stale=stale,
-        base_changed=request.args.get("stale") == "1",
+        base_changed=_proposal_base_changed(proposal, patch),
+        resubmit_body=split_frontmatter_block(patch.proposed_content)[1].lstrip("\n"),
+        current_hash=(current_page.content_hash if current_page else "") or "",
         is_owner=_is_owner(wiki),
         can_resubmit=can_resubmit,
     )
@@ -1343,6 +1379,8 @@ def accept_proposal(username, slug, proposal_id):
     if not page:
         abort(404)
     if patch.base_content_hash and page.content_hash != patch.base_content_hash:
+        return redirect(url_for("wiki.proposal_detail", username=owner.username, slug=wiki.slug, proposal_id=proposal.id, stale="1"))
+    if _proposal_base_changed(proposal, patch) and request.form.get("confirm_base_changed") != "1":
         return redirect(url_for("wiki.proposal_detail", username=owner.username, slug=wiki.slug, proposal_id=proposal.id, stale="1"))
 
     content = set_visibility_in_content(patch.proposed_content, page.visibility)
@@ -1442,7 +1480,9 @@ def resubmit_proposal(username, slug, proposal_id):
     if base_content is None:
         abort(404)
 
-    proposed_content = set_visibility_in_content(request.form.get("content", ""), page.visibility)
+    # Same frontmatter lock as the suggest flow: the form edits the body only.
+    proposed_content = _build_suggested_content(base_content, request.form.get("content", ""), page)
+    started_hash = _started_base_hash(page)
     note = request.form.get("note", "").strip()
     latest_revision = proposal.revisions.order_by(None).order_by(ProposalRevision.revision_number.desc()).first()
     next_number = (latest_revision.revision_number if latest_revision else 0) + 1
@@ -1458,7 +1498,7 @@ def resubmit_proposal(username, slug, proposal_id):
         proposed_content=proposed_content,
     ))
     proposal.status = "pending"
-    proposal.base_content_hash = page.content_hash
+    proposal.base_content_hash = started_hash
     proposal.reviewed_by_id = None
     proposal.reviewed_at = None
     _add_proposal_comment(proposal, note or f"Submitted revision {next_number}.", event="resubmitted")

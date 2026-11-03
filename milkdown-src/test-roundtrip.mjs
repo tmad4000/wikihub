@@ -74,6 +74,10 @@ const PROBE_CASES = [
   { input: 'A ~~strike~~ word.\n', ok: true },
   { input: 'Note.[^1]\n\n[^1]: Footnote body.\n', ok: true },
   { input: 'See [the docs][docs].\n\n[docs]: https://example.com\n', ok: false },
+  // inline $$..$$ renders as display math; Visual would turn it into $..$
+  { input: 'Energy $$E=mc^2$$ inline.\n', ok: false },
+  { input: 'Inline $E=mc^2$ math.\n', ok: true },
+  { input: '$$\n\\int_0^1 x^2 dx\n$$\n', ok: true },
 ];
 
 const html = `<!doctype html><html><head><meta charset="utf-8"></head>

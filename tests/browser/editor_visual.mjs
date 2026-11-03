@@ -186,6 +186,20 @@ try {
     const nowActive = await page.$eval('.editor-tab.active', (el) => el.dataset.mode);
     check('"Open visual anyway" enters Visual', nowActive === 'visual');
     check('entering Visual without editing leaves content untouched', (await textarea()) === (await storedContent('Reference.md')));
+
+    // The probe also guards tab switches, not just the initial load.
+    await page.goto(`${W}/Harvard/edit?mode=markdown`);
+    await settle(800);
+    await page.$eval('#editor-textarea', (el) => {
+      el.value += '\n\nInline $$E=mc^2$$ display.\n';
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await page.click('.editor-tab[data-mode="visual"]');
+    await settle(1200);
+    const afterTab = await page.$eval('.editor-tab.active', (el) => el.dataset.mode);
+    const tabNotice = await page.$eval('#editor-mode-notice', (el) => el.classList.contains('open'));
+    check('Visual tab on an unsafe edit stays in Markdown with notice', afterTab === 'markdown' && tabNotice, `active=${afterTab} notice=${tabNotice}`);
+    await shot('editor-probe-on-tab');
   }
 
   // 7. suggest-edit ----------------------------------------------------------------

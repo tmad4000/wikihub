@@ -365,8 +365,8 @@ function findAncestor($pos, name) {
 // ---------------------------------------------------------------------------
 
 // Normalization deliberately ignores differences that do not change meaning or
-// rendering: trailing whitespace, blank-line runs, a trailing newline, inline
-// `$$x$$` -> `$x$`, and equivalent marker choices (`*`/`+` bullets vs `-`,
+// rendering: trailing whitespace, blank-line runs, a trailing newline, and
+// equivalent marker choices (`*`/`+` bullets vs `-`,
 // `_em_` vs `*em*`, `__strong__` vs `**strong**`, `***`/`___` rules, `1)` vs
 // `1.`). Everything else (raw HTML, reference links, escapes, nesting quirks)
 // must survive verbatim or the page opens in Markdown.
@@ -398,8 +398,9 @@ export function normalizeForProbe(markdown) {
   s = s.replace(/\\([!-\/:-@[-`{-~])/g, '$1');
   // GFM autolink literals re-serialize as <autolinks>.
   s = s.replace(/<((?:https?:\/\/|mailto:)[^>\s]+|[^@\s<>]+@[^@\s<>]+\.[^@\s<>]+)>/g, '$1');
-  // single-line display math written inline -> inline math
-  s = s.replace(/\$\$([^\n$]+?)\$\$/g, (_m, inner) => `$${inner}$`);
+  // NOTE: `$$x$$` -> `$x$` is NOT cosmetic: the renderer (dollarmath,
+  // double_inline=True) shows inline `$$x$$` as display math, so a page whose
+  // inline double-dollar math Visual would rewrite stays in Markdown.
   s = s.replace(/__([^_\n]+?)__/g, '**$1**');
   s = s.replace(/(^|[^\w_])_([^_\n]+?)_(?![\w_])/g, '$1*$2*');
   s = s.replace(/^(\s*-\s+)\[[xX]\]/gm, '$1[x]');

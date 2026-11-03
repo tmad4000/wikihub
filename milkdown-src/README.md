@@ -45,7 +45,10 @@ On top of the legacy commonmark + history + listener stack it adds:
   only when this is ok; otherwise Markdown with an "Open visual anyway" notice.
   Normalization ignores marker style (`*`/`-`, `_`/`*`), blank-line placement,
   table padding, defensive backslash escapes, and autolink brackets; anything
-  else (reference links, re-nested emphasis) keeps the page in Markdown.
+  else (reference links, re-nested emphasis, inline `$$x$$` which the renderer
+  shows as display math but Visual would rewrite to `$x$`) keeps the page in
+  Markdown. The probe runs on every entry into Visual (load, tab, "Load latest")
+  unless the user chose "Open visual anyway" or `?mode=visual`.
 - **Sync on doc change** (`surface-plugin.mjs`): `onUpdate` fires only for
   document changes after mount, so toolbar/slash actions sync and merely
   viewing a page never rewrites it. `editor.wikihub.flush()` before submit.
@@ -91,7 +94,9 @@ constructs round-trip identically:
 - `Math $E=mc^2$ and $$\int_0^1 x^2 dx$$` (math re-emits unescaped; note inline
   `$$...$$` mid-paragraph normalizes to `$...$` per remark-math — content is
   byte-identical, only the delimiter count changes; a `$$` block on its own
-  line round-trips as a `$$` block)
+  line round-trips as a `$$` block). Because WikiHub's renderer shows inline
+  `$$...$$` as display math, that delimiter change is visible, so the probe
+  keeps such pages in Markdown (wikihub-k7k5 review)
 - `Embed ![[diagram.png]]`
 
 Browser driver: `PUPPETEER_PATH=/path/to/node_modules/puppeteer`, or

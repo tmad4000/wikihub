@@ -274,8 +274,17 @@
     if (opts && opts.focus) ta.focus();
   }
 
-  function enterVisual(opts) {
-    opts = opts || {};
+  function showUnsafeNotice() {
+    showNotice(
+      'Opened in Markdown \u2014 the visual editor would change this page\u2019s formatting.',
+      [{ label: 'Open visual anyway', primary: true, onClick: function () {
+        hideNotice();
+        enterVisual({ force: true, focus: true });
+      } }]
+    );
+  }
+
+  function mountVisualNow(opts) {
     closeMenus();
     state.mode = 'visual';
     setActiveTab('visual');
@@ -284,6 +293,21 @@
     return mountVisual().then(function () {
       if (opts.focus && api()) api().focus();
       updateModeLabel();
+    });
+  }
+
+  // Every entry into Visual (initial load, tab click, keyboard cycle, "Load
+  // latest version") runs the round-trip probe first, unless the user
+  // explicitly chose "Open visual anyway" or ?mode=visual (opts.force).
+  // A failing probe keeps (or puts) the editor in Markdown with the notice.
+  function enterVisual(opts) {
+    opts = opts || {};
+    var ready = opts.force ? Promise.resolve({ ok: true }) : probeBody();
+    return ready.then(function (res) {
+      if (res && res.ok) return mountVisualNow(opts);
+      enterMarkdown();
+      showUnsafeNotice();
+      return null;
     }).catch(function (err) {
       console.error('[wikihub] visual editor failed to load', err);
       state.visualFailed = true;
@@ -320,29 +344,10 @@
   function initialMode() {
     var fromUrl = urlMode();
     if (fromUrl === 'markdown') { enterMarkdown(); return; }
-    if (fromUrl === 'visual') { enterVisual(); return; }
-    var stored = readStoredMode();
-    if (stored === 'markdown') { enterMarkdown(); return; }
-    // Visual by default — but only when the visual editor would not change
-    // this file. Never writes the remembered preference.
-    probeBody().then(function (res) {
-      if (res && res.ok) {
-        enterVisual();
-      } else {
-        enterMarkdown();
-        showNotice(
-          'Opened in Markdown — the visual editor would change this page’s formatting.',
-          [{ label: 'Open visual anyway', primary: true, onClick: function () {
-            hideNotice();
-            enterVisual({ focus: true });
-          } }]
-        );
-      }
-    }).catch(function (err) {
-      console.error('[wikihub] visual editor unavailable', err);
-      state.visualFailed = true;
-      enterMarkdown();
-    });
+    if (fromUrl === 'visual') { enterVisual({ force: true }); return; }
+    if (readStoredMode() === 'markdown') { enterMarkdown(); return; }
+    // Visual by default, guarded by the probe. Never writes the preference.
+    enterVisual();
   }
 
   tabs.forEach(function (tab) {
