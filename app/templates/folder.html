@@ -2,6 +2,7 @@
 {% block title %}{{ wiki.title or wiki.slug }} — wikihub{% endblock %}
 
 {% block extra_css %}
+{% include "_article_styles.css.html" %}
 .folder-shell { display: flex; min-height: calc(100vh - 56px); }
 .sidebar { width: 280px; flex-shrink: 0; border-right: 1px solid var(--border-default); padding: 16px 0; overflow-y: auto; overflow-x: hidden; display: none; }
 @media (min-width: 768px) { .sidebar { display: block; } }
