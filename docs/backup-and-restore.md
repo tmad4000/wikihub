@@ -194,6 +194,11 @@ The .env contains:
   paste into a new `.env`, restart wikihub. Users will need to re-login.
 - `DATABASE_URL` — reconstructible from local postgres setup.
 - `ADMIN_TOKEN` — generate a new one and update wherever it's referenced.
+  Send it only as an `Authorization: Bearer` header.
+- `HOOK_TOKEN` — token the git hooks use for their sync callbacks; keep it
+  different from `ADMIN_TOKEN`. After setting or rotating either token, run
+  `python3 scripts/reinstall_hooks.py` (with the app env) to rewrite every
+  repo's `hooks/wikihub.conf` and refresh its hooks.
 - OAuth client secrets — these are issued by Google. Without them, OAuth
   login is broken until you regenerate the client in the GCP console for the
   wikihub OAuth app and paste the new secret in.

@@ -15,7 +15,7 @@ from app.url_utils import url_path_from_page_path
 from app import db
 from app.backlinks import get_backlinks_for_page, serialize_backlink
 from app.models import CustomDomain, User, Wiki, Page, Star, Fork, Wikilink, WikiSlugRedirect, PendingInvite, utcnow
-from app.auth_utils import api_auth_optional, api_auth_required, rate_limit_writes, security_event
+from app.auth_utils import api_auth_optional, api_auth_required, check_admin_token, rate_limit_writes, security_event
 from app.git_backend import init_wiki_repo
 from app.git_sync import (
     apply_repo_changes,
@@ -2228,14 +2228,14 @@ def revert_page(owner, slug):
 
 # --- admin endpoints (called by post-receive hook) ---
 
+# The git hooks authenticate with HOOK_TOKEN; ADMIN_TOKEN stays accepted so
+# repos whose hooks/wikihub.conf predates HOOK_TOKEN keep syncing.
+_HOOK_TOKEN_KEYS = ("HOOK_TOKEN", "ADMIN_TOKEN")
+
 @api_bp.route("/admin/sync-page", methods=["POST"])
 def admin_sync_page():
     """internal endpoint for post-receive hook to upsert page metadata."""
-    auth = request.headers.get("Authorization", "")
-    from flask import current_app
-    expected = current_app.config.get("ADMIN_TOKEN", "")
-    if not expected or auth != f"Bearer {expected}":
-        security_event("admin.auth", "denied", admin_endpoint=request.endpoint, token_present=bool(auth))
+    if not check_admin_token(request, config_keys=_HOOK_TOKEN_KEYS, log_success=False):
         return {"error": "unauthorized"}, 401
 
     data = request.get_json(silent=True) or {}
@@ -2270,11 +2270,7 @@ def admin_sync_page():
 
 @api_bp.route("/admin/delete-page", methods=["POST"])
 def admin_delete_page():
-    auth = request.headers.get("Authorization", "")
-    from flask import current_app
-    expected = current_app.config.get("ADMIN_TOKEN", "")
-    if not expected or auth != f"Bearer {expected}":
-        security_event("admin.auth", "denied", admin_endpoint=request.endpoint, token_present=bool(auth))
+    if not check_admin_token(request, config_keys=_HOOK_TOKEN_KEYS, log_success=False):
         return {"error": "unauthorized"}, 401
 
     data = request.get_json(silent=True) or {}
@@ -2299,11 +2295,7 @@ def admin_delete_page():
 
 @api_bp.route("/admin/regenerate-mirror", methods=["POST"])
 def admin_regenerate_mirror():
-    auth = request.headers.get("Authorization", "")
-    from flask import current_app
-    expected = current_app.config.get("ADMIN_TOKEN", "")
-    if not expected or auth != f"Bearer {expected}":
-        security_event("admin.auth", "denied", admin_endpoint=request.endpoint, token_present=bool(auth))
+    if not check_admin_token(request, config_keys=_HOOK_TOKEN_KEYS, log_success=False):
         return {"error": "unauthorized"}, 401
 
     data = request.get_json(silent=True) or {}

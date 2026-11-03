@@ -8,7 +8,9 @@ wiki repos.
 
 import json
 import os
+import re
 import shutil
+import stat
 import subprocess
 import tempfile
 import threading
@@ -19,7 +21,7 @@ import anthropic
 from flask import Blueprint, Response, current_app, jsonify, request, stream_with_context
 
 from app.acl import can_read, can_write
-from app.auth_utils import get_current_user_from_request, security_event
+from app.auth_utils import check_admin_token, get_current_user_from_request
 from app.git_sync import list_files_in_repo, read_file_from_repo
 from app.models import Page, User, Wiki
 from app.page_utils import is_wikihub_plumbing_path
@@ -60,6 +62,27 @@ def _repo_path(repos_dir, username, slug):
     return os.path.join(repos_dir, safe_user, f"{safe_slug}.git")
 
 
+# Every git command the Curator runs in its working clone ignores repo-level
+# executable configuration (fsmonitor, hooks) and global/system config, so
+# file content in the clone can never become a command. The bare repo's own
+# receive hooks still run on push.
+_GIT_SAFE = [
+    "git",
+    "-c", "core.fsmonitor=false",
+    "-c", "core.hooksPath=/dev/null",
+    "-c", "core.symlinks=false",
+]
+
+
+def _git_env():
+    return {
+        **os.environ,
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_TERMINAL_PROMPT": "0",
+    }
+
+
 def _clone_wiki(repos_dir, owner, slug, work_dir):
     """Clone a wiki bare repo into the working directory. Returns clone path."""
     bare_repo = _repo_path(repos_dir, owner, slug)
@@ -69,18 +92,20 @@ def _clone_wiki(repos_dir, owner, slug, work_dir):
     os.makedirs(os.path.dirname(clone_dest), exist_ok=True)
     try:
         subprocess.run(
-            ["git", "clone", bare_repo, clone_dest],
-            check=True, capture_output=True, timeout=30,
+            # core.symlinks=false: any symlink entry is checked out as a
+            # plain file holding the link text, never as a real link.
+            _GIT_SAFE + ["clone", bare_repo, clone_dest],
+            check=True, capture_output=True, timeout=30, env=_git_env(),
         )
-        # Configure git user for commits
-        subprocess.run(
-            ["git", "config", "user.name", "Curator"],
-            cwd=clone_dest, check=True, capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.email", "curator@wikihub"],
-            cwd=clone_dest, check=True, capture_output=True,
-        )
+        for key, value in (
+            ("core.symlinks", "false"),
+            ("user.name", "Curator"),
+            ("user.email", "curator@wikihub"),
+        ):
+            subprocess.run(
+                _GIT_SAFE + ["config", key, value],
+                cwd=clone_dest, check=True, capture_output=True, env=_git_env(),
+            )
         return clone_dest
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return None
@@ -91,23 +116,23 @@ def _commit_and_push(wiki_dir, message="Curator edit"):
     try:
         # Check if there are changes
         status = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=wiki_dir, capture_output=True, text=True, timeout=10,
+            _GIT_SAFE + ["status", "--porcelain"],
+            cwd=wiki_dir, capture_output=True, text=True, timeout=10, env=_git_env(),
         )
         if not status.stdout.strip():
             return False, "No changes to commit"
 
         subprocess.run(
-            ["git", "add", "-A"],
-            cwd=wiki_dir, check=True, capture_output=True, timeout=10,
+            _GIT_SAFE + ["add", "-A"],
+            cwd=wiki_dir, check=True, capture_output=True, timeout=10, env=_git_env(),
         )
         subprocess.run(
-            ["git", "commit", "-m", message],
-            cwd=wiki_dir, check=True, capture_output=True, timeout=10,
+            _GIT_SAFE + ["commit", "-m", message],
+            cwd=wiki_dir, check=True, capture_output=True, timeout=10, env=_git_env(),
         )
         subprocess.run(
-            ["git", "push"],
-            cwd=wiki_dir, check=True, capture_output=True, timeout=30,
+            _GIT_SAFE + ["push"],
+            cwd=wiki_dir, check=True, capture_output=True, timeout=30, env=_git_env(),
         )
         return True, "Changes committed and pushed"
     except subprocess.CalledProcessError as e:
@@ -136,6 +161,45 @@ def _split_session_path(path):
     return owner, slug, page_path
 
 
+def _resolve_in_work_dir(session, path):
+    """Resolve a tool path to an absolute filesystem path inside the session's
+    work_dir, or None. Refuses absolute/escaping paths and any path where an
+    existing component is a symbolic link, then double-checks the fully
+    resolved real path is still inside the real work_dir."""
+    work_dir = session.get("work_dir") or ""
+    if not work_dir or path is None or os.path.isabs(path) or "\x00" in path:
+        return None
+    for segment in path.replace("\\", "/").split("/"):
+        # Git metadata (.git, .gitattributes, ...) is never tool-visible:
+        # writing it could change how git behaves in the clone. Compared
+        # case-insensitively for case-insensitive filesystems.
+        if segment in (".", "..") or segment.lower().startswith(".git"):
+            return None
+    base = os.path.realpath(work_dir)
+    rel = os.path.normpath(path) if path else "."
+    if rel == ".." or rel.startswith(".." + os.sep):
+        return None
+    current = base
+    if rel != ".":
+        for part in rel.split(os.sep):
+            current = os.path.join(current, part)
+            try:
+                if stat.S_ISLNK(os.lstat(current).st_mode):
+                    return None
+            except FileNotFoundError:
+                break
+            except OSError:
+                return None
+    full = os.path.normpath(os.path.join(base, rel))
+    real = os.path.realpath(full)
+    try:
+        if os.path.commonpath([base, real]) != base:
+            return None
+    except ValueError:
+        return None
+    return full
+
+
 def _check_path_access(session, path, write=False):
     """Per-tool ACL gate. Returns (ok: bool, error_message: str|None).
 
@@ -149,9 +213,7 @@ def _check_path_access(session, path, write=False):
     list_files at the wiki root), pass page_path == ''. We still gate on the
     wiki-level access — the per-file filtering happens in the tool body.
     """
-    work_dir = session["work_dir"]
-    full = os.path.normpath(os.path.join(work_dir, path))
-    if not full.startswith(work_dir):
+    if _resolve_in_work_dir(session, path) is None:
         return False, "Error: path escapes working directory"
 
     sess_owner = session.get("owner") or ""
@@ -214,12 +276,15 @@ def _tool_read_file(session, path):
     ok, err = _check_path_access(session, path, write=False)
     if not ok:
         return err
-    work_dir = session["work_dir"]
-    full = os.path.normpath(os.path.join(work_dir, path))
-    if not os.path.isfile(full):
+    full = _resolve_in_work_dir(session, path)
+    if full is None or not os.path.isfile(full):
         return _ACL_DENIED
     try:
-        with open(full, "r", encoding="utf-8", errors="replace") as f:
+        fd = os.open(full, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError:
+        return _ACL_DENIED
+    try:
+        with os.fdopen(fd, "r", encoding="utf-8", errors="replace") as f:
             content = f.read()
         # Truncate very large files
         if len(content) > 50000:
@@ -234,11 +299,16 @@ def _tool_write_file(session, path, content):
     ok, err = _check_path_access(session, path, write=True)
     if not ok:
         return err
-    work_dir = session["work_dir"]
-    full = os.path.normpath(os.path.join(work_dir, path))
+    full = _resolve_in_work_dir(session, path)
+    if full is None:
+        return _ACL_DENIED
     try:
         os.makedirs(os.path.dirname(full), exist_ok=True)
-        with open(full, "w", encoding="utf-8") as f:
+        # Re-resolve after creating parents, then refuse to open a link.
+        if _resolve_in_work_dir(session, path) != full:
+            return _ACL_DENIED
+        fd = os.open(full, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(content)
         return f"Written {len(content)} bytes to {path}"
     except Exception as e:
@@ -250,9 +320,9 @@ def _tool_list_files(session, directory=""):
     ok, err = _check_path_access(session, directory or f"{session.get('owner','')}/{session.get('wiki_slug','')}", write=False)
     if not ok:
         return err
-    work_dir = session["work_dir"]
-    full = os.path.normpath(os.path.join(work_dir, directory))
-    if not full.startswith(work_dir):
+    work_dir = os.path.realpath(session["work_dir"])
+    full = _resolve_in_work_dir(session, directory)
+    if full is None:
         return "Error: path escapes working directory"
     if not os.path.isdir(full):
         return _ACL_DENIED
@@ -280,6 +350,8 @@ def _tool_list_files(session, directory=""):
             if entry.startswith(".git") and entry != ".gitkeep":
                 continue
             entry_path = os.path.join(full, entry)
+            if os.path.islink(entry_path):
+                continue
             kind = "dir" if os.path.isdir(entry_path) else "file"
             rel = os.path.relpath(entry_path, work_dir)
             _o, _s, rel_page_path = _split_session_path(rel)
@@ -332,7 +404,7 @@ def _tool_search_content(session, query):
         if not os.path.isdir(scope_dir):
             return f"No matches found for: {query}"
         result = subprocess.run(
-            ["grep", "-r", "-n", "-i", "--include=*.md", "--include=*.txt",
+            ["grep", "-r", "-n", "-i", "--exclude-dir=.git", "--include=*.md", "--include=*.txt",
              "--include=*.yaml", "--include=*.yml", "--include=*.json",
              query, "."],
             cwd=scope_dir, capture_output=True, text=True, timeout=10,
@@ -370,9 +442,59 @@ def _tool_search_content(session, query):
         return f"Search error: {e}"
 
 
-def _tool_wikihub_api(base_url, auth_token, method, endpoint, body=None):
-    """Proxy a call to WikiHub's own API."""
+_API_READ_PATTERNS = [
+    re.compile(p) for p in (
+        r"^/wikis$",
+        r"^/search$",
+        r"^/wikis/[^/]+/[^/]+$",
+        r"^/wikis/[^/]+/[^/]+/pages$",
+        r"^/wikis/[^/]+/[^/]+/history$",
+        r"^/wikis/[^/]+/[^/]+/pages/(?!.*/grants$).+$",
+    )
+]
+_API_DENIED = "Error: this API call is not available to the Curator"
+
+
+def _wikihub_api_allowed(session, method, endpoint, body):
+    """Allowlist for the wikihub_api tool, which acts with the user's token.
+
+    Reads: wiki/page metadata, page content, history, search.
+    Writes: only page create/update/append in the session's own wiki, without
+    visibility changes. Never auth, accounts, keys, sharing, grants, ACL,
+    settings, or deletion."""
+    method = (method or "").upper()
+    if not isinstance(endpoint, str) or not endpoint.startswith("/"):
+        return False
+    path, _, query = endpoint.partition("?")
+    if any(ch in path for ch in ("%", "\\", "#")) or "//" in path:
+        return False
+    segments = path.split("/")[1:]
+    if any(seg in (".", "..") or seg.lower().startswith((".wikihub", ".git")) for seg in segments):
+        return False
+    if method == "GET":
+        return any(p.match(path) for p in _API_READ_PATTERNS)
+    if method not in ("POST", "PUT", "PATCH") or query:
+        return False
+    if isinstance(body, dict) and "visibility" in body:
+        return False
+    owner = re.escape(session.get("owner") or "\x00")
+    slug = re.escape(session.get("wiki_slug") or "\x00")
+    if method == "POST" and re.match(rf"^/wikis/{owner}/{slug}/pages$", path):
+        return True
+    page = re.match(rf"^/wikis/{owner}/{slug}/pages/(.+)$", path)
+    if not page:
+        return False
+    tail = page.group(1)
+    if method in ("PUT", "PATCH"):
+        return not re.search(r"/(share|grants|visibility|claim|backlinks|append-section)$", tail)
+    return method == "POST" and tail.endswith("/append-section")
+
+
+def _tool_wikihub_api(base_url, auth_token, method, endpoint, body=None, session=None):
+    """Proxy an allowlisted call to WikiHub's own API as the session user."""
     import requests
+    if session is None or not _wikihub_api_allowed(session, method, endpoint, body):
+        return _API_DENIED
     url = f"{base_url}/api/v1{endpoint}"
     headers = {"Content-Type": "application/json"}
     if auth_token:
@@ -442,11 +564,11 @@ TOOLS = [
     },
     {
         "name": "wikihub_api",
-        "description": "Call WikiHub's REST API. Use for operations like starring, forking, or reading wiki metadata. Endpoint should start with / (e.g. '/wikis/owner/slug').",
+        "description": "Call WikiHub's REST API (restricted). Allowed: GET wiki/page metadata, page content, history and search; POST/PUT/PATCH to create, update or append to pages in the current wiki. Account, key, sharing, ACL, visibility and delete operations are not available. Endpoint should start with / (e.g. '/wikis/owner/slug').",
         "input_schema": {
             "type": "object",
             "properties": {
-                "method": {"type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
+                "method": {"type": "string", "enum": ["GET", "POST", "PUT", "PATCH"]},
                 "endpoint": {"type": "string", "description": "API endpoint path (e.g. '/wikis/owner/slug/pages')"},
                 "body": {
                     "type": "object",
@@ -488,7 +610,7 @@ def _build_system_prompt(username, owner, wiki_slug, page_path, page_content, pa
 - Use read_file and list_files to explore the wiki content
 - Use write_file to create or edit pages (changes are auto-committed and pushed)
 - Use search_content to find information across the wiki
-- Use wikihub_api for metadata and owner-only plumbing operations (starring, forking, reading wiki info, ACL updates)
+- Use wikihub_api for wiki/page metadata, history and search (sharing, ACL, visibility and account changes are not available; the user does those in the WikiHub UI)
 - File paths are relative to the working directory root: {owner}/{wiki_slug}/filename.md
 
 ## Guidelines
@@ -531,9 +653,10 @@ def _execute_tool(tool_name, tool_input, session):
         return _tool_wikihub_api(
             session["base_url"],
             session.get("auth_token"),
-            tool_input["method"],
-            tool_input["endpoint"],
+            tool_input.get("method"),
+            tool_input.get("endpoint"),
             tool_input.get("body"),
+            session=session,
         )
     else:
         return f"Unknown tool: {tool_name}"
@@ -1040,52 +1163,12 @@ def _run_bd_create(title, issue_type, priority, description=None):
         return False, str(e)
 
 
-def _bd_sync_and_push():
-    """Run bd sync --flush-only, then commit and push the JSONL to GitHub."""
-    try:
-        # Flush beads to JSONL
-        subprocess.run(
-            ["bd", "sync", "--flush-only"],
-            cwd=_PROJECT_ROOT, capture_output=True, text=True, timeout=15,
-        )
-        # Stage the JSONL file
-        subprocess.run(
-            ["git", "add", ".beads/issues.jsonl"],
-            cwd=_PROJECT_ROOT, capture_output=True, timeout=10,
-        )
-        # Check if there are changes to commit
-        status = subprocess.run(
-            ["git", "status", "--porcelain", ".beads/issues.jsonl"],
-            cwd=_PROJECT_ROOT, capture_output=True, text=True, timeout=10,
-        )
-        if not status.stdout.strip():
-            return True, "No changes to push"
-        # Commit
-        subprocess.run(
-            ["git", "commit", "-m", "roadmap: add issues from web UI"],
-            cwd=_PROJECT_ROOT, capture_output=True, timeout=10,
-        )
-        # Push
-        result = subprocess.run(
-            ["git", "push"],
-            cwd=_PROJECT_ROOT, capture_output=True, text=True, timeout=30,
-        )
-        if result.returncode == 0:
-            return True, "Pushed to GitHub"
-        return False, result.stderr.strip()
-    except Exception as e:
-        return False, str(e)
-
-
 @agent_chat_bp.route("/roadmap/create-issues", methods=["POST"])
 def roadmap_create_issues():
     """SSE endpoint: parse natural language into beads issues via Claude."""
-    # Admin-token auth (same as admin endpoints)
-    if not _check_admin_token(request, log=False):
-        # Also allow logged-in users
-        user = get_current_user_from_request()
-        if not user:
-            return {"error": "unauthorized", "message": "Authentication required"}, 401
+    # Admin only: this runs `bd` in the server checkout.
+    if not check_admin_token(request):
+        return {"error": "unauthorized", "message": "Admin token required"}, 401
 
     data = request.get_json(silent=True)
     if not data or "message" not in data:
@@ -1095,10 +1178,9 @@ def roadmap_create_issues():
     if not message:
         return {"error": "bad_request", "message": "Empty message"}, 400
 
-    # Get API key: env var → server config → user home Claude config
+    # Get API key: env var → server-wide Claude config
     api_key = os.environ.get("ANTHROPIC_API_KEY")
-    home_claude_dir = os.path.join(os.path.expanduser("~"), ".claude")
-    for config_dir in [SERVER_CONFIG_DIR, home_claude_dir]:
+    for config_dir in [SERVER_CONFIG_DIR]:
         if api_key:
             break
         creds_file = os.path.join(config_dir, ".credentials.json")
@@ -1233,16 +1315,8 @@ def roadmap_create_issues():
             else:
                 break
 
-        # Sync and push if we created anything
-        if created_issues:
-            yield _sse_event({"type": "syncing"})
-            ok, msg = _bd_sync_and_push()
-            yield _sse_event({
-                "type": "sync_result",
-                "success": ok,
-                "message": msg,
-            })
-
+        # Issues stay in the server's local beads database; an operator
+        # syncs them. The server never commits or pushes its own checkout.
         yield _sse_event({
             "type": "done",
             "created_count": len(created_issues),
@@ -1256,306 +1330,7 @@ def roadmap_create_issues():
     )
 
 
-# --- Admin Claude auth (server-wide, token-protected) ---
-
-# Background login process state
-_admin_login = {"proc": None, "master_fd": None, "output": [], "status": "idle", "lock": threading.Lock()}
-
+# Server-wide Claude config directory (read-only here: used as a credential
+# fallback for the curator). The former web-based admin login and terminal
+# routes were removed; manage server credentials over SSH instead.
 SERVER_CONFIG_DIR = "/opt/wikihub-app/claude-config"
-
-
-# Admin requests that only read/poll state; logging every poll would drown
-# the security log. Everything else that passes the admin check is logged.
-_ADMIN_QUIET_ENDPOINTS = frozenset({
-    "agent_chat.admin_claude_auth_page",
-    "agent_chat.admin_claude_auth_status",
-    "agent_chat.admin_claude_auth_poll",
-    "agent_chat.admin_terminal_output",
-    "agent_chat.admin_terminal_input",
-})
-
-
-def _check_admin_token(req, *, log=True):
-    token = req.args.get("token") or req.headers.get("X-Admin-Token") or ""
-    expected = current_app.config.get("ADMIN_TOKEN", "")
-    ok = bool(expected and token == expected)
-    if log:
-        if not ok:
-            security_event("admin.auth", "denied", admin_endpoint=req.endpoint, token_present=bool(token))
-        elif req.endpoint not in _ADMIN_QUIET_ENDPOINTS:
-            security_event("admin.action", "success", admin_endpoint=req.endpoint)
-    return ok
-
-
-@agent_chat_bp.route("/admin/claude-auth", methods=["GET"])
-def admin_claude_auth_page():
-    """Admin page for server-wide Claude auth. Token required.
-
-    Gate the HTML itself behind the admin token so anonymous visitors can't
-    discover that admin functionality exists. Returns 404 on unauth to avoid
-    leaking the existence of this route.
-    """
-    from flask import render_template, abort
-    if not _check_admin_token(request):
-        abort(404)
-    return render_template("admin_claude_auth.html")
-
-
-@agent_chat_bp.route("/admin/claude-auth/status", methods=["GET"])
-def admin_claude_auth_status():
-    if not _check_admin_token(request):
-        return {"error": "unauthorized"}, 401
-    os.makedirs(SERVER_CONFIG_DIR, exist_ok=True)
-    try:
-        result = subprocess.run(
-            ["claude", "auth", "status"],
-            capture_output=True, text=True, timeout=10,
-            env={**os.environ, "CLAUDE_CONFIG_DIR": SERVER_CONFIG_DIR},
-        )
-        data = json.loads(result.stdout) if result.stdout.strip() else {}
-        return jsonify(data)
-    except Exception as e:
-        return jsonify({"loggedIn": False, "error": str(e)})
-
-
-@agent_chat_bp.route("/admin/claude-auth/start", methods=["POST"])
-def admin_claude_auth_start():
-    """Start the claude auth login process in background using PTY."""
-    import pty, select
-    if not _check_admin_token(request):
-        return {"error": "unauthorized"}, 401
-
-    with _admin_login["lock"]:
-        # Kill any existing process
-        if _admin_login["proc"] and _admin_login["proc"].poll() is None:
-            _admin_login["proc"].terminate()
-        if _admin_login.get("master_fd"):
-            try:
-                os.close(_admin_login["master_fd"])
-            except OSError:
-                pass
-
-        _admin_login["output"] = []
-        _admin_login["status"] = "waiting"
-        _admin_login["master_fd"] = None
-        os.makedirs(SERVER_CONFIG_DIR, exist_ok=True)
-
-        # Use PTY so the process thinks it has a real terminal
-        master_fd, slave_fd = pty.openpty()
-        proc = subprocess.Popen(
-            ["claude", "auth", "login"],
-            stdin=slave_fd, stdout=slave_fd, stderr=slave_fd,
-            env={**os.environ, "CLAUDE_CONFIG_DIR": SERVER_CONFIG_DIR},
-            close_fds=True,
-        )
-        os.close(slave_fd)  # Parent doesn't need slave end
-        _admin_login["proc"] = proc
-        _admin_login["master_fd"] = master_fd
-
-        # Reader thread — reads PTY output and watches for credentials
-        def reader():
-            creds_path = os.path.join(SERVER_CONFIG_DIR, ".credentials.json")
-            buf = ""
-            for _ in range(300):  # 5 minutes max
-                try:
-                    r, _, _ = select.select([master_fd], [], [], 1.0)
-                    if r:
-                        data = os.read(master_fd, 4096).decode("utf-8", errors="replace")
-                        buf += data
-                        # Split into lines
-                        while "\n" in buf:
-                            line, buf = buf.split("\n", 1)
-                            line = line.strip()
-                            if line:
-                                _admin_login["output"].append(line)
-                        # Also add partial line if it looks complete
-                        if buf.strip() and "\r" in buf:
-                            for part in buf.split("\r"):
-                                part = part.strip()
-                                if part:
-                                    _admin_login["output"].append(part)
-                            buf = ""
-                except OSError:
-                    break
-
-                if os.path.exists(creds_path):
-                    _admin_login["status"] = "success"
-                    _admin_login["output"].append("Authentication successful!")
-                    proc.terminate()
-                    return
-
-                if proc.poll() is not None:
-                    break
-
-            # Final check
-            if os.path.exists(creds_path):
-                _admin_login["status"] = "success"
-                _admin_login["output"].append("Authentication successful!")
-            else:
-                _admin_login["status"] = "failed"
-                _admin_login["output"].append("Timed out waiting for authentication.")
-            if proc.poll() is None:
-                proc.terminate()
-            try:
-                os.close(master_fd)
-            except OSError:
-                pass
-
-        t = threading.Thread(target=reader, daemon=True)
-        t.start()
-
-    return jsonify({"started": True})
-
-
-@agent_chat_bp.route("/admin/claude-auth/poll", methods=["GET"])
-def admin_claude_auth_poll():
-    """Poll for login output. Returns accumulated lines and status."""
-    if not _check_admin_token(request):
-        return {"error": "unauthorized"}, 401
-    return jsonify({
-        "output": _admin_login["output"],
-        "status": _admin_login["status"],
-    })
-
-
-@agent_chat_bp.route("/admin/claude-auth/submit-code", methods=["POST"])
-def admin_claude_auth_submit_code():
-    """Submit the OAuth code from the callback page to the waiting process."""
-    if not _check_admin_token(request):
-        return {"error": "unauthorized"}, 401
-    data = request.get_json(silent=True) or {}
-    code = (data.get("code") or "").strip()
-    if not code:
-        return {"error": "bad_request", "message": "code is required"}, 400
-
-    master_fd = _admin_login.get("master_fd")
-    proc = _admin_login.get("proc")
-    if not proc or proc.poll() is not None or not master_fd:
-        return {"error": "no_process", "message": "No login process running. Click 'Login with Claude' first."}, 400
-
-    try:
-        os.write(master_fd, (code + "\n").encode())
-        _admin_login["output"].append("Code submitted, waiting for verification...")
-        # Give it a moment to process
-        for _ in range(15):
-            time.sleep(1)
-            if os.path.exists(os.path.join(SERVER_CONFIG_DIR, ".credentials.json")):
-                _admin_login["status"] = "success"
-                _admin_login["output"].append("Authentication successful!")
-                proc.terminate()
-                return jsonify({"success": True})
-        return jsonify({"submitted": True, "message": "Code sent. Check status."})
-    except Exception as e:
-        return {"error": "write_error", "message": str(e)}, 500
-
-
-@agent_chat_bp.route("/admin/claude-auth/logout", methods=["POST"])
-def admin_claude_auth_revoke():
-    if not _check_admin_token(request):
-        return {"error": "unauthorized"}, 401
-    creds = os.path.join(SERVER_CONFIG_DIR, ".credentials.json")
-    if os.path.exists(creds):
-        os.unlink(creds)
-    return jsonify({"loggedIn": False})
-
-
-# --- Admin interactive terminal (PTY + polling) ---
-
-_admin_term = {"master_fd": None, "pid": None, "output_buf": b"", "lock": threading.Lock()}
-
-
-@agent_chat_bp.route("/admin/terminal/start", methods=["POST"])
-def admin_terminal_start():
-    """Start an interactive PTY shell session."""
-    import pty as pty_mod
-    if not _check_admin_token(request):
-        return {"error": "unauthorized"}, 401
-
-    with _admin_term["lock"]:
-        # Kill existing session
-        if _admin_term["pid"]:
-            try:
-                os.kill(_admin_term["pid"], 9)
-                os.waitpid(_admin_term["pid"], os.WNOHANG)
-            except (OSError, ChildProcessError):
-                pass
-        if _admin_term["master_fd"]:
-            try:
-                os.close(_admin_term["master_fd"])
-            except OSError:
-                pass
-
-        os.makedirs(SERVER_CONFIG_DIR, exist_ok=True)
-        env = {**os.environ, "CLAUDE_CONFIG_DIR": SERVER_CONFIG_DIR, "TERM": "xterm-256color"}
-        pid, master_fd = pty_mod.fork()
-        if pid == 0:
-            # Child — exec bash
-            os.execvpe("/bin/bash", ["/bin/bash", "--norc", "-i"], env)
-        else:
-            _admin_term["master_fd"] = master_fd
-            _admin_term["pid"] = pid
-            _admin_term["output_buf"] = b""
-
-            # Non-blocking reads
-            import fcntl
-            flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
-            fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
-
-    return jsonify({"started": True})
-
-
-@agent_chat_bp.route("/admin/terminal/input", methods=["POST"])
-def admin_terminal_input():
-    """Send keystrokes to the PTY."""
-    if not _check_admin_token(request):
-        return {"error": "unauthorized"}, 401
-    data = request.get_json(silent=True) or {}
-    keys = data.get("data", "")
-    if not keys or not _admin_term["master_fd"]:
-        return jsonify({"ok": False})
-    try:
-        os.write(_admin_term["master_fd"], keys.encode("utf-8"))
-        return jsonify({"ok": True})
-    except OSError:
-        return jsonify({"ok": False, "error": "session ended"})
-
-
-@agent_chat_bp.route("/admin/terminal/output", methods=["GET"])
-def admin_terminal_output():
-    """Read pending output from the PTY."""
-    if not _check_admin_token(request):
-        return {"error": "unauthorized"}, 401
-    if not _admin_term["master_fd"]:
-        return jsonify({"data": "", "alive": False})
-    try:
-        data = os.read(_admin_term["master_fd"], 8192)
-        alive = True
-    except BlockingIOError:
-        data = b""
-        alive = True
-    except OSError:
-        data = b""
-        alive = False
-    return jsonify({"data": data.decode("utf-8", errors="replace"), "alive": alive})
-
-
-@agent_chat_bp.route("/admin/terminal/stop", methods=["POST"])
-def admin_terminal_stop():
-    """Kill the PTY session."""
-    if not _check_admin_token(request):
-        return {"error": "unauthorized"}, 401
-    with _admin_term["lock"]:
-        if _admin_term["pid"]:
-            try:
-                os.kill(_admin_term["pid"], 9)
-                os.waitpid(_admin_term["pid"], os.WNOHANG)
-            except (OSError, ChildProcessError):
-                pass
-            _admin_term["pid"] = None
-        if _admin_term["master_fd"]:
-            try:
-                os.close(_admin_term["master_fd"])
-            except OSError:
-                pass
-            _admin_term["master_fd"] = None
-    return jsonify({"stopped": True})

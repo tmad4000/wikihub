@@ -192,9 +192,9 @@ def regenerate_public_mirror(username, slug, acl_rules=None):
     if not head:
         return
 
-    # list all files in HEAD
+    # list all regular files in HEAD (symlinks are never mirrored)
     try:
-        ls_output = _git(auth_repo, "ls-tree", "-r", "--name-only", "HEAD")
+        mirror_paths = [path for mode, path in list_tree_entries(auth_repo) if mode != GIT_SYMLINK_MODE]
     except subprocess.CalledProcessError:
         return
 
@@ -202,7 +202,7 @@ def regenerate_public_mirror(username, slug, acl_rules=None):
     env = {"GIT_INDEX_FILE": idx}
 
     try:
-        for filepath in ls_output.split("\n"):
+        for filepath in mirror_paths:
             filepath = filepath.strip()
             if not filepath:
                 continue
@@ -383,14 +383,37 @@ def read_file_bytes_from_repo(username, slug, file_path, public=False):
         return None
 
 
+GIT_SYMLINK_MODE = "120000"
+
+
+def list_tree_entries(repo_path, rev="HEAD"):
+    """Return [(mode, path)] for every blob-like entry in `rev` (recursive).
+    Raises CalledProcessError if the rev is not readable."""
+    output = _git_bytes(repo_path, "ls-tree", "-r", "-z", rev)
+    entries = []
+    for record in output.split(b"\0"):
+        if not record:
+            continue
+        meta, _, path = record.partition(b"\t")
+        mode = meta.split(b" ", 1)[0].decode("ascii", errors="replace")
+        entries.append((mode, path.decode("utf-8", errors="surrogateescape")))
+    return entries
+
+
+def symlink_paths_in_tree(repo_path, rev):
+    """Paths in `rev` stored as symbolic links (git mode 120000). WikiHub
+    content is plain files only; pushes containing symlinks are rejected by
+    the pre-receive hook and any that exist are skipped when indexing."""
+    return [path for mode, path in list_tree_entries(repo_path, rev) if mode == GIT_SYMLINK_MODE]
+
+
 def list_files_in_repo(username, slug, public=False):
-    """list all files in HEAD of a bare repo."""
+    """list all regular files in HEAD of a bare repo (symlinks excluded)."""
     repo = _repo_path(username, slug, public=public)
     if not os.path.isdir(repo):
         return []
     try:
-        output = _git(repo, "ls-tree", "-r", "--name-only", "HEAD")
-        return [f.strip() for f in output.split("\n") if f.strip()]
+        return [path for mode, path in list_tree_entries(repo) if mode != GIT_SYMLINK_MODE and path.strip()]
     except subprocess.CalledProcessError:
         return []
 
