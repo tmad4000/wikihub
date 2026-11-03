@@ -17,7 +17,7 @@ choosing canonical URLs in templates).
 
 from typing import Callable, Iterable
 
-from app.subdomains import resolve_host
+from app.subdomains import resolve_host, site_for_host
 
 # prefixes that never get rewritten, even when Host is a mapped wiki host.
 # these are always routed globally (login, api, agent surfaces, static assets).
@@ -104,26 +104,5 @@ class SubdomainMiddleware:
         return self.wsgi_app(environ, start_response)
 
     def _prefix_for(self, resolved) -> str:
-        kind, name = resolved
-        if kind == "user":
-            return f"/@{name}"
-        if kind == "wiki":
-            # need to look up owner to build /@owner/slug prefix
-            from app.models import Wiki, User
-            wiki = Wiki.query.filter(Wiki.subdomain == name).first()
-            if not wiki:
-                return ""
-            owner = User.query.get(wiki.owner_id)
-            if not owner:
-                return ""
-            return f"/@{owner.username}/{wiki.slug}"
-        if kind == "custom":
-            from app.models import CustomDomain, User
-            domain = CustomDomain.query.filter_by(hostname=name).first()
-            if not domain or not domain.wiki:
-                return ""
-            owner = User.query.get(domain.wiki.owner_id)
-            if not owner:
-                return ""
-            return f"/@{owner.username}/{domain.wiki.slug}"
-        return ""
+        site = site_for_host(*resolved)
+        return site["prefix"] if site else ""

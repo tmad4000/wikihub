@@ -10935,6 +10935,8 @@ def run_all():
             ("templates keep user values out of inline JS (wikihub-l1w4)", lambda: test_templates_do_not_interpolate_user_values_into_inline_js(app, client, key)),
             ("concurrent repo writes keep every commit (wikihub-xkmk)", lambda: test_concurrent_repo_writes_keep_every_commit(app, client, key)),
             # READER_SIDEBAR_TESTS
+            ("subdomain nav shows site identity (wikihub-m0pr)", lambda: test_subdomain_nav_identity(app, client)),
+            ("custom domain footer mark (wikihub-m0pr)", lambda: test_custom_domain_footer_mark(client)),
             ("sidebar Home row (wikihub-e8pj)", lambda: test_sidebar_home_row(client, key)),
             ("sidebar custom order file (wikihub-hnfm)", lambda: test_sidebar_custom_order_file(client, key)),
             ("sidebar custom order rest marker (wikihub-hnfm)", lambda: test_sidebar_custom_order_rest_marker(client, key)),
@@ -11790,6 +11792,71 @@ def test_sidebar_custom_sort_client_matches_server(client, key):
     env = dict(os.environ, CUSTOM_TREE=json.dumps(custom), AUTO_TREE=json.dumps(auto))
     r = subprocess.run(["node", "-e", _SIDEBAR_SORT_NODE], cwd=repo_root, env=env, text=True, capture_output=True)
     assert r.returncode == 0, r.stderr or r.stdout
+
+
+
+def _nav_html(html):
+    start = html.index('<nav class="nav"')
+    return html[start:html.index("</nav>", start)]
+
+
+def _nav_top_bar(html):
+    """Top-bar links only: the nav minus its account dropdown."""
+    nav = _nav_html(html)
+    i = nav.find('class="nav-account-menu"')
+    return nav if i < 0 else nav[:i]
+
+
+def test_subdomain_nav_identity(app, client):
+    """wikihub-m0pr: on a user/wiki subdomain the left slot is the site's own
+    identity (href "/"), a small [[wikihub]] mark links to the apex, and
+    platform links leave the top bar; the apex nav is unchanged."""
+    key = _make_account(client, "navsite")
+    h = {"Authorization": f"Bearer {key}"}
+    r = client.post("/api/v1/wikis", json={"slug": "garden", "title": "Garden Notes"}, headers=h)
+    assert r.status_code == 201
+    r = client.patch("/api/v1/wikis/navsite/garden", json={"subdomain": "gardennotes"}, headers=h)
+    assert r.status_code == 200, r.get_data(as_text=True)
+
+    for host, title in [("navsite.wikihub.md", "navsite"), ("gardennotes.wikihub.md", "Garden Notes")]:
+        html = _get(client, "/", headers={"Host": host}).get_data(as_text=True)
+        top = _nav_top_bar(html)
+        assert re.search(r'<a href="/" class="nav-site"[^>]*>', top), f"{host}: site identity link missing"
+        assert title in top and host in top, f"{host}: site title/host missing from top bar"
+        assert 'href="https://wikihub.md/"' in top, f"{host}: platform mark missing"
+        assert 'href="/explore"' not in top and 'href="/people"' not in top, f"{host}: platform links still in top bar"
+        assert 'class="nav-logo"' not in top
+
+    browser = app.test_client()
+    r = browser.post("/auth/login", data={"username": "navsite", "password": "testpass12345"},
+                     headers={"Host": "gardennotes.wikihub.md"}, follow_redirects=False)
+    assert r.status_code == 302, r.status_code
+    nav = _nav_html(_get(browser, "/", headers={"Host": "gardennotes.wikihub.md"}).get_data(as_text=True))
+    menu = nav[nav.index('class="nav-account-menu"'):]
+    assert 'href="/explore"' in menu and 'href="/@navsite"' in menu, "signed-in users keep WikiHub links + profile in the account menu"
+
+    apex = _nav_top_bar(_get(client, "/").get_data(as_text=True))
+    assert 'class="nav-logo"' in apex and 'href="/explore"' in apex and "nav-site" not in apex
+    assert 'href="https://wikihub.md/"' not in apex
+
+
+def test_custom_domain_footer_mark(client):
+    """wikihub-m0pr: a custom domain credits WikiHub in the footer, not in the nav."""
+    key = _make_account(client, "navcustom")
+    h = {"Authorization": f"Bearer {key}"}
+    r = client.post("/api/v1/wikis", json={"slug": "docs", "title": "Custom Docs"}, headers=h)
+    assert r.status_code == 201
+    _put_page(client, key, "navcustom", "docs", "index.md", "---\ntitle: Custom Docs\nvisibility: public\n---\n\n# Custom Docs\n")
+    wiki = Wiki.query.filter_by(slug="docs", owner_id=User.query.filter_by(username="navcustom").first().id).first()
+    db.session.add(CustomDomain(wiki_id=wiki.id, hostname="docs.navcustom-example.com", status="active",
+                                verification_token="navcustom-token", tls_status="active"))
+    db.session.commit()
+    html = _get(client, "/", headers={"Host": "docs.navcustom-example.com"}).get_data(as_text=True)
+    top = _nav_top_bar(html)
+    assert "Custom Docs" in top and 'class="nav-site"' in top
+    assert "nav-platform-mark" not in top, "custom domains do not show the platform mark in the nav"
+    footer = html[html.rindex("<footer"):]
+    assert "Published with" in footer and "https://wikihub.md/" in footer
 
 
 if __name__ == "__main__":

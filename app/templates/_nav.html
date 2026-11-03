@@ -1,14 +1,28 @@
 <nav class="nav" data-nav-root>
+  {% if site_host %}
+  <a href="/" class="nav-site" aria-label="{{ site_host.title }} home" title="{{ site_host.title }} home">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+    <span class="nav-site-title">{{ site_host.title }}</span>
+    <span class="nav-site-host">{{ site_host.host }}</span>
+  </a>
+  {% else %}
   <a href="/" class="nav-logo"><span class="bracket">[[</span><span class="wordmark">wikihub</span><span class="bracket">]]</span></a>
+  {% endif %}
   <button class="search-trigger" onclick="wikihubSearch && wikihubSearch.open()" aria-label="Search">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
     <span class="search-label-text">Search</span> <kbd>&#8984;K</kbd>
   </button>
   <div class="nav-spacer"></div>
+  {% if site_host %}
+  {% if site_host.kind != 'custom' %}
+  <a href="{{ site_host.platform_url }}" class="nav-platform-mark" title="Go to WikiHub" aria-label="Go to WikiHub"><span class="bracket">[[</span>wikihub<span class="bracket">]]</span></a>
+  {% endif %}
+  {% else %}
   <a href="/explore" class="nav-link nav-hide-narrow">Explore</a>
   <a href="/activity" class="nav-link nav-hide-mobile">Activity</a>
   <a href="/people" class="nav-link nav-hide-mobile">People</a>
   <a href="/agents" class="nav-link nav-agents nav-hide-mobile">For Agents</a>
+  {% endif %}
   <button
     type="button"
     class="nav-menu-toggle"
@@ -40,7 +54,7 @@
     </svg>
   </button>
   {% if current_user and current_user.is_authenticated %}
-    <a href="/@{{ current_user.username }}" class="nav-link nav-hide-mobile">My Wiki</a>
+    {% if not site_host %}<a href="/@{{ current_user.username }}" class="nav-link nav-hide-mobile">My Wiki</a>{% endif %}
     <div class="nav-account" data-account-menu>
       <button
         type="button"
@@ -64,6 +78,12 @@
           <span>View profile</span>
           <span class="menu-hint">home</span>
         </a>
+        {% if site_host %}
+        <div class="nav-account-group" role="presentation">WikiHub</div>
+        <a href="/explore" class="nav-account-item" role="menuitem"><span>Explore</span></a>
+        <a href="/people" class="nav-account-item" role="menuitem"><span>People</span></a>
+        <a href="/activity" class="nav-account-item" role="menuitem"><span>Activity</span></a>
+        {% endif %}
         <a href="/shared" class="nav-account-item" role="menuitem">
           <span>Shared</span>
           <span class="menu-hint">access</span>
@@ -97,6 +117,10 @@
         <line x1="6" y1="6" x2="18" y2="18"/>
       </svg>
     </button>
+    {% if site_host %}
+    <a href="/" class="nav-mobile-item" role="menuitem">{{ site_host.title }} home</a>
+    {% if site_host.kind != 'custom' %}<a href="{{ site_host.platform_url }}" class="nav-mobile-item" role="menuitem">WikiHub</a>{% endif %}
+    {% endif %}
     <a href="/explore" class="nav-mobile-item" role="menuitem">Explore</a>
     <a href="/activity" class="nav-mobile-item" role="menuitem">Activity</a>
     <a href="/people" class="nav-mobile-item" role="menuitem">People</a>

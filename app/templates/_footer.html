@@ -1,6 +1,11 @@
 <footer style="border-top:1px solid var(--border-default);padding:24px 16px 16px;text-align:center;">
   <div style="font-family:var(--font-mono);font-size:0.8125rem;margin-bottom:6px;">
+    {% if site_host and site_host.kind == 'custom' %}
+    {# wikihub-m0pr: external custom domains credit the platform here, not in the nav. #}
+    <a href="{{ site_host.platform_url }}" class="footer-published-with" style="text-decoration:none;color:var(--text-muted);">Published with <span style="color:var(--text-muted);">[[</span><span style="color:var(--text-secondary);">wikihub</span><span style="color:var(--text-muted);">]]</span></a>
+    {% else %}
     <span style="color:var(--text-muted);">[[</span><span style="color:var(--text-secondary);">wikihub</span><span style="color:var(--text-muted);">]]</span>
+    {% endif %}
   </div>
   <div style="font-size:0.6875rem;color:var(--text-muted);font-family:var(--font-mono);display:flex;justify-content:center;gap:8px;flex-wrap:wrap;">
     <a href="/explore" style="color:var(--text-muted);text-decoration:none;">explore</a>

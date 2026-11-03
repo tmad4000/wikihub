@@ -155,3 +155,38 @@ def resolve_host(host: str) -> Optional[Tuple[str, str]]:
     if wiki:
         return ("wiki", wiki.subdomain)
     return None
+
+
+def site_for_host(kind: str, name: str) -> Optional[dict]:
+    """Describe the site a mapped host serves (wikihub-m0pr).
+
+    Shared by SubdomainMiddleware (path prefix) and the nav context processor
+    (site identity in the top bar). Returns None when the mapping no longer
+    resolves to a live user/wiki.
+    """
+    from app.models import CustomDomain
+
+    if kind == "user":
+        user = User.query.filter_by(username=name).first()
+        if not user:
+            return None
+        return {
+            "kind": "user", "name": name, "prefix": f"/@{user.username}",
+            "title": user.display_name or user.username,
+        }
+    if kind == "wiki":
+        wiki = Wiki.query.filter(Wiki.subdomain == name).first()
+    elif kind == "custom":
+        domain = CustomDomain.query.filter_by(hostname=name).first()
+        wiki = domain.wiki if domain else None
+    else:
+        return None
+    if not wiki:
+        return None
+    owner = db.session.get(User, wiki.owner_id)
+    if not owner:
+        return None
+    return {
+        "kind": kind, "name": name, "prefix": f"/@{owner.username}/{wiki.slug}",
+        "title": wiki.title or wiki.slug,
+    }

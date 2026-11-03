@@ -167,6 +167,38 @@ def create_app(config_class="config.Config"):
             "ideaflow_login_enabled": ideaflow_oidc_enabled(app.config),
         }
 
+    @app.context_processor
+    def inject_site_host():
+        # wikihub-m0pr: on a user/wiki/custom host the top bar shows that
+        # site's identity (left, links to "/" = the site's home) and a small
+        # [[wikihub]] mark to the platform apex. None on the apex itself.
+        from flask import has_request_context, request as _request
+        if not has_request_context():
+            return {"site_host": None}
+        kind = _request.environ.get("wikihub.host_kind")
+        name = _request.environ.get("wikihub.host_name")
+        if not kind or not name:
+            return {"site_host": None}
+        cache = _request.environ.get("wikihub.site_host")
+        if cache is None:
+            from app.subdomains import site_for_host
+            try:
+                cache = site_for_host(kind, name) or {}
+            except Exception:
+                cache = {}
+            if cache:
+                from app.subdomains import CANONICAL_SUFFIX, LOCAL_SUFFIX
+                host = (_request.host or "").split(":")[0].lower()
+                if host.endswith(CANONICAL_SUFFIX):
+                    platform_url = "https://" + CANONICAL_SUFFIX.lstrip(".") + "/"
+                elif host.endswith(LOCAL_SUFFIX):
+                    platform_url = _request.scheme + "://" + LOCAL_SUFFIX.lstrip(".") + "/"
+                else:
+                    platform_url = "https://" + CANONICAL_SUFFIX.lstrip(".") + "/"
+                cache = dict(cache, host=host, platform_url=platform_url)
+            _request.environ["wikihub.site_host"] = cache
+        return {"site_host": cache or None}
+
     os.makedirs(app.config["REPOS_DIR"], exist_ok=True)
 
     with app.app_context():
