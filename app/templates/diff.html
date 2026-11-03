@@ -1,6 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ commit.message if commit else sha[:12] }} — {{ wiki.title or wiki.slug }} — wikihub{% include "_sidebar_tree_styles.css.html" %}
-{% endblock %}
+{% block title %}{{ commit.message if commit else sha[:12] }} — {{ wiki.title or wiki.slug }} — wikihub{% endblock %}
 
 {% block extra_css %}
 .diff-shell { display: flex; min-height: calc(100vh - 56px); }
@@ -68,6 +67,7 @@
 .diff-line.hunk { background: var(--bg-elevated); color: var(--accent); padding: 4px 16px; border-top: 1px solid var(--border-default); }
 .diff-line.meta { color: var(--text-muted); }
 .diff-line.ctx { color: var(--text-secondary); }
+{% include "_sidebar_tree_styles.css.html" %}
 {% endblock %}
 
 {% block body %}

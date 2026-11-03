@@ -1,6 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ page.title or page.path }} — {{ wiki.title or wiki.slug }} — wikihub{% include "_sidebar_tree_styles.css.html" %}
-{% endblock %}
+{% block title %}{{ page.title or page.path }} — {{ wiki.title or wiki.slug }} — wikihub{% endblock %}
 {% block og_title %}{{ page.title or page.path }} — {{ wiki.title or wiki.slug }}{% endblock %}
 {% block og_desc %}{{ page.excerpt or wiki.description or '' }}{% endblock %}
 {% block meta_desc %}{{ page.excerpt or wiki.description or '' }}{% endblock %}
@@ -665,6 +664,7 @@ a:hover + .peek-trigger, a:focus-visible + .peek-trigger,
   font-size: 0.75rem; font-family: var(--font-body); white-space: nowrap; flex-shrink: 0;
 }
 .qr-copy-btn:hover { color: var(--accent); background: var(--accent-subtle); }
+{% include "_sidebar_tree_styles.css.html" %}
 {% endblock %}
 
 {% block body %}
@@ -1280,7 +1280,8 @@ document.addEventListener('click', function(e) {
 // --- Sidebar sort (shared: app/static/js/sidebar-sort.js) ---
 const sidebarSort = window.WikihubSidebar.init({
   scope: sidebarStorageScope,
-  custom: {{ 'true' if sidebar_custom else 'false' }},
+  // Rendered by sidebar_sort_buttons(); block-scoped Jinja vars don't reach here.
+  custom: !!(document.querySelector('#sidebar .sidebar-sort') && document.querySelector('#sidebar .sidebar-sort').dataset.custom === '1'),
   container: document.querySelector('#sidebar .sidebar-sort'),
   buttons: Array.from(document.querySelectorAll('#sidebar .sidebar-sort-btn')),
   tree: function() { return document.getElementById('sidebar-tree'); },

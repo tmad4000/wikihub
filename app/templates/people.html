@@ -80,7 +80,7 @@
       <div class="person-meta">
         {% if person.sort_meta %}<span class="person-sort-meta">{{ person.sort_meta }}</span>{% endif %}
         <span>{{ person.project_count }} public {{ 'wiki' if person.project_count == 1 else 'wikis' }}</span>
-        <span>{{ person.total_stars }} stars</span>
+        {% if sort != 'stars' %}<span>{{ person.total_stars }} {{ 'star' if person.total_stars == 1 else 'stars' }}</span>{% endif %}
         <span>{{ 'Personal wiki published' if person.profile_is_public else 'Personal wiki private' }}</span>
       </div>
       <div class="person-wikis">

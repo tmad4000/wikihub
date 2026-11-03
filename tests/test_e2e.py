@@ -11523,6 +11523,10 @@ def test_sidebar_home_row(client, key):
     assert m.group(1) == "/@agent1/home-row" and not m.group(2), f"Home row on deep page: {m.group(0)}"
     assert html.index("sidebar-home") < html.index('id="sidebar-tree"'), "Home row must sit outside/above #sidebar-tree"
     assert "sidebar-home" not in _sidebar_tree_html(html), "Home row must not be inside the sortable tree"
+    title = re.search(r"<title>(.*?)</title>", html, re.S).group(1)
+    assert "{" not in title and "sidebar" not in title, f"sidebar CSS leaked into <title>: {title[:120]}"
+    style = html[html.index("<style"):html.index("</style>")]
+    assert ".sidebar-home {" in style, "shared sidebar CSS must be inside the page stylesheet"
 
     html = _get(client, "/@agent1/home-row").get_data(as_text=True)
     m = home_re.search(html)
@@ -11570,6 +11574,9 @@ def test_sidebar_custom_order_file(client, key):
     assert "Other pages" in _sidebar_tree_html(html), "rest under groups gets the 'Other pages' kicker"
     assert 'data-order="0"' in html, "rows carry data-order"
     assert re.search(r'class="sidebar-sort-btn active" data-sort="custom"', html), "Custom sort button rendered and active"
+    # The sort init must learn "custom" from the rendered control (a block-scoped
+    # Jinja flag once rendered `custom: false` and the client re-sorted A→Z).
+    assert "dataset.custom === '1'" in html and "custom: false" not in html
 
     r = _get(client, "/@agent1/nav-order/sidebar.json")
     assert r.headers.get("X-Wikihub-Sidebar-Custom") == "1"

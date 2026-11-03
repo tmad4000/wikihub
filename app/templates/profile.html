@@ -1,6 +1,5 @@
 {% extends "base.html" %}
-{% block title %}@{{ owner.username }} — wikihub{% include "_sidebar_tree_styles.css.html" %}
-{% endblock %}
+{% block title %}@{{ owner.username }} — wikihub{% endblock %}
 
 {% block extra_css %}
 .profile-shell { display: flex; min-height: calc(100vh - 56px); }
@@ -185,6 +184,7 @@
   border: 1px dashed var(--border-emphasis); border-radius: var(--radius-md);
   padding: 16px 18px; color: var(--text-secondary); background: rgba(255,255,255,0.01);
 }
+{% include "_sidebar_tree_styles.css.html" %}
 {% endblock %}
 
 {% block body %}
@@ -402,7 +402,8 @@ document.addEventListener('click', function(e) {
 {% if personal_wiki %}
 window.WikihubSidebar.init({
   scope: {{ (owner.username ~ '/' ~ personal_wiki.slug) | tojson }},
-  custom: {{ 'true' if sidebar_custom else 'false' }},
+  // Rendered by sidebar_sort_buttons(); block-scoped Jinja vars don't reach here.
+  custom: !!(document.querySelector('.profile-sidebar .sidebar-sort') && document.querySelector('.profile-sidebar .sidebar-sort').dataset.custom === '1'),
   container: document.querySelector('.profile-sidebar .sidebar-sort'),
   buttons: Array.from(document.querySelectorAll('.profile-sidebar .sidebar-sort .sidebar-sort-btn')),
   tree: function() { return document.getElementById('sidebar-tree'); },

@@ -1,6 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ wiki.title or wiki.slug }} — wikihub{% include "_sidebar_tree_styles.css.html" %}
-{% endblock %}
+{% block title %}{{ wiki.title or wiki.slug }} — wikihub{% endblock %}
 
 {% block extra_css %}
 {% include "_article_styles.css.html" %}
@@ -61,6 +60,7 @@
 .history-card:hover { border-color: var(--border-accent); }
 .history-meta { display: flex; gap: 12px; flex-wrap: wrap; font-size: 0.75rem; color: var(--text-muted); font-family: var(--font-mono); margin-bottom: 8px; }
 .private-band-warning { margin-bottom: 20px; padding: 12px 14px; border: 1px solid rgba(212, 160, 74, 0.2); background: rgba(212, 160, 74, 0.08); border-radius: var(--radius-md); color: var(--text-secondary); font-size: 0.8125rem; line-height: 1.5; }
+{% include "_sidebar_tree_styles.css.html" %}
 {% endblock %}
 
 {% block body %}
@@ -295,7 +295,8 @@ requestAnimationFrame(() => {
 // --- Sidebar sort (shared: app/static/js/sidebar-sort.js) ---
 const sidebarSort = window.WikihubSidebar.init({
   scope: sidebarStorageScope,
-  custom: {{ 'true' if sidebar_custom else 'false' }},
+  // Rendered by sidebar_sort_buttons(); block-scoped Jinja vars don't reach here.
+  custom: !!(document.querySelector('.sidebar .sidebar-sort') && document.querySelector('.sidebar .sidebar-sort').dataset.custom === '1'),
   container: document.querySelector('.sidebar .sidebar-sort'),
   buttons: Array.from(document.querySelectorAll('.sidebar .sidebar-sort-btn')),
   tree: function() { return document.getElementById('sidebar-tree'); },
