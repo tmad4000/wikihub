@@ -6,7 +6,7 @@ from datetime import timezone
 from urllib.parse import quote, unquote, urlparse
 from sqlalchemy.orm import defer
 
-from flask import Response, abort, jsonify, redirect, render_template, request, url_for
+from flask import Response, abort, current_app, jsonify, redirect, render_template, request, url_for
 
 from app.url_utils import page_path_from_url_path, url_path_from_page_path
 from flask_login import current_user
@@ -393,6 +393,21 @@ def _visible_files(username, slug, wiki, public=False, acl_filter_user=None, pag
         pages_by_path: Pre-loaded {path: Page} dict to avoid duplicate DB queries.
     """
     files = list_files_in_repo(username, slug, public=public)
+    if not public and (acl_filter_user or _is_owner(wiki)):
+        # Authoritative-repo viewers (owner / ACL grantee): union git with the
+        # DB page index (wikihub-325p). The DB is the derived index of git, so
+        # in a healthy repo this adds nothing; when the authoritative repo is
+        # unreadable (permissions, dangling HEAD, moved dir) git returns []
+        # and the owner used to see "(none yet)" while the API reported pages.
+        # Git still contributes non-markdown assets that have no Page row.
+        # Only the real owner (no filtering needed) or an ACL grantee (every
+        # path still gated by can_read below) gets the union; a public=False
+        # call for anyone else never gains DB-only pages. The public-mirror
+        # branch is deliberately NOT unioned: the mirror is the no-leak
+        # boundary for anonymous viewers.
+        if pages_by_path is None:
+            pages_by_path = {p.path: p for p in _content_pages(_content_pages_query(wiki))}
+        files = list(dict.fromkeys(list(files) + [path for path in pages_by_path if is_content_page_path(path)]))
     if not public and not acl_filter_user:
         # owner view — everything
         return [path for path in files if not path.startswith(".wikihub/") and not path.endswith(".gitkeep")]
@@ -400,8 +415,6 @@ def _visible_files(username, slug, wiki, public=False, acl_filter_user=None, pag
     if acl_filter_user:
         # non-owner with ACL grants — read authoritative repo, filter by can_read
         acl_rules = load_acl_rules(username, slug)
-        if pages_by_path is None:
-            pages_by_path = {p.path: p for p in _content_pages(_content_pages_query(wiki))}
         return [
             path
             for path in files
@@ -426,6 +439,31 @@ def _visible_files(username, slug, wiki, public=False, acl_filter_user=None, pag
         and not path.endswith(".gitkeep")
         and can_read(path, acl_rules, None, (pages_by_path[path].visibility if path in pages_by_path else None))
     ]
+
+
+def _owner_content_fallback(owner, wiki, page):
+    """Owner-only degraded read when the authoritative repo is unreadable.
+
+    wikihub-325p: a Page row exists (the DB index knows the page) but git
+    returned nothing for the owner. Prefer the public mirror's copy (present
+    for public/unlisted pages); otherwise render the indexed excerpt with an
+    explicit notice. Either way log a warning so ops learn the repo is broken
+    instead of the owner seeing a silent 404.
+    """
+    current_app.logger.warning(
+        "authoritative repo read failed for %s/%s:%s; serving owner fallback",
+        owner.username, wiki.slug, page.path,
+    )
+    content = read_file_from_repo(owner.username, wiki.slug, page.path, public=True)
+    if content is not None:
+        return content
+    excerpt = (page.excerpt or "").strip()
+    notice = (
+        "> **This page's stored content could not be read right now.** "
+        "Only the indexed excerpt is shown. The wiki's repository may need repair; "
+        "the problem has been logged.\n\n"
+    )
+    return notice + (excerpt + "\n" if excerpt else "")
 
 
 def _folder_url(username, slug, folder_path):
@@ -1054,6 +1092,10 @@ def user_profile(username):
     if personal_wiki:
         use_public = not is_owner
         _, personal_content = _folder_index_content(owner.username, personal_wiki.slug, "", public=use_public, wiki=personal_wiki)
+        if personal_content is None and is_owner:
+            # wikihub-325p: authoritative repo unreadable → the mirror's copy
+            # of a public index is still better than an empty profile.
+            _, personal_content = _folder_index_content(owner.username, personal_wiki.slug, "", public=True, wiki=personal_wiki)
         if personal_content:
             personal_rendered_html = render_page(personal_content, owner.username, personal_wiki.slug)
             personal_sidebar = _build_sidebar_tree(owner.username, personal_wiki.slug, personal_wiki, public=use_public, current_path="index.md")
@@ -2160,6 +2202,8 @@ def wiki_page(username, slug, page_path):
         unindexed_vis = resolve_visibility(file_path, acl_rules, unindexed_frontmatter.get("visibility"))
         if not can_read(file_path, acl_rules, user_name, unindexed_vis):
             content = None
+    if content is None and page is not None and is_owner:
+        content = _owner_content_fallback(owner, wiki, page)
     if content is None:
         # wikihub-3rjt: agent-friendly content negotiation on miss. If the
         # client asked for markdown (or used a .md URL without HTML Accept),

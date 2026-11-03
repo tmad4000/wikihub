@@ -15,6 +15,7 @@ import contextlib
 import fcntl
 import os
 import json
+import logging
 import subprocess
 import tempfile
 from datetime import datetime, timezone
@@ -492,14 +493,36 @@ def symlink_paths_in_tree(repo_path, rev):
     return [path for mode, path in list_tree_entries(repo_path, rev) if mode == GIT_SYMLINK_MODE]
 
 
+logger = logging.getLogger(__name__)
+_reported_repo_failures = set()
+
+
+def _report_repo_failure(repo, reason):
+    """Warn (once per process per repo+reason) that a repo could not be listed.
+
+    wikihub-325p: list_files_in_repo used to return [] silently for a missing
+    or unreadable repo, so an owner whose authoritative repo broke saw an empty
+    profile/sidebar with nothing in the logs. Callers still get [] (they
+    tolerate it), but ops now get a line naming the repo.
+    """
+    key = (repo, reason)
+    if key in _reported_repo_failures:
+        return
+    _reported_repo_failures.add(key)
+    logger.warning("git ls-tree failed for %s: %s", repo, reason)
+
+
 def list_files_in_repo(username, slug, public=False):
     """list all regular files in HEAD of a bare repo (symlinks excluded)."""
     repo = _repo_path(username, slug, public=public)
     if not os.path.isdir(repo):
+        _report_repo_failure(repo, "repository directory missing")
         return []
     try:
         return [path for mode, path in list_tree_entries(repo) if mode != GIT_SYMLINK_MODE and path.strip()]
-    except subprocess.CalledProcessError:
+    except subprocess.CalledProcessError as e:
+        stderr = e.stderr.decode("utf-8", "replace") if isinstance(e.stderr, bytes) else (e.stderr or "")
+        _report_repo_failure(repo, stderr.strip() or f"exit {e.returncode}")
         return []
 
 

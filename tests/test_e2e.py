@@ -10701,6 +10701,8 @@ def run_all():
             ("service worker never caches signed-in HTML (wikihub-miq4)", lambda: test_service_worker_never_caches_signed_in_html(app, client, key)),
             ("templates keep user values out of inline JS (wikihub-l1w4)", lambda: test_templates_do_not_interpolate_user_values_into_inline_js(app, client, key)),
             ("concurrent repo writes keep every commit (wikihub-xkmk)", lambda: test_concurrent_repo_writes_keep_every_commit(app, client, key)),
+            # READER_SIDEBAR_TESTS
+            ("profile owner sees pages when auth repo unreadable (wikihub-325p)", lambda: test_profile_owner_sees_pages_when_auth_repo_unreadable(app, client)),
         ]
 
         passed = 1  # account creation already passed
@@ -11117,6 +11119,111 @@ def test_anonymous_search_total_filters_normalized_plumbing(client, key):
     data = r.get_json()
     assert data["results"] == [], "normalized plumbing row must not become searchable"
     assert data["total"] == 0, "search total must not count normalized plumbing rows"
+
+
+# ---------------------------------------------------------------------------
+# Reader + sidebar (design 2026-11-03): wikihub-325p, wikihub-9i28,
+# wikihub-e8pj, wikihub-hnfm (+9c8j), wikihub-m0pr, wikihub-hnp4
+# ---------------------------------------------------------------------------
+
+def _make_account(client, username, password="testpass12345"):
+    r = client.post("/api/v1/accounts", json={"username": username, "password": password})
+    assert r.status_code == 201, f"{username} creation: {r.status_code} {r.get_data(as_text=True)[:200]}"
+    return r.get_json()["api_key"]
+
+
+def _login_browser(app, username, password="testpass12345"):
+    browser = app.test_client()
+    r = browser.post("/auth/login", data={"username": username, "password": password}, follow_redirects=False)
+    assert r.status_code == 302, f"{username} login: {r.status_code}"
+    return browser
+
+
+def _get(browser, url, **kwargs):
+    """GET with the cached Flask-Login user dropped first: the runner holds one
+    app context for every request, so g._login_user would otherwise leak from
+    the previous client (owner) into the next (anonymous)."""
+    from flask import g as _g
+    _g.pop("_login_user", None)
+    return browser.get(url, **kwargs)
+
+
+def _put_page(client, key, owner, slug, path, content, visibility="public"):
+    h = {"Authorization": f"Bearer {key}"}
+    r = client.post(f"/api/v1/wikis/{owner}/{slug}/pages", json={
+        "path": path, "content": content, "visibility": visibility,
+    }, headers=h)
+    assert r.status_code == 201, f"create {path}: {r.status_code} {r.get_data(as_text=True)[:200]}"
+
+
+def _profile_pages_section(html):
+    m = re.search(r'<h2[^>]*>Pages</h2>(.*?)(?:<h2[^>]*>Wikis</h2>|$)', html, re.S)
+    assert m, "profile PAGES section missing"
+    return m.group(1)
+
+
+def test_profile_owner_sees_pages_when_auth_repo_unreadable(app, client):
+    """wikihub-325p: owner profile said "(none yet)" while anonymous viewers saw
+    pages, because the owner reads the authoritative repo and a git failure
+    there returned [] silently. The owner surface must union the DB index, log
+    the failure, and keep pages readable; the anonymous mirror is unchanged."""
+    import logging
+    from app import git_sync
+    from app.git_sync import _repo_path, list_files_in_repo
+
+    key = _make_account(client, "repobroken")
+    _put_page(client, key, "repobroken", "repobroken", "Charities.md",
+              "---\ntitle: Charities\nvisibility: public\n---\n\n# Charities\n\nGiveDirectly body text.\n")
+    _put_page(client, key, "repobroken", "repobroken", "SecretLedger.md",
+              "---\ntitle: SecretLedger\nvisibility: private\n---\n\n# SecretLedger\n\nPrivate notes body.\n", visibility="private")
+
+    owner_browser = _login_browser(app, "repobroken")
+    anon = app.test_client()
+
+    r = _get(owner_browser, "/@repobroken")
+    assert r.status_code == 200
+    pages = _profile_pages_section(r.get_data(as_text=True))
+    assert "Charities" in pages and "SecretLedger" in pages, "healthy owner profile lists both pages"
+
+    auth_repo = _repo_path("repobroken", "repobroken", public=False)
+    head = os.path.join(auth_repo, "HEAD")
+    os.rename(head, head + ".bak")
+    try:
+        records = []
+
+        class _Capture(logging.Handler):
+            def emit(self, record):
+                records.append(record.getMessage())
+
+        handler = _Capture(level=logging.WARNING)
+        git_logger = logging.getLogger("app.git_sync")
+        git_logger.addHandler(handler)
+        git_sync._reported_repo_failures.clear()
+        try:
+            assert list_files_in_repo("repobroken", "repobroken", public=False) == []
+        finally:
+            git_logger.removeHandler(handler)
+        assert any(auth_repo in msg for msg in records), f"git failure must be logged with the repo path: {records}"
+
+        r = _get(owner_browser, "/@repobroken")
+        assert r.status_code == 200
+        html = r.get_data(as_text=True)
+        pages = _profile_pages_section(html)
+        assert "(none yet)" not in pages, "owner must not see (none yet) when the DB knows pages"
+        assert "Charities" in pages and "SecretLedger" in pages, f"owner profile lists both pages from the DB index: {pages[:400]}"
+
+        r = _get(anon, "/@repobroken")
+        assert r.status_code == 200
+        anon_html = r.get_data(as_text=True)
+        assert "Charities" in anon_html, "anonymous mirror still lists the public page"
+        _i = anon_html.find("SecretLedger")
+        assert _i < 0, "anonymous must not see the private page: " + anon_html[max(0, _i - 300):_i + 100]
+
+        r = _get(owner_browser, "/@repobroken/repobroken/Charities")
+        assert r.status_code == 200, f"owner page read must fall back, got {r.status_code}"
+        assert "GiveDirectly body text." in r.get_data(as_text=True)
+    finally:
+        os.rename(head + ".bak", head)
 
 
 if __name__ == "__main__":
