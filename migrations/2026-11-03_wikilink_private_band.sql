@@ -1,0 +1,21 @@
+-- wikihub-oorq / private sections: hide wikilinks that live inside owner-only
+-- private bands (<!-- private --> ... <!-- /private -->) from non-owner
+-- backlinks and graphs.
+--
+-- Why: refresh_wikilinks_for_page indexes every [[link]] in the stored file,
+-- including links inside private bands. Without this flag a band linking
+-- [[food/Tea]] showed the band's page as a backlink on Tea to everyone.
+--
+-- The app also runs this ALTER idempotently at startup (app/__init__.py), so
+-- applying it by hand is optional. Existing rows default to FALSE; run the
+-- reindex backfill (see migrations/2026-11-03_private_band_reindex.sql) to
+-- recompute flags, excerpts and search vectors for existing pages.
+--
+-- Apply (production, GCP):
+--   gcloud compute scp migrations/2026-11-03_wikilink_private_band.sql wikihub-prod:/tmp/ --project=wikihub-prod --zone=us-east1-b --tunnel-through-iap \
+--     && gcloud compute ssh wikihub-prod --project=wikihub-prod --zone=us-east1-b --tunnel-through-iap \
+--          --command='sudo -u postgres psql -d wikihub -f /tmp/2026-11-03_wikilink_private_band.sql'
+--
+-- Idempotent: safe to re-run.
+
+ALTER TABLE wikilinks ADD COLUMN IF NOT EXISTS in_private_band BOOLEAN NOT NULL DEFAULT FALSE;

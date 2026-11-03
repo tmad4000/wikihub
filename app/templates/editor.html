@@ -269,7 +269,7 @@
   {% endif %}
 
   <div class="editor-statusbar">
-    <span>Markdown</span>
+    <span>Markdown{% if is_owner %} <span title="Cmd/Ctrl+Shift+P wraps lines in a private section (only you can see it)">· ⌘⇧P private</span>{% endif %}</span>
     <span class="status-pill" id="save-status">Ready</span>
     <span id="line-count"></span>
   </div>
@@ -523,7 +523,13 @@ async function saveExistingPage(mode) {
       window.location.href = '/@' + editorConfig.owner + '/' + editorConfig.slug + '/' + targetPath.replace(/\.md$/, '').split('/').map(encodeURIComponent).join('/');
       return;
     }
-    if (response.status === 409) {
+    if (response.status === 409 && data.reason === 'private_bands') {
+      // The owner's private sections overlap this edit; the server saved it as
+      // a suggestion instead of writing (nothing is lost).
+      setBanner(data.message || 'Saved as a suggestion.', data.proposal_url ? [
+        {label: 'View suggestion', onClick: () => { window.location.href = data.proposal_url; }, primary: true},
+      ] : [], 'conflict');
+    } else if (response.status === 409) {
       const remote = await readRemotePage(editorConfig.initialPath);
       editorState.pendingRemote = remote;
       setBanner(
@@ -737,6 +743,30 @@ ta.addEventListener('keydown', function(event) {
     closeWikilinkMenu();
   }
 });
+
+// Private sections (Markdown tab): Cmd/Ctrl+Shift+P wraps the selected lines
+// (or the current line) in owner-only <!-- private --> markers, each on its
+// own line. Owner only: non-owners never receive bands.
+function wrapSelectionInPrivateSection() {
+  const value = ta.value;
+  const lineStart = value.lastIndexOf('\n', ta.selectionStart - 1) + 1;
+  let lineEnd = value.indexOf('\n', Math.max(ta.selectionEnd - (ta.selectionEnd > ta.selectionStart ? 1 : 0), ta.selectionStart));
+  if (lineEnd === -1) lineEnd = value.length;
+  const block = value.slice(lineStart, lineEnd);
+  const wrapped = '<!-- private -->\n' + block + '\n<!-- /private -->';
+  ta.setRangeText(wrapped, lineStart, lineEnd, 'end');
+  ta.selectionStart = lineStart + '<!-- private -->\n'.length;
+  ta.selectionEnd = ta.selectionStart + block.length;
+  ta.dispatchEvent(new Event('input', {bubbles: true}));
+}
+if (editorConfig.isOwner) {
+  ta.addEventListener('keydown', function(event) {
+    if ((event.metaKey || event.ctrlKey) && event.shiftKey && (event.key === 'p' || event.key === 'P')) {
+      event.preventDefault();
+      wrapSelectionInPrivateSection();
+    }
+  });
+}
 
 ta.addEventListener('input', function() {
   updateLineCount();

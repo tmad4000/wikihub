@@ -10213,6 +10213,412 @@ def test_nav_header_nowrap(client):
     assert "@media (max-width: 480px)" in body, "narrow-width nav breakpoint must exist"
 
 
+# ---------------------------------------------------------------------------
+# Private bands ("private sections"): owner-only <!-- private --> regions.
+# One regression per leak path from the 2026-11-03 audit (wikihub-oorq).
+# ---------------------------------------------------------------------------
+
+_BAND_NOTES = (
+    "---\ntitle: Band Notes\nvisibility: public-edit\n---\n"
+    "# Notes\n\npublic intro\n\n"
+    "<!-- private -->\n## Secret heading\n\n- SECRETTOKEN alpha [[band-target]]\n<!-- /private -->\n\n"
+    "public outro\n"
+)
+_BAND_STATE = {}
+
+
+def _band_req(c, method, url, **kw):
+    """Issue a request with a clean flask-login cache (tests share one app
+    context, so g._login_user would otherwise leak between clients)."""
+    from flask import g as _flask_g
+    _flask_g.pop("_login_user", None)
+    _write_timestamps.clear()
+    _ip_write_timestamps.clear()
+    return getattr(c, method)(url, **kw)
+
+
+def _band_browser(app, api_key=None):
+    c = app.test_client()
+    if api_key:
+        r = _band_req(c, "get", f"/auth/login?api_key={api_key}&next=/", follow_redirects=False)
+        assert r.status_code == 302, f"login failed: {r.status_code}"
+    return c
+
+
+def _assert_no_band(text, where):
+    assert "SECRETTOKEN" not in text, f"{where}: band text leaked"
+    assert "Secret heading" not in text, f"{where}: band heading leaked"
+    assert "<!-- private" not in text and "&lt;!-- private" not in text, f"{where}: band marker leaked"
+
+
+def _band_fixture(client, api_key):
+    """wiki agent1/bands: notes.md (public-edit) with one band, band-target.md
+    (public), granted.md (private, read-granted to bandreader). Resets notes.md
+    to the canonical content on every call."""
+    app = client.application
+    h = {"Authorization": f"Bearer {api_key}"}
+    if not _BAND_STATE:
+        r = _band_req(client, "post", "/api/v1/wikis", json={"slug": "bands", "title": "Bands"}, headers=h)
+        assert r.status_code == 201, r.data
+        for path, vis, body in [
+            ("notes.md", "public-edit", _BAND_NOTES),
+            ("band-target.md", "public", "---\ntitle: Band Target\nvisibility: public\n---\n# Band Target\n"),
+            ("granted.md", "private", "---\ntitle: Granted\nvisibility: private\n---\n# Granted\n\nshared line\n\n<!-- private -->\nGRANTEDSECRET\n<!-- /private -->\n"),
+        ]:
+            r = _band_req(client, "post", "/api/v1/wikis/agent1/bands/pages", json={"path": path, "content": body, "visibility": vis}, headers=h)
+            assert r.status_code == 201, r.data
+        for name in ("bandreader", "bandeditor"):
+            r = _band_req(app.test_client(), "post", "/api/v1/accounts", json={"username": name})
+            assert r.status_code == 201, r.data
+            _BAND_STATE[name] = r.get_json()["api_key"]
+        acl = "* private\nnotes.md @bandreader:read\ngranted.md @bandreader:read\nnotes.md @bandeditor:edit\n"
+        r = _band_req(client, "post", "/api/v1/wikis/agent1/bands/pages", json={"path": ".wikihub/acl", "content": acl}, headers=h)
+        assert r.status_code in (200, 201), r.data
+    r = _band_req(client, "put", "/api/v1/wikis/agent1/bands/pages/notes.md", json={"content": _BAND_NOTES}, headers=h)
+    assert r.status_code == 200, r.data
+    return h
+
+
+def test_private_bands_owner_render(client, api_key):
+    _band_fixture(client, api_key)
+    owner = _band_browser(client.application, api_key)
+    r = _band_req(owner, "get", "/@agent1/bands/notes")
+    assert r.status_code == 200
+    body = r.get_data(as_text=True)
+    assert 'class="private-band"' in body, "owner should see the labelled band"
+    assert "Private · only you" in body
+    assert "SECRETTOKEN" in body
+    assert "&lt;!-- private" not in body, "owner must not see the raw marker as text"
+    assert "This page has sections visible only to editors" not in body, "old banner removed"
+    # TOC lock for the private heading (rendered when >= 3 headings; check extract_toc directly)
+    from app.renderer import extract_toc, render_page
+    toc = extract_toc(render_page(_BAND_NOTES, mark_private_bands=True))
+    assert any(text == "Secret heading" and private for _, _, text, private in toc), toc
+    r = _band_req(owner, "get", "/@agent1/bands/notes", headers={"Accept": "text/markdown"})
+    assert "<!-- private -->" in r.get_data(as_text=True), "owner raw markdown keeps markers verbatim"
+
+
+def test_private_bands_anon_reader_surfaces(client, api_key):
+    _band_fixture(client, api_key)
+    anon = client.application.test_client()
+    checks = {
+        "reader html": ("get", "/@agent1/bands/notes", {}),
+        "fragment": ("get", "/@agent1/bands/notes?fragment=1", {}),
+        "text/markdown": ("get", "/@agent1/bands/notes", {"headers": {"Accept": "text/markdown"}}),
+        ".md url": ("get", "/@agent1/bands/notes.md", {"headers": {"Accept": "text/markdown"}}),
+        "api json": ("get", "/api/v1/wikis/agent1/bands/pages/notes.md", {}),
+        "api markdown": ("get", "/api/v1/wikis/agent1/bands/pages/notes.md", {"headers": {"Accept": "text/markdown"}}),
+        "wiki llms-full": ("get", "/@agent1/bands/llms-full.txt", {}),
+        "site llms-full": ("get", "/llms-full.txt", {}),
+    }
+    for where, (method, url, kw) in checks.items():
+        r = _band_req(anon, method, url, **kw)
+        assert r.status_code == 200, f"{where}: {r.status_code}"
+        text = r.get_data(as_text=True)
+        _assert_no_band(text, where)
+        assert 'class="private-band' not in text and "Private · only you" not in text, f"{where}: band wrapper leaked"
+        if where != "site llms-full" and where != "wiki llms-full":
+            assert "public outro" in text, f"{where}: public text missing"
+    data = _band_req(anon, "get", "/api/v1/wikis/agent1/bands/pages/notes.md").get_json()
+    _assert_no_band(data["excerpt"] or "", "api excerpt")
+
+
+def test_private_bands_search_and_excerpt(client, api_key):
+    _band_fixture(client, api_key)
+    app = client.application
+    anon = app.test_client()
+    r = _band_req(anon, "get", "/api/v1/search?q=SECRETTOKEN")
+    assert r.get_json()["total"] == 0, "band words must not be searchable"
+    r = _band_req(anon, "get", "/api/v1/search?q=SECRETTOKEN", headers={"Authorization": f"Bearer {_BAND_STATE['bandreader']}"})
+    assert r.get_json()["total"] == 0, "grantee search must not hit band words"
+    r = _band_req(anon, "get", "/api/v1/search?q=outro&scope=wiki&wiki=agent1/bands")
+    hits = [res for res in r.get_json()["results"] if res.get("path") == "notes.md"] or r.get_json()["results"]
+    assert hits, "public words remain searchable"
+    for res in hits:
+        _assert_no_band(json.dumps(res), "search result")
+    r = _band_req(anon, "get", "/@agent1/bands/notes")
+    meta = re.findall(r'<meta[^>]+(?:description)[^>]*>', r.get_data(as_text=True))
+    for tag in meta:
+        _assert_no_band(tag, "meta description")
+    # Owner search over band words is a documented v1 limitation (index is band-free).
+    r = _band_req(anon, "get", "/api/v1/search?q=SECRETTOKEN", headers={"Authorization": f"Bearer {api_key}"})
+    assert r.get_json()["total"] == 0
+
+
+def test_private_bands_acl_grantee_stripped(client, api_key):
+    _band_fixture(client, api_key)
+    reader = _band_browser(client.application, _BAND_STATE["bandreader"])
+    for url in ("/@agent1/bands/notes", "/@agent1/bands/granted", "/@agent1/bands/granted?fragment=1"):
+        r = _band_req(reader, "get", url)
+        assert r.status_code == 200, f"{url}: {r.status_code}"
+        text = r.get_data(as_text=True)
+        _assert_no_band(text, f"grantee {url}")
+        assert "GRANTEDSECRET" not in text, f"grantee {url}: band on private page leaked"
+    r = _band_req(reader, "get", "/@agent1/bands/granted")
+    assert "shared line" in r.get_data(as_text=True), "grantee still reads the granted private page"
+    hb = {"Authorization": f"Bearer {_BAND_STATE['bandreader']}"}
+    for path in ("notes.md", "granted.md"):
+        r = _band_req(client.application.test_client(), "get", f"/api/v1/wikis/agent1/bands/pages/{path}", headers=hb)
+        assert r.status_code == 200, r.data
+        text = r.get_data(as_text=True)
+        _assert_no_band(text, f"grantee api {path}")
+        assert "GRANTEDSECRET" not in text
+    r = _band_req(reader, "get", "/@agent1/bands/sidebar.json")
+    assert "notes.md" in r.get_data(as_text=True) or "notes" in r.get_data(as_text=True), "sidebar still lists the page"
+
+
+def test_private_bands_editor_and_suggest_do_not_load_bands(client, api_key):
+    _band_fixture(client, api_key)
+    anon = client.application.test_client()
+    for url in ("/@agent1/bands/notes/edit", "/@agent1/bands/-/suggest/notes.md"):
+        r = _band_req(anon, "get", url)
+        assert r.status_code == 200, f"{url}: {r.status_code}"
+        text = r.get_data(as_text=True)
+        _assert_no_band(text, f"anon {url}")
+        assert "public outro" in text
+    owner = _band_browser(client.application, api_key)
+    r = _band_req(owner, "get", "/@agent1/bands/notes/edit")
+    assert "SECRETTOKEN" in r.get_data(as_text=True), "owner editor loads the band"
+
+
+def _band_owner_content(client, api_key):
+    r = _band_req(client.application.test_client(), "get", "/api/v1/wikis/agent1/bands/pages/notes.md",
+                  headers={"Authorization": f"Bearer {api_key}", "Accept": "text/markdown"})
+    return r.get_data(as_text=True)
+
+
+def test_private_bands_survive_non_owner_edit(client, api_key):
+    from app.models import Proposal
+    _band_fixture(client, api_key)
+    anon = client.application.test_client()
+    shown = _band_req(anon, "get", "/api/v1/wikis/agent1/bands/pages/notes.md").get_json()["content"]
+    _assert_no_band(shown, "edit base")
+    r = _band_req(anon, "post", "/@agent1/bands/notes/edit", data={"content": shown.replace("public outro", "public outro edited")})
+    assert r.status_code == 302, f"merge edit: {r.status_code}"
+    full = _band_owner_content(client, api_key)
+    assert "public outro edited" in full, "edit applied"
+    assert "<!-- private -->" in full and "SECRETTOKEN" in full, "band survived non-owner edit"
+    # A rewrite that overlaps the band cannot merge: 409 + suggestion, page unchanged.
+    before = Proposal.query.count()
+    r = _band_req(anon, "post", "/@agent1/bands/notes/edit", data={"content": "# Rewritten\n\nall new text\n"})
+    assert r.status_code == 409, f"conflicting edit should 409, got {r.status_code}"
+    assert Proposal.query.count() == before + 1, "conflicting edit saved as a suggestion"
+    proposal = Proposal.query.order_by(Proposal.id.desc()).first()
+    for revision in proposal.revisions:
+        for patch in revision.patches:
+            _assert_no_band(patch.base_content, "conflict proposal base")
+    assert "SECRETTOKEN" in _band_owner_content(client, api_key), "stored page unchanged by conflicting edit"
+
+
+def test_private_bands_api_write_paths(client, api_key):
+    _band_fixture(client, api_key)
+    he = {"Authorization": f"Bearer {_BAND_STATE['bandeditor']}"}
+    c = client.application.test_client()
+    shown = _band_req(c, "get", "/api/v1/wikis/agent1/bands/pages/notes.md", headers=he).get_json()["content"]
+    _assert_no_band(shown, "editor api read")
+    r = _band_req(c, "put", "/api/v1/wikis/agent1/bands/pages/notes.md", headers=he,
+                  json={"content": shown.replace("public intro", "public intro via put")})
+    assert r.status_code == 200, r.data
+    _assert_no_band(r.get_data(as_text=True), "put response")
+    full = _band_owner_content(client, api_key)
+    assert "public intro via put" in full and "SECRETTOKEN" in full, "PUT merged around the band"
+    r = _band_req(c, "patch", "/api/v1/wikis/agent1/bands/pages/notes.md", headers=he,
+                  json={"append_section": {"heading": "Appended", "content": "appended line"}})
+    assert r.status_code == 200, r.data
+    full = _band_owner_content(client, api_key)
+    assert "appended line" in full and "SECRETTOKEN" in full, "append keeps the band"
+    r = _band_req(c, "patch", "/api/v1/wikis/agent1/bands/pages/notes.md", headers=he,
+                  json={"content": shown.replace("public outro", "public outro via patch")})
+    assert r.status_code == 200, r.data
+    assert "SECRETTOKEN" in _band_owner_content(client, api_key), "PATCH content merged around the band"
+    r = _band_req(c, "put", "/api/v1/wikis/agent1/bands/pages/notes.md", headers=he, json={"content": "# Replaced\n"})
+    assert r.status_code == 409, f"conflicting PUT should 409, got {r.status_code}"
+    data = r.get_json()
+    assert data["reason"] == "private_bands" and data["proposal_id"], data
+    _assert_no_band(r.get_data(as_text=True), "409 body")
+    assert "SECRETTOKEN" in _band_owner_content(client, api_key)
+
+
+def test_private_bands_suggest_accept_merges(client, api_key):
+    from app.models import Proposal
+    _band_fixture(client, api_key)
+    anon = client.application.test_client()
+    shown = _band_req(anon, "get", "/api/v1/wikis/agent1/bands/pages/notes.md").get_json()["content"]
+    r = _band_req(anon, "post", "/@agent1/bands/-/suggest/notes.md",
+                  data={"content": shown.replace("public intro", "public intro suggested"), "title": "band suggestion"})
+    assert r.status_code == 302, r.status_code
+    proposal = Proposal.query.filter_by(title="band suggestion").order_by(Proposal.id.desc()).first()
+    assert proposal is not None
+    owner = _band_browser(client.application, api_key)
+    r = _band_req(owner, "post", f"/@agent1/bands/-/proposals/{proposal.id}/accept")
+    assert r.status_code == 302, r.status_code
+    assert "conflict=1" not in r.headers.get("Location", ""), r.headers.get("Location")
+    full = _band_owner_content(client, api_key)
+    assert "public intro suggested" in full, "suggestion applied"
+    assert "SECRETTOKEN" in full, "band survived accepted suggestion"
+
+
+def test_private_bands_agent_chat_context(client, api_key):
+    import tempfile
+    from app.routes import agent_chat as ac
+    _band_fixture(client, api_key)
+    app = client.application
+    reader = User.query.filter_by(username="bandreader").first()
+    owner = User.query.filter_by(username="agent1").first()
+    # Captured system prompt for a non-owner vs the owner.
+    captured = []
+    original = ac._build_system_prompt
+    ac._build_system_prompt = lambda *a, **kw: captured.append(a[4]) or original(*a, **kw)
+    app.config["CURATOR_ENABLED"] = True
+    try:
+        for key in (_BAND_STATE["bandreader"], api_key):
+            # No LLM key is configured in tests, so the request ends after the
+            # system prompt is built; only the captured prompt matters here.
+            _band_req(app.test_client(), "post", "/api/v1/agent/chat",
+                      json={"message": "hi", "context": {"owner": "agent1", "wiki": "bands", "page_path": "notes.md"}},
+                      headers={"Authorization": f"Bearer {key}"})
+    finally:
+        ac._build_system_prompt = original
+        app.config["CURATOR_ENABLED"] = False
+    assert len(captured) >= 2, f"system prompt not built: {len(captured)}"
+    _assert_no_band(captured[0], "non-owner curator prompt")
+    assert "SECRETTOKEN" in captured[-1], "owner curator prompt includes the band"
+    # Tool layer: non-owner read_file/search_content never see band text.
+    with tempfile.TemporaryDirectory() as work_dir:
+        session = _make_curator_session(app, work_dir, "agent1", "bands", "bandreader", reader.id)
+        out = ac._execute_tool("read_file", {"path": "agent1/bands/notes.md"}, session)
+        _assert_no_band(out, "curator read_file")
+        assert "public outro" in out
+        out = ac._execute_tool("search_content", {"query": "SECRETTOKEN"}, session)
+        assert out.startswith("No matches found"), f"curator search leaked: {out}"
+        out = ac._execute_tool("search_content", {"query": "outro"}, session)
+        assert "public outro" in out, f"curator search lost public text: {out}"
+    with tempfile.TemporaryDirectory() as work_dir:
+        session = _make_curator_session(app, work_dir, "agent1", "bands", "agent1", owner.id)
+        out = ac._execute_tool("read_file", {"path": "agent1/bands/notes.md"}, session)
+        assert "SECRETTOKEN" in out, "owner curator read_file includes the band"
+
+
+def test_private_bands_history_and_diff(client, api_key):
+    _band_fixture(client, api_key)
+    app = client.application
+    owner = _band_browser(app, api_key)
+    body = _band_req(owner, "get", "/@agent1/bands/notes/history").get_data(as_text=True)
+    shas = list(dict.fromkeys(re.findall(r"\b[0-9a-f]{40}\b", body)))
+    assert shas, "owner history lists commits"
+    r = _band_req(owner, "get", f"/@agent1/bands/commit/{shas[0]}")
+    assert r.status_code == 200
+    anon = app.test_client()
+    reader = _band_browser(app, _BAND_STATE["bandreader"])
+    for who, c in (("anon", anon), ("grantee", reader)):
+        for url in ("/@agent1/bands/history", "/@agent1/bands/notes/history", "/api/v1/wikis/agent1/bands/history"):
+            r = _band_req(c, "get", url)
+            _assert_no_band(r.get_data(as_text=True), f"{who} {url}")
+        for sha in shas[:3]:
+            r = _band_req(c, "get", f"/@agent1/bands/commit/{sha}")
+            _assert_no_band(r.get_data(as_text=True), f"{who} authoritative commit {sha[:8]}")
+        mirror_shas = re.findall(r"\b[0-9a-f]{40}\b", _band_req(c, "get", "/@agent1/bands/history").get_data(as_text=True))
+        for sha in mirror_shas[:2]:
+            r = _band_req(c, "get", f"/@agent1/bands/commit/{sha}")
+            _assert_no_band(r.get_data(as_text=True), f"{who} mirror commit {sha[:8]}")
+    r = _band_req(app.test_client(), "get", "/api/v1/wikis/agent1/bands/history",
+                  headers={"Authorization": f"Bearer {_BAND_STATE['bandreader']}"})
+    _assert_no_band(r.get_data(as_text=True), "grantee api history")
+
+
+def test_private_bands_mirror_zip_clone_fork(client, api_key):
+    from app.git_backend import _repo_path
+    _band_fixture(client, api_key)
+    app = client.application
+    r = _band_req(app.test_client(), "get", "/@agent1/bands.zip")
+    assert r.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(r.data)) as zf:
+        names = [n for n in zf.namelist() if n.endswith("notes.md")]
+        assert names, zf.namelist()
+        _assert_no_band(zf.read(names[0]).decode(), "anon zip")
+    pub = _repo_path("agent1", "bands", public=True)
+    shown = subprocess.run(["git", "-C", pub, "show", "HEAD:notes.md"], capture_output=True, text=True, check=True).stdout
+    _assert_no_band(shown, "public mirror")
+    assert "public outro" in shown
+    count = subprocess.run(["git", "-C", pub, "rev-list", "--count", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+    assert count == "1", f"mirror must be a parentless snapshot, got {count} commits"
+    r = _band_req(app.test_client(), "post", "/api/v1/wikis/agent1/bands/fork",
+                  headers={"Authorization": f"Bearer {_BAND_STATE['bandreader']}"})
+    assert r.status_code in (200, 201), r.data
+    forked = subprocess.run(["git", "-C", _repo_path("bandreader", "bands"), "show", "HEAD:notes.md"], capture_output=True, text=True)
+    _assert_no_band(forked.stdout, "fork")
+
+
+def test_private_bands_mirror_fail_closed(client, api_key):
+    import app.git_sync as gs
+    from app.git_backend import _repo_path
+    from app.renderer import render_page
+    _band_fixture(client, api_key)
+    original = gs.strip_private_bands
+
+    def boom(_content):
+        raise RuntimeError("stripper exploded")
+
+    gs.strip_private_bands = boom
+    try:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            gs.regenerate_public_mirror("agent1", "bands", [])
+        assert "notes.md" in buf.getvalue(), "regen should warn about the skipped file"
+    finally:
+        gs.strip_private_bands = original
+    pub = _repo_path("agent1", "bands", public=True)
+    listing = subprocess.run(["git", "-C", pub, "ls-tree", "-r", "--name-only", "HEAD"], capture_output=True, text=True).stdout
+    assert "notes.md" not in listing, "fail closed: unstrippable file must be absent from the mirror"
+    from app.wiki_ops import load_acl_rules
+    gs.regenerate_public_mirror("agent1", "bands", load_acl_rules("agent1", "bands"))
+    # Defence in depth: render_page strips when not told to mark bands.
+    _assert_no_band(render_page(_BAND_NOTES), "render_page default")
+
+
+def test_private_bands_wikilinks_hidden(client, api_key):
+    _band_fixture(client, api_key)
+    app = client.application
+    anon = app.test_client()
+    r = _band_req(anon, "get", "/api/v1/wikis/agent1/bands/pages/band-target.md?include=backlinks")
+    assert all(b["path"] != "notes.md" for b in r.get_json()["backlinks"]), "anon backlinks expose band link"
+    r = _band_req(anon, "get", "/api/v1/wikis/agent1/bands/pages/band-target.md/backlinks")
+    assert all(b["path"] != "notes.md" for b in r.get_json()["backlinks"])
+    r = _band_req(anon, "get", "/@agent1/bands/band-target/graph.json")
+    assert "Band Notes" not in r.get_data(as_text=True), "anon graph exposes band link"
+    r = _band_req(anon, "get", "/@agent1/bands/notes/graph.json")
+    assert "Band Target" not in r.get_data(as_text=True), "anon outgoing graph exposes band link"
+    r = _band_req(anon, "get", "/@agent1/bands/graph.json")
+    assert not any(l for l in r.get_json().get("links", [])), "anon full graph exposes band edge"
+    h = {"Authorization": f"Bearer {api_key}"}
+    r = _band_req(app.test_client(), "get", "/api/v1/wikis/agent1/bands/pages/band-target.md?include=backlinks", headers=h)
+    assert any(b["path"] == "notes.md" for b in r.get_json()["backlinks"]), "owner keeps band backlinks"
+
+
+def test_private_bands_unclosed_and_protected(client, api_key):
+    h = _band_fixture(client, api_key)
+    app = client.application
+    body = ("---\ntitle: Edge\nvisibility: public\n---\n# Edge\n\nvisible start\n\n"
+            "```\n<!-- private -->\nliteral code\n```\n\nafter code\n\n"
+            "<!-- private @alice -->\nUNCLOSEDSECRET to the end\n\nmore hidden\n")
+    r = _band_req(client, "post", "/api/v1/wikis/agent1/bands/pages", json={"path": "edge.md", "content": body, "visibility": "public"}, headers=h)
+    if r.status_code == 409:
+        r = _band_req(client, "put", "/api/v1/wikis/agent1/bands/pages/edge.md", json={"content": body}, headers=h)
+    assert r.status_code in (200, 201), r.data
+    anon = app.test_client()
+    html = _band_req(anon, "get", "/@agent1/bands/edge").get_data(as_text=True)
+    assert "UNCLOSEDSECRET" not in html and "more hidden" not in html, "unclosed band strips to EOF"
+    assert "&lt;!-- private --&gt;" in html and "literal code" in html, "marker inside code is literal"
+    assert "after code" in html
+
+
+def test_private_bands_agent_surface_docs(client):
+    anon = client.application.test_client()
+    for url in ("/agents", "/llms.txt", "/AGENTS.md"):
+        text = _band_req(anon, "get", url).get_data(as_text=True)
+        assert "<!-- private -->" in text or "&lt;!-- private --&gt;" in text, f"{url} documents private sections"
+
+
 def run_all():
     app = setup()
 
@@ -10405,6 +10811,21 @@ def run_all():
             ("global activity rows avoid nested anchors", lambda: test_global_activity_rows_do_not_nest_anchors(client, key)),
             ("global activity pagination", lambda: test_activity_pagination(client, key)),
             ("anonymous search total filters normalized plumbing", lambda: test_anonymous_search_total_filters_normalized_plumbing(client, key)),
+            ("private bands: owner render + label (wikihub-oorq)", lambda: test_private_bands_owner_render(client, key)),
+            ("private bands: anon reader surfaces stripped", lambda: test_private_bands_anon_reader_surfaces(client, key)),
+            ("private bands: search + excerpt band-free", lambda: test_private_bands_search_and_excerpt(client, key)),
+            ("private bands: ACL grantee stripped", lambda: test_private_bands_acl_grantee_stripped(client, key)),
+            ("private bands: editor/suggest forms band-free", lambda: test_private_bands_editor_and_suggest_do_not_load_bands(client, key)),
+            ("private bands: survive non-owner web edit / 409", lambda: test_private_bands_survive_non_owner_edit(client, key)),
+            ("private bands: API write paths merge / 409", lambda: test_private_bands_api_write_paths(client, key)),
+            ("private bands: accepted suggestion merges", lambda: test_private_bands_suggest_accept_merges(client, key)),
+            ("private bands: curator context + tools", lambda: test_private_bands_agent_chat_context(client, key)),
+            ("private bands: history + diff", lambda: test_private_bands_history_and_diff(client, key)),
+            ("private bands: mirror/zip/clone/fork", lambda: test_private_bands_mirror_zip_clone_fork(client, key)),
+            ("private bands: mirror fail closed", lambda: test_private_bands_mirror_fail_closed(client, key)),
+            ("private bands: wikilinks hidden", lambda: test_private_bands_wikilinks_hidden(client, key)),
+            ("private bands: unclosed + code-protected", lambda: test_private_bands_unclosed_and_protected(client, key)),
+            ("private bands: agent surface docs", lambda: test_private_bands_agent_surface_docs(client)),
         ]
 
         passed = 1  # account creation already passed

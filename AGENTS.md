@@ -95,7 +95,9 @@ host (`ubuntu@54.145.123.7`) — that's historical. Production is GCP now.
 
 ## key invariants
 
-- **git is source of truth for public content.** Postgres is derived index. private pages live in Postgres only.
+- **git is source of truth for public content.** Postgres is derived index. Private pages and private bands live in the authoritative repo (`repos/<user>/<slug>.git`, served only to the owner); the public mirror, the DB `excerpt`/`search_vector`, and every non-owner read surface are band-stripped. Any new read surface must go through `content_for_viewer` / `read_file_for_viewer` (`app/content_utils.py`, `app/git_sync.py`).
+- **private bands are owner-only.** `<!-- private -->` … `<!-- /private -->` regions are visible to the wiki owner and nobody else (ACL grantees and public-edit editors included). Non-owner surfaces never contain `<!-- private` or band text: reader HTML/fragment/markdown, API JSON, excerpts, search, hover cards, llms-full.txt, editor/suggest forms, proposal rows, agent-chat context and tools, history/diff (non-owners read mirror history), zip, clone, fork, backlinks/graph (`wikilinks.in_private_band`). Unclosed band = private to EOF; mirror regeneration skips a file whose stripping fails (fail closed); `render_page(..., mark_private_bands=False)` strips as defence in depth. Regression: `test_private_bands_*`.
+- **non-owner writes are 3-way merged around private bands** (`app/private_bands.py`, `git merge-file`): base = band-stripped current, ours = owner's full content, theirs = submission. Clean merge → write; conflict → no write, HTTP 409 `{"error":"conflict","reason":"private_bands"}` and the submission is saved as a pending suggestion. Accepting a suggestion whose base was stripped merges the same way. Never strip markers from a submission.
 - **DB→git sync does NOT fire hooks.** this prevents infinite sync loops.
 - **two repos per wiki:** `repos/<user>/<slug>.git` (authoritative) + `repos/<user>/<slug>-public.git` (derived mirror).
 - **frontmatter visibility wins over ACL file** (most specific wins).

@@ -44,6 +44,11 @@ KEY INVARIANTS
 - Visibilities are: public, public-edit, private, unlisted. Frontmatter
   wins over ACL file — setting page-level visibility overrides the wiki
   default.
+- Private sections: wrap lines in <!-- private --> ... <!-- /private -->
+  (each marker on its own line) to keep them visible only to the wiki
+  owner; they are removed for everyone else, including search, excerpts,
+  history, clones, and exports. A non-owner edit that cannot be merged
+  around them returns 409 (reason private_bands) and becomes a suggestion.
 - Set frontmatter pinned: true to float a readable page to the top of the
   wiki sidebar. Pinning is metadata only; it never grants read access and
   there is no dedicated pinning tool.
