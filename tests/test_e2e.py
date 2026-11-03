@@ -1452,6 +1452,133 @@ def _ideaflow_oauth(app, userinfo, state="fake-ideaflow-state"):
             delattr(auth_routes.oauth, "ideaflow")
 
 
+@contextlib.contextmanager
+def _capture_security_events():
+    """Collect the JSON lines emitted on the "security" logger."""
+    import logging
+
+    lines = []
+
+    class _Collector(logging.Handler):
+        def emit(self, record):
+            lines.append(record.getMessage())
+
+    handler = _Collector(level=logging.INFO)
+    logger = logging.getLogger("security")
+    logger.addHandler(handler)
+    try:
+        yield lines
+    finally:
+        logger.removeHandler(handler)
+
+
+def test_login_rate_limit_ignores_spoofed_forwarded_for_and_logs_security_events(app, client):
+    """Security: the login limiter must key on the trusted client address.
+    Behind nginx the trusted address is the RIGHTMOST X-Forwarded-For entry
+    (nginx appends it; ProxyFix x_for=1 uses it). Rotating the client-supplied
+    leftmost entries must not open a fresh bucket. Every attempt also emits a
+    security_event JSON line without the password, raw email, or API key."""
+    from app.routes.auth import _LOGIN_MAX_PER_IP, _login_attempts
+
+    real_ip = "203.0.113.7"
+    secret_password = "hunter2-do-not-log"
+    with _preserve_login_rate_limit_state(), _capture_security_events() as lines:
+        _login_attempts.clear()
+        browser = app.test_client()
+        statuses = []
+        for i in range(_LOGIN_MAX_PER_IP + 1):
+            r = browser.post(
+                "/auth/login",
+                data={"username": "nobody-here", "password": secret_password},
+                headers={"X-Forwarded-For": f"10.9.{i}.1, {real_ip}", "User-Agent": "seclog-test"},
+            )
+            statuses.append(r.status_code)
+        assert statuses[:-1] == [401] * _LOGIN_MAX_PER_IP, statuses
+        assert statuses[-1] == 429, f"rotating the spoofed leftmost X-Forwarded-For bypassed the limiter: {statuses[-1]}"
+        assert set(_login_attempts) == {real_ip}, f"limiter keys must be the trusted IP only: {list(_login_attempts)}"
+
+        # A different real client is unaffected by that bucket.
+        r = app.test_client().post(
+            "/auth/login",
+            data={"username": "nobody-here", "password": secret_password},
+            headers={"X-Forwarded-For": f"{real_ip}, 198.51.100.4"},
+        )
+        assert r.status_code == 401
+
+        events = [json.loads(line) for line in lines]
+        failures = [e for e in events if e["security_event"] == "auth.signin" and e["outcome"] == "failure"]
+        assert len(failures) == _LOGIN_MAX_PER_IP + 1
+        assert failures[0]["ip"] == real_ip and failures[0]["ua"] == "seclog-test"
+        assert failures[0]["path"] == "/auth/login" and failures[0]["reason"] == "unknown_user"
+        assert failures[-1]["ip"] == "198.51.100.4"
+        limited = [e for e in events if e["security_event"] == "rate_limit"]
+        assert len(limited) == 1 and limited[0]["outcome"] == "denied" and limited[0]["scope"] == "login"
+        assert limited[0]["ip"] == real_ip
+
+        # Invalid bearer key, API signup with an email, key create/revoke.
+        lines.clear()
+        bogus = "wh_bogus-key-that-must-not-be-logged"
+        r = app.test_client().get("/api/v1/accounts/me", headers={"Authorization": f"Bearer {bogus}"})
+        assert r.status_code == 401
+        r = app.test_client().post("/api/v1/accounts", json={"username": "seclog-agent", "email": "Seclog.Person@Example.com"})
+        assert r.status_code == 201
+        new_key = r.get_json()["api_key"]
+        h = {"Authorization": f"Bearer {new_key}"}
+        r = app.test_client().post("/api/v1/keys", json={"label": "second"}, headers=h)
+        assert r.status_code == 201
+        second = r.get_json()
+        assert app.test_client().delete(f"/api/v1/keys/{second['id']}", headers=h).status_code == 204
+
+        text_log = "\n".join(lines)
+        for secret in (secret_password, bogus, new_key, second["key"], "seclog.person@example.com", "Seclog.Person"):
+            assert secret not in text_log, f"secret leaked into security log: {secret}"
+        events = [json.loads(line) for line in lines]
+        names = [(e["security_event"], e["outcome"]) for e in events]
+        assert ("auth.api_key_invalid", "failure") in names
+        assert ("auth.signup", "success") in names
+        assert ("api_key.create", "success") in names
+        assert ("api_key.revoke", "success") in names
+        signup = next(e for e in events if e["security_event"] == "auth.signup")
+        import hashlib
+        assert signup["email_domain"] == "example.com"
+        assert signup["email_hash"] == hashlib.sha256(b"seclog.person@example.com").hexdigest()[:12]
+        assert isinstance(signup["user_id"], int)
+
+        # A Google callback whose state does not match used to 500; it now
+        # returns to the login page and logs the OAuth callback failure.
+        import app.routes.auth as auth_routes
+
+        class StaleStateGoogleClient:
+            def authorize_access_token(self):
+                raise RuntimeError("mismatching_state")
+
+        try:
+            original_google = auth_routes.oauth.google
+            had_original = True
+        except AttributeError:
+            original_google, had_original = None, False
+        auth_routes.oauth.google = StaleStateGoogleClient()
+        try:
+            lines.clear()
+            r = app.test_client().get("/auth/google/callback?state=stale&code=abc")
+            assert r.status_code == 302 and "/auth/login" in r.headers["Location"]
+            events = [json.loads(line) for line in lines]
+            assert any(
+                e["security_event"] == "auth.oauth_callback" and e["provider"] == "google"
+                and e["reason"] == "token_exchange_failed" for e in events
+            ), events
+            assert "code=abc" not in "\n".join(lines), "query strings (OAuth codes) must not be logged"
+        finally:
+            if had_original:
+                auth_routes.oauth.google = original_google
+            else:
+                delattr(auth_routes.oauth, "google")
+
+    # Crawlers must not follow sign-in links into the OAuth round trip.
+    r = client.get("/robots.txt")
+    assert r.status_code == 200 and "Disallow: /auth/" in r.get_data(as_text=True)
+
+
 def test_ideaflow_oidc_feature_flag_off(app, client):
     """wikihub-39pe: with the kill switch off, the new routes disappear (404)
     and the button doesn't render — same contract as other feature flags in
@@ -9810,6 +9937,7 @@ def run_all():
             ("password reset flow (wikihub-ks5t.5)", lambda: test_password_reset_lifecycle(client)),
             ("Google auto-link security (wikihub-ks5t.4)", lambda: test_google_auto_link_security(app)),
             ("Google OAuth preserves next + invite context (wikihub-gtrq)", lambda: test_google_oauth_preserves_next_and_invite_context(app, client, key)),
+            ("login limiter ignores spoofed X-Forwarded-For; security events logged", lambda: test_login_rate_limit_ignores_spoofed_forwarded_for_and_logs_security_events(app, client)),
             ("Ideaflow OIDC feature flag off removes routes+UI (wikihub-39pe)", lambda: test_ideaflow_oidc_feature_flag_off(app, client)),
             ("Ideaflow OIDC new login creates local session (wikihub-39pe)", lambda: test_ideaflow_oidc_new_login_creates_local_session(app, client)),
             ("Ideaflow OIDC repeat exact subject login (wikihub-39pe)", lambda: test_ideaflow_oidc_repeat_exact_subject_login(app, client)),

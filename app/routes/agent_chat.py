@@ -19,7 +19,7 @@ import anthropic
 from flask import Blueprint, Response, current_app, jsonify, request, stream_with_context
 
 from app.acl import can_read, can_write
-from app.auth_utils import get_current_user_from_request
+from app.auth_utils import get_current_user_from_request, security_event
 from app.git_sync import list_files_in_repo, read_file_from_repo
 from app.models import Page, User, Wiki
 from app.page_utils import is_wikihub_plumbing_path
@@ -1081,7 +1081,7 @@ def _bd_sync_and_push():
 def roadmap_create_issues():
     """SSE endpoint: parse natural language into beads issues via Claude."""
     # Admin-token auth (same as admin endpoints)
-    if not _check_admin_token(request):
+    if not _check_admin_token(request, log=False):
         # Also allow logged-in users
         user = get_current_user_from_request()
         if not user:
@@ -1264,10 +1264,27 @@ _admin_login = {"proc": None, "master_fd": None, "output": [], "status": "idle",
 SERVER_CONFIG_DIR = "/opt/wikihub-app/claude-config"
 
 
-def _check_admin_token(req):
+# Admin requests that only read/poll state; logging every poll would drown
+# the security log. Everything else that passes the admin check is logged.
+_ADMIN_QUIET_ENDPOINTS = frozenset({
+    "agent_chat.admin_claude_auth_page",
+    "agent_chat.admin_claude_auth_status",
+    "agent_chat.admin_claude_auth_poll",
+    "agent_chat.admin_terminal_output",
+    "agent_chat.admin_terminal_input",
+})
+
+
+def _check_admin_token(req, *, log=True):
     token = req.args.get("token") or req.headers.get("X-Admin-Token") or ""
     expected = current_app.config.get("ADMIN_TOKEN", "")
-    return bool(expected and token == expected)
+    ok = bool(expected and token == expected)
+    if log:
+        if not ok:
+            security_event("admin.auth", "denied", admin_endpoint=req.endpoint, token_present=bool(token))
+        elif req.endpoint not in _ADMIN_QUIET_ENDPOINTS:
+            security_event("admin.action", "success", admin_endpoint=req.endpoint)
+    return ok
 
 
 @agent_chat_bp.route("/admin/claude-auth", methods=["GET"])

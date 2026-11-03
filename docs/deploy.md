@@ -175,6 +175,12 @@ gcloud compute ssh wikihub-prod --project=wikihub-prod --zone=us-east1-b \
 gcloud compute ssh wikihub-prod --project=wikihub-prod --zone=us-east1-b \
   --command='sudo systemctl restart wikihub'
 
+# security events (one JSON line each: sign-in/up, password/email changes,
+# account deletion, API keys, admin actions, 429s, OAuth callback failures).
+# Emitted by app.auth_utils.security_event on the "security" logger -> stderr.
+gcloud compute ssh wikihub-prod --project=wikihub-prod --zone=us-east1-b \
+  --command='sudo journalctl -u wikihub --since "1 hour ago" --no-pager | grep security_event'
+
 # query production DB
 gcloud compute ssh wikihub-prod --project=wikihub-prod --zone=us-east1-b \
   --command='sudo -u postgres psql -d wikihub'

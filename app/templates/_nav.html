@@ -85,7 +85,7 @@
       </div>
     </div>
   {% else %}
-    <a href="/auth/login?next={{ request.path|urlencode }}" class="nav-link">Sign in</a>
+    <a rel="nofollow" href="/auth/login?next={{ request.path|urlencode }}" class="nav-link">Sign in</a>
   {% endif %}
 </nav>
 <div id="nav-mobile-menu" class="nav-mobile-menu" role="menu" aria-label="Navigation" hidden>
@@ -108,7 +108,7 @@
       {% if ideaflow_login_enabled %}<a href="/auth/switch-account" class="nav-mobile-item" role="menuitem">Switch account</a>{% endif %}
       <a href="/auth/logout" class="nav-mobile-item nav-mobile-item-danger" role="menuitem">Sign out</a>
     {% else %}
-      <a href="/auth/login?next={{ request.path|urlencode }}" class="nav-mobile-item" role="menuitem">Sign in</a>
+      <a rel="nofollow" href="/auth/login?next={{ request.path|urlencode }}" class="nav-mobile-item" role="menuitem">Sign in</a>
     {% endif %}
   </div>
 </div>

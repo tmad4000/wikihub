@@ -7,6 +7,7 @@ from flask import current_app, flash, jsonify, redirect, render_template, reques
 from flask_login import login_required, logout_user, current_user
 
 from app import db
+from app.auth_utils import security_event
 from app.acl import grants_for_user, list_all_grants, parse_acl
 from app.discovery import DISCOVERABLE_VISIBILITIES, discoverable_page_for_wiki, discoverable_wiki_ids, visible_wikis_for_owner
 from app.git_sync import read_file_from_repo
@@ -42,6 +43,18 @@ def index():
         '</llms.txt>; rel="alternate"; type="text/plain"; title="LLM index"'
     )
     return resp
+
+
+_ROBOTS_TXT = """User-agent: *
+# Sign-in/sign-up endpoints start an OAuth round trip at id.ideaflow.app;
+# crawlers following them only generate authorize traffic.
+Disallow: /auth/
+"""
+
+
+@main_bp.route("/robots.txt")
+def robots_txt():
+    return current_app.response_class(_ROBOTS_TXT, mimetype="text/plain")
 
 
 @main_bp.route("/roadmap")
@@ -244,6 +257,8 @@ def claim_email_web():
     if email_changed:
         current_user.email_verified_at = None
     db.session.commit()
+    if email_changed:
+        security_event("account.email_change", "success", user_id=current_user.id, via="web", email=email)
 
     if email_changed:
         from app.routes.auth import send_verification_if_needed
@@ -313,6 +328,7 @@ def delete_account_api():
     """legacy JSON-body delete — /settings/delete-account is the primary path."""
     data = request.get_json(silent=True) or {}
     if data.get("confirm") != current_user.username:
+        security_event("account.delete", "failure", user_id=current_user.id, reason="confirm_mismatch")
         return {"error": "bad_request", "message": "Type your username to confirm"}, 400
 
     user_id = current_user.id
@@ -343,6 +359,7 @@ def delete_account_api():
 
     db.session.delete(current_user._get_current_object())
     db.session.commit()
+    security_event("account.delete", "success", user_id=user_id, wikis_deleted=len(wikis))
 
     logout_user()
     return jsonify({"deleted": True})

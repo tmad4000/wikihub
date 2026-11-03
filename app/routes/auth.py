@@ -30,6 +30,8 @@ from app.auth_utils import (
     hash_one_time_token,
     generate_email_verification_token,
     generate_password_reset_token,
+    client_ip,
+    security_event,
 )
 from app.routes import auth_bp
 from app.subdomains import validate_username
@@ -97,8 +99,8 @@ _signup_attempts = defaultdict(deque)
 _LOGIN_WINDOW_SECONDS = 300
 _LOGIN_MAX_PER_IP = 20
 _login_attempts = defaultdict(deque)
-# Separate from the per-IP dict: its keys come from a client-supplied
-# X-Forwarded-For value, so sharing would let anyone poison a user's counter.
+# Separate from the per-IP dict (keyed by client IP, user ids must never share
+# a namespace with it), so nobody can poison a user's counter.
 _ideaflow_confirm_failures = defaultdict(deque)
 
 _FORGOT_PASSWORD_WINDOW_SECONDS = 3600
@@ -182,12 +184,13 @@ def _pop_google_oauth_context():
 
 def _check_login_rate_limit():
     """return 429 response if login rate limit exceeded, else None."""
-    ip = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
+    ip = client_ip()
     attempts = _login_attempts[ip]
     now = time()
     while attempts and now - attempts[0] > _LOGIN_WINDOW_SECONDS:
         attempts.popleft()
     if len(attempts) >= _LOGIN_MAX_PER_IP:
+        security_event("rate_limit", "denied", scope="login", limit=_LOGIN_MAX_PER_IP)
         flash("Too many login attempts. Try again in a few minutes.")
         return _render_login(), 429
     attempts.append(now)
@@ -216,7 +219,10 @@ def _last_login_method():
 
 
 def _remember_login_method(response, method):
-    """Record `method` as last used. Call only after login_user() succeeded."""
+    """Record `method` as last used. Call only after login_user() succeeded.
+    Every interactive sign-in funnels through here, so it is also where the
+    auth.signin success security event is emitted."""
+    security_event("auth.signin", "success", method=method)
     response.set_cookie(
         _LAST_LOGIN_METHOD_COOKIE,
         method,
@@ -285,13 +291,14 @@ def _render_forgot_password_success(email=""):
 
 
 def _check_forgot_password_rate_limit(email):
-    ip = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
+    ip = client_ip()
     now = time()
 
     ip_attempts = _forgot_password_ip_attempts[ip]
     while ip_attempts and now - ip_attempts[0] > _FORGOT_PASSWORD_WINDOW_SECONDS:
         ip_attempts.popleft()
     if len(ip_attempts) >= _FORGOT_PASSWORD_MAX_PER_IP:
+        security_event("rate_limit", "denied", scope="forgot_password_ip", limit=_FORGOT_PASSWORD_MAX_PER_IP)
         flash("Too many password reset attempts from this IP. Try again later.")
         return render_template("auth/forgot_password.html", email=email), 429
 
@@ -299,6 +306,7 @@ def _check_forgot_password_rate_limit(email):
     while email_attempts and now - email_attempts[0] > _FORGOT_PASSWORD_WINDOW_SECONDS:
         email_attempts.popleft()
     if len(email_attempts) >= _FORGOT_PASSWORD_MAX_PER_EMAIL:
+        security_event("rate_limit", "denied", scope="forgot_password_email", email=email, limit=_FORGOT_PASSWORD_MAX_PER_EMAIL)
         flash("Too many password reset attempts for that email. Try again later.")
         return render_template("auth/forgot_password.html", email=email), 429
 
@@ -390,6 +398,7 @@ def login():
         key_row = ApiKey.query.filter_by(key_hash=key_hash).first()
         user = User.query.get(key_row.user_id) if key_row else None
         if not user:
+            security_event("auth.signin", "failure", method="api_key", reason="invalid_api_key")
             flash("Invalid API key")
             return _render_login(), 401
         login_user(user)
@@ -399,6 +408,10 @@ def login():
 
     user = User.query.filter_by(username=username).first()
     if not user or not user.password_hash or not check_password(password, user.password_hash):
+        security_event(
+            "auth.signin", "failure", user_id=user.id if user else None, method="password",
+            reason="bad_password" if user else "unknown_user",
+        )
         flash("Invalid username or password")
         return _render_login(), 401
 
@@ -464,12 +477,13 @@ def test_login(username):
 @auth_bp.route("/signup", methods=["GET", "POST"])
 def signup():
     if request.method == "POST":
-        ip = request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
+        ip = client_ip()
         attempts = _signup_attempts[ip]
         now = time()
         while attempts and now - attempts[0] > _SIGNUP_WINDOW_SECONDS:
             attempts.popleft()
         if len(attempts) >= _SIGNUP_MAX_PER_IP:
+            security_event("rate_limit", "denied", scope="signup", limit=_SIGNUP_MAX_PER_IP)
             return render_template("auth/signup.html"), 429
 
         username = request.form.get("username", "").strip().lower()
@@ -535,6 +549,7 @@ def signup():
         # but weren't marked verified via a pending-invite match.
         send_verification_if_needed(user)
 
+        security_event("auth.signup", "success", user_id=user.id, method="password", email=user.email)
         login_user(user)
         return _remember_login_method(redirect(url_for("wiki.user_profile", username=user.username)), "password")
 
@@ -597,6 +612,7 @@ def forgot_password():
 
         server_url = resolve_server_url(current_app, request)
         reset_url = f"{server_url}/auth/reset/{raw_token}"
+        security_event("auth.password_reset_request", "success", user_id=user.id)
         email_service.send_password_reset(
             to=email,
             reset_url=reset_url,
@@ -610,6 +626,8 @@ def forgot_password():
 def reset_password(token):
     row, user = _get_valid_password_reset(token)
     if not row or not user:
+        if request.method == "POST":
+            security_event("auth.password_reset", "failure", reason="invalid_or_expired_token")
         return render_template(
             "auth/reset_password.html",
             reset_error="This password reset link expired or was already used.",
@@ -651,6 +669,7 @@ def reset_password(token):
         row.used_at = utcnow()
         db.session.commit()
 
+    security_event("auth.password_reset", "success", user_id=user.id)
     login_user(user)
     flash("Password reset. You're signed in.")
     return redirect(url_for("wiki.user_profile", username=user.username))
@@ -692,11 +711,14 @@ def verify_email(token):
     # mark verified. If it differs (user changed email in settings after
     # minting), update to the token's address and mark verified — the token
     # proves ownership of `new_email` specifically.
-    if user.email != row.new_email:
+    email_changed = user.email != row.new_email
+    if email_changed:
         user.email = row.new_email
     user.email_verified_at = utcnow()
     row.used_at = utcnow()
     db.session.commit()
+
+    security_event("account.email_verify", "success", user_id=user.id, email_changed=email_changed)
 
     # Pending invites scoped to this address can now apply.
     materialize_pending_invites_for(user)
@@ -750,6 +772,7 @@ def magic_login(token):
     ).first()
     db.session.commit()
     if not consumed:
+        security_event("auth.signin", "failure", method="magic_link", reason="invalid_or_expired_token")
         flash("This magic sign-in link is invalid or expired.")
         return redirect(url_for("auth.login")), 302
 
@@ -759,6 +782,7 @@ def magic_login(token):
         return redirect(url_for("auth.login")), 302
 
     login_user(user)
+    security_event("auth.signin", "success", user_id=user.id, method="magic_link")
     return redirect(_safe_redirect_target(consumed.redirect_path))
 
 
@@ -787,7 +811,18 @@ def google_callback():
         flash("Google OAuth not configured")
         return redirect(url_for("auth.login"))
 
-    token = client.authorize_access_token()
+    try:
+        token = client.authorize_access_token()
+    except Exception as exc:
+        # e.g. MismatchingStateError from a stale tab or replayed callback;
+        # previously an unhandled 500.
+        security_event(
+            "auth.oauth_callback", "failure", provider="google",
+            reason="token_exchange_failed", error_type=type(exc).__name__,
+        )
+        _pop_google_oauth_context()
+        flash("Google sign-in failed or was cancelled.")
+        return redirect(url_for("auth.login"))
     oauth_context = _pop_google_oauth_context()
     userinfo = token.get("userinfo", {})
     google_id = userinfo.get("sub")
@@ -796,6 +831,7 @@ def google_callback():
     name = userinfo.get("name", "")
 
     if not google_id:
+        security_event("auth.oauth_callback", "failure", provider="google", reason="missing_subject")
         flash("Could not get Google user info")
         return redirect(url_for("auth.login"))
 
@@ -1229,6 +1265,14 @@ def ideaflow_callback():
     oauth_context = _pop_ideaflow_oauth_context()
     silent = bool(oauth_context.get("silent"))
     if request.args.get("error"):
+        if not silent:
+            # Silent attempts end in login_required for every signed-out
+            # visitor; that is normal traffic, not a security signal.
+            security_event(
+                "auth.oauth_callback", "failure", provider="ideaflow",
+                reason="provider_error", provider_error=request.args.get("error", "")[:64],
+                known_state=bool(oauth_context),
+            )
         if silent:
             # login_required / consent_required / interaction_required (or
             # any other provider error) on an automatic attempt: back to the
@@ -1243,7 +1287,11 @@ def ideaflow_callback():
             return redirect(url_for("auth.login"))
     try:
         token = client.authorize_access_token()
-    except Exception:
+    except Exception as exc:
+        security_event(
+            "auth.oauth_callback", "failure", provider="ideaflow",
+            reason="token_exchange_failed", error_type=type(exc).__name__, silent=silent,
+        )
         if silent:
             return _silent_signin_return(oauth_context)
         flash("Ideaflow ID sign-in failed or was cancelled.")
@@ -1265,12 +1313,14 @@ def ideaflow_callback():
     name = userinfo.get("name") or userinfo.get("preferred_username") or ""
 
     if not subject or not issuer:
+        security_event("auth.oauth_callback", "failure", provider="ideaflow", reason="missing_claims", silent=silent)
         if silent:
             return _silent_signin_return(oauth_context)
         flash("Could not get Ideaflow ID user info.")
         return redirect(url_for("auth.login"))
 
     if issuer != current_app.config["IDEAFLOW_OIDC_ISSUER"]:
+        security_event("auth.oauth_callback", "failure", provider="ideaflow", reason="issuer_mismatch", silent=silent)
         # Defense in depth: Authlib already validates the id_token's iss
         # against the discovered issuer, but a configured-vs-asserted
         # mismatch here would mean the two have drifted apart. Refuse rather
@@ -1298,6 +1348,10 @@ def ideaflow_callback():
 def _login_via_ideaflow_identity(identity, oauth_context):
     user = db.session.get(User, identity.user_id)
     if not user:
+        security_event(
+            "auth.oauth_callback", "failure", user_id=identity.user_id, provider="ideaflow",
+            reason="linked_account_missing",
+        )
         if oauth_context.get("silent"):
             return _silent_signin_return(oauth_context)
         flash("This Ideaflow ID is linked to a WikiHub account that no longer exists.")
@@ -1330,6 +1384,10 @@ def _ideaflow_conflict(message, oauth_context=None):
     existing account (category "ideaflow_fallback"), so nobody is locked out
     by the single-button login page. An automatic (silent) attempt instead
     returns to the page signed out with no message (code-xbh.21.6)."""
+    security_event(
+        "auth.oauth_callback", "failure", provider="ideaflow", reason="account_conflict",
+        silent=bool(oauth_context and oauth_context.get("silent")),
+    )
     if oauth_context and oauth_context.get("silent"):
         return _silent_signin_return(oauth_context)
     flash(message, "ideaflow_fallback")
@@ -1506,6 +1564,7 @@ def _create_ideaflow_account(*, issuer, subject, email, email_verified, name):
 
 
 def _login_new_ideaflow_account(user, oauth_context):
+    security_event("auth.signup", "success", user_id=user.id, method="ideaflow", email=user.email)
     login_user(user)
     if user.email:
         applied = materialize_pending_invites_for(user)
@@ -1558,10 +1617,15 @@ def ideaflow_confirm():
     while failures and now - failures[0] > _LOGIN_WINDOW_SECONDS:
         failures.popleft()
     if len(failures) >= _IDEAFLOW_CONFIRM_MAX_FAILURES_PER_USER:
+        security_event(
+            "rate_limit", "denied", user_id=user.id, scope="ideaflow_confirm",
+            limit=_IDEAFLOW_CONFIRM_MAX_FAILURES_PER_USER,
+        )
         flash("Too many incorrect attempts for this account. Try again in a few minutes.")
         return _render(429)
 
     if not check_password(request.form.get("password", ""), user.password_hash):
+        security_event("auth.signin", "failure", user_id=user.id, method="ideaflow_confirm", reason="bad_password")
         failures.append(now)
         pending["attempts"] += 1
         if pending["attempts"] >= _IDEAFLOW_PENDING_LINK_MAX_ATTEMPTS:
@@ -1670,5 +1734,6 @@ def _handle_ideaflow_link_callback(oauth_context, *, issuer, subject, email):
         flash("This Ideaflow ID was just linked elsewhere — please try again.")
         return redirect(url_for("main.settings"))
 
+    security_event("account.identity_link", "success", user_id=current_user.id, provider="ideaflow")
     flash("Ideaflow ID linked to your account.")
     return redirect(url_for("main.settings"))

@@ -37,7 +37,7 @@
   <p class="notice">You were invited at <strong>{{ prefill_email }}</strong>. Sign in and your invite will apply automatically.</p>
   {% endif %}
 
-  <a href="{{ url_for('auth.ideaflow_login', next=next_value or None, email=prefill_email or None, it=invite_token or None) }}" class="btn btn-primary" data-login-method="ideaflow">Sign in with Ideaflow</a>
+  <a rel="nofollow" href="{{ url_for('auth.ideaflow_login', next=next_value or None, email=prefill_email or None, it=invite_token or None) }}" class="btn btn-primary" data-login-method="ideaflow">Sign in with Ideaflow</a>
   <p class="helper">New here? You can create an account on the next screen.</p>
 
   {% if needs_fallback %}

@@ -16,6 +16,7 @@ from app.models import User, ApiKey, MagicLoginToken, UsernameRedirect, utcnow, 
 from app.auth_utils import (
     generate_api_key, generate_magic_login_token, hash_password, check_password,
     api_auth_required, api_auth_optional, get_current_user_from_request, rate_limit_writes,
+    client_ip, security_event,
 )
 from app.credentials_hint import build_client_config, resolve_server_url
 from app.git_backend import _repo_path
@@ -78,6 +79,8 @@ def create_account():
     )
     db.session.add(api_key)
     db.session.commit()
+    security_event("auth.signup", "success", user_id=user.id, method="api", email=email)
+    security_event("api_key.create", "success", user_id=user.id, key_id=api_key.id, label="Initial key")
 
     # apply any pending invites addressed to this email (no-op unless verified)
     applied = materialize_pending_invites_for(user)
@@ -113,6 +116,10 @@ def get_token():
 
     user = User.query.filter_by(username=username).first()
     if not user or not user.password_hash or not check_password(password, user.password_hash):
+        security_event(
+            "auth.signin", "failure", user_id=user.id if user else None, method="api_token",
+            reason="bad_password" if user else "unknown_user",
+        )
         return {"error": "unauthorized", "message": "Invalid username or password"}, 401
 
     # Generate a new API key for this login
@@ -125,6 +132,8 @@ def get_token():
     )
     db.session.add(api_key)
     db.session.commit()
+    security_event("auth.signin", "success", user_id=user.id, method="api_token")
+    security_event("api_key.create", "success", user_id=user.id, key_id=api_key.id, label="Generated via /auth/token")
 
     server_url = resolve_server_url(current_app, request)
     return jsonify({
@@ -254,6 +263,10 @@ def create_magic_link():
             user = candidate
         else:
             user = None
+            security_event(
+                "auth.signin", "failure", user_id=candidate.id if candidate else None,
+                method="magic_link_mint", reason="bad_password" if candidate else "unknown_user",
+            )
     else:
         user = get_current_user_from_request()
 
@@ -296,7 +309,7 @@ def create_access_request():
     requester_email = (data.get("email") or "").strip().lower()
     note = (data.get("note") or "").strip()
     user = getattr(request, "current_user", None)
-    ip = request.remote_addr or "unknown"
+    ip = client_ip()
 
     neutral = {
         "ok": True,
@@ -372,6 +385,7 @@ def update_account():
     user = request.current_user
     data = request.get_json(silent=True) or {}
     old_username = user.username
+    email_changed_to = None
 
     if "username" in data:
         new_username = data["username"].strip().lower()
@@ -402,6 +416,7 @@ def update_account():
             if User.query.filter_by(email=new_email).first():
                 return {"error": "conflict", "message": "Email taken"}, 409
             user.email = new_email
+            email_changed_to = new_email
 
     if user.username != old_username:
         old_repo_root = os.path.dirname(_repo_path(old_username, "placeholder"))
@@ -414,6 +429,10 @@ def update_account():
             personal.slug = user.username
 
     db.session.commit()
+    if email_changed_to:
+        security_event("account.email_change", "success", user_id=user.id, via="api", email=email_changed_to)
+    if user.username != old_username:
+        security_event("account.username_change", "success", user_id=user.id, via="api")
     return jsonify({
         "user_id": user.id,
         "username": user.username,
@@ -433,8 +452,11 @@ def claim_email():
     existing = User.query.filter_by(email=email).first()
     if existing and existing.id != user.id:
         return {"error": "conflict", "message": "Email already claimed"}, 409
+    changed = (user.email or "").lower() != email
     user.email = email
     db.session.commit()
+    if changed:
+        security_event("account.email_change", "success", user_id=user.id, via="api_claim", email=email)
     return jsonify({"email": user.email})
 
 
@@ -454,6 +476,7 @@ def create_key():
     )
     db.session.add(api_key)
     db.session.commit()
+    security_event("api_key.create", "success", user_id=user.id, key_id=api_key.id, label=label)
 
     return jsonify({
         "id": api_key.id,
@@ -469,10 +492,12 @@ def delete_key(key_id):
     user = request.current_user
     api_key = ApiKey.query.filter_by(id=key_id, user_id=user.id).first()
     if not api_key:
+        security_event("api_key.revoke", "failure", user_id=user.id, key_id=key_id, reason="not_found")
         return {"error": "not_found", "message": "API key not found"}, 404
 
     db.session.delete(api_key)
     db.session.commit()
+    security_event("api_key.revoke", "success", user_id=user.id, key_id=key_id)
     return "", 204
 
 
