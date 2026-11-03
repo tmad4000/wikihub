@@ -6078,6 +6078,14 @@ def test_curator_wikihub_api_allowlist(client, api_key):
     for method, ep in denied:
         assert not _wikihub_api_allowed(sess, method, ep, {"content": "x"}), (method, ep)
     assert not _wikihub_api_allowed(sess, "PUT", "/wikis/agent1/mywiki/pages/a.md", {"visibility": "public"})
+    # Body-supplied plumbing paths / renames must be refused (ACL rewrite via create_page body).
+    for body in ({"path": ".wikihub/acl", "content": "* public"},
+                 {"path": "x/../.wikihub/acl", "content": "* public"},
+                 {"path": ".WikiHub/ACL", "content": "* public"},
+                 {"path": ".git/config", "content": "x"}):
+        assert not _wikihub_api_allowed(sess, "POST", "/wikis/agent1/mywiki/pages", body), body
+    assert not _wikihub_api_allowed(sess, "PATCH", "/wikis/agent1/mywiki/pages/a.md", {"new_path": "public/a.md"})
+    assert _wikihub_api_allowed(sess, "POST", "/wikis/agent1/mywiki/pages", {"path": "notes/a.md", "content": "x"})
     # The proxy refuses before making any network call.
     out = _tool_wikihub_api("http://127.0.0.1:9", "tok", "POST", "/auth/magic-link", {}, session=sess)
     assert out == _API_DENIED, out

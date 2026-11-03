@@ -406,7 +406,7 @@ def _tool_search_content(session, query):
         result = subprocess.run(
             ["grep", "-r", "-n", "-i", "--exclude-dir=.git", "--include=*.md", "--include=*.txt",
              "--include=*.yaml", "--include=*.yml", "--include=*.json",
-             query, "."],
+             "-e", query, "--", "."],
             cwd=scope_dir, capture_output=True, text=True, timeout=10,
         )
         output = result.stdout.strip()
@@ -475,8 +475,16 @@ def _wikihub_api_allowed(session, method, endpoint, body):
         return any(p.match(path) for p in _API_READ_PATTERNS)
     if method not in ("POST", "PUT", "PATCH") or query:
         return False
-    if isinstance(body, dict) and "visibility" in body:
-        return False
+    if isinstance(body, dict):
+        if "visibility" in body or "new_path" in body or "anonymous" in body:
+            return False
+        # Body-supplied paths (create_page takes its path from the body) must
+        # never reach plumbing such as .wikihub/acl or .git.
+        p = body.get("path")
+        if p is not None:
+            segs = str(p).replace("\\", "/").split("/")
+            if any(seg in (".", "..") or seg.lower().startswith((".wikihub", ".git")) for seg in segs):
+                return False
     owner = re.escape(session.get("owner") or "\x00")
     slug = re.escape(session.get("wiki_slug") or "\x00")
     if method == "POST" and re.match(rf"^/wikis/{owner}/{slug}/pages$", path):
