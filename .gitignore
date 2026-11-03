@@ -14,3 +14,4 @@ backups/
 archive/
 electron/node_modules/
 electron/dist/
+.playwright-mcp/

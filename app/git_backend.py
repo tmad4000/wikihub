@@ -198,12 +198,20 @@ def _install_hook(repo_path, username, slug):
 
     config_path = os.path.join(hooks_dir, "wikihub.conf")
     base_url = current_app.config.get("BASE_URL", os.environ.get("BASE_URL", "http://localhost:5000"))
-    admin_token = current_app.config.get("ADMIN_TOKEN", os.environ.get("ADMIN_TOKEN", ""))
-    with open(config_path, "w") as f:
+    hook_token = (
+        current_app.config.get("HOOK_TOKEN")
+        or current_app.config.get("ADMIN_TOKEN")
+        or ""
+    )
+    # Owner-only: the file carries the hook callback token.
+    fd = os.open(config_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "w") as f:
         f.write(f"WIKIHUB_USERNAME={username}\n")
         f.write(f"WIKIHUB_SLUG={slug}\n")
         f.write(f"WIKIHUB_BASE_URL={base_url}\n")
-        f.write(f"WIKIHUB_ADMIN_TOKEN={admin_token}\n")
+        # Key name kept for compatibility with the shipped post-receive hook.
+        f.write(f"WIKIHUB_ADMIN_TOKEN={hook_token}\n")
         f.write(f"WIKIHUB_APP_ROOT={os.path.dirname(os.path.dirname(os.path.abspath(__file__)))}\n")
 
 

@@ -37,6 +37,10 @@ class Config:
     BASE_URL = os.environ.get("BASE_URL", "http://localhost:5000")
     CUSTOM_DOMAIN_TARGET = os.environ.get("CUSTOM_DOMAIN_TARGET", "domains.wikihub.md")
     ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
+    # Token written into each repo's hooks/wikihub.conf for the post-receive
+    # sync callbacks. Keep it distinct from ADMIN_TOKEN; when unset, hooks
+    # fall back to ADMIN_TOKEN for back-compat.
+    HOOK_TOKEN = os.environ.get("HOOK_TOKEN", "")
     # Curator agent (inline AI sidebar on wiki reader pages). wikihub-2jn.2
     # Default ON so the feature is live as soon as the endpoint is deployed.
     # Set CURATOR_ENABLED=false to hide the panel and return 503 from /api/v1/agent/chat.

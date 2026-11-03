@@ -7,7 +7,7 @@ from flask import current_app, flash, jsonify, redirect, render_template, reques
 from flask_login import login_required, logout_user, current_user
 
 from app import db
-from app.auth_utils import security_event
+from app.auth_utils import security_event, set_user_email
 from app.acl import grants_for_user, list_all_grants, parse_acl
 from app.discovery import DISCOVERABLE_VISIBILITIES, discoverable_page_for_wiki, discoverable_wiki_ids, visible_wikis_for_owner
 from app.git_sync import read_file_from_repo
@@ -250,12 +250,7 @@ def claim_email_web():
     existing = User.query.filter_by(email=email).first()
     if existing and existing.id != current_user.id:
         return {"error": "conflict", "message": "Email already claimed"}, 409
-    current_email = (current_user.email or "").strip().lower()
-    email_changed = current_email != email
-
-    current_user.email = email
-    if email_changed:
-        current_user.email_verified_at = None
+    email_changed = set_user_email(current_user, email)
     db.session.commit()
     if email_changed:
         security_event("account.email_change", "success", user_id=current_user.id, via="web", email=email)

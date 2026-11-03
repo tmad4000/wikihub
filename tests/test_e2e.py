@@ -5835,16 +5835,316 @@ def test_soft_line_breaks_render_as_visual_break():
     assert html.count("<p>") == 2, f"expected two <p> blocks, got: {html!r}"
 
 
-def test_admin_claude_auth_page_requires_token(client):
-    """anonymous GET to /api/v1/admin/claude-auth must not expose admin HTML
-    (wikihub-6q3). Return 404 to avoid leaking that the route exists."""
-    anon = client.application.test_client()
-    r = anon.get("/api/v1/admin/claude-auth")
-    assert r.status_code == 404, f"anonymous admin page should 404, got {r.status_code}"
+def test_admin_shell_routes_removed_and_admin_token_header_only(client, api_key):
+    """wikihub-bze1: the web admin shell / server login routes no longer
+    exist (even with the admin token), and admin-token endpoints accept the
+    token only as an Authorization Bearer header, compared in constant time.
+    Hook config files carry HOOK_TOKEN when set, readable by owner only."""
+    import stat as _stat
+    from app.git_sync import _repo_path
 
-    # with the right admin token, the page loads
-    r = anon.get("/api/v1/admin/claude-auth?token=test-admin-token")
-    assert r.status_code == 200
+    anon = client.application.test_client()
+    bearer = {"Authorization": "Bearer test-admin-token"}
+    removed = [
+        "/api/v1/admin/claude-auth",
+        "/api/v1/admin/claude-auth/status",
+        "/api/v1/admin/claude-auth/start",
+        "/api/v1/admin/claude-auth/poll",
+        "/api/v1/admin/claude-auth/submit-code",
+        "/api/v1/admin/claude-auth/logout",
+        "/api/v1/admin/terminal/start",
+        "/api/v1/admin/terminal/input",
+        "/api/v1/admin/terminal/output",
+        "/api/v1/admin/terminal/stop",
+    ]
+    for path in removed:
+        for method in ("get", "post"):
+            for kwargs in ({}, {"headers": bearer}, {"query_string": {"token": "test-admin-token"}}):
+                r = getattr(anon, method)(path, **kwargs)
+                assert r.status_code == 404, f"{method.upper()} {path} {kwargs} -> {r.status_code}, expected 404"
+
+    payload = {"username": "agent1", "slug": "agent1", "reindex": False}
+    # query-string and non-Bearer header tokens are refused
+    r = anon.post("/api/v1/admin/regenerate-mirror?token=test-admin-token", json=payload)
+    assert r.status_code == 401, r.status_code
+    r = anon.post("/api/v1/admin/regenerate-mirror", json=payload, headers={"X-Admin-Token": "test-admin-token"})
+    assert r.status_code == 401, r.status_code
+    r = anon.post("/api/v1/admin/regenerate-mirror", json=payload, headers={"Authorization": "Bearer wrong"})
+    assert r.status_code == 401, r.status_code
+    r = anon.post("/api/v1/admin/regenerate-mirror", json=payload, headers=bearer)
+    assert r.status_code == 200, r.status_code
+    # roadmap issue creation is admin-only (no longer open to any signed-in user)
+    r = anon.post("/api/v1/roadmap/create-issues", json={"message": "x"},
+                  headers={"Authorization": f"Bearer {api_key}"})
+    assert r.status_code == 401, f"non-admin roadmap call must be refused, got {r.status_code}"
+
+    app = client.application
+    original = app.config.get("HOOK_TOKEN", "")
+    app.config["HOOK_TOKEN"] = "test-hook-token"
+    try:
+        h = {"Authorization": f"Bearer {api_key}"}
+        r = client.post("/api/v1/wikis", json={"slug": "hook-token-wiki", "title": "Hook"}, headers=h)
+        assert r.status_code == 201, r.get_data(as_text=True)
+        conf = os.path.join(_repo_path("agent1", "hook-token-wiki"), "hooks", "wikihub.conf")
+        text_conf = open(conf).read()
+        assert "WIKIHUB_ADMIN_TOKEN=test-hook-token" in text_conf
+        assert "test-admin-token" not in text_conf, "admin token must not be written into repo hook config"
+        assert _stat.S_IMODE(os.stat(conf).st_mode) == 0o600, oct(os.stat(conf).st_mode)
+        # the hook token works for the hook callbacks; admin token stays accepted for old repos
+        r = anon.post("/api/v1/admin/regenerate-mirror", json={"username": "agent1", "slug": "hook-token-wiki"},
+                      headers={"Authorization": "Bearer test-hook-token"})
+        assert r.status_code == 200, r.status_code
+
+        # scripts/reinstall_hooks.py refreshes stale hook config + hooks in existing repos
+        import runpy
+        with open(conf, "w") as f:
+            f.write("WIKIHUB_ADMIN_TOKEN=test-admin-token\n")
+        os.chmod(conf, 0o644)
+        pre = os.path.join(os.path.dirname(conf), "pre-receive")
+        with open(pre, "w") as f:
+            f.write("#!/bin/sh\nexit 0\n")
+        script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "reinstall_hooks.py")
+        n = runpy.run_path(script)["reinstall_all"]()
+        assert n >= 1
+        assert "WIKIHUB_ADMIN_TOKEN=test-hook-token" in open(conf).read()
+        assert _stat.S_IMODE(os.stat(conf).st_mode) == 0o600
+        assert "symlink_paths_in_tree" in open(pre).read(), "pre-receive must be refreshed"
+    finally:
+        app.config["HOOK_TOKEN"] = original
+
+
+def _commit_symlink_into_bare_repo(repo, link_path, target):
+    """Plant a symlink entry directly in a bare repo (bypassing receive hooks),
+    as if it already existed before hardening."""
+    env = {**os.environ, "GIT_INDEX_FILE": os.path.join(repo, "plant-index"),
+           "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+    def g(*args, inp=None):
+        return subprocess.run(["git", "-C", repo, *args], env=env, input=inp, capture_output=True, check=True).stdout.decode().strip()
+    g("read-tree", "HEAD")
+    blob = g("hash-object", "-w", "--stdin", inp=target.encode())
+    g("update-index", "--add", "--cacheinfo", "120000", blob, link_path)
+    tree = g("write-tree")
+    commit = g("commit-tree", tree, "-p", "HEAD", "-m", "plant symlink")
+    g("update-ref", "refs/heads/main", commit)
+    os.unlink(os.path.join(repo, "plant-index"))
+
+
+def test_curator_file_tools_refuse_symlinks_and_git_metadata(client, api_key):
+    """wikihub-lzzy: Curator read/write must never follow a symlink out of the
+    working clone (symlinks in history or on disk), must never touch git
+    metadata such as .git/config, and indexing skips symlink entries."""
+    import tempfile, shutil as _sh
+    from app.models import User
+    from app.git_sync import _repo_path, list_files_in_repo, symlink_paths_in_tree
+    from app.routes.agent_chat import _execute_tool
+
+    h = {"Authorization": f"Bearer {api_key}"}
+    r = client.post("/api/v1/wikis", json={"slug": "curator-symlink", "title": "S"}, headers=h)
+    assert r.status_code == 201
+    r = client.post("/api/v1/wikis/agent1/curator-symlink/pages", json={"path": "ok.md", "content": "# ok\n"}, headers=h)
+    assert r.status_code in (200, 201)
+
+    outside = tempfile.mkdtemp(prefix="curator-outside-")
+    secret_file = os.path.join(outside, "secret.txt")
+    with open(secret_file, "w") as f:
+        f.write("OUTSIDESECRET4242")
+    repo = _repo_path("agent1", "curator-symlink")
+    _commit_symlink_into_bare_repo(repo, "leak.md", secret_file)
+    assert symlink_paths_in_tree(repo, "HEAD") == ["leak.md"]
+    assert "leak.md" not in list_files_in_repo("agent1", "curator-symlink"), "indexing must skip symlink entries"
+    assert "ok.md" in list_files_in_repo("agent1", "curator-symlink")
+
+    owner = User.query.filter_by(username="agent1").first()
+    work_dir = tempfile.mkdtemp(prefix="curator-test-")
+    try:
+        sess = _make_curator_session(client.application, work_dir, owner="agent1",
+                                     wiki_slug="curator-symlink", username="agent1", user_id=owner.id)
+        clone = sess["clone_path"]
+        assert clone and not os.path.islink(os.path.join(clone, "leak.md")), "clone must not materialize symlinks"
+        out = _execute_tool("read_file", {"path": "agent1/curator-symlink/leak.md"}, sess)
+        assert "OUTSIDESECRET4242" not in out, f"LEAK through historical symlink: {out!r}"
+
+        # Defense in depth: links that appear on disk anyway are refused.
+        os.symlink(secret_file, os.path.join(clone, "disk-link.md"))
+        os.symlink(outside, os.path.join(clone, "dirlink"))
+        out = _execute_tool("read_file", {"path": "agent1/curator-symlink/disk-link.md"}, sess)
+        assert "OUTSIDESECRET4242" not in out, f"LEAK through file symlink: {out!r}"
+        out = _execute_tool("read_file", {"path": "agent1/curator-symlink/dirlink/secret.txt"}, sess)
+        assert "OUTSIDESECRET4242" not in out, f"LEAK through dir symlink: {out!r}"
+        out = _execute_tool("write_file", {"path": "agent1/curator-symlink/disk-link.md", "content": "CLOBBER"}, sess)
+        assert not out.startswith("Written"), out
+        out = _execute_tool("write_file", {"path": "agent1/curator-symlink/dirlink/new.md", "content": "CLOBBER"}, sess)
+        assert not out.startswith("Written"), out
+        assert open(secret_file).read() == "OUTSIDESECRET4242", "outside file must be untouched"
+        assert not os.path.exists(os.path.join(outside, "new.md"))
+        listing = _execute_tool("list_files", {"directory": "agent1/curator-symlink"}, sess)
+        assert "disk-link.md" not in listing and "dirlink" not in listing, listing
+
+        # Git metadata is never readable or writable through the tools.
+        git_config = os.path.join(clone, ".git", "config")
+        before = open(git_config).read()
+        for p in ("agent1/curator-symlink/.git/config", "agent1/curator-symlink/.GIT/config",
+                  "agent1/curator-symlink/.git/hooks/post-commit", "agent1/curator-symlink/.gitattributes",
+                  "agent1/curator-symlink/sub/../.git/config"):
+            out = _execute_tool("write_file", {"path": p, "content": "[core]\n\tfsmonitor = touch /tmp/pwned\n"}, sess)
+            assert not out.startswith("Written"), f"git metadata write allowed for {p!r}: {out!r}"
+        assert open(git_config).read() == before, ".git/config must be unchanged"
+        out = _execute_tool("read_file", {"path": "agent1/curator-symlink/.git/config"}, sess)
+        assert "[core]" not in out, out
+
+        # Ordinary edits still work end to end.
+        out = _execute_tool("write_file", {"path": "agent1/curator-symlink/ok.md", "content": "# ok\n\nedited\n"}, sess)
+        assert out.startswith("Written"), out
+    finally:
+        _sh.rmtree(work_dir, ignore_errors=True)
+        _sh.rmtree(outside, ignore_errors=True)
+
+
+def test_push_with_symlink_is_rejected(client, api_key):
+    """wikihub-lzzy: a push whose tree contains a symbolic link is refused by
+    the repository's pre-receive hook."""
+    import tempfile, shutil as _sh
+    from app.git_sync import _repo_path, list_files_in_repo
+
+    h = {"Authorization": f"Bearer {api_key}"}
+    r = client.post("/api/v1/wikis", json={"slug": "push-symlink", "title": "P"}, headers=h)
+    assert r.status_code == 201
+    repo = _repo_path("agent1", "push-symlink")
+    tmp = tempfile.mkdtemp(prefix="push-symlink-")
+    try:
+        clone = os.path.join(tmp, "c")
+        subprocess.run(["git", "clone", "-q", repo, clone], check=True, capture_output=True)
+        os.symlink("/etc/hosts", os.path.join(clone, "evil.md"))
+        git = ["git", "-C", clone, "-c", "user.name=t", "-c", "user.email=t@t"]
+        subprocess.run(git + ["add", "evil.md"], check=True, capture_output=True)
+        subprocess.run(git + ["commit", "-qm", "link"], check=True, capture_output=True)
+        before = subprocess.run(["git", "-C", repo, "rev-parse", "HEAD"], capture_output=True, text=True).stdout
+        for ref in ("HEAD:main", "HEAD:refs/heads/side"):
+            r = subprocess.run(git + ["push", "origin", ref], capture_output=True, text=True, timeout=60)
+            assert r.returncode != 0, f"symlink push to {ref} should be rejected: {r.stdout}{r.stderr}"
+            assert "symbolic links are not supported" in r.stderr, r.stderr
+        after = subprocess.run(["git", "-C", repo, "rev-parse", "HEAD"], capture_output=True, text=True).stdout
+        assert before == after
+        assert "evil.md" not in list_files_in_repo("agent1", "push-symlink")
+    finally:
+        _sh.rmtree(tmp, ignore_errors=True)
+
+
+def test_curator_wikihub_api_allowlist(client, api_key):
+    """The Curator's API tool acts with the user's token, so it is limited to
+    reads plus page edits in the current wiki; account, key, auth, sharing,
+    visibility and delete calls are refused before any request is made."""
+    from app.routes.agent_chat import _wikihub_api_allowed, _tool_wikihub_api, _API_DENIED
+
+    sess = {"owner": "agent1", "wiki_slug": "mywiki"}
+    allowed = [
+        ("GET", "/wikis/agent1/mywiki"),
+        ("GET", "/wikis/agent1/mywiki/pages"),
+        ("GET", "/wikis/someone/else/pages/notes/a.md"),
+        ("GET", "/search?q=hello"),
+        ("POST", "/wikis/agent1/mywiki/pages"),
+        ("PUT", "/wikis/agent1/mywiki/pages/notes/a.md"),
+        ("PATCH", "/wikis/agent1/mywiki/pages/a.md"),
+        ("POST", "/wikis/agent1/mywiki/pages/a.md/append-section"),
+    ]
+    for method, ep in allowed:
+        assert _wikihub_api_allowed(sess, method, ep, {"content": "x"}), (method, ep)
+    denied = [
+        ("POST", "/auth/magic-link"),
+        ("POST", "/auth/token"),
+        ("GET", "/accounts/me"),
+        ("PATCH", "/accounts/me"),
+        ("POST", "/keys"),
+        ("GET", "/keys"),
+        ("POST", "/claim-email"),
+        ("POST", "/wikis/agent1/mywiki/share"),
+        ("POST", "/wikis/agent1/mywiki/pages/a.md/share"),
+        ("GET", "/wikis/agent1/mywiki/grants"),
+        ("GET", "/wikis/agent1/mywiki/pages/a.md/grants"),
+        ("POST", "/wikis/agent1/mywiki/pages/a.md/visibility"),
+        ("POST", "/wikis/agent1/mywiki/bulk-visibility"),
+        ("DELETE", "/wikis/agent1/mywiki"),
+        ("DELETE", "/wikis/agent1/mywiki/pages/a.md"),
+        ("PATCH", "/wikis/agent1/mywiki"),
+        ("PUT", "/wikis/other/wiki/pages/a.md"),
+        ("POST", "/wikis/other/wiki/pages"),
+        ("PUT", "/wikis/agent1/mywiki/pages/.wikihub/acl"),
+        ("PUT", "/wikis/agent1/mywiki/pages/x/../../../accounts/me"),
+        ("PUT", "/wikis/agent1/mywiki/pages/a%2e%2e/b"),
+        ("POST", "/wikis/agent1/mywiki/fork"),
+        ("GET", "/../accounts/me"),
+        ("GET", "//evil.example/x"),
+    ]
+    for method, ep in denied:
+        assert not _wikihub_api_allowed(sess, method, ep, {"content": "x"}), (method, ep)
+    assert not _wikihub_api_allowed(sess, "PUT", "/wikis/agent1/mywiki/pages/a.md", {"visibility": "public"})
+    # Body-supplied plumbing paths / renames must be refused (ACL rewrite via create_page body).
+    for body in ({"path": ".wikihub/acl", "content": "* public"},
+                 {"path": "x/../.wikihub/acl", "content": "* public"},
+                 {"path": ".WikiHub/ACL", "content": "* public"},
+                 {"path": ".git/config", "content": "x"}):
+        assert not _wikihub_api_allowed(sess, "POST", "/wikis/agent1/mywiki/pages", body), body
+    assert not _wikihub_api_allowed(sess, "PATCH", "/wikis/agent1/mywiki/pages/a.md", {"new_path": "public/a.md"})
+    assert _wikihub_api_allowed(sess, "POST", "/wikis/agent1/mywiki/pages", {"path": "notes/a.md", "content": "x"})
+    # The proxy refuses before making any network call.
+    out = _tool_wikihub_api("http://127.0.0.1:9", "tok", "POST", "/auth/magic-link", {}, session=sess)
+    assert out == _API_DENIED, out
+    assert _tool_wikihub_api("http://127.0.0.1:9", "tok", "GET", "/wikis") == _API_DENIED
+
+
+def test_api_email_change_resets_verification(app, client):
+    """wikihub-0dcc: changing email through the API (PATCH /accounts/me and
+    POST /claim-email) clears email verification, so the new address cannot
+    pick up pending invites or OAuth email auto-links until it is verified."""
+    import re
+    from app import email_service
+    from app.models import PendingInvite
+    from app.routes.auth import _resolve_or_create_google_user
+    from app.wiki_ops import materialize_pending_invites_for
+
+    os.environ["EMAIL_MODE"] = "mock"
+    r = client.post("/api/v1/accounts", json={"username": "invite-owner-0dcc"})
+    assert r.status_code == 201
+    owner_key = r.get_json()["api_key"]
+    r = client.post("/api/v1/wikis", json={"slug": "invite-target-0dcc", "title": "T"},
+                    headers={"Authorization": f"Bearer {owner_key}"})
+    assert r.status_code == 201
+    target_wiki = Wiki.query.filter_by(slug="invite-target-0dcc").first()
+
+    for i, (method, path, field) in enumerate((
+        ("patch", "/api/v1/accounts/me", "email"),
+        ("post", "/api/v1/claim-email", "email"),
+    )):
+        victim = f"victim-0dcc-{i}@example.com"
+        db.session.add(PendingInvite(wiki_id=target_wiki.id, pattern="*", email=victim, role="read"))
+        db.session.commit()
+
+        r = client.post("/api/v1/accounts", json={"username": f"swapper-0dcc-{i}", "email": f"mine-0dcc-{i}@example.com"})
+        assert r.status_code == 201
+        key = r.get_json()["api_key"]
+        user = User.query.filter_by(username=f"swapper-0dcc-{i}").first()
+        user.email_verified_at = utcnow()
+        db.session.commit()
+        user_id = user.id
+
+        email_service.mock_clear()
+        r = getattr(client, method)(path, json={field: victim}, headers={"Authorization": f"Bearer {key}"})
+        assert r.status_code == 200, (path, r.status_code, r.get_data(as_text=True))
+
+        db.session.expire_all()
+        user = db.session.get(User, user_id)
+        assert user.email == victim
+        assert user.email_verified_at is None, f"{path}: email change must clear verification"
+        assert materialize_pending_invites_for(user) == []
+        assert PendingInvite.query.filter_by(email=victim).count() == 1, "pending invite must not materialize"
+        # a fresh verification link goes to the new address
+        assert any(m["to"] == victim and "Verify" in m["subject"] for m in email_service.mock_outbox()), path
+
+        # Google sign-in for the victim's address does not link into this account
+        g = _resolve_or_create_google_user(google_id=f"google-sub-0dcc-{i}", email=victim,
+                                           email_verified=True, name="Victim")
+        db.session.commit()
+        assert g.id != user_id, f"{path}: Google auto-link must not match an unverified changed email"
 
 
 def test_history_api_with_anon_and_deleted_page(client, api_key):
@@ -10024,7 +10324,16 @@ def run_all():
             ("![[file.html]] inline iframe + new-tab links (wikihub-wz2j)", lambda: test_html_embed_inline_iframe(client, key)),
             ("HTML viewer embedded in reader chrome (wikihub-ntpc)", lambda: test_html_viewer_embedded_in_reader_chrome(client, key)),
             ("soft line breaks render as visual break (wikihub-eiv7)", lambda: test_soft_line_breaks_render_as_visual_break()),
-            ("admin claude-auth page requires token", lambda: test_admin_claude_auth_page_requires_token(client)),
+            ("admin shell routes removed; admin token header-only (wikihub-bze1)", lambda: test_admin_shell_routes_removed_and_admin_token_header_only(client, key)),
+            ("curator file tools refuse symlinks + git metadata (wikihub-lzzy)", lambda: test_curator_file_tools_refuse_symlinks_and_git_metadata(client, key)),
+            ("push with symlink rejected (wikihub-lzzy)", lambda: test_push_with_symlink_is_rejected(client, key)),
+            ("curator wikihub_api allowlist", lambda: test_curator_wikihub_api_allowlist(client, key)),
+            ("API email change resets verification (wikihub-0dcc)", lambda: test_api_email_change_resets_verification(app, client)),
+            ("sidebar JSON preserves current path + ACL shares", lambda: test_sidebar_json_preserves_current_path_and_acl_shares(app, client, key)),
+            ("settings email change requires reverification (wikihub-tzgn)", lambda: test_settings_email_change_requires_reverification(client)),
+            ("reader sidebar collapse controls", lambda: test_reader_sidebar_collapse_controls(client, key)),
+            ("folder async sidebar passes current context", lambda: test_folder_async_sidebar_passes_current_context(client, key)),
+            ("folder index gets article typography", lambda: test_folder_index_gets_article_typography(client, key)),
             ("history API with anon + deleted page", lambda: test_history_api_with_anon_and_deleted_page(client, key)),
             ("API CORS headers", lambda: test_api_cors_headers(client, key)),
             ("list wikis API", lambda: test_list_wikis_api(client, key)),
