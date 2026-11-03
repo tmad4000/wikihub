@@ -95,7 +95,10 @@ host (`ubuntu@54.145.123.7`) — that's historical. Production is GCP now.
 
 ## key invariants
 
-- **git is source of truth for public content.** Postgres is derived index. private pages live in Postgres only.
+- **git is the source of truth for ALL page content, public and private.** Private pages live in the authoritative repo (`repos/<user>/<slug>.git`); only the public mirror omits them. Postgres holds a derived index/metadata (`Page` has no content column). Treat the authoritative repo as sensitive in backups, and never read it on behalf of a non-owner without a `can_read` check — including for a file that has no `Page` row yet (fail closed, wikihub-l5oo).
+- **partial ACL grantees read the authoritative repo through a filter.** History, page/folder history and commit diffs are narrowed to the files the grantee can read now (`_history_readable_paths`); sidebars take the `(use_public, acl_filter_user)` pair as one `access=` argument so the filter cannot be dropped (wikihub-vv7q, wikihub-sk06).
+- **only signed-out HTML is cached offline.** The server marks anonymous 200 HTML with `X-WikiHub-Offline-Cache: public` and signed-in HTML `Cache-Control: private`; `static/sw.js` stores only opted-in responses and purges its page cache on sign-out (wikihub-miq4).
+- **repo writes are serialized and compare-and-swap.** `apply_repo_changes` and mirror updates hold a per-repo `flock` and move `refs/heads/main` with an expected old value, retrying on a concurrent push (wikihub-xkmk).
 - **DB→git sync does NOT fire hooks.** this prevents infinite sync loops.
 - **two repos per wiki:** `repos/<user>/<slug>.git` (authoritative) + `repos/<user>/<slug>-public.git` (derived mirror).
 - **frontmatter visibility wins over ACL file** (most specific wins).
