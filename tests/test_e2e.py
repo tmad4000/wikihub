@@ -11525,8 +11525,8 @@ def test_sidebar_home_row(client, key):
     assert "sidebar-home" not in _sidebar_tree_html(html), "Home row must not be inside the sortable tree"
     title = re.search(r"<title>(.*?)</title>", html, re.S).group(1)
     assert "{" not in title and "sidebar" not in title, f"sidebar CSS leaked into <title>: {title[:120]}"
-    style = html[html.index("<style"):html.index("</style>")]
-    assert ".sidebar-home {" in style, "shared sidebar CSS must be inside the page stylesheet"
+    styles = "".join(re.findall(r"<style[^>]*>(.*?)</style>", html, re.S))
+    assert ".sidebar-home {" in styles, "shared sidebar CSS must be inside a page stylesheet"
 
     html = _get(client, "/@agent1/home-row").get_data(as_text=True)
     m = home_re.search(html)
