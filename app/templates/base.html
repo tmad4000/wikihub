@@ -414,7 +414,8 @@ a:hover { text-decoration: underline; }
   font-family: var(--font-mono); font-size: 0.6875rem; font-weight: 500;
   text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-private);
 }
-.toc-private { color: var(--color-private); font-size: 0.75em; }
+.private-band > .private-band-label + * { margin-top: 6px; }
+.toc-private { color: var(--color-private); }
 
 {% block extra_css %}{% endblock %}
 </style>

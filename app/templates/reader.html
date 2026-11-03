@@ -986,7 +986,7 @@
       <div class="toc-title">Contents</div>
       <ol class="toc-list">
         {% for level, id, text, is_private in toc %}
-        <li class="toc-item toc-level-{{ level }}"><a href="#{{ id }}">{{ text }}</a>{% if is_private %}<span class="toc-private" title="Private section, only you can see this" aria-label="private"> &#128274;</span>{% endif %}</li>
+        <li class="toc-item toc-level-{{ level }}"><a href="#{{ id }}">{{ text }}{% if is_private %} <span class="toc-private" title="Private section, only you can see this" aria-label="private"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></span>{% endif %}</a></li>
         {% endfor %}
       </ol>
     </nav>
@@ -1027,7 +1027,7 @@
         <div class="toc-title">Contents</div>
         <ol class="toc-list">
           {% for level, id, text, is_private in toc %}
-          <li class="toc-item toc-level-{{ level }}"><a href="#{{ id }}">{{ text }}</a>{% if is_private %}<span class="toc-private" title="Private section, only you can see this" aria-label="private"> &#128274;</span>{% endif %}</li>
+          <li class="toc-item toc-level-{{ level }}"><a href="#{{ id }}">{{ text }}{% if is_private %} <span class="toc-private" title="Private section, only you can see this" aria-label="private"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></span>{% endif %}</a></li>
           {% endfor %}
         </ol>
       </nav>
