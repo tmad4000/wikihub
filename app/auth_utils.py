@@ -6,7 +6,10 @@ Bearer token extraction from requests.
 """
 
 import hashlib
+import json
+import logging
 import secrets
+import sys
 import time
 from collections import defaultdict
 
@@ -19,6 +22,102 @@ from app.models import User, ApiKey
 
 # sliding window: user_id -> list of monotonic timestamps
 _write_timestamps = defaultdict(list)
+
+
+# --- security event log ---------------------------------------------------
+#
+# One JSON object per line on logger "security". Gunicorn does not configure
+# the root logger, so without a handler of our own INFO records would be
+# dropped; attach a stderr handler (systemd captures stderr into journald)
+# and stop propagation so the line is not printed twice if a root handler is
+# ever added.
+security_logger = logging.getLogger("security")
+if not any(getattr(h, "_wikihub_security", False) for h in security_logger.handlers):
+    _security_handler = logging.StreamHandler(sys.stderr)
+    _security_handler.setFormatter(logging.Formatter("%(message)s"))
+    _security_handler._wikihub_security = True
+    security_logger.addHandler(_security_handler)
+security_logger.setLevel(logging.INFO)
+security_logger.propagate = False
+
+SECURITY_OUTCOMES = ("success", "failure", "denied")
+# Field names that must never be written to the security log, whatever a
+# caller passes. Values for these keys are dropped, not masked.
+_SECURITY_FORBIDDEN_FIELDS = frozenset({
+    "password", "new_password", "token", "api_key", "key", "secret",
+    "otp", "code", "authorization", "cookie", "email",
+})
+
+
+def client_ip():
+    """The trusted client address for this request.
+
+    ProxyFix(x_for=1) in create_app already replaced REMOTE_ADDR with the
+    address nginx appended to X-Forwarded-For (nginx's realip module derives
+    it from CF-Connecting-IP only for Cloudflare peers). Everything to the
+    left of that entry is client-controlled, so never read the header here.
+    """
+    return request.remote_addr or "unknown"
+
+
+def email_fingerprint(email):
+    """Non-reversible label for an email: domain + first 12 hex of sha256 of
+    the lowercased address. Enough to correlate attempts, not to read them."""
+    email = (email or "").strip().lower()
+    if not email:
+        return None
+    domain = email.rsplit("@", 1)[1] if "@" in email else ""
+    return {
+        "email_domain": domain[:100],
+        "email_hash": hashlib.sha256(email.encode()).hexdigest()[:12],
+    }
+
+
+def security_event(event, outcome, *, user_id=None, email=None, **fields):
+    """Emit one JSON line on the "security" logger. Never raises.
+
+    `email` is never logged raw: it becomes email_domain + email_hash.
+    Secret-looking keyword fields are dropped. Remaining values are coerced
+    to short strings/numbers/bools so a caller cannot dump objects."""
+    try:
+        if outcome not in SECURITY_OUTCOMES:
+            outcome = "failure"
+        record = {"security_event": event, "outcome": outcome}
+        try:
+            record["ip"] = client_ip()
+            record["ua"] = (request.headers.get("User-Agent") or "")[:200]
+            record["http_method"] = request.method
+            record["path"] = request.path[:300]
+        except RuntimeError:
+            # outside a request context (CLI, background thread)
+            pass
+        if user_id is None:
+            try:
+                from flask_login import current_user
+                if current_user and current_user.is_authenticated:
+                    user_id = current_user.id
+            except Exception:
+                pass
+            if user_id is None:
+                try:
+                    u = getattr(request, "current_user", None)
+                    user_id = getattr(u, "id", None)
+                except RuntimeError:
+                    pass
+        if user_id is not None:
+            record["user_id"] = user_id
+        fp = email_fingerprint(email)
+        if fp:
+            record.update(fp)
+        for k, v in fields.items():
+            if k.lower() in _SECURITY_FORBIDDEN_FIELDS or v is None:
+                continue
+            if not isinstance(v, (bool, int, float)):
+                v = str(v)[:200]
+            record[k] = v
+        security_logger.info(json.dumps(record, separators=(",", ":"), sort_keys=False))
+    except Exception:  # logging must never break the request
+        pass
 
 
 def hash_password(password):
@@ -82,6 +181,10 @@ def get_current_user_from_request():
                 api_key.agent_version = agent_version
             db.session.commit()
             return User.query.get(api_key.user_id)
+        security_event(
+            "auth.api_key_invalid", "failure", user_id=None,
+            via="bearer", key_prefix=token[:3] if token.startswith("wh_") else "other",
+        )
 
     # Only trust flask-login session auth when this request actually carries
     # a logged-in session. In tests with a long-lived app context, the
@@ -176,12 +279,13 @@ def rate_limit_writes(
                 )
                 ip_bucket_prefix = "anon"
 
-            ip = request.remote_addr or "unknown"
+            ip = client_ip()
             ip_key = (ip_bucket_prefix, ip)
             ip_ts = _ip_write_timestamps[ip_key]
             _ip_write_timestamps[ip_key] = ip_ts = _prune_window(ip_ts, now, window)
             if effective_ip_limit is not None and len(ip_ts) >= effective_ip_limit:
                 retry_after = int(ip_ts[0] + window - now) + 1
+                security_event("rate_limit", "denied", scope=f"writes_ip_{ip_bucket_prefix}", limit=effective_ip_limit)
                 scope = "authenticated requests from this IP" if user else "anonymous write requests from this IP"
                 return {
                     "error": "rate_limited",
@@ -196,6 +300,7 @@ def rate_limit_writes(
                 _write_timestamps[key] = timestamps = _prune_window(timestamps, now, window)
                 if len(timestamps) >= effective_user_limit:
                     retry_after = int(timestamps[0] + window - now) + 1
+                    security_event("rate_limit", "denied", scope="writes_user", limit=effective_user_limit)
                     return {
                         "error": "rate_limited",
                         "message": f"Too many write requests ({effective_user_limit}/min). Retry in {retry_after}s.",

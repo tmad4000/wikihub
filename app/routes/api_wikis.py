@@ -15,7 +15,7 @@ from app.url_utils import url_path_from_page_path
 from app import db
 from app.backlinks import get_backlinks_for_page, serialize_backlink
 from app.models import CustomDomain, User, Wiki, Page, Star, Fork, Wikilink, WikiSlugRedirect, PendingInvite, utcnow
-from app.auth_utils import api_auth_optional, api_auth_required, rate_limit_writes
+from app.auth_utils import api_auth_optional, api_auth_required, rate_limit_writes, security_event
 from app.git_backend import init_wiki_repo
 from app.git_sync import (
     apply_repo_changes,
@@ -2235,6 +2235,7 @@ def admin_sync_page():
     from flask import current_app
     expected = current_app.config.get("ADMIN_TOKEN", "")
     if not expected or auth != f"Bearer {expected}":
+        security_event("admin.auth", "denied", admin_endpoint=request.endpoint, token_present=bool(auth))
         return {"error": "unauthorized"}, 401
 
     data = request.get_json(silent=True) or {}
@@ -2273,6 +2274,7 @@ def admin_delete_page():
     from flask import current_app
     expected = current_app.config.get("ADMIN_TOKEN", "")
     if not expected or auth != f"Bearer {expected}":
+        security_event("admin.auth", "denied", admin_endpoint=request.endpoint, token_present=bool(auth))
         return {"error": "unauthorized"}, 401
 
     data = request.get_json(silent=True) or {}
@@ -2301,6 +2303,7 @@ def admin_regenerate_mirror():
     from flask import current_app
     expected = current_app.config.get("ADMIN_TOKEN", "")
     if not expected or auth != f"Bearer {expected}":
+        security_event("admin.auth", "denied", admin_endpoint=request.endpoint, token_present=bool(auth))
         return {"error": "unauthorized"}, 401
 
     data = request.get_json(silent=True) or {}
@@ -2316,6 +2319,7 @@ def admin_regenerate_mirror():
             return {"error": "not_found", "message": "Wiki not found"}, 404
         reindex_wiki_pages_and_mirror(username, slug, wiki)
         db.session.commit()
+        security_event("admin.action", "success", admin_endpoint=request.endpoint, target_user=username, target_wiki=slug, reindex=True)
         return jsonify({"status": "ok", "reindexed": True})
 
     acl_rules = load_acl_rules(username, slug)

@@ -36,7 +36,7 @@
   <a href="/" class="logo" style="text-decoration:none;color:inherit;"><span class="bracket">[[</span>wikihub<span class="bracket">]]</span></a>
   <h1>{% if ideaflow_login_enabled %}Sign in to an existing WikiHub account{% else %}Sign in{% endif %}</h1>
   {% if ideaflow_login_enabled %}
-  <p style="font-size:0.8125rem;color:var(--text-tertiary);text-align:center;margin:-12px 0 20px;">Use this only if Ideaflow cannot reach your account. Most people should <a href="{{ url_for('auth.ideaflow_login', next=next_value or None) }}" style="color:var(--accent);text-decoration:none;">sign in with Ideaflow</a>.</p>
+  <p style="font-size:0.8125rem;color:var(--text-tertiary);text-align:center;margin:-12px 0 20px;">Use this only if Ideaflow cannot reach your account. Most people should <a rel="nofollow" href="{{ url_for('auth.ideaflow_login', next=next_value or None) }}" style="color:var(--accent);text-decoration:none;">sign in with Ideaflow</a>.</p>
   {% endif %}
 
   {% with messages = get_flashed_messages() %}

@@ -50,8 +50,11 @@ def _check_basic_auth():
     if not auth or not auth.username or not auth.password:
         return None
 
+    from app.auth_utils import security_event
+
     user = User.query.filter_by(username=auth.username).first()
     if not user:
+        security_event("auth.git_basic", "failure", user_id=None, reason="unknown_user")
         return None
 
     # try bcrypt password
@@ -68,6 +71,7 @@ def _check_basic_auth():
     if api_key:
         return user
 
+    security_event("auth.git_basic", "failure", user_id=user.id, reason="bad_credentials")
     return None
 
 

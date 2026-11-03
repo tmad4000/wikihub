@@ -17,7 +17,7 @@ from flask_login import current_user, login_required, login_user
 
 from app import db
 from app.acl import normalize_page_visibility, resolve_visibility
-from app.auth_utils import generate_api_key, rate_limit_writes
+from app.auth_utils import generate_api_key, rate_limit_writes, security_event
 from app.credentials_hint import build_client_config, resolve_server_url
 from app.models import ApiKey, User, Wiki, Page
 from app.content_utils import parse_markdown_document
@@ -115,6 +115,8 @@ def create_wiki_anonymous():
 
     wiki = create_wiki_for_user(user, slug=slug, title=title, description=description, scaffold=False)
     db.session.commit()
+    security_event("auth.signup", "success", user_id=user.id, method="anonymous_upload")
+    security_event("api_key.create", "success", user_id=user.id, label="Anonymous upload key")
 
     uploaded = request.files.getlist("files")
     if uploaded and uploaded[0].filename:
