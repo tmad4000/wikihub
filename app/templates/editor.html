@@ -744,9 +744,10 @@ ta.addEventListener('keydown', function(event) {
   }
 });
 
+{% if is_owner %}
 // Private sections (Markdown tab): Cmd/Ctrl+Shift+P wraps the selected lines
 // (or the current line) in owner-only <!-- private --> markers, each on its
-// own line. Owner only: non-owners never receive bands.
+// own line. Rendered for owners only: non-owner pages never contain band markers.
 function wrapSelectionInPrivateSection() {
   const value = ta.value;
   const lineStart = value.lastIndexOf('\n', ta.selectionStart - 1) + 1;
@@ -759,7 +760,7 @@ function wrapSelectionInPrivateSection() {
   ta.selectionEnd = ta.selectionStart + block.length;
   ta.dispatchEvent(new Event('input', {bubbles: true}));
 }
-if (editorConfig.isOwner) {
+{
   ta.addEventListener('keydown', function(event) {
     if ((event.metaKey || event.ctrlKey) && event.shiftKey && (event.key === 'p' || event.key === 'P')) {
       event.preventDefault();
@@ -768,6 +769,7 @@ if (editorConfig.isOwner) {
   });
 }
 
+{% endif %}
 ta.addEventListener('input', function() {
   updateLineCount();
   updateSaveStatus();
