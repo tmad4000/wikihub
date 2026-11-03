@@ -18,6 +18,7 @@ from app.models import CustomDomain, User, Wiki, Page, Star, Fork, Wikilink, Wik
 from app.auth_utils import api_auth_optional, api_auth_required, check_admin_token, rate_limit_writes, security_event
 from app.git_backend import init_wiki_repo
 from app.git_sync import (
+    RefUpdateConflict,
     apply_repo_changes,
     append_event_to_repo,
     list_files_in_repo,
@@ -158,10 +159,13 @@ def _write_sidebar_file(owner_user, wiki, content, status=200):
     if len((content or "").encode("utf-8")) > max_page:
         return {"error": "too_large", "message": "Sidebar file is too large"}, 413
     author_name, author_email = _current_author()
-    sync_page_to_repo(
-        owner_user.username, wiki.slug, SIDEBAR_FILE_PATH, content or "",
-        message="Update .wikihub/sidebar.md", author_name=author_name, author_email=author_email,
-    )
+    try:
+        sync_page_to_repo(
+            owner_user.username, wiki.slug, SIDEBAR_FILE_PATH, content or "",
+            message="Update .wikihub/sidebar.md", author_name=author_name, author_email=author_email,
+        )
+    except RefUpdateConflict:
+        return {"error": "conflict", "message": "The wiki changed while saving; retry"}, 409
     return jsonify({"path": SIDEBAR_FILE_PATH}), status
 
 
@@ -1403,7 +1407,10 @@ def delete_page(owner, slug, page_path):
     if _is_sidebar_file_path(normalized_page_path):
         if not _current_user_is_owner(wiki):
             return _sidebar_file_forbidden()
-        remove_page_from_repo(owner_user.username, wiki.slug, SIDEBAR_FILE_PATH)
+        try:
+            remove_page_from_repo(owner_user.username, wiki.slug, SIDEBAR_FILE_PATH)
+        except RefUpdateConflict:
+            return {"error": "conflict", "message": "The wiki changed while saving; retry"}, 409
         return "", 204
     if _is_wikihub_plumbing_path(normalized_page_path):
         return _reject_wikihub_plumbing_path()

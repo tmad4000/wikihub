@@ -17,7 +17,7 @@ from app.backlinks import get_backlinks_for_page
 from app.content_utils import has_private_bands, parse_markdown_document, set_visibility_in_content
 from app.discovery import discoverable_page_for_wiki, visible_wikis_for_owner
 from app.git_backend import _repo_path
-from app.git_sync import read_file_from_repo, read_file_bytes_from_repo, list_files_in_repo, regenerate_public_mirror, remove_page_from_repo, sync_page_to_repo, update_mirror_page
+from app.git_sync import RefUpdateConflict, read_file_from_repo, read_file_bytes_from_repo, list_files_in_repo, regenerate_public_mirror, remove_page_from_repo, sync_page_to_repo, update_mirror_page
 from app.page_utils import content_page_path_filter, is_content_page_path, is_wikihub_plumbing_path
 from app.models import (
     Page,
@@ -414,13 +414,17 @@ def _visible_files(username, slug, wiki, public=False, acl_filter_user=None, pag
         return [path for path in files if not path.startswith(".wikihub/") and not path.endswith(".gitkeep")]
 
     if acl_filter_user:
-        # non-owner with ACL grants — read authoritative repo, filter by can_read
+        # non-owner with ACL grants — read authoritative repo, filter by can_read.
+        # Fail closed on unindexed markdown (wikihub-l5oo): a .md in git with
+        # no Page row may carry private frontmatter we have not resolved, so a
+        # partial grantee never sees it listed (or in history narrowing).
         acl_rules = load_acl_rules(username, slug)
         return [
             path
             for path in files
-            if not path.startswith(".wikihub/")
+            if not _is_wikihub_plumbing_path(path)
             and not path.endswith(".gitkeep")
+            and not (path.lower().endswith(".md") and path not in pages_by_path)
             and can_read(path, acl_rules, acl_filter_user, (pages_by_path[path].visibility if path in pages_by_path else None))
         ]
 
@@ -1337,18 +1341,10 @@ def edit_sidebar(username, slug):
         return _render_permission_error(owner, wiki)
     wiki_url = f"/@{owner.username}" if wiki.slug == owner.username else f"/@{owner.username}/{wiki.slug}"
     if request.method == "POST":
-        if request.form.get("reset"):
-            if read_file_from_repo(owner.username, wiki.slug, SIDEBAR_FILE_PATH, public=False) is not None:
-                remove_page_from_repo(owner.username, wiki.slug, SIDEBAR_FILE_PATH)
-        else:
-            content = request.form.get("content", "").replace("\r\n", "\n")
-            if len(content.encode("utf-8")) > current_app.config["MAX_PAGE_SIZE"]:
-                abort(413)
-            sync_page_to_repo(
-                owner.username, wiki.slug, SIDEBAR_FILE_PATH, content,
-                message="Update .wikihub/sidebar.md",
-                author_name=current_user.username, author_email=f"{current_user.username}@wikihub",
-            )
+        try:
+            _save_sidebar_form(owner, wiki)
+        except RefUpdateConflict:
+            return Response("The wiki changed while saving; reload and try again.", status=409, content_type="text/plain; charset=utf-8")
         return redirect(wiki_url)
     existing = read_file_from_repo(owner.username, wiki.slug, SIDEBAR_FILE_PATH, public=False)
     if existing is None:
@@ -1356,6 +1352,22 @@ def edit_sidebar(username, slug):
     else:
         content = existing
     return render_template("sidebar_edit.html", owner=owner, wiki=wiki, content=content, has_file=existing is not None, wiki_url=wiki_url)
+
+
+def _save_sidebar_form(owner, wiki):
+    """Write or reset `.wikihub/sidebar.md` from the owner form."""
+    if request.form.get("reset"):
+        if read_file_from_repo(owner.username, wiki.slug, SIDEBAR_FILE_PATH, public=False) is not None:
+            remove_page_from_repo(owner.username, wiki.slug, SIDEBAR_FILE_PATH)
+    else:
+        content = request.form.get("content", "").replace("\r\n", "\n")
+        if len(content.encode("utf-8")) > current_app.config["MAX_PAGE_SIZE"]:
+            abort(413)
+        sync_page_to_repo(
+            owner.username, wiki.slug, SIDEBAR_FILE_PATH, content,
+            message="Update .wikihub/sidebar.md",
+            author_name=current_user.username, author_email=f"{current_user.username}@wikihub",
+        )
 
 
 @wiki_bp.route("/@<username>/<slug>/-/suggest/<path:page_path>", methods=["GET", "POST"])
