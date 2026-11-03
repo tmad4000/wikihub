@@ -47,6 +47,10 @@ KEY INVARIANTS
 - Set frontmatter pinned: true to float a readable page to the top of the
   wiki sidebar. Pinning is metadata only; it never grants read access and
   there is no dedicated pinning tool.
+- Order and group a wiki's sidebar (owner only) by writing
+  .wikihub/sidebar.md with the page tools: "# Heading" = group,
+  "- [[page|Label]]" = page, "- folder/" = folder, "- ..." = every unlisted
+  page (unlisted pages are never hidden).
 - .wikihub/* paths are wiki plumbing, not normal pages. Owners may write,
   patch, delete, or revert .wikihub/acl through page tools; ACL changes
   reindex inherited visibility and refresh the public mirror. Other

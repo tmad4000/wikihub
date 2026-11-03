@@ -10935,6 +10935,13 @@ def run_all():
             ("templates keep user values out of inline JS (wikihub-l1w4)", lambda: test_templates_do_not_interpolate_user_values_into_inline_js(app, client, key)),
             ("concurrent repo writes keep every commit (wikihub-xkmk)", lambda: test_concurrent_repo_writes_keep_every_commit(app, client, key)),
             # READER_SIDEBAR_TESTS
+            ("sidebar Home row (wikihub-e8pj)", lambda: test_sidebar_home_row(client, key)),
+            ("sidebar custom order file (wikihub-hnfm)", lambda: test_sidebar_custom_order_file(client, key)),
+            ("sidebar custom order rest marker (wikihub-hnfm)", lambda: test_sidebar_custom_order_rest_marker(client, key)),
+            ("sidebar custom order no leak (wikihub-hnfm)", lambda: test_sidebar_custom_order_no_leak(app, client, key)),
+            ("sidebar custom order ignores unknown targets (wikihub-hnfm)", lambda: test_sidebar_custom_order_unknown_targets_ignored(client, key)),
+            ("sidebar.md write guard + owner editor (wikihub-hnfm)", lambda: test_sidebar_md_write_guard(app, client, key)),
+            ("sidebar client sort matches server (wikihub-9c8j)", lambda: test_sidebar_custom_sort_client_matches_server(client, key)),
             ("side peek: plain click navigates (wikihub-9i28)", lambda: test_side_peek_plain_click_navigates()),
             ("side peek: Shift+click opens peek (wikihub-9i28)", lambda: test_side_peek_shift_click_opens_peek()),
             ("side peek: hover trigger injected (wikihub-9i28)", lambda: test_side_peek_trigger_button_injected()),
@@ -11391,6 +11398,12 @@ def _put_page(client, key, owner, slug, path, content, visibility="public"):
     r = client.post(f"/api/v1/wikis/{owner}/{slug}/pages", json={
         "path": path, "content": content, "visibility": visibility,
     }, headers=h)
+    if r.status_code == 409:  # new wikis ship a default index.md etc.
+        r = client.put(f"/api/v1/wikis/{owner}/{slug}/pages/{path}", json={
+            "content": content, "visibility": visibility,
+        }, headers=h)
+        assert r.status_code == 200, f"replace {path}: {r.status_code} {r.get_data(as_text=True)[:200]}"
+        return
     assert r.status_code == 201, f"create {path}: {r.status_code} {r.get_data(as_text=True)[:200]}"
 
 
@@ -11462,6 +11475,321 @@ def test_profile_owner_sees_pages_when_auth_repo_unreadable(app, client):
         assert "GiveDirectly body text." in r.get_data(as_text=True)
     finally:
         os.rename(head + ".bak", head)
+
+
+
+def _sidebar_tree_html(html):
+    start = html.index('<div id="sidebar-tree">')
+    end = html.index('/activity" class="sidebar-item"', start)
+    return html[start:end]
+
+
+def _sidebar_sequence(tree_html):
+    """Flatten the rendered tree into tokens: 'G:Name', 'F:name', 'P:name', 'X:name', '---'."""
+    tokens = []
+    for m in re.finditer(
+        r'sidebar-group-heading">([^<]*)<|data-kind="divider"|data-name="([^"]*)" data-kind="(folder|page|external)"'
+        r'|class="sidebar-item sidebar-external"[^>]*data-name="([^"]*)"',
+        tree_html,
+    ):
+        if m.group(1) is not None:
+            tokens.append("G:" + m.group(1).strip())
+        elif m.group(0) == 'data-kind="divider"':
+            tokens.append("---")
+        elif m.group(4) is not None:
+            tokens.append("X:" + m.group(4))
+        else:
+            tokens.append({"folder": "F:", "page": "P:", "external": "X:"}[m.group(3)] + m.group(2))
+    return tokens
+
+
+def test_sidebar_home_row(client, key):
+    """wikihub-e8pj: a fixed Home row sits above (outside) #sidebar-tree, links to
+    the wiki index (or /@user for the personal wiki) and is active on the index."""
+    h = {"Authorization": f"Bearer {key}"}
+    r = client.post("/api/v1/wikis", json={"slug": "home-row", "title": "Home Row"}, headers=h)
+    assert r.status_code == 201
+    _put_page(client, key, "agent1", "home-row", "index.md", "---\ntitle: Home Row\nvisibility: public\n---\n\n# Home Row\n")
+    _put_page(client, key, "agent1", "home-row", "guides/setup.md", "---\ntitle: Setup\nvisibility: public\n---\n\n# Setup\n")
+
+    home_re = re.compile(r'<a href="([^"]+)" class="sidebar-item sidebar-home ?(active)?')
+    html = _get(client, "/@agent1/home-row/guides/setup").get_data(as_text=True)
+    m = home_re.search(html)
+    assert m, "deep page must render the Home row"
+    assert m.group(1) == "/@agent1/home-row" and not m.group(2), f"Home row on deep page: {m.group(0)}"
+    assert html.index("sidebar-home") < html.index('id="sidebar-tree"'), "Home row must sit outside/above #sidebar-tree"
+    assert "sidebar-home" not in _sidebar_tree_html(html), "Home row must not be inside the sortable tree"
+
+    html = _get(client, "/@agent1/home-row").get_data(as_text=True)
+    m = home_re.search(html)
+    assert m and m.group(2) == "active", "Home row is active on the wiki index"
+
+    _put_page(client, key, "agent1", "agent1", "home-row-note.md", "---\ntitle: Note\nvisibility: public\n---\n\n# Note\n")
+    html = _get(client, "/@agent1/agent1/home-row-note").get_data(as_text=True)
+    m = home_re.search(html)
+    assert m and m.group(1) == "/@agent1", f"personal wiki Home row links to the profile: {m and m.group(0)}"
+
+
+def _setup_nav_wiki(client, key, slug):
+    h = {"Authorization": f"Bearer {key}"}
+    r = client.post("/api/v1/wikis", json={"slug": slug, "title": slug}, headers=h)
+    assert r.status_code == 201, r.get_data(as_text=True)
+    for path in ["a.md", "b.md", "c.md", "guides/x.md", "index.md"]:
+        name = path.rsplit("/", 1)[-1][:-3]
+        _put_page(client, key, "agent1", slug, path, f"---\ntitle: {name}\nvisibility: public\n---\n\n# {name}\n")
+    return h
+
+
+def _write_sidebar(client, h, slug, content, method="post"):
+    if method == "post":
+        r = client.post(f"/api/v1/wikis/agent1/{slug}/pages", json={"path": ".wikihub/sidebar.md", "content": content}, headers=h)
+        assert r.status_code == 201, f"sidebar write: {r.status_code} {r.get_data(as_text=True)[:200]}"
+    else:
+        r = client.put(f"/api/v1/wikis/agent1/{slug}/pages/.wikihub/sidebar.md", json={"content": content}, headers=h)
+        assert r.status_code == 200, f"sidebar replace: {r.status_code} {r.get_data(as_text=True)[:200]}"
+
+
+def test_sidebar_custom_order_file(client, key):
+    """wikihub-hnfm: `.wikihub/sidebar.md` orders + groups the sidebar; unlisted
+    pages are appended under "Other pages"; Custom sort button is active;
+    sidebar.json carries the same structure."""
+    h = _setup_nav_wiki(client, key, "nav-order")
+    before = _sidebar_sequence(_sidebar_tree_html(_get(client, "/@agent1/nav-order/a").get_data(as_text=True)))
+    assert "G:Start" not in before
+    _write_sidebar(client, h, "nav-order", "# Start\n- [[c]]\n- [[a|Alpha]]\n# More\n- guides/\n")
+
+    html = _get(client, "/@agent1/nav-order/a").get_data(as_text=True)
+    seq = _sidebar_sequence(_sidebar_tree_html(html))
+    rest = [t for t in before if t not in {"P:a", "P:c", "F:guides", "P:x"}]
+    expected = ["G:Start", "P:c", "P:Alpha", "G:More", "F:guides", "P:x", "---"] + rest
+    assert seq == expected, f"custom order mismatch:\n got {seq}\n want {expected}"
+    assert "Other pages" in _sidebar_tree_html(html), "rest under groups gets the 'Other pages' kicker"
+    assert 'data-order="0"' in html, "rows carry data-order"
+    assert re.search(r'class="sidebar-sort-btn active" data-sort="custom"', html), "Custom sort button rendered and active"
+
+    r = _get(client, "/@agent1/nav-order/sidebar.json")
+    assert r.headers.get("X-Wikihub-Sidebar-Custom") == "1"
+    tree = r.get_json()
+    assert [i["kind"] for i in tree[:2]] == ["group", "group"], tree
+    assert [c["name"] for c in tree[0]["children"]] == ["c", "Alpha"]
+    assert all(i.get("order") is not None for i in tree)
+
+    # A wiki without the file keeps today's sidebar: no Custom button.
+    plain = _get(client, "/@agent1/home-row/guides/setup").get_data(as_text=True)
+    assert 'data-sort="custom"' not in plain
+
+
+def test_sidebar_custom_order_rest_marker(client, key):
+    """wikihub-hnfm: `- ...` places unlisted pages exactly there; no 'Other pages' kicker."""
+    h = _setup_nav_wiki(client, key, "nav-rest")
+    _write_sidebar(client, h, "nav-rest", "# Start\n- [[c]]\n- ...\n# End\n- [[a]]\n")
+    html = _get(client, "/@agent1/nav-rest/a").get_data(as_text=True)
+    tree_html = _sidebar_tree_html(html)
+    seq = _sidebar_sequence(tree_html)
+    assert seq[:2] == ["G:Start", "P:c"], seq
+    assert seq[-2:] == ["G:End", "P:a"], seq
+    middle = seq[2:-2]
+    assert "P:b" in middle and "F:guides" in middle, f"rest lands at the marker: {seq}"
+    assert "---" not in seq and "Other pages" not in tree_html
+
+
+def test_sidebar_custom_order_no_leak(app, client, key):
+    """wikihub-hnfm: a listed page the viewer cannot read drops with its label,
+    and a group left empty drops with its heading."""
+    h = _setup_nav_wiki(client, key, "nav-leak")
+    r = client.post("/api/v1/wikis/agent1/nav-leak/pages", json={
+        "path": "secret.md", "content": "---\ntitle: secret\nvisibility: private\n---\n\n# secret\n", "visibility": "private",
+    }, headers=h)
+    assert r.status_code == 201
+    _write_sidebar(client, h, "nav-leak", "# Hidden Group\n- [[secret|Secret plans]]\n# Open\n- [[a]]\n")
+    anon_html = _get(app.test_client(), "/@agent1/nav-leak/a").get_data(as_text=True)
+    assert "Secret plans" not in anon_html, "label of an unreadable entry must not leak"
+    assert "Hidden Group" not in anon_html, "group with no visible rows must not render its heading"
+    assert "G:Open" in _sidebar_sequence(_sidebar_tree_html(anon_html))
+    anon_json = json.dumps(_get(app.test_client(), "/@agent1/nav-leak/sidebar.json").get_json())
+    assert "Secret plans" not in anon_json and "Hidden Group" not in anon_json
+
+    owner = _login_browser_with_key(app, key)
+    owner_html = _get(owner, "/@agent1/nav-leak/a").get_data(as_text=True)
+    assert "Secret plans" in owner_html and "Hidden Group" in owner_html, "owner sees the private entry"
+
+
+def _login_browser_with_key(app, key):
+    browser = app.test_client()
+    r = browser.post("/auth/login", data={"api_key": key}, follow_redirects=False)
+    assert r.status_code == 302, r.status_code
+    return browser
+
+
+def test_sidebar_custom_order_unknown_targets_ignored(client, key):
+    """wikihub-hnfm: stale targets and unknown folders are dropped silently."""
+    h = _setup_nav_wiki(client, key, "nav-stale")
+    _write_sidebar(client, h, "nav-stale", "# Start\n- [[deleted-page|Gone Label]]\n- nowhere/\n- [[b]]\n- [Docs](https://example.com/docs)\n- [Bad](javascript:alert(1))\n")
+    r = _get(client, "/@agent1/nav-stale/a")
+    assert r.status_code == 200
+    html = r.get_data(as_text=True)
+    seq = _sidebar_sequence(_sidebar_tree_html(html))
+    assert seq[:3] == ["G:Start", "P:b", "X:Docs"], seq
+    assert "Gone Label" not in html and "nowhere" not in _sidebar_tree_html(html)
+    assert 'href="https://example.com/docs"' in html and 'rel="noopener"' in html
+    assert "javascript:alert" not in _sidebar_tree_html(html)
+
+
+def test_sidebar_md_write_guard(app, client, key):
+    """wikihub-hnfm: only the owner writes `.wikihub/sidebar.md`; other
+    `.wikihub/*` paths stay rejected; the file is never content."""
+    h = _setup_nav_wiki(client, key, "nav-guard")
+    count_before = client.get("/api/v1/wikis/agent1/nav-guard", headers=h).get_json()["page_count"]
+    _write_sidebar(client, h, "nav-guard", "# Start\n- [[a]]\n- ...\n")
+    _write_sidebar(client, h, "nav-guard", "# Start\n- [[b]]\n- ...\n", method="put")
+    r = client.get("/api/v1/wikis/agent1/nav-guard/pages/.wikihub/sidebar.md", headers=h)
+    assert r.status_code == 200 and "[[b]]" in r.get_json()["content"]
+
+    other_key = _make_account(client, "navguardother")
+    oh = {"Authorization": f"Bearer {other_key}"}
+    r = client.put("/api/v1/wikis/agent1/nav-guard/pages/.wikihub/sidebar.md", json={"content": "# x\n"}, headers=oh)
+    assert r.status_code == 403, r.status_code
+    r = client.post("/api/v1/wikis/agent1/nav-guard/pages", json={"path": ".wikihub/sidebar.md", "content": "# x\n"}, headers=oh)
+    assert r.status_code == 403, r.status_code
+    r = client.get("/api/v1/wikis/agent1/nav-guard/pages/.wikihub/sidebar.md", headers=oh)
+    assert r.status_code == 404
+    r = client.post("/api/v1/wikis/agent1/nav-guard/pages", json={"path": ".wikihub/foo.md", "content": "x"}, headers=h)
+    assert r.status_code == 400, "other plumbing paths stay rejected for the owner"
+
+    r = client.get("/api/v1/wikis/agent1/nav-guard", headers=h)
+    assert r.get_json()["page_count"] == count_before, f"sidebar file must not count as a page: {r.get_json()}"
+    from app.git_sync import list_files_in_repo
+    assert ".wikihub/sidebar.md" in list_files_in_repo("agent1", "nav-guard", public=False)
+    assert not any(p.startswith(".wikihub/") for p in list_files_in_repo("agent1", "nav-guard", public=True))
+    zr = _get(app.test_client(), "/@agent1/nav-guard.zip")
+    if zr.status_code == 200:
+        assert not any(n.startswith(".wikihub/") for n in zipfile.ZipFile(io.BytesIO(zr.data)).namelist())
+    assert "sidebar" not in _get(app.test_client(), "/@agent1/nav-guard/llms.txt").get_data(as_text=True)
+    assert not Page.query.filter(Page.path.like(".wikihub/%")).filter_by(
+        wiki_id=Wiki.query.filter_by(slug="nav-guard").first().id).count()
+
+    # Owner web editor: link in the sidebar, prefilled template, save + reset.
+    owner = _login_browser_with_key(app, key)
+    html = _get(owner, "/@agent1/nav-guard/a").get_data(as_text=True)
+    assert 'href="/@agent1/nav-guard/-/sidebar"' in html, "owner sees Edit sidebar"
+    assert "/-/sidebar" not in _get(app.test_client(), "/@agent1/nav-guard/a").get_data(as_text=True)
+    assert _get(app.test_client(), "/@agent1/nav-guard/-/sidebar").status_code in (302, 401, 403)
+    page = _get(owner, "/@agent1/nav-guard/-/sidebar")
+    assert page.status_code == 200 and "[[b]]" in page.get_data(as_text=True)
+    from flask import g as _g
+    _g.pop("_login_user", None)
+    r = owner.post("/@agent1/nav-guard/-/sidebar", data={"content": "# Web\n- [[c]]\n"})
+    assert r.status_code == 302
+    seq = _sidebar_sequence(_sidebar_tree_html(_get(owner, "/@agent1/nav-guard/a").get_data(as_text=True)))
+    assert seq[:2] == ["G:Web", "P:c"], seq
+    _g.pop("_login_user", None)
+    owner.post("/@agent1/nav-guard/-/sidebar", data={"reset": "1", "content": ""})
+    assert 'data-sort="custom"' not in _get(owner, "/@agent1/nav-guard/a").get_data(as_text=True)
+
+
+_SIDEBAR_SORT_NODE = r"""
+const fs = require("fs");
+const path = require("path");
+const vm = require("vm");
+const src = fs.readFileSync(path.join(process.cwd(), "app/static/js/sidebar-sort.js"), "utf8");
+const ctx = { window: {} };
+vm.runInNewContext(src, ctx);
+const S = ctx.window.WikihubSidebar;
+
+function el(cls, ds, tag) {
+  return {
+    tagName: tag || "DIV", id: "", dataset: ds || {}, children: [],
+    classList: { contains(c) { return cls.split(" ").indexOf(c) >= 0; } },
+    insertBefore(node, before) {
+      const i = this.children.indexOf(node);
+      if (i >= 0) this.children.splice(i, 1);
+      const j = before ? this.children.indexOf(before) : -1;
+      if (j >= 0) this.children.splice(j, 0, node); else this.children.push(node);
+    }
+  };
+}
+function build(items) {
+  return items.map((item) => {
+    const order = item.order === undefined || item.order === null ? "" : String(item.order);
+    if (item.kind === "folder") {
+      const f = el("sidebar-folder", { kind: "folder", name: item.name, folderPath: item.path, updated: item.updated_at || "", order });
+      const kids = el("sidebar-children");
+      kids.children = build(item.children || []);
+      f.children = [el("sidebar-folder-row"), kids];
+      return f;
+    }
+    if (item.kind === "group") {
+      const g = el("sidebar-group", { kind: "group", name: item.name, order });
+      const kids = el("sidebar-group-children");
+      kids.children = build(item.children || []);
+      g.children = [el("sidebar-heading"), kids];
+      return g;
+    }
+    if (item.kind === "divider") return el("sidebar-divider", { kind: "divider", order });
+    return el("sidebar-item", { kind: item.kind, name: item.name, path: item.path || "", pinned: item.pinned ? "1" : "0", updated: item.updated_at || "", order }, "A");
+  });
+}
+function flat(nodes) {
+  const out = [];
+  nodes.forEach((n) => {
+    const d = n.dataset;
+    out.push((d.kind || "?") + ":" + (d.name || ""));
+    n.children.forEach((c) => {
+      if (c.classList.contains("sidebar-children") || c.classList.contains("sidebar-group-children")) out.push(...flat(c.children));
+    });
+  });
+  return out;
+}
+function check(items, mode, label) {
+  const root = el("tree"); root.id = "sidebar-tree";
+  root.children = build(items);
+  const want = flat(root.children);
+  // Realistic churn: the reader picks another order (and the DOM is
+  // scrambled within each run), then returns to the server's mode.
+  S.sortChildren(root, "alpha-desc");
+  S.sortChildren(root, "recent");
+  S.sortChildren(root, mode);
+  const got = flat(root.children);
+  if (JSON.stringify(got) !== JSON.stringify(want)) {
+    throw new Error(label + " " + mode + " client order differs from server:\n got " + got.join(",") + "\n want " + want.join(","));
+  }
+  return root;
+}
+const custom = JSON.parse(process.env.CUSTOM_TREE);
+const auto = JSON.parse(process.env.AUTO_TREE);
+check(custom, "custom", "custom tree");
+check(auto, "alpha", "auto tree");
+// alpha on a custom tree keeps groups/dividers fixed and sorts within groups.
+const root = el("tree");
+root.children = build(custom);
+S.sortChildren(root, "alpha");
+const kinds = root.children.map((n) => n.dataset.kind);
+const fixedBefore = custom.map((i) => i.kind).filter((k) => k === "group" || k === "divider");
+const fixedAfter = kinds.filter((k) => k === "group" || k === "divider");
+if (JSON.stringify(fixedBefore) !== JSON.stringify(fixedAfter)) throw new Error("groups moved under alpha: " + kinds.join(","));
+const startGroup = root.children.find((n) => n.dataset.kind === "group" && n.dataset.name === "Start");
+const start = startGroup.children[1].children.map((n) => n.dataset.name);
+if (JSON.stringify(start) !== JSON.stringify(["Alpha", "c"])) throw new Error("alpha did not sort within group: " + start.join(","));
+if (S.savedMode("w", false, { getItem() { return "custom"; } }) !== "alpha") throw new Error("stored custom must fall back to alpha without a file");
+if (S.savedMode("w", true, { getItem() { return null; } }) !== "custom") throw new Error("custom wikis default to custom");
+"""
+
+
+def test_sidebar_custom_sort_client_matches_server(client, key):
+    """wikihub-9c8j + wikihub-hnfm: the client comparator reproduces the server
+    order exactly (custom and default A→Z), so clicking a page never reorders
+    the sidebar; A→Z on a custom tree keeps groups fixed and sorts within them."""
+    h = _setup_nav_wiki(client, key, "nav-sortcheck")
+    for path in ["Zeta.md", "beta.md", "Beta.md", "guides/Apple.md", "pinme.md"]:
+        content = f"---\ntitle: t\nvisibility: public\n{'pinned: true' + chr(10) if path == 'pinme.md' else ''}---\n\n# t\n"
+        _put_page(client, key, "agent1", "nav-sortcheck", path, content)
+    auto = _get(client, "/@agent1/nav-sortcheck/sidebar.json").get_json()
+    _write_sidebar(client, h, "nav-sortcheck", "# Start\n- [[c]]\n- [[a|Alpha]]\n# More\n- guides/\n  - [[guides/x]]\n")
+    custom = _get(client, "/@agent1/nav-sortcheck/sidebar.json").get_json()
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env = dict(os.environ, CUSTOM_TREE=json.dumps(custom), AUTO_TREE=json.dumps(auto))
+    r = subprocess.run(["node", "-e", _SIDEBAR_SORT_NODE], cwd=repo_root, env=env, text=True, capture_output=True)
+    assert r.returncode == 0, r.stderr or r.stdout
 
 
 if __name__ == "__main__":

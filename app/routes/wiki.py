@@ -6,7 +6,7 @@ from datetime import timezone
 from urllib.parse import quote, unquote, urlparse
 from sqlalchemy.orm import defer
 
-from flask import Response, abort, current_app, jsonify, redirect, render_template, request, url_for
+from flask import Response, abort, current_app, has_request_context, jsonify, redirect, render_template, request, url_for
 
 from app.url_utils import page_path_from_url_path, url_path_from_page_path
 from flask_login import current_user
@@ -34,6 +34,7 @@ from app.models import (
     Wikilink,
     utcnow,
 )
+from app.sidebar_nav import SIDEBAR_FILE_PATH, apply_nav, default_sidebar_md, parse_sidebar_md
 from app.renderer import build_html_embed_figure, extract_toc, render_page
 from app.routes import wiki_bp
 from app.wiki_ops import index_repo_pages, load_acl_rules, load_page_redirects, load_serve_inline_patterns, refresh_wikilinks_for_page, sync_wiki_counters, update_page_metadata
@@ -393,7 +394,7 @@ def _visible_files(username, slug, wiki, public=False, acl_filter_user=None, pag
         pages_by_path: Pre-loaded {path: Page} dict to avoid duplicate DB queries.
     """
     files = list_files_in_repo(username, slug, public=public)
-    if not public and (acl_filter_user or _is_owner(wiki)):
+    if not public and (acl_filter_user or (has_request_context() and _is_owner(wiki))):
         # Authoritative-repo viewers (owner / ACL grantee): union git with the
         # DB page index (wikihub-325p). The DB is the derived index of git, so
         # in a healthy repo this adds nothing; when the authoritative repo is
@@ -705,7 +706,29 @@ def _build_sidebar_tree(username, slug, wiki, public=False, current_path=None, a
             ),
         )
 
-    return normalize(root["children"])
+    tree = normalize(root["children"])
+    nav_text = _sidebar_nav_text(username, slug)
+    if nav_text:
+        tree, _applied = apply_nav(parse_sidebar_md(nav_text), tree)
+    return tree
+
+
+def _sidebar_nav_text(username, slug):
+    """Read `.wikihub/sidebar.md` from the AUTHORITATIVE repo (the public mirror
+    strips .wikihub/*), cached per request. Visibility filtering happens in
+    apply_nav against the viewer's already-filtered tree, so reading the file
+    for every viewer is safe (wikihub-hnfm)."""
+    if not has_request_context():
+        return read_file_from_repo(username, slug, SIDEBAR_FILE_PATH, public=False)
+    cache = request.environ.setdefault("wikihub.sidebar_nav", {})
+    key = (username, slug)
+    if key not in cache:
+        cache[key] = read_file_from_repo(username, slug, SIDEBAR_FILE_PATH, public=False)
+    return cache[key]
+
+
+def _sidebar_is_custom(items):
+    return bool(items) and any(item.get("order") is not None for item in items)
 
 
 def _activity_time(value):
@@ -1218,7 +1241,11 @@ def sidebar_json(username, slug):
         current_path=_sidebar_current_path_from_request(owner.username, wiki.slug),
         acl_filter_user=acl_filter_user,
     )
-    return jsonify(tree)
+    resp = jsonify(tree)
+    # Array payload kept for existing consumers; custom order is also
+    # discoverable from per-item `order` (wikihub-hnfm).
+    resp.headers["X-Wikihub-Sidebar-Custom"] = "1" if _sidebar_is_custom(tree) else "0"
+    return resp
 
 
 @wiki_bp.route("/@<username>/<slug>/settings", strict_slashes=False)
@@ -1294,6 +1321,41 @@ def wiki_index(username, slug):
         sibling_wikis=siblings,
         user_can_edit=user_can_edit,
     )
+
+
+@wiki_bp.route("/@<username>/<slug>/-/sidebar", methods=["GET", "POST"])
+def edit_sidebar(username, slug):
+    """Owner-only editor for `.wikihub/sidebar.md` (wikihub-hnfm).
+
+    A dedicated plain-text form rather than the page editor: the file is git
+    plumbing (no Page row, no frontmatter, no visibility), not wiki content.
+    """
+    owner, wiki, redirect_row = _get_owner_and_wiki_or_404(username, slug)
+    if redirect_row:
+        return redirect(url_for("wiki.edit_sidebar", username=owner.username, slug=wiki.slug), code=302)
+    if not _is_owner(wiki):
+        return _render_permission_error(owner, wiki)
+    wiki_url = f"/@{owner.username}" if wiki.slug == owner.username else f"/@{owner.username}/{wiki.slug}"
+    if request.method == "POST":
+        if request.form.get("reset"):
+            if read_file_from_repo(owner.username, wiki.slug, SIDEBAR_FILE_PATH, public=False) is not None:
+                remove_page_from_repo(owner.username, wiki.slug, SIDEBAR_FILE_PATH)
+        else:
+            content = request.form.get("content", "").replace("\r\n", "\n")
+            if len(content.encode("utf-8")) > current_app.config["MAX_PAGE_SIZE"]:
+                abort(413)
+            sync_page_to_repo(
+                owner.username, wiki.slug, SIDEBAR_FILE_PATH, content,
+                message="Update .wikihub/sidebar.md",
+                author_name=current_user.username, author_email=f"{current_user.username}@wikihub",
+            )
+        return redirect(wiki_url)
+    existing = read_file_from_repo(owner.username, wiki.slug, SIDEBAR_FILE_PATH, public=False)
+    if existing is None:
+        content = default_sidebar_md(_build_sidebar_tree(owner.username, wiki.slug, wiki, public=False))
+    else:
+        content = existing
+    return render_template("sidebar_edit.html", owner=owner, wiki=wiki, content=content, has_file=existing is not None, wiki_url=wiki_url)
 
 
 @wiki_bp.route("/@<username>/<slug>/-/suggest/<path:page_path>", methods=["GET", "POST"])

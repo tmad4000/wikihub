@@ -1,0 +1,89 @@
+{#- Shared wiki sidebar tree (wikihub-hnfm, wikihub-e8pj). One renderer for the
+    reader, folder, profile and commit-diff sidebars so new row kinds and the
+    indentation contract (wikihub-58c) live in one place. The async renderer in
+    app/static/js/sidebar-sort.js (WikihubSidebar.renderItem) must emit the same
+    markup. Kinds: page, folder, group, divider, external. Rows of a custom
+    (.wikihub/sidebar.md) tree carry data-order so the client "Custom" sort
+    reproduces the server order exactly (wikihub-9c8j). -#}
+
+{% macro render_sidebar(items, level=0) %}
+  {% for item in items or [] %}
+    {% set order_attr = item.order if item.order is defined and item.order is not none else '' %}
+    {% if item.kind == 'folder' %}
+    <div class="sidebar-folder {{ 'open' if item.active else '' }}" data-folder-path="{{ item.path }}" data-name="{{ item.name }}" data-kind="folder" data-updated="{{ item.updated_at or '' }}" data-order="{{ order_attr }}" data-level="{{ level }}">
+      <div class="sidebar-folder-row">
+        <button type="button" class="sidebar-folder-toggle" aria-label="Toggle {{ item.name }}">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
+        </button>
+        <a href="{{ item.url }}" class="sidebar-item {{ 'active' if item.active else '' }}" style="padding-left: {{ 12 + (level * 16) }}px;">
+          <span class="sidebar-icon">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h5l2 2h11v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>
+          </span>
+          {{ item.name }}
+        </a>
+      </div>
+      <div class="sidebar-children">
+        {{ render_sidebar(item.children, level + 1) }}
+      </div>
+    </div>
+    {% elif item.kind == 'group' %}
+    <div class="sidebar-group" data-kind="group" data-name="{{ item.name }}" data-order="{{ order_attr }}" data-level="{{ level }}">
+      <div class="sidebar-heading sidebar-group-heading">{{ item.name }}</div>
+      <div class="sidebar-group-children">
+        {{ render_sidebar(item.children, level) }}
+      </div>
+    </div>
+    {% elif item.kind == 'divider' %}
+    <div class="sidebar-divider {{ 'sidebar-divider-labeled' if item.name else '' }}" data-kind="divider" data-order="{{ order_attr }}" role="separator">{% if item.name %}<span class="sidebar-heading">{{ item.name }}</span>{% endif %}</div>
+    {% elif item.kind == 'external' %}
+    <a href="{{ item.url }}" class="sidebar-item sidebar-external" target="_blank" rel="noopener" data-name="{{ item.name }}" data-kind="external" data-pinned="0" data-updated="" data-order="{{ order_attr }}" data-level="{{ level }}" style="padding-left: {{ 28 + (level * 16) }}px;">
+      <span class="sidebar-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg></span>
+      {{ item.name }}
+    </a>
+    {% else %}
+    <a href="{{ item.url }}" class="sidebar-item {{ 'sidebar-pinned' if item.pinned else '' }} {{ 'active' if item.active else '' }}" data-name="{{ item.name }}" data-kind="page" data-pinned="{{ '1' if item.pinned else '0' }}" data-updated="{{ item.updated_at or '' }}" data-path="{{ item.path }}" data-order="{{ order_attr }}" data-level="{{ level }}" style="padding-left: {{ 28 + (level * 16) }}px;">
+      <span class="sidebar-icon">
+        {% if item.pinned %}<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>{% else %}<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>{% endif %}
+      </span>
+      {{ item.name }}
+      {% if item.visibility is defined and item.visibility == 'private' %}
+      <span class="sidebar-vis" title="Private"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
+      {% elif item.visibility is defined and item.visibility == 'unlisted' %}
+      <span class="sidebar-vis" title="Unlisted"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></span>
+      {% endif %}
+    </a>
+    {% endif %}
+  {% endfor %}
+{% endmacro %}
+
+{#- Fixed "Home" row (wikihub-e8pj): lives OUTSIDE #sidebar-tree so the client
+    sort can never move it. -#}
+{% macro sidebar_home_row(owner, wiki, active=False) %}
+<a href="/@{{ owner.username }}{% if wiki.slug != owner.username %}/{{ wiki.slug }}{% endif %}" class="sidebar-item sidebar-home {{ 'active' if active else '' }}" title="Wiki home (index)"{% if active %} aria-current="page"{% endif %}>
+  <span class="sidebar-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span>
+  Home
+</a>
+{% endmacro %}
+
+{#- Sort controls. "Custom" appears only when the wiki has a sidebar.md order. -#}
+{% macro sidebar_sort_buttons(custom=False) %}
+<div class="sidebar-sort" style="padding:0 12px 4px;display:flex;gap:2px;" data-custom="{{ '1' if custom else '0' }}" role="group" aria-label="Sort pages">
+  {% if custom %}
+  <button type="button" class="sidebar-sort-btn active" data-sort="custom" title="Custom order (.wikihub/sidebar.md)" aria-label="Custom order">
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>
+  </button>
+  {% endif %}
+  <button type="button" class="sidebar-sort-btn {{ '' if custom else 'active' }}" data-sort="alpha" title="A → Z" aria-label="Sort A to Z">A↓</button>
+  <button type="button" class="sidebar-sort-btn" data-sort="alpha-desc" title="Z → A" aria-label="Sort Z to A">Z↓</button>
+  <button type="button" class="sidebar-sort-btn" data-sort="recent" title="Recently updated" aria-label="Sort by recently updated">
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+  </button>
+</div>
+{% endmacro %}
+
+{% macro sidebar_edit_link(owner, wiki) %}
+<a href="/@{{ owner.username }}/{{ wiki.slug }}/-/sidebar" class="sidebar-item sidebar-edit-link" title="Order and group this sidebar (.wikihub/sidebar.md)">
+  <span class="sidebar-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>
+  Edit sidebar
+</a>
+{% endmacro %}

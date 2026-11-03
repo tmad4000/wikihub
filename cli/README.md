@@ -67,9 +67,15 @@ explore, global activity, global RSS, and profiles.
 To pin a page in the wiki sidebar, include `pinned: true` in the page
 frontmatter and write or publish the full markdown file again. Pinning only
 affects readable pages; it does not grant access.
+To order and group the sidebar, the wiki owner writes `.wikihub/sidebar.md`
+(`wikihub write` / `publish` / `rm` accept that path): `# Heading` starts a
+group, `- [[page]]` or `- [[page|Label]]` lists a page, `- folder/` inserts a
+folder, two-space indents nest, `- [Label](https://...)` adds an external link,
+and `- ...` marks where unlisted pages go (otherwise they are appended under
+"Other pages" — never hidden).
 
 `.wikihub/*` paths are wiki plumbing rather than normal pages. `wikihub write`,
-`publish`, and `rm` may target `.wikihub/acl` when the active profile owns the
+`publish`, and `rm` may target `.wikihub/acl` (and `.wikihub/sidebar.md`) when the active profile owns the
 wiki; ACL writes reindex inherited page visibility and refresh the public
 mirror. Other `.wikihub/*` paths are rejected by the generic page API and are
 excluded from `ls`, `read`, search/discovery, history, zip exports, agent
