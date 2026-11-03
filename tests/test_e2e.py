@@ -10935,6 +10935,8 @@ def run_all():
             ("templates keep user values out of inline JS (wikihub-l1w4)", lambda: test_templates_do_not_interpolate_user_values_into_inline_js(app, client, key)),
             ("concurrent repo writes keep every commit (wikihub-xkmk)", lambda: test_concurrent_repo_writes_keep_every_commit(app, client, key)),
             # READER_SIDEBAR_TESTS
+            ("people sort modes (wikihub-hnp4)", lambda: test_people_sort_modes(app, client, key)),
+            ("people sort no leak (wikihub-hnp4)", lambda: test_people_sort_no_leak(app, client, key)),
             ("subdomain nav shows site identity (wikihub-m0pr)", lambda: test_subdomain_nav_identity(app, client)),
             ("custom domain footer mark (wikihub-m0pr)", lambda: test_custom_domain_footer_mark(client)),
             ("sidebar Home row (wikihub-e8pj)", lambda: test_sidebar_home_row(client, key)),
@@ -11857,6 +11859,100 @@ def test_custom_domain_footer_mark(client):
     assert "nav-platform-mark" not in top, "custom domains do not show the platform mark in the nav"
     footer = html[html.rindex("<footer"):]
     assert "Published with" in footer and "https://wikihub.md/" in footer
+
+
+
+def _people_order(html, *usernames):
+    positions = {}
+    for u in usernames:
+        m = re.search(r'<a href="/@%s" class="person-card">' % re.escape(u), html)
+        assert m, f"{u} missing from /people"
+        positions[u] = m.start()
+    return sorted(usernames, key=lambda u: positions[u])
+
+
+def _person_card(html, username):
+    start = html.index(f'<a href="/@{username}" class="person-card">')
+    return html[start:html.index("</a>", html.index('class="person-wikis"', start))]
+
+
+def test_people_sort_modes(app, client, key):
+    """wikihub-hnp4: /people sorts by recent (default), pages, stars, newest, A–Z;
+    invalid ?sort falls back to recent; the active control is aria-current and
+    each card leads with the datum its sort uses."""
+    from datetime import datetime, timezone
+    ka = _make_account(client, "sortpa")
+    kb = _make_account(client, "sortpb")
+    now = datetime.now(timezone.utc)
+    for i in range(3):
+        _put_page(client, ka, "sortpa", "sortpa", f"note{i}.md", f"---\ntitle: n{i}\nvisibility: public\n---\n\n# n{i}\n")
+    hb = {"Authorization": f"Bearer {kb}"}
+    r = client.post("/api/v1/wikis", json={"slug": "bwiki", "title": "B Wiki"}, headers=hb)
+    assert r.status_code == 201
+    _put_page(client, kb, "sortpb", "bwiki", "only.md", "---\ntitle: only\nvisibility: public\n---\n\n# only\n")
+    for k in (ka, key):
+        r = client.post("/api/v1/wikis/sortpb/bwiki/star", headers={"Authorization": f"Bearer {k}"})
+        assert r.status_code in (200, 201), r.status_code
+    ua = User.query.filter_by(username="sortpa").first()
+    ub = User.query.filter_by(username="sortpb").first()
+    ub.created_at = ua.created_at + timedelta(seconds=5)
+    for page in Page.query.join(Wiki, Page.wiki_id == Wiki.id).filter(Wiki.owner_id == ub.id).all():
+        page.updated_at = now - timedelta(days=30)
+    for page in Page.query.join(Wiki, Page.wiki_id == Wiki.id).filter(Wiki.owner_id == ua.id).all():
+        page.updated_at = now
+    db.session.commit()
+
+    anon = app.test_client()
+    def order(sort):
+        html = _get(anon, "/people" + (f"?sort={sort}" if sort is not None else "")).get_data(as_text=True)
+        return html, _people_order(html, "sortpa", "sortpb")
+
+    default_html, default_order = order(None)
+    assert default_order == ["sortpa", "sortpb"], f"default=recent: {default_order}"
+    assert re.search(r'href="/people\?sort=recent" aria-current="true"', default_html)
+    assert "Edited " in _person_card(default_html, "sortpa")
+    assert order("recent")[1] == ["sortpa", "sortpb"]
+    html, o = order("stars")
+    assert o == ["sortpb", "sortpa"], f"stars: {o}"
+    assert re.search(r'href="/people\?sort=stars" aria-current="true"', html)
+    assert "2 stars" in _person_card(html, "sortpb")
+    html, o = order("pages")
+    assert o == ["sortpa", "sortpb"], f"pages: {o}"
+    na = int(re.search(r"(\d+) pages?<", _person_card(html, "sortpa")).group(1))
+    nb = int(re.search(r"(\d+) pages?<", _person_card(html, "sortpb")).group(1))
+    assert na > nb, (na, nb)
+    assert order("name")[1] == ["sortpa", "sortpb"]
+    html, o = order("newest")
+    assert o == ["sortpb", "sortpa"], f"newest: {o}"
+    assert "Joined " in _person_card(html, "sortpb")
+    assert order("zzz")[1] == ["sortpa", "sortpb"], "invalid sort = recent"
+    zzz_html = order("zzz")[0]
+    assert re.search(r'href="/people\?sort=recent" aria-current="true"', zzz_html)
+
+
+def test_people_sort_no_leak(app, client, key):
+    """wikihub-hnp4: an unlisted page edited "now" must not move its owner up
+    anonymous "Recently edited", but counts when that owner views as self."""
+    from datetime import datetime, timezone
+    _make_account(client, "leakpa")
+    kb = _make_account(client, "leakpb")
+    _put_page(client, kb, "leakpb", "leakpb", "public-old.md", "---\ntitle: old\nvisibility: public\n---\n\n# old\n")
+    _put_page(client, kb, "leakpb", "leakpb", "secret-new.md", "---\ntitle: new\nvisibility: unlisted\n---\n\n# new\n", visibility="unlisted")
+    now = datetime.now(timezone.utc)
+    ua = User.query.filter_by(username="leakpa").first()
+    ub = User.query.filter_by(username="leakpb").first()
+    pa_wiki = Wiki.query.filter_by(owner_id=ua.id, slug="leakpa").first()
+    db.session.add(Page(wiki_id=pa_wiki.id, path="fresh.md", title="fresh", visibility="public",
+                        excerpt="fresh", updated_at=now - timedelta(hours=1)))
+    for page in Page.query.join(Wiki, Page.wiki_id == Wiki.id).filter(Wiki.owner_id == ub.id).all():
+        page.updated_at = now if page.path == "secret-new.md" else now - timedelta(days=10)
+    db.session.commit()
+
+    anon_html = _get(app.test_client(), "/people?sort=recent").get_data(as_text=True)
+    assert _people_order(anon_html, "leakpa", "leakpb") == ["leakpa", "leakpb"], "unlisted edit must not count for anonymous"
+    self_b = _login_browser(app, "leakpb")
+    self_html = _get(self_b, "/people?sort=recent").get_data(as_text=True)
+    assert _people_order(self_html, "leakpa", "leakpb") == ["leakpb", "leakpa"], "own unlisted edit counts for self-viewer"
 
 
 if __name__ == "__main__":

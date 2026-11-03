@@ -214,9 +214,23 @@ def activity_rss():
     return current_app.response_class(xml, mimetype="application/rss+xml")
 
 
+PEOPLE_SORTS = (
+    ("recent", "Recently edited"),
+    ("pages", "Most pages"),
+    ("stars", "Most stars"),
+    ("newest", "Newest"),
+    ("name", "A–Z"),
+)
+_PEOPLE_SORT_KEYS = {key for key, _label in PEOPLE_SORTS}
+
+
 @main_bp.route("/people")
 def people_index():
-    return render_template("people.html", people=_people_directory())
+    # wikihub-hnp4: URL-driven sort so links are shareable; invalid → recent.
+    sort = request.args.get("sort", "recent")
+    if sort not in _PEOPLE_SORT_KEYS:
+        sort = "recent"
+    return render_template("people.html", people=_people_directory(sort=sort), sort=sort, sorts=PEOPLE_SORTS)
 
 
 @main_bp.route("/settings")
@@ -411,7 +425,46 @@ def get_user_llm_key(user):
         return None
 
 
-def _people_directory(limit=None):
+def _people_page_stats(visibility, viewer_id):
+    """{owner_id: (page_count, last_edit)} over pages the viewer may discover.
+
+    One grouped query (wikihub-hnp4). Anonymous viewers count only
+    discoverable page visibilities, so an unlisted/private edit never moves
+    someone up "Recently edited"; a signed-in viewer also counts their own.
+    """
+    from sqlalchemy import func
+
+    page_visibility = Page.visibility.in_(DISCOVERABLE_VISIBILITIES)
+    if viewer_id is not None:
+        page_visibility = or_(page_visibility, Wiki.owner_id == viewer_id)
+    rows = (
+        db.session.query(Wiki.owner_id, func.count(Page.id), func.max(Page.updated_at))
+        .join(Page, Page.wiki_id == Wiki.id)
+        .filter(visibility, page_visibility, content_page_path_filter(Page.path))
+        .group_by(Wiki.owner_id)
+        .all()
+    )
+    return {owner_id: (count, last_edit) for owner_id, count, last_edit in rows}
+
+
+def _people_sort_meta(card, sort):
+    from app.feeds import relative_time
+
+    if sort == "recent":
+        return f"Edited {relative_time(card['last_edit'])}" if card["last_edit"] else "No public edits"
+    if sort == "pages":
+        n = card["page_count"]
+        return f"{n} {'page' if n == 1 else 'pages'}"
+    if sort == "stars":
+        n = card["total_stars"]
+        return f"{n} {'star' if n == 1 else 'stars'}"
+    if sort == "newest":
+        created = card["user"].created_at
+        return f"Joined {created.strftime('%Y-%m')}" if created else ""
+    return None
+
+
+def _people_directory(limit=None, sort=None):
     cards = []
     viewer_id = current_user.id if current_user.is_authenticated else None
     visible_ids = discoverable_wiki_ids()
@@ -441,13 +494,29 @@ def _people_directory(limit=None):
             }
         )
 
-    cards.sort(
-        key=lambda card: (
-            -card["visible_wiki_count"],
-            -card["total_stars"],
-            card["user"].username.lower(),
-        )
-    )
+    def default_key(card):
+        return (-card["visible_wiki_count"], -card["total_stars"], card["user"].username.lower())
+
+    cards.sort(key=default_key)
+    if sort:
+        stats = _people_page_stats(visibility, viewer_id)
+        for card in cards:
+            card["page_count"], card["last_edit"] = stats.get(card["user"].id, (0, None))
+
+        def ts(dt):
+            return dt.timestamp() if dt else float("-inf")
+
+        sort_keys = {
+            "recent": lambda c: (-ts(c["last_edit"]),),
+            "pages": lambda c: (-c["page_count"],),
+            "stars": lambda c: (-c["total_stars"],),
+            "newest": lambda c: (-ts(c["user"].created_at),),
+            "name": lambda c: ((c["user"].display_name or c["user"].username).casefold(),),
+        }
+        primary = sort_keys.get(sort, sort_keys["recent"])
+        cards.sort(key=lambda c: primary(c) + default_key(c))
+        for card in cards:
+            card["sort_meta"] = _people_sort_meta(card, sort)
 
     if limit is not None:
         cards = cards[:limit]
