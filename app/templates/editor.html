@@ -14,7 +14,7 @@
   font-family: var(--font-mono); font-size: 0.8125rem; color: var(--text-tertiary);
   flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.editor-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.editor-actions { display: flex; gap: 8px; flex-shrink: 0; align-items: center; }
 .btn-sm {
   padding: 8px 16px; border-radius: var(--radius-sm); font-size: 0.8125rem;
   font-weight: 600; cursor: pointer; min-height: 36px; border: none;
@@ -24,81 +24,6 @@
 .btn-save:hover { background: var(--accent-hover); }
 .btn-save .wh-spinner { border-color: rgba(15, 14, 12, 0.25); border-top-color: #0f0e0c; }
 .btn-cancel { background: transparent; color: var(--text-secondary); border: 1px solid var(--border-emphasis); }
-
-.editor-tabs {
-  display: flex; gap: 0; border-bottom: 1px solid var(--border-default); flex-shrink: 0;
-}
-.editor-banner {
-  display: none; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 10px 16px; border-bottom: 1px solid var(--border-default); flex-wrap: wrap;
-  background: rgba(var(--rgb-accent), 0.08);
-}
-@media (min-width: 640px) { .editor-banner { padding: 10px 24px; } }
-.editor-banner.open { display: flex; }
-.editor-banner.conflict { background: rgba(196, 92, 60, 0.12); }
-.editor-banner.sync { background: rgba(212, 160, 74, 0.08); }
-.editor-banner-text {
-  flex: 1; min-width: 220px; color: var(--text-secondary); font-size: 0.8125rem;
-}
-.editor-banner-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.editor-banner-btn {
-  padding: 7px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-emphasis);
-  background: var(--bg-surface); color: var(--text-secondary); cursor: pointer;
-  font-size: 0.75rem; font-family: var(--font-body); font-weight: 600;
-}
-.editor-banner-btn.primary {
-  background: var(--accent); color: #0f0e0c; border-color: transparent;
-}
-.editor-tab {
-  padding: 10px 20px; font-size: 0.8125rem; color: var(--text-tertiary);
-  cursor: pointer; border-bottom: 2px solid transparent; background: none;
-  border-top: none; border-left: none; border-right: none; font-family: var(--font-body);
-  font-weight: 500;
-}
-.editor-tab.active { color: var(--text-primary); border-bottom-color: var(--accent); }
-.editor-tab:hover { color: var(--text-secondary); }
-
-.editor-wrap { flex: 1; display: flex; flex-direction: column; overflow: hidden; position: relative; }
-.editor-textarea {
-  flex: 1; width: 100%; resize: none; border: none; outline: none;
-  background: var(--control-bg); color: var(--text-primary);
-  font-family: var(--font-mono); font-size: 14.5px; line-height: 1.6;
-  padding: 20px 16px;
-}
-@media (min-width: 640px) { .editor-textarea { padding: 20px 24px; } }
-
-.preview-wrap {
-  flex: 1; overflow-y: auto; padding: 20px 16px; display: none;
-}
-@media (min-width: 640px) { .preview-wrap { padding: 20px 24px; } }
-.preview-wrap .article { max-width: 720px; }
-/* Mirror reader.html's .article content styles so Preview renders identically
-   (blockquotes, lists, code, tables were previously unstyled here — flat
-   indentation). Keep in sync with reader.html .article rules. (wikihub-5cg7) */
-.preview-wrap .article h1 { font-size: 2.25rem; font-weight: 700; letter-spacing: -0.03em; margin-bottom: 8px; line-height: 1.2; }
-.preview-wrap .article h2 { font-size: 1.375rem; font-weight: 700; letter-spacing: -0.01em; margin-top: 28px; margin-bottom: 14px; padding-bottom: 4px; border-bottom: 1px solid var(--border-default); }
-.preview-wrap .article h3 { font-size: 1.125rem; font-weight: 600; margin-top: 22px; margin-bottom: 8px; }
-.preview-wrap .article p { color: var(--text-secondary); line-height: 1.55; margin-bottom: 12px; font-size: 0.9375rem; }
-.preview-wrap .article ul, .preview-wrap .article ol { color: var(--text-secondary); padding-left: 24px; margin-bottom: 12px; line-height: 1.55; font-size: 0.9375rem; }
-.preview-wrap .article li { margin-bottom: 4px; }
-.preview-wrap .article blockquote { border-left: 3px solid var(--border-accent); padding: 4px 16px; color: var(--text-tertiary); margin-bottom: 14px; font-style: italic; line-height: 1.55; }
-.preview-wrap .article code { font-family: var(--font-mono); font-size: 0.8125rem; background: var(--bg-elevated); padding: 2px 7px; border-radius: var(--radius-sm); border: 1px solid var(--border-default); }
-.preview-wrap .article pre { background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--radius-md); padding: 18px; margin-bottom: 20px; overflow-x: auto; }
-.preview-wrap .article pre code { background: none; border: none; padding: 0; font-size: 0.8125rem; line-height: 1.65; }
-.preview-wrap .article img { max-width: 100%; border-radius: var(--radius-sm); margin-bottom: 18px; }
-.preview-wrap .article table { width: 100%; border-collapse: collapse; margin-bottom: 14px; font-size: 0.875rem; }
-.preview-wrap .article th, .preview-wrap .article td { padding: 7px 12px; border: 1px solid var(--border-default); text-align: left; line-height: 1.45; }
-.preview-wrap .article th { background: var(--bg-surface); color: var(--text-secondary); font-weight: 600; }
-.preview-wrap .article hr { border: none; border-top: 1px solid var(--border-default); margin: 36px 0; }
-.preview-wrap .article strong { color: var(--text-primary); }
-
-.editor-statusbar {
-  display: flex; align-items: center; gap: 16px; padding: 6px 16px;
-  background: var(--bg-surface); border-top: 1px solid var(--border-default);
-  font-size: 0.6875rem; color: var(--text-muted); font-family: var(--font-mono);
-  flex-shrink: 0;
-}
-
 .vis-dropdown {
   position: relative; display: inline-block;
 }
@@ -121,82 +46,32 @@
 }
 .vis-option:hover { background: var(--accent-subtle); color: var(--text-primary); }
 .vis-option.selected { background: var(--accent-muted); color: var(--accent); }
-.wikilink-menu {
-  display: none; position: absolute; left: 16px; right: 16px; bottom: 16px;
-  max-height: 240px; overflow: auto; background: var(--bg-elevated);
-  border: 1px solid var(--border-emphasis); border-radius: var(--radius-md);
-  box-shadow: var(--card-shadow); z-index: 20;
-}
-.wikilink-menu.open { display: block; }
-@media (min-width: 640px) { .wikilink-menu { left: 24px; right: auto; width: 420px; } }
-.wikilink-menu-empty {
-  padding: 10px 12px; color: var(--text-muted); font-size: 0.75rem;
-}
-.wikilink-item {
-  display: flex; justify-content: space-between; align-items: center; gap: 12px;
-  width: 100%; padding: 10px 12px; border: none; background: none; cursor: pointer;
-  color: var(--text-primary); text-align: left; font-family: var(--font-body);
-}
-.wikilink-item + .wikilink-item { border-top: 1px solid var(--border-default); }
-.wikilink-item:hover, .wikilink-item.active { background: var(--accent-subtle); }
-.wikilink-item-main { min-width: 0; }
-.wikilink-item-title {
-  display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: 0.8125rem;
-}
-.wikilink-item-path {
-  display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  color: var(--text-muted); font-size: 0.6875rem; font-family: var(--font-mono);
-}
-.status-pill {
-  display: inline-flex; align-items: center; gap: 6px; min-height: 20px;
-}
 
-/* Milkdown WYSIWYG surface — themed to match wikihub obsidian+amber */
-#milkdown-editor {
-  flex: 1; overflow-y: auto; background: var(--control-bg);
-  padding: 20px 16px; display: none;
+/* Page properties (owner only): title / pinned / tags held in frontmatter. */
+.page-props {
+  flex-shrink: 0; border-bottom: 1px solid var(--border-default); background: var(--bg-surface);
 }
-@media (min-width: 640px) { #milkdown-editor { padding: 20px 24px; } }
-#milkdown-editor .milkdown { max-width: 760px; margin: 0 auto; }
-#milkdown-editor .ProseMirror {
-  outline: none; color: var(--text-primary); font-family: var(--font-body);
-  font-size: 1rem; line-height: 1.7; min-height: 100%;
+.page-props summary {
+  cursor: pointer; padding: 7px 16px; font-size: 0.75rem; color: var(--text-tertiary);
+  font-family: var(--font-body); list-style: none; user-select: none;
 }
-#milkdown-editor .ProseMirror:focus { outline: none; }
-#milkdown-editor .ProseMirror p { margin: 0 0 1em; }
-#milkdown-editor .ProseMirror h1,
-#milkdown-editor .ProseMirror h2,
-#milkdown-editor .ProseMirror h3,
-#milkdown-editor .ProseMirror h4 {
-  color: var(--text-primary); font-weight: 650; margin: 1.4em 0 0.5em; line-height: 1.25;
+.page-props summary::-webkit-details-marker { display: none; }
+.page-props summary::before { content: '\25B8'; display: inline-block; width: 1em; transition: transform 0.12s; }
+.page-props[open] summary::before { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .page-props summary::before { transition: none; } }
+@media (min-width: 640px) { .page-props summary { padding: 7px 24px; } }
+.page-props-grid {
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 4px 16px 12px;
 }
-#milkdown-editor .ProseMirror h1 { font-size: 1.9em; border-bottom: 1px solid var(--border-default); padding-bottom: 0.25em; }
-#milkdown-editor .ProseMirror h2 { font-size: 1.5em; border-bottom: 1px solid var(--border-default); padding-bottom: 0.2em; }
-#milkdown-editor .ProseMirror h3 { font-size: 1.25em; }
-#milkdown-editor .ProseMirror a { color: var(--accent); }
-#milkdown-editor .ProseMirror code {
-  background: var(--bg-surface); border: 1px solid var(--border-default);
-  border-radius: 4px; padding: 0.1em 0.35em; font-family: var(--font-mono); font-size: 0.9em;
+@media (min-width: 720px) { .page-props-grid { grid-template-columns: minmax(0, 2fr) auto minmax(0, 2fr); align-items: end; padding: 4px 24px 12px; } }
+.page-props label { display: block; font-size: 0.6875rem; color: var(--text-tertiary); margin-bottom: 4px; font-weight: 600; }
+.page-props input[type="text"] {
+  width: 100%; border: 1px solid var(--border-default); border-radius: var(--radius-sm);
+  background: var(--control-bg); color: var(--text-primary); font-family: var(--font-body);
+  font-size: 0.8125rem; padding: 7px 9px;
 }
-#milkdown-editor .ProseMirror pre {
-  background: var(--bg-surface); border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm); padding: 12px 14px; overflow-x: auto;
-}
-#milkdown-editor .ProseMirror pre code { background: none; border: none; padding: 0; }
-#milkdown-editor .ProseMirror blockquote {
-  border-left: 3px solid var(--border-emphasis); margin: 0 0 1em; padding-left: 1em; color: var(--text-secondary);
-}
-#milkdown-editor .ProseMirror ul, #milkdown-editor .ProseMirror ol { padding-left: 1.5em; margin: 0 0 1em; }
-#milkdown-editor .ProseMirror hr { border: none; border-top: 1px solid var(--border-default); margin: 1.5em 0; }
-#milkdown-editor .ProseMirror img { max-width: 100%; }
-.wysiwyg-hint {
-  display: none; padding: 6px 16px; font-size: 0.6875rem; color: var(--text-muted);
-  background: var(--bg-surface); border-bottom: 1px solid var(--border-default);
-  font-family: var(--font-mono);
-}
-@media (min-width: 640px) { .wysiwyg-hint { padding: 6px 24px; } }
-.wysiwyg-hint.open { display: block; }
+.page-props .prop-switch input { accent-color: var(--accent); }
+.page-props .prop-switch { display: inline-flex; align-items: center; gap: 8px; min-height: 34px; font-size: 0.8125rem; color: var(--text-secondary); margin: 0; font-weight: 500; }
 {% endblock %}
 
 {% block body %}
@@ -245,622 +120,39 @@
     <div class="editor-banner-actions" id="editor-banner-actions"></div>
   </div>
 
-  <div class="editor-tabs">
-    <button type="button" class="editor-tab" onclick="showTab('edit')">Markdown</button>
-    <button type="button" class="editor-tab active" onclick="showTab('wysiwyg')">WYSIWYG</button>
-    <button type="button" class="editor-tab" onclick="showTab('preview')">Preview</button>
-  </div>
-  <div class="wysiwyg-hint" id="wysiwyg-hint">WYSIWYG. Wikilinks, math ($…$, $$…$$), and embeds round-trip losslessly.</div>
+  {% if is_owner %}
+  <details class="page-props" id="page-properties">
+    <summary>Properties</summary>
+    <div class="page-props-grid">
+      <div>
+        <label for="prop-title">Title</label>
+        <input type="text" id="prop-title" autocomplete="off" placeholder="Page title">
+      </div>
+      <label class="prop-switch" for="prop-pinned"><input type="checkbox" id="prop-pinned"> Pinned</label>
+      <div>
+        <label for="prop-tags">Tags</label>
+        <input type="text" id="prop-tags" autocomplete="off" placeholder="comma, separated">
+      </div>
+    </div>
+  </details>
+  {% endif %}
 
-  <div class="editor-wrap">
-    <textarea name="content" class="editor-textarea" id="editor-textarea">{{ content or '' }}</textarea>
-    <div id="milkdown-editor"></div>
-    <div class="preview-wrap" id="preview-wrap">
-      <article class="article" id="preview-article"></article>
-    </div>
-    <div class="wikilink-menu" id="wikilink-menu">
-      <div id="wikilink-items"></div>
-    </div>
-  </div>
+  {% with surface_mode="page", preview_url="/@" ~ owner.username ~ "/" ~ wiki.slug ~ "/preview",
+       pages_url="/api/v1/wikis/" ~ owner.username ~ "/" ~ wiki.slug ~ "/pages", exclude_path=page_path %}
+  {% include "_editor_surface.html" %}
+  {% endwith %}
 
   <input type="hidden" name="visibility" id="visibility-input" value="{{ visibility or 'private' }}">
   {% if not is_owner %}
   <input type="hidden" name="path" value="{{ page_path }}">
   {% endif %}
-
-  <div class="editor-statusbar">
-    <span>Markdown</span>
-    <span class="status-pill" id="save-status">Ready</span>
-    <span id="line-count"></span>
-  </div>
 </form>
-{% endblock %}
-
-{% block scripts %}
-<script>
-const editorConfig = {
-  owner: {{ owner.username|tojson }},
-  slug: {{ wiki.slug|tojson }},
-  initialPath: {{ page_path|tojson }},
-  existingPage: {{ existing_page|tojson }},
-  initialHash: {{ initial_content_hash|tojson }},
-  isOwner: {{ is_owner|tojson }},
-};
-
-const ta = document.getElementById('editor-textarea');
-const form = document.getElementById('editor-form');
-const visibilityInput = document.getElementById('visibility-input');
-const pathInput = document.getElementById('path-input');
-const saveStatus = document.getElementById('save-status');
-const saveButton = form.querySelector('.btn-save');
-const banner = document.getElementById('editor-banner');
-const bannerText = document.getElementById('editor-banner-text');
-const bannerActions = document.getElementById('editor-banner-actions');
-const wikilinkMenu = document.getElementById('wikilink-menu');
-const wikilinkItems = document.getElementById('wikilink-items');
-
-const editorState = {
-  baseContent: ta.value,
-  baseVisibility: visibilityInput.value,
-  remoteHash: editorConfig.initialHash,
-  pendingRemote: null,
-  saving: false,
-  pages: null,
-  pagesPromise: null,
-  suggestions: [],
-  suggestionIndex: -1,
-};
-
-function showTab(tab) {
-  const tabs = document.querySelectorAll('.editor-tab');
-  tabs.forEach(t => t.classList.remove('active'));
-  if (typeof event !== 'undefined' && event && event.target) event.target.classList.add('active');
-
-  const textarea = document.getElementById('editor-textarea');
-  const milk = document.getElementById('milkdown-editor');
-  const hint = document.getElementById('wysiwyg-hint');
-  const preview = document.getElementById('preview-wrap');
-  const previewEl = document.getElementById('preview-article');
-
-  // hide all surfaces, then reveal the selected one
-  textarea.style.display = 'none';
-  milk.style.display = 'none';
-  preview.style.display = 'none';
-  hint.classList.remove('open');
-  closeWikilinkMenu();
-
-  if (tab === 'edit') {
-    textarea.style.display = '';
-  } else if (tab === 'wysiwyg') {
-    milk.style.display = 'block';
-    hint.classList.add('open');
-    // window.wysiwygEnter is provided by the milkdown module script
-    if (window.wysiwygEnter) {
-      window.wysiwygEnter().catch(() => { showEditFallback(); });
-    } else {
-      // module not ready (or failed to load) — fall back to raw markdown
-      showEditFallback();
-    }
-  } else { // preview
-    preview.style.display = 'block';
-    previewEl.textContent = 'Rendering…';
-    fetch('/@{{ owner.username }}/{{ wiki.slug }}/preview', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({content: textarea.value})
-    })
-    .then(r => r.json())
-    .then(d => { previewEl.innerHTML = d.html; })
-    .catch(() => { previewEl.textContent = 'Preview failed'; });
-  }
-}
-
-function showEditFallback() {
-  document.getElementById('milkdown-editor').style.display = 'none';
-  document.getElementById('wysiwyg-hint').classList.remove('open');
-  document.getElementById('preview-wrap').style.display = 'none';
-  document.getElementById('editor-textarea').style.display = '';
-  const tabs = document.querySelectorAll('.editor-tab');
-  tabs.forEach(t => t.classList.toggle('active', t.textContent.trim() === 'Markdown'));
-}
-
-function setVisibility(v) {
-  visibilityInput.value = v;
-  document.getElementById('vis-label').textContent = v;
-  document.querySelectorAll('.vis-option').forEach(opt => {
-    opt.classList.toggle('selected', opt.textContent.trim() === v);
-  });
-  document.getElementById('vis-menu').classList.remove('open');
-  updateSaveStatus();
-}
-
-function updateLineCount() {
-  const lines = ta.value.split('\n').length;
-  document.getElementById('line-count').textContent = lines + ' lines';
-}
-
-function normalizePath(path) {
-  const trimmed = (path || '').trim();
-  if (!trimmed) return editorConfig.initialPath;
-  return trimmed.endsWith('.md') ? trimmed : trimmed + '.md';
-}
-
-function currentPath() {
-  if (!pathInput) return editorConfig.initialPath;
-  return normalizePath(pathInput.value);
-}
-
-function encodedPath(path) {
-  return path.split('/').map(encodeURIComponent).join('/');
-}
-
-function isDirty() {
-  const pathDirty = pathInput ? normalizePath(pathInput.value) !== editorConfig.initialPath : false;
-  return ta.value !== editorState.baseContent || visibilityInput.value !== editorState.baseVisibility || pathDirty;
-}
-
-function updateSaveStatus(text) {
-  if (text) {
-    saveStatus.textContent = text;
-    return;
-  }
-  if (editorState.saving) {
-    saveStatus.textContent = 'Saving…';
-  } else if (editorState.pendingRemote) {
-    saveStatus.textContent = 'Conflict detected';
-  } else if (isDirty()) {
-    saveStatus.textContent = 'Unsaved changes';
-  } else {
-    saveStatus.textContent = 'Ready';
-  }
-}
-
-function setSaveButtonLoading(loading) {
-  editorState.saving = loading;
-  saveButton.classList.toggle('btn-loading', loading);
-  saveButton.disabled = loading;
-  saveButton.textContent = '';
-  if (loading) {
-    const sp = document.createElement('span');
-    sp.className = 'wh-spinner';
-    saveButton.appendChild(sp);
-    saveButton.appendChild(document.createTextNode('Saving...'));
-  } else {
-    saveButton.textContent = 'Save';
-  }
-  updateSaveStatus();
-}
-
-function setBanner(message, actions, kind) {
-  banner.classList.add('open');
-  banner.classList.toggle('conflict', kind === 'conflict');
-  banner.classList.toggle('sync', kind !== 'conflict');
-  bannerText.textContent = message;
-  bannerActions.innerHTML = '';
-  (actions || []).forEach(action => {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'editor-banner-btn' + (action.primary ? ' primary' : '');
-    btn.textContent = action.label;
-    btn.addEventListener('click', action.onClick);
-    bannerActions.appendChild(btn);
-  });
-}
-
-function clearBanner() {
-  banner.classList.remove('open', 'conflict', 'sync');
-  bannerText.textContent = '';
-  bannerActions.innerHTML = '';
-}
-
-async function readRemotePage(path) {
-  const response = await fetch('/api/v1/wikis/' + encodeURIComponent(editorConfig.owner) + '/' + encodeURIComponent(editorConfig.slug) + '/pages/' + encodedPath(path));
-  if (!response.ok) throw new Error('Failed to fetch latest page state');
-  return response.json();
-}
-
-function applyRemoteState(remote) {
-  ta.value = remote.content || '';
-  updateLineCount();
-  if (editorConfig.isOwner && remote.visibility) {
-    setVisibility(remote.visibility);
-  }
-  editorState.baseContent = ta.value;
-  editorState.baseVisibility = visibilityInput.value;
-  editorState.remoteHash = remote.content_hash || null;
-  editorState.pendingRemote = null;
-  clearBanner();
-  closeWikilinkMenu();
-  updateSaveStatus('Loaded latest version');
-}
-
-function tryAutoMerge(base, local, remote) {
-  if (local === base) return {content: remote};
-  if (remote === base) return {content: local};
-
-  if (local.startsWith(base) && remote.startsWith(base)) {
-    const localTail = local.slice(base.length);
-    const remoteTail = remote.slice(base.length);
-    return {content: base + remoteTail + (remoteTail && localTail ? '\n' : '') + localTail};
-  }
-  if (local.startsWith(base) && !remote.includes(local.slice(base.length))) {
-    return {content: remote + local.slice(base.length)};
-  }
-  if (remote.startsWith(base) && !local.includes(remote.slice(base.length))) {
-    return {content: local + remote.slice(base.length)};
-  }
-
-  return {conflict: true};
-}
-
-async function saveExistingPage(mode) {
-  const payload = {
-    content: ta.value,
-    visibility: visibilityInput.value,
-  };
-  if (editorConfig.isOwner && pathInput) {
-    const nextPath = normalizePath(pathInput.value);
-    if (nextPath !== editorConfig.initialPath) payload.new_path = nextPath;
-  }
-
-  const headers = {'Content-Type': 'application/json'};
-  if (mode === 'normal' && editorState.remoteHash) {
-    headers['If-Match'] = '"' + editorState.remoteHash + '"';
-  }
-  if (mode === 'merge' && editorState.pendingRemote && editorState.pendingRemote.content_hash) {
-    headers['If-Match'] = '"' + editorState.pendingRemote.content_hash + '"';
-  }
-
-  setSaveButtonLoading(true);
-  try {
-    const response = await fetch(
-      '/api/v1/wikis/' + encodeURIComponent(editorConfig.owner) + '/' + encodeURIComponent(editorConfig.slug) + '/pages/' + encodedPath(editorConfig.initialPath),
-      {method: 'PUT', headers, body: JSON.stringify(payload)}
-    );
-    const data = await response.json().catch(() => ({}));
-    if (response.ok) {
-      const targetPath = data.path || payload.new_path || editorConfig.initialPath;
-      window.location.href = '/@' + editorConfig.owner + '/' + editorConfig.slug + '/' + targetPath.replace(/\.md$/, '').split('/').map(encodeURIComponent).join('/');
-      return;
-    }
-    if (response.status === 409) {
-      const remote = await readRemotePage(editorConfig.initialPath);
-      editorState.pendingRemote = remote;
-      setBanner(
-        'This page changed elsewhere while you were editing. Choose how to resolve it.',
-        [
-          {label: 'Discard local changes', onClick: discardLocalChanges},
-          {label: 'Auto-merge to history', onClick: autoMergeChanges, primary: true},
-          {label: 'Overwrite remote', onClick: overwriteRemoteVersion},
-        ],
-        'conflict'
-      );
-    } else {
-      setBanner(data.message || 'Save failed.', [], 'conflict');
-    }
-  } catch (_error) {
-    setBanner('Save failed because the latest page state could not be reached.', [], 'conflict');
-  } finally {
-    setSaveButtonLoading(false);
-    updateSaveStatus();
-  }
-}
-
-async function discardLocalChanges() {
-  const remote = editorState.pendingRemote || await readRemotePage(editorConfig.initialPath);
-  applyRemoteState(remote);
-}
-
-async function overwriteRemoteVersion() {
-  editorState.pendingRemote = null;
-  clearBanner();
-  await saveExistingPage('overwrite');
-}
-
-async function autoMergeChanges() {
-  const remote = editorState.pendingRemote || await readRemotePage(editorConfig.initialPath);
-  const merged = tryAutoMerge(editorState.baseContent, ta.value, remote.content || '');
-  if (merged.conflict) {
-    setBanner(
-      'Automatic merge could not confidently combine both versions. Reload latest or overwrite if you intend to replace it.',
-      [
-        {label: 'Discard local changes', onClick: discardLocalChanges},
-        {label: 'Overwrite remote', onClick: overwriteRemoteVersion, primary: true},
-      ],
-      'conflict'
-    );
-    return;
-  }
-  ta.value = merged.content;
-  editorState.pendingRemote = remote;
-  updateLineCount();
-  updateSaveStatus('Merged locally; saving…');
-  await saveExistingPage('merge');
-}
-
-async function pollForRemoteChanges() {
-  if (!editorConfig.existingPage || !editorState.remoteHash || editorState.saving) return;
-  try {
-    const remote = await readRemotePage(editorConfig.initialPath);
-    if (remote.content_hash && remote.content_hash !== editorState.remoteHash) {
-      editorState.pendingRemote = remote;
-      setBanner(
-        isDirty()
-          ? 'A newer version was saved elsewhere while you have local changes.'
-          : 'A newer version was saved elsewhere.',
-        isDirty()
-          ? [
-              {label: 'Discard local changes', onClick: discardLocalChanges},
-              {label: 'Auto-merge to history', onClick: autoMergeChanges, primary: true},
-              {label: 'Overwrite remote', onClick: overwriteRemoteVersion},
-            ]
-          : [
-              {label: 'Load latest version', onClick: discardLocalChanges, primary: true},
-            ],
-        isDirty() ? 'conflict' : 'sync'
-      );
-      updateSaveStatus();
-    }
-  } catch (_error) {
-    // Ignore transient polling failures; manual save will still surface conflicts.
-  }
-}
-
-function stripMd(path) {
-  return path.replace(/\.md$/, '');
-}
-
-function currentWikilinkContext() {
-  const caret = ta.selectionStart;
-  const before = ta.value.slice(0, caret);
-  const match = before.match(/\[\[([^\]\n]*)$/);
-  if (!match) return null;
-  return {
-    query: match[1].trim().toLowerCase(),
-    start: caret - match[0].length,
-    end: caret,
-  };
-}
-
-async function ensurePages() {
-  if (editorState.pages) return editorState.pages;
-  if (editorState.pagesPromise) return editorState.pagesPromise;
-  editorState.pagesPromise = fetch('/api/v1/wikis/' + encodeURIComponent(editorConfig.owner) + '/' + encodeURIComponent(editorConfig.slug) + '/pages')
-    .then(r => r.json())
-    .then(data => {
-      editorState.pages = (data.pages || []).map(page => ({
-        title: page.title || stripMd(page.path).split('/').pop(),
-        path: page.path,
-        target: stripMd(page.path),
-      }));
-      return editorState.pages;
-    });
-  return editorState.pagesPromise;
-}
-
-function rankSuggestions(pages, query) {
-  const scored = pages
-    .filter(page => page.path !== editorConfig.initialPath)
-    .map(page => {
-      const title = (page.title || '').toLowerCase();
-      const path = page.target.toLowerCase();
-      let score = 0;
-      if (!query) score = 1;
-      else if (title === query || path === query) score = 100;
-      else if (title.startsWith(query) || path.startsWith(query)) score = 70;
-      else if (title.includes(query)) score = 50;
-      else if (path.includes(query)) score = 40;
-      return {page, score};
-    })
-    .filter(item => item.score > 0)
-    .sort((a, b) => b.score - a.score || a.page.title.localeCompare(b.page.title));
-  return scored.slice(0, 8).map(item => item.page);
-}
-
-function closeWikilinkMenu() {
-  wikilinkMenu.classList.remove('open');
-  wikilinkItems.innerHTML = '';
-  editorState.suggestions = [];
-  editorState.suggestionIndex = -1;
-}
-
-function renderWikilinkSuggestions() {
-  if (!editorState.suggestions.length) {
-    wikilinkItems.innerHTML = '<div class="wikilink-menu-empty">No matching pages in this wiki.</div>';
-    wikilinkMenu.classList.add('open');
-    return;
-  }
-  wikilinkItems.innerHTML = '';
-  editorState.suggestions.forEach((page, index) => {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'wikilink-item' + (index === editorState.suggestionIndex ? ' active' : '');
-    btn.innerHTML =
-      '<span class="wikilink-item-main">' +
-        '<span class="wikilink-item-title">' + escapeHtml(page.title) + '</span>' +
-        '<span class="wikilink-item-path">' + escapeHtml(page.target) + '</span>' +
-      '</span>';
-    btn.addEventListener('mousedown', function(event) {
-      event.preventDefault();
-      insertWikilink(page);
-    });
-    wikilinkItems.appendChild(btn);
-  });
-  wikilinkMenu.classList.add('open');
-}
-
-function escapeHtml(text) {
-  var div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
-}
-
-function insertWikilink(page) {
-  const ctx = currentWikilinkContext();
-  if (!ctx) return;
-  const insertion = page.title && page.title !== page.target
-    ? '[[' + page.target + '|' + page.title + ']]'
-    : '[[' + page.target + ']]';
-  ta.setRangeText(insertion, ctx.start, ctx.end, 'end');
-  closeWikilinkMenu();
-  ta.focus();
-  updateLineCount();
-  updateSaveStatus();
-}
-
-async function updateWikilinkAutocomplete() {
-  const ctx = currentWikilinkContext();
-  if (!ctx) {
-    closeWikilinkMenu();
-    return;
-  }
-  const pages = await ensurePages();
-  editorState.suggestions = rankSuggestions(pages, ctx.query);
-  editorState.suggestionIndex = editorState.suggestions.length ? 0 : -1;
-  renderWikilinkSuggestions();
-}
-
-ta.addEventListener('keydown', function(event) {
-  if (!wikilinkMenu.classList.contains('open') || !editorState.suggestions.length) return;
-  if (event.key === 'ArrowDown') {
-    event.preventDefault();
-    editorState.suggestionIndex = Math.min(editorState.suggestionIndex + 1, editorState.suggestions.length - 1);
-    renderWikilinkSuggestions();
-  } else if (event.key === 'ArrowUp') {
-    event.preventDefault();
-    editorState.suggestionIndex = Math.max(editorState.suggestionIndex - 1, 0);
-    renderWikilinkSuggestions();
-  } else if ((event.key === 'Enter' || event.key === 'Tab') && editorState.suggestionIndex >= 0) {
-    event.preventDefault();
-    insertWikilink(editorState.suggestions[editorState.suggestionIndex]);
-  } else if (event.key === 'Escape') {
-    closeWikilinkMenu();
-  }
-});
-
-ta.addEventListener('input', function() {
-  updateLineCount();
-  updateSaveStatus();
-  updateWikilinkAutocomplete();
-});
-ta.addEventListener('click', updateWikilinkAutocomplete);
-ta.addEventListener('keyup', function(event) {
-  if (['ArrowUp', 'ArrowDown', 'Enter', 'Tab', 'Escape'].includes(event.key)) return;
-  updateWikilinkAutocomplete();
-});
-ta.addEventListener('blur', function() {
-  setTimeout(closeWikilinkMenu, 150);
-});
-if (pathInput) {
-  pathInput.addEventListener('input', updateSaveStatus);
-}
-updateLineCount();
-updateSaveStatus();
-
-if (navigator.modelContext && typeof navigator.modelContext.registerTool === 'function') {
-  navigator.modelContext.registerTool({
-    name: 'save_wikihub_page',
-    description: 'Save the current wikihub page using the logged-in browser session.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        content: {type: 'string'},
-        visibility: {type: 'string'}
-      },
-      required: ['content']
-    },
-    handler: async ({content, visibility}) => {
-      document.getElementById('editor-textarea').value = content;
-      if (visibility) setVisibility(visibility);
-      document.getElementById('editor-form').requestSubmit();
-      return {status: 'submitted'};
-    }
-  });
-}
-
-document.getElementById('editor-form').addEventListener('submit', function(event) {
-  if (!editorConfig.existingPage) {
-    setSaveButtonLoading(true);
-    return;
-  }
-  event.preventDefault();
-  saveExistingPage('normal');
-});
-
-setInterval(pollForRemoteChanges, 15000);
-</script>
-
-<!-- Milkdown WYSIWYG (pre-bundled, no build step). Loaded as a module; the classic
-     script above stays the source of truth via the hidden #editor-textarea. -->
-<script type="module">
-import { createMilkdownEditor } from '{{ url_for("static", filename="js/milkdown-bundle.js") }}';
-
-const textarea = document.getElementById('editor-textarea');
-const container = document.getElementById('milkdown-editor');
-
-let editor = null;
-let storedFm = '';          // YAML frontmatter held aside while editing the body in WYSIWYG
-let syncEnabled = false;    // only true after a real edit in the WYSIWYG surface
-
-function splitFrontmatter(text) {
-  // commonmark would mangle a leading ---fm--- block, so keep it out of Milkdown
-  const m = (text || '').match(/^(---\r?\n[\s\S]*?\r?\n---\r?\n?)([\s\S]*)$/);
-  if (m) return { fm: m[1], body: m[2] };
-  return { fm: '', body: text || '' };
-}
-
-function syncToTextarea(markdown) {
-  if (!syncEnabled) return;  // ignore the load-time fire + view-only switches
-  textarea.value = storedFm + markdown;
-  // reuse the existing input handler (line count, dirty state, save status)
-  textarea.dispatchEvent(new Event('input', { bubbles: true }));
-}
-
-window.wysiwygEnter = async function () {
-  const { fm, body } = splitFrontmatter(textarea.value);
-  storedFm = fm;
-  syncEnabled = false;
-  // recreate each time so the surface always reflects the latest textarea content
-  if (editor) {
-    try { await editor.destroy(); } catch (_e) {}
-    editor = null;
-    container.innerHTML = '';
-  }
-  editor = await createMilkdownEditor(container, body, syncToTextarea);
-  // start syncing only once the user actually edits here — viewing or commonmark
-  // re-serialization on load must never clobber the canonical markdown
-  const enable = () => { syncEnabled = true; };
-  container.addEventListener('keydown', enable, { once: true });
-  container.addEventListener('paste', enable, { once: true });
-  container.addEventListener('drop', enable, { once: true });
-  return true;
-};
-
-// WYSIWYG is the default editor surface. Mount it on load; fall back to the
-// Markdown textarea if Milkdown fails. Viewing never mutates content (sync is
-// gated on a real edit). The bundle round-trips wikilinks, math, and embeds
-// losslessly (wikihub-oyf4) — see milkdown-src/ for the build + plugins.
-(function defaultToWysiwyg() {
-  const tabs = document.querySelectorAll('.editor-tab');
-  const wysTab = [...tabs].find(t => t.textContent.trim() === 'WYSIWYG');
-  const mdTab = [...tabs].find(t => t.textContent.trim() === 'Markdown');
-  const ta = document.getElementById('editor-textarea');
-  const milk = document.getElementById('milkdown-editor');
-  const hint = document.getElementById('wysiwyg-hint');
-  const preview = document.getElementById('preview-wrap');
-  ta.style.display = 'none';
-  preview.style.display = 'none';
-  milk.style.display = 'block';
-  hint.classList.add('open');
-  tabs.forEach(t => t.classList.remove('active'));
-  if (wysTab) wysTab.classList.add('active');
-  window.wysiwygEnter().catch(() => {
-    milk.style.display = 'none';
-    hint.classList.remove('open');
-    ta.style.display = '';
-    tabs.forEach(t => t.classList.remove('active'));
-    if (mdTab) mdTab.classList.add('active');
-  });
-})();
-</script>
+<script type="application/json" id="editor-config">{{ {
+  "owner": owner.username,
+  "slug": wiki.slug,
+  "initialPath": page_path,
+  "existingPage": existing_page,
+  "initialHash": initial_content_hash,
+  "isOwner": is_owner
+}|tojson }}</script>
 {% endblock %}

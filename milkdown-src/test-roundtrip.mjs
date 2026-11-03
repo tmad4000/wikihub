@@ -1,21 +1,25 @@
-// Acceptance test for wikihub-oyf4.
+// Acceptance test for the Milkdown bundle (wikihub-oyf4, wikihub-k7k5).
 //
-// Loads the BUILT app/static/js/milkdown-bundle.js into a headless Chromium
-// page, exercises createMilkdownEditor directly (the same API editor.html uses),
-// performs a trivial edit to force re-serialization, and asserts the three
-// constructs round-trip IDENTICALLY with no added backslashes.
+// Loads the BUILT app/static/js/milkdown-bundle.js into headless Chromium and:
+//   1. exercises createMilkdownEditor directly (the same API the editor uses),
+//      performs a real edit to force re-serialization through the doc-changed
+//      sync path, and asserts the constructs round-trip without corruption;
+//   2. checks probeRoundTrip() (the Visual-mode safety probe): GFM constructs
+//      must probe ok, constructs the visual editor would rewrite (reference
+//      links) must probe NOT ok so the page opens in Markdown;
+//   3. checks the load-time parse never fires onUpdate (D8).
 //
 // Run:  node test-roundtrip.mjs   (from milkdown-src/)
-// Requires the built bundle to exist.
+// Browser driver: PUPPETEER_PATH=/path/to/node_modules/puppeteer, or
+// PLAYWRIGHT_PATH=/path/to/node_modules/playwright (defaults to the global
+// playwright install if present). Skips with exit 0 when neither is available.
 
 import http from 'node:http';
 import { readFileSync, existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { dirname, resolve, join } from 'node:path';
+import { execSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-
-const require = createRequire(import.meta.url);
-const puppeteer = require('/Users/jacobcole/code/cortex-j7-impl/node_modules/puppeteer');
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const bundlePath = resolve(__dirname, '../app/static/js/milkdown-bundle.js');
@@ -26,29 +30,58 @@ if (!existsSync(bundlePath)) {
 }
 const bundleSrc = readFileSync(bundlePath, 'utf8');
 
-// Each case asserts the round-trip is lossless. `mode`:
-//   'exact'    — output must equal input byte-for-byte (wikilinks, embeds).
-//   'noescape' — no backslash escaping may be introduced, and the math content
-//                must survive verbatim. remark-math legitimately normalizes an
-//                inline `$$..$$` (mid-paragraph, not its own line) to `$..$`;
-//                that is delimiter normalization, NOT corruption. A `$$` block
-//                on its own line round-trips as a `$$` block (covered in the
-//                README's manual check). The acceptance criterion that matters
-//                is "no added backslashes".
-const CASES = [
+async function launchBrowser() {
+  if (process.env.PUPPETEER_PATH) {
+    const require = createRequire(import.meta.url);
+    const puppeteer = require(process.env.PUPPETEER_PATH);
+    const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox'] });
+    return { browser, kind: 'puppeteer' };
+  }
+  let pwPath = process.env.PLAYWRIGHT_PATH;
+  if (!pwPath) {
+    try {
+      pwPath = join(execSync('npm root -g', { encoding: 'utf8' }).trim(), 'playwright');
+    } catch (_e) { /* ignore */ }
+  }
+  if (pwPath && existsSync(join(pwPath, 'index.mjs'))) {
+    const pw = await import(pathToFileURL(join(pwPath, 'index.mjs')).href);
+    const browser = await pw.chromium.launch({ headless: true });
+    return { browser, kind: 'playwright' };
+  }
+  return null;
+}
+
+// Each round-trip case asserts the output after a real edit. `mode`:
+//   'exact'    — output must equal input byte-for-byte.
+//   'noescape' — no backslash escaping may be introduced and math content
+//                survives verbatim modulo inline `$$..$$` -> `$..$`.
+//   'probe'    — output equals input under normalizeForProbe (marker style).
+const ROUNDTRIP_CASES = [
   { input: 'See [[SomePage]] and [[a/b|Alias]].', mode: 'exact' },
   { input: 'Math $E=mc^2$ and $$\\int_0^1 x^2 dx$$', mode: 'noescape' },
   { input: 'Embed ![[diagram.png]]', mode: 'exact' },
+  { input: '| a | b |\n| - | - |\n| 1 | 2 |\n| 3 | 4 |', mode: 'probe' },
+  { input: '- [ ] todo\n- [x] done', mode: 'probe' },
+  { input: 'Some ~~struck~~ text.', mode: 'exact' },
+  { input: 'Footnote here.[^1]\n\n[^1]: The note.', mode: 'probe' },
+];
+
+// probeRoundTrip expectations.
+const PROBE_CASES = [
+  { input: '# Title\n\nPara with **bold**, *em*, `code` and [[Wiki|Link]].\n\n- a\n- b\n', ok: true },
+  { input: '| a | b |\n| --- | --- |\n| 1 | 2 |\n', ok: true },
+  { input: '- [ ] task\n- [x] done\n', ok: true },
+  { input: 'A ~~strike~~ word.\n', ok: true },
+  { input: 'Note.[^1]\n\n[^1]: Footnote body.\n', ok: true },
+  { input: 'See [the docs][docs].\n\n[docs]: https://example.com\n', ok: false },
 ];
 
 const html = `<!doctype html><html><head><meta charset="utf-8"></head>
 <body>
   <div id="milkdown-editor"></div>
   <script type="module">
-    import { createMilkdownEditor, editorViewCtx } from '/milkdown-bundle.js';
-    window.__ready = false;
-    window.__createMilkdownEditor = createMilkdownEditor;
-    window.__editorViewCtx = editorViewCtx;
+    import * as M from '/milkdown-bundle.js';
+    window.__M = M;
     window.__ready = true;
   </script>
 </body></html>`;
@@ -63,92 +96,80 @@ const server = http.createServer((req, res) => {
   }
 });
 
-await new Promise((r) => server.listen(0, r));
-const port = server.address().port;
-const base = `http://127.0.0.1:${port}`;
+const launched = await launchBrowser();
+if (!launched) {
+  console.log('SKIP: no browser driver (set PUPPETEER_PATH or PLAYWRIGHT_PATH)');
+  process.exit(0);
+}
+const { browser } = launched;
 
-const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox'] });
+await new Promise((r) => server.listen(0, '127.0.0.1', r));
+const base = `http://127.0.0.1:${server.address().port}`;
+
 let failed = false;
-const results = [];
+const lines = [];
+
+async function freshPage() {
+  const page = await browser.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
+  await page.goto(base);
+  for (let i = 0; i < 150; i++) {
+    if (await page.evaluate(() => window.__ready === true)) break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return { page, errors };
+}
 
 try {
-  for (const { input, mode } of CASES) {
-    const page = await browser.newPage();
-    const consoleErrors = [];
-    page.on('console', (m) => {
-      if (m.type() === 'error') consoleErrors.push(m.text());
-    });
-    page.on('pageerror', (e) => consoleErrors.push('pageerror: ' + e.message));
-
-    await page.goto(base, { waitUntil: 'networkidle0' });
-    await page.waitForFunction('window.__ready === true', { timeout: 15000 });
-
-    const output = await page.evaluate(async (initial) => {
+  for (const { input, mode } of ROUNDTRIP_CASES) {
+    const { page, errors } = await freshPage();
+    const out = await page.evaluate(async (initial) => {
       const container = document.getElementById('milkdown-editor');
       let last = null;
       let fired = 0;
-      const editor = await window.__createMilkdownEditor(container, initial, (md) => {
-        fired++;
-        last = md;
-      });
-
-      // Force a REAL ProseMirror transaction (mirroring a user edit in the
-      // WYSIWYG surface) so serialization runs through the listener. We append a
-      // character at the end of the doc then delete it, via the ProseMirror
-      // view's own dispatch — execCommand does not reach ProseMirror's state.
-      const baselineFired = fired;
+      const editor = await window.__M.createMilkdownEditor(container, initial, (md) => { fired++; last = md; });
+      await new Promise((r) => setTimeout(r, 300));
+      const loadFires = fired;
       let view;
-      editor.action((ctx) => {
-        view = ctx.get(window.__editorViewCtx);
+      editor.action((ctx) => { view = ctx.get(window.__M.editorViewCtx); });
+      // Insert then delete a char inside the first textblock: a genuine pair
+      // of transactions leaving the doc identical, forcing serialization.
+      let pos = 1;
+      view.state.doc.descendants((node, p) => {
+        if (pos === 1 && node.isTextblock && node.content.size > 0) { pos = p + 1; return false; }
+        return pos === 1;
       });
-      // Insert a char inside the first text block, then delete it, returning
-      // the document to a byte-identical state. Position 1 is inside the first
-      // paragraph's leading text. This produces a genuine pair of transactions
-      // (and thus serialization) without permanently altering the doc.
-      view.dispatch(view.state.tr.insertText('x', 1));
-      await new Promise((r) => setTimeout(r, 200));
-      view.dispatch(view.state.tr.delete(1, 2));
-      // markdownUpdated is debounced; wait long enough for the final fire.
-      await new Promise((r) => setTimeout(r, 500));
-
-      return { md: last, fired: fired - baselineFired, total: fired };
+      view.dispatch(view.state.tr.insertText('x', pos));
+      view.dispatch(view.state.tr.delete(pos, pos + 1));
+      await new Promise((r) => setTimeout(r, 400));
+      return { md: last, fired, loadFires };
     }, input);
-
-    const normalized = (output.md || '').trim();
-    // require the edit to have actually fired the markdown listener, so we know
-    // serialization ran through a real transaction, not just the load-time fire
-    const editFired = output.fired > 0;
-
-    // count backslashes; the bug is ADDED backslashes (escaping). Compare
-    // against the input so we only flag NEW ones.
-    const inBackslashes = (input.match(/\\/g) || []).length;
-    const outBackslashes = (normalized.match(/\\/g) || []).length;
-    const noAddedEscapes = outBackslashes <= inBackslashes;
-
-    let roundTripOk;
-    if (mode === 'exact') {
-      roundTripOk = normalized === input.trim();
+    const normalized = (out.md || '').trim();
+    const inBs = (input.match(/\\/g) || []).length;
+    const outBs = (normalized.match(/\\/g) || []).length;
+    let ok;
+    if (mode === 'exact') ok = normalized === input.trim();
+    else if (mode === 'noescape') {
+      const strip = (s) => s.replace(/\${1,2}/g, '$');
+      ok = outBs <= inBs && strip(normalized) === strip(input.trim());
     } else {
-      // 'noescape': content survives verbatim modulo $$->$ delimiter
-      // normalization, and no backslashes were added.
-      const stripDelims = (s) => s.replace(/\${1,2}/g, '$');
-      roundTripOk =
-        noAddedEscapes && stripDelims(normalized) === stripDelims(input.trim());
+      ok = await page.evaluate(([a, b]) => window.__M.normalizeForProbe(a) === window.__M.normalizeForProbe(b), [normalized, input]);
     }
-
-    const ok = roundTripOk && editFired && noAddedEscapes;
+    ok = ok && out.fired > 0 && out.loadFires === 0 && errors.length === 0;
     if (!ok) failed = true;
-    results.push({
-      input,
-      mode,
-      output: normalized,
-      ok,
-      editFired,
-      noAddedEscapes,
-      backslashes: `${inBackslashes} -> ${outBackslashes}`,
-      listenerFires: output.total,
-      consoleErrors,
-    });
+    lines.push(`${ok ? 'PASS' : 'FAIL'}  roundtrip [${mode}] ${JSON.stringify(input)}\n      out: ${JSON.stringify(normalized)}  loadFires=${out.loadFires} fires=${out.fired}${errors.length ? ' errors=' + JSON.stringify(errors) : ''}`);
+    await page.close();
+  }
+
+  {
+    const { page, errors } = await freshPage();
+    for (const { input, ok: expected } of PROBE_CASES) {
+      const res = await page.evaluate((md) => window.__M.probeRoundTrip(md), input);
+      const ok = res.ok === expected && errors.length === 0;
+      if (!ok) failed = true;
+      lines.push(`${ok ? 'PASS' : 'FAIL'}  probe expect ok=${expected} got ok=${res.ok} ${JSON.stringify(input)}\n      serialized: ${JSON.stringify(res.serialized)}`);
+    }
     await page.close();
   }
 } finally {
@@ -156,18 +177,7 @@ try {
   server.close();
 }
 
-console.log('\n=== wikihub-oyf4 round-trip acceptance test ===\n');
-for (const r of results) {
-  console.log((r.ok ? 'PASS' : 'FAIL') + '  [' + r.mode + ']');
-  console.log('  in : ' + JSON.stringify(r.input));
-  console.log('  out: ' + JSON.stringify(r.output));
-  console.log('  backslashes (in->out): ' + r.backslashes + '  no added escapes: ' + r.noAddedEscapes);
-  console.log('  edit fired listener: ' + r.editFired + ' (total fires: ' + r.listenerFires + ')');
-  if (r.consoleErrors.length) {
-    console.log('  console errors: ' + JSON.stringify(r.consoleErrors.slice(0, 5)));
-  }
-  console.log('');
-}
-
-console.log(failed ? 'RESULT: FAIL' : 'RESULT: PASS');
+console.log('\n=== Milkdown bundle acceptance (wikihub-oyf4, wikihub-k7k5) ===\n');
+console.log(lines.join('\n'));
+console.log(failed ? '\nRESULT: FAIL' : '\nRESULT: PASS');
 process.exit(failed ? 1 : 0);

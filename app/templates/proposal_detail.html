@@ -209,6 +209,9 @@
     </div>
   </div>
 
+  {% if base_changed and not stale %}
+  <div class="proposal-stale">The page changed while this suggestion was being written; review the diff against the current version.</div>
+  {% endif %}
   {% if stale %}
   <div class="proposal-stale">This suggestion is based on an older version of the page.</div>
   {% endif %}

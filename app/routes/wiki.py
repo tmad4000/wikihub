@@ -13,7 +13,13 @@ from flask_login import current_user
 from app import db
 from app.acl import can_read, can_write, grants_for_user, matches_serve_inline, normalize_page_visibility, resolve_grants, resolve_visibility
 from app.backlinks import get_backlinks_for_page
-from app.content_utils import has_private_bands, parse_markdown_document, set_visibility_in_content
+from app.content_utils import (
+    has_private_bands,
+    parse_markdown_document,
+    replace_body_keep_frontmatter,
+    set_visibility_in_content,
+    split_frontmatter_block,
+)
 from app.discovery import discoverable_page_for_wiki, visible_wikis_for_owner
 from app.git_backend import _repo_path
 from app.git_sync import read_file_from_repo, read_file_bytes_from_repo, list_files_in_repo, regenerate_public_mirror, remove_page_from_repo, sync_page_to_repo, update_mirror_page
@@ -1210,7 +1216,12 @@ def suggest_edit(username, slug, page_path):
     if content is None:
         abort(404)
     if request.method == "POST":
-        proposed_content = request.form.get("content", "")
+        # The suggest editor only ever shows the page body; frontmatter is
+        # held server-side and re-attached from the CURRENT file, so
+        # contributors can neither see nor change it (wikihub-k7k5 D6).
+        proposed_content = replace_body_keep_frontmatter(content, request.form.get("content", ""))
+        posted_base_hash = (request.form.get("base_content_hash") or "").strip()
+        base_changed = bool(posted_base_hash and page.content_hash and posted_base_hash != page.content_hash)
         note = request.form.get("note", "").strip()
         title = request.form.get("title", "").strip() or f"Suggested edit to {page.title or file_path}"
         author_name = current_user.username if current_user.is_authenticated else (
@@ -1248,20 +1259,24 @@ def suggest_edit(username, slug, page_path):
         if note:
             _add_proposal_comment(proposal, note, event="submitted")
         db.session.commit()
+        detail_args = {"stale": 1} if base_changed else {}
         return redirect(url_for(
             "wiki.proposal_detail",
             username=owner.username,
             slug=wiki.slug,
             proposal_id=proposal.id,
+            **detail_args,
         ))
 
+    _, body = split_frontmatter_block(content)
     return render_template(
         "suggest_edit.html",
         owner=owner,
         wiki=wiki,
         page=page,
         page_path=file_path,
-        content=content,
+        content=body.lstrip("\n"),
+        base_content_hash=page.content_hash or "",
         is_authenticated=current_user.is_authenticated,
     )
 
@@ -1307,6 +1322,7 @@ def proposal_detail(username, slug, proposal_id):
         comments=proposal.comments.order_by(ProposalComment.created_at.asc()).all(),
         diff_lines=_proposal_diff(patch.base_content, patch.proposed_content, patch.page_path),
         stale=stale,
+        base_changed=request.args.get("stale") == "1",
         is_owner=_is_owner(wiki),
         can_resubmit=can_resubmit,
     )

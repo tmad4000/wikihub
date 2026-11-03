@@ -47,6 +47,48 @@ def parse_markdown_document(content):
     return metadata, body
 
 
+# Same pattern the editor's client-side splitFrontmatter() uses, so the server
+# and the Visual editor agree on where the YAML block ends (wikihub-k7k5).
+_FRONTMATTER_BLOCK_RE = re.compile(r"\A(---\r?\n[\s\S]*?\r?\n---\r?\n?)([\s\S]*)\Z")
+
+
+_YAML_KEY_LINE_RE = re.compile(r"\A---\r?\n[A-Za-z_][\w-]*\s*:")
+
+
+def split_frontmatter_block(content):
+    """Split raw content into (frontmatter_block_text, body) without re-serializing.
+
+    The block keeps its exact original bytes (including the closing `---` line
+    and newline) so re-attaching it reproduces the file verbatim.
+    """
+    content = content or ""
+    match = _FRONTMATTER_BLOCK_RE.match(content)
+    if not match:
+        return "", content
+    return match.group(1), match.group(2)
+
+
+def replace_body_keep_frontmatter(current_content, new_body):
+    """Return current_content's frontmatter block + new_body.
+
+    Any frontmatter included in new_body is discarded: callers use this where
+    the editor must not change frontmatter (suggested edits). The blank-line
+    gap between the block and the body is preserved from the current file so
+    proposal diffs stay minimal.
+    """
+    current_fm, current_body = split_frontmatter_block(current_content)
+    body = (new_body or "").replace("\r\n", "\n")
+    posted_fm, posted_body = split_frontmatter_block(body)
+    # Only treat a leading ---…--- block as frontmatter when it looks like YAML
+    # keys; a body may legitimately open with a horizontal rule.
+    if posted_fm and _YAML_KEY_LINE_RE.search(posted_fm):
+        body = posted_body
+    if not current_fm:
+        return body
+    gap = current_body[: len(current_body) - len(current_body.lstrip("\n"))]
+    return current_fm + gap + body.lstrip("\n")
+
+
 def split_frontmatter(content):
     if not content.startswith("---"):
         return "", content

@@ -215,11 +215,160 @@ def test_wysiwyg_editor_surface(client, api_key):
     assert r.status_code == 200, f"editor GET failed: {r.status_code} {r.get_data(as_text=True)[:200]}"
     html = r.get_data(as_text=True)
     assert "milkdown-bundle.js" in html, "Milkdown bundle not referenced in editor"
+    assert "js/editor-surface.js" in html, "shared editor surface script missing"
     assert 'id="milkdown-editor"' in html, "Milkdown mount div missing"
-    assert ">WYSIWYG<" in html, "WYSIWYG tab missing"
     assert 'id="editor-textarea"' in html, "canonical markdown textarea missing"
-    # WYSIWYG is the default (active) tab (wikihub-scay)
-    assert "class=\"editor-tab active\" onclick=\"showTab('wysiwyg')\"" in html, "WYSIWYG should be the default tab"
+    # Visual (WYSIWYG) is the default (active) tab, listed first (wikihub-scay, wikihub-k7k5)
+    tab_labels = re.findall(r'role="tab"[^>]*data-mode="(\w+)"', html)
+    assert tab_labels == ["visual", "markdown", "preview"], f"tab order wrong: {tab_labels}"
+    assert 'class="editor-tab active" data-mode="visual"' in html, "Visual should be the default tab"
+    assert ">Visual</button>" in html, "Visual tab label missing"
+    assert 'data-initial-mode="visual"' in html
+    assert 'role="toolbar"' in html and 'data-cmd="bold"' in html, "formatting toolbar missing"
+    # The developer-facing hint is gone (wikihub-k7k5 D4).
+    assert "round-trip losslessly" not in html, "old WYSIWYG hint should be removed"
+    assert ">WYSIWYG<" not in html, "tab should say Visual, not WYSIWYG"
+
+
+def test_editor_mode_query_param(client, api_key):
+    """wikihub-k7k5 D2: ?mode=markdown|wysiwyg|visual is a server-visible override
+    (data-initial-mode + active tab) so links and agents can force a mode."""
+    h = {"Authorization": f"Bearer {api_key}"}
+    r = client.post("/api/v1/wikis/agent1/test-wiki/pages", json={
+        "path": "wiki/mode-param.md",
+        "content": "---\ntitle: Mode Param\nvisibility: public-edit\n---\n\n# Mode Param\n\nBody.",
+        "visibility": "public-edit",
+    }, headers=h)
+    assert r.status_code == 201
+
+    r = client.get("/@agent1/test-wiki/wiki/mode-param/edit?mode=markdown")
+    assert r.status_code == 200
+    html = r.get_data(as_text=True)
+    assert 'data-initial-mode="markdown"' in html
+    assert 'class="editor-tab active" data-mode="markdown"' in html, "?mode=markdown must activate the Markdown tab"
+    assert 'class="editor-tab active" data-mode="visual"' not in html
+
+    for alias in ("wysiwyg", "visual"):
+        r = client.get(f"/@agent1/test-wiki/wiki/mode-param/edit?mode={alias}")
+        assert r.status_code == 200
+        html = r.get_data(as_text=True)
+        assert 'class="editor-tab active" data-mode="visual"' in html, f"?mode={alias} must activate Visual"
+
+
+def _suggest_textarea_value(html):
+    match = re.search(r'<textarea name="content"[^>]*id="editor-textarea"[^>]*>(.*?)</textarea>', html, re.S)
+    assert match, "suggest page must render the shared editor textarea"
+    return match.group(1)
+
+
+def test_suggest_edit_uses_visual_editor(client, api_key):
+    """wikihub-k7k5: suggest-edit uses the shared Visual editor surface and never
+    shows or accepts frontmatter. The POSTed body is re-attached to the page's
+    current frontmatter, so proposals stay full-file diffs and accept keeps
+    title/visibility intact."""
+    from app.content_utils import parse_markdown_document
+    from app.models import ProposalPagePatch
+
+    h = {"Authorization": f"Bearer {api_key}"}
+    r = client.post("/api/v1/wikis", json={"slug": "suggest-visual", "title": "Suggest Visual"}, headers=h)
+    assert r.status_code == 201
+    original = "---\ntitle: Visual Draft\nvisibility: public-edit\n---\n\n# Visual Draft\n\nOriginal visual line."
+    r = client.post("/api/v1/wikis/agent1/suggest-visual/pages", json={
+        "path": "draft.md", "content": original, "visibility": "public-edit",
+    }, headers=h)
+    assert r.status_code == 201
+
+    anon = client.application.test_client()
+    r = anon.get("/@agent1/suggest-visual/-/suggest/draft")
+    assert r.status_code == 200, r.status_code
+    html = r.get_data(as_text=True)
+    assert 'id="milkdown-editor"' in html, "suggest page must mount the Visual editor"
+    assert 'data-surface="suggest"' in html
+    assert 'class="editor-tab active" data-mode="visual"' in html, "Visual is the default suggest mode"
+    assert "js/editor-surface.js" in html and "milkdown-bundle.js" in html
+    body = _suggest_textarea_value(html)
+    assert "visibility: public-edit" not in html, "frontmatter must not be shown to contributors"
+    assert "title: Visual Draft" not in body
+    assert body.startswith("# Visual Draft"), f"textarea should hold the body only: {body[:60]!r}"
+    page = Page.query.join(Wiki).filter(Wiki.slug == "suggest-visual", Page.path == "draft.md").first()
+    assert f'name="base_content_hash" value="{page.content_hash}"' in html
+
+    # Contributor submits only a body (as the Visual editor does), plus a
+    # sneaky frontmatter block in a second suggestion that must be ignored.
+    r = anon.post("/@agent1/suggest-visual/-/suggest/draft", data={
+        "title": "Visual tweak",
+        "author_name": "student",
+        "content": "# Visual Draft\r\n\r\nSuggested visual line.",
+        "base_content_hash": page.content_hash,
+    }, follow_redirects=False)
+    assert r.status_code in (302, 303), r.get_data(as_text=True)[:200]
+    proposal_path = urlparse(r.headers["Location"]).path
+    assert "stale=1" not in r.headers["Location"]
+    patch = ProposalPagePatch.query.filter_by(page_path="draft.md").order_by(ProposalPagePatch.id.desc()).first()
+    assert patch.proposed_content.startswith("---\n"), patch.proposed_content[:40]
+    meta, proposed_body = parse_markdown_document(patch.proposed_content)
+    assert meta.get("title") == "Visual Draft"
+    assert meta.get("visibility") == "public-edit"
+    assert proposed_body.strip() == "# Visual Draft\n\nSuggested visual line.", repr(proposed_body)
+    assert "\r" not in patch.proposed_content
+
+    r = anon.post("/@agent1/suggest-visual/-/suggest/draft", data={
+        "title": "Frontmatter smuggle",
+        "content": "---\ntitle: Hacked\nvisibility: private\n---\n\n# Visual Draft\n\nSmuggled.",
+    }, follow_redirects=False)
+    assert r.status_code in (302, 303)
+    smuggle = ProposalPagePatch.query.filter_by(page_path="draft.md").order_by(ProposalPagePatch.id.desc()).first()
+    meta, smuggle_body = parse_markdown_document(smuggle.proposed_content)
+    assert meta.get("title") == "Visual Draft", "suggestions must not change the title"
+    assert meta.get("visibility") == "public-edit"
+    assert "Hacked" not in smuggle.proposed_content
+    assert smuggle_body.strip().endswith("Smuggled.")
+
+    # Owner accepts the first suggestion: body replaced, frontmatter preserved.
+    owner = client.application.test_client()
+    r = owner.get(f"/auth/login?api_key={api_key}&next={proposal_path}", follow_redirects=False)
+    assert r.status_code == 302
+    r = owner.post(proposal_path + "/accept", follow_redirects=False)
+    assert r.status_code in (302, 303)
+    r = client.get("/api/v1/wikis/agent1/suggest-visual/pages/draft.md", headers=h)
+    accepted = r.get_json()["content"]
+    meta, accepted_body = parse_markdown_document(accepted)
+    assert meta.get("title") == "Visual Draft"
+    assert meta.get("visibility") == "public-edit"
+    assert "Suggested visual line." in accepted_body
+    assert "Original visual line." not in accepted
+
+
+def test_suggest_edit_stale_base_flag(client, api_key):
+    """wikihub-k7k5: a suggestion started against an older page version is
+    flagged (stale=1) on redirect so the proposal page can say so."""
+    h = {"Authorization": f"Bearer {api_key}"}
+    r = client.post("/api/v1/wikis", json={"slug": "suggest-stale", "title": "Suggest Stale"}, headers=h)
+    assert r.status_code == 201
+    r = client.post("/api/v1/wikis/agent1/suggest-stale/pages", json={
+        "path": "draft.md",
+        "content": "---\ntitle: Stale Draft\nvisibility: public-edit\n---\n\n# Stale Draft\n\nLine.",
+        "visibility": "public-edit",
+    }, headers=h)
+    assert r.status_code == 201
+
+    anon = client.application.test_client()
+    r = anon.post("/@agent1/suggest-stale/-/suggest/draft", data={
+        "title": "From an old tab",
+        "content": "# Stale Draft\n\nChanged line.",
+        "base_content_hash": "0" * 64,
+    }, follow_redirects=False)
+    assert r.status_code in (302, 303)
+    location = r.headers["Location"]
+    assert "stale=1" in location, location
+
+    owner = client.application.test_client()
+    path = urlparse(location).path
+    r = owner.get(f"/auth/login?api_key={api_key}&next={path}", follow_redirects=False)
+    assert r.status_code == 302
+    r = owner.get(path + "?stale=1")
+    assert r.status_code == 200
+    assert b"The page changed while this suggestion was being written" in r.data
 
 
 def test_page_etag_conflict(client, api_key):
@@ -10030,6 +10179,9 @@ def run_all():
             ("list wikis API", lambda: test_list_wikis_api(client, key)),
             ("bulk sharing (wikihub-iga9)", lambda: test_bulk_sharing(client, key)),
             ("suggested edit proposal flow (wikihub-b6lc)", lambda: test_suggested_edit_proposal_flow(client, key)),
+            ("editor ?mode= override (wikihub-k7k5)", lambda: test_editor_mode_query_param(client, key)),
+            ("suggest edit uses Visual editor, hides frontmatter (wikihub-k7k5)", lambda: test_suggest_edit_uses_visual_editor(client, key)),
+            ("suggest edit stale-base flag (wikihub-k7k5)", lambda: test_suggest_edit_stale_base_flag(client, key)),
             ("proposal comments + revisions (wikihub-7cus)", lambda: test_proposal_comments_and_revision_flow(client, key)),
             ("pending invite lifecycle (wikihub-skp7)", lambda: test_pending_invite_lifecycle(client, key)),
             ("share sends email (wikihub-exj1 mock)", lambda: test_share_sends_email(client, key)),

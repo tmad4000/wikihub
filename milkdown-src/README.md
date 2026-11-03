@@ -1,7 +1,8 @@
 # milkdown-src — WikiHub Milkdown bundle build
 
-Builds `app/static/js/milkdown-bundle.js`, the WYSIWYG editor bundle used by
-`app/templates/editor.html`.
+Builds `app/static/js/milkdown-bundle.js`, the Visual (WYSIWYG) editor bundle
+used by the shared editor surface (`app/templates/_editor_surface.html` +
+`app/static/js/editor-surface.js`) in the page editor and suggest-edit flow.
 
 ## Why this exists
 
@@ -35,13 +36,40 @@ On top of the legacy commonmark + history + listener stack it adds:
   the marker-plugin example.
 - **Embeds** — `![[embed]]`, same custom-node approach.
 
+## Visual editor additions (wikihub-k7k5)
+
+- **GFM** via `@milkdown/preset-gfm` (tables, task lists, strikethrough,
+  autolinks, footnotes).
+- **`probeRoundTrip(markdown)`** — parses and re-serializes on a detached editor
+  and compares `normalizeForProbe()` forms. The editor opens a page in Visual
+  only when this is ok; otherwise Markdown with an "Open visual anyway" notice.
+  Normalization ignores marker style (`*`/`-`, `_`/`*`), blank-line placement,
+  table padding, defensive backslash escapes, and autolink brackets; anything
+  else (reference links, re-nested emphasis) keeps the page in Markdown.
+- **Sync on doc change** (`surface-plugin.mjs`): `onUpdate` fires only for
+  document changes after mount, so toolbar/slash actions sync and merely
+  viewing a page never rewrites it. `editor.wikihub.flush()` before submit.
+- **Surface API** on `editor.wikihub`: `run(cmd)`, `activeState()`,
+  `insertWikilink()`, `replaceRange()`, `toggleTaskAt()`; `[[` and `/` trigger
+  events (`wikihub:trigger`, `wikihub:menukey`) for the host page's menus.
+- **List fix**: Milkdown 7.20 stores list `spread` as the string `"false"`,
+  which remark-stringify treats as truthy, turning every tight list loose on
+  save. `remarkListSpreadFix` coerces it before the list handlers run.
+- `prosemirror-model` is pinned to 1.25.11 via `overrides`: 1.25.12 validates
+  attributes on create and rejects Milkdown 7.20's string `spread`, which made
+  every list disappear from the Visual editor.
+
 ## Build
 
 ```bash
 cd milkdown-src
-npm install        # installs pinned deps (see below)
-npm run build      # esbuild -> ../app/static/js/milkdown-bundle.js
+npm install --before=YYYY-MM-DD   # a date >=1 month before the build (dependency policy)
+npm run build                     # esbuild -> ../app/static/js/milkdown-bundle.js
 ```
+
+`package-lock.json` is not committed; `--before` keeps transitive packages
+inside the one-month window too. The 2026-11-03 build used
+`--before=2026-10-03`.
 
 Output is a single minified ESM file exporting `createMilkdownEditor` (and a few
 named Milkdown ctx symbols). `node_modules/` is gitignored; the committed
@@ -66,7 +94,9 @@ constructs round-trip identically:
   line round-trips as a `$$` block)
 - `Embed ![[diagram.png]]`
 
-Puppeteer is taken from `/Users/jacobcole/code/cortex-j7-impl/node_modules/puppeteer`.
+Browser driver: `PUPPETEER_PATH=/path/to/node_modules/puppeteer`, or
+`PLAYWRIGHT_PATH` / the global Playwright install. Skips (exit 0) when neither
+is available. Also covers GFM round-trips, the probe, and "no sync on load".
 
 ## Pinned dependency versions
 
@@ -85,6 +115,9 @@ everything is dated on/before 2026-05-08). Milkdown 7.21.x (2026-05-12) was
 | `@milkdown/prose` | 7.20.0 | 2026-03-30 | yes |
 | `@milkdown/transformer` | 7.20.0 | 2026-03-30 | yes |
 | `@milkdown/utils` | 7.20.0 | 2026-03-30 | yes |
+| `@milkdown/preset-gfm` | 7.20.0 | 2026-03-30 | yes (added 2026-11-03) |
+| `mdast-util-to-markdown` | 2.1.2 | 2024-11-04 | yes (direct import for the list fix) |
+| `prosemirror-model` (override) | 1.25.11 | 2026-07-11 | yes |
 | `katex` | 0.16.45 | 2026-04-05 | yes |
 | `esbuild` (dev) | 0.27.7 | 2026-04-02 | yes |
 
