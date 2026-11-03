@@ -87,7 +87,7 @@ host (`ubuntu@54.145.123.7`) — that's historical. Production is GCP now.
 - `app/feeds.py` — pure activity entry, relative time, and RSS formatting helpers
 - `app/page_utils.py` — canonical repo-path normalization plus `.wikihub/*` plumbing/content-page checks
 - `app/renderer.py` — markdown-it-py with wikilinks, KaTeX, footnotes, Obsidian embeds, wiki-relative link rewriting
-- `app/static/js/sidepeek.js` — desktop reader slide-over for same-wiki page links; fetches rendered body JSON via `?fragment=1`
+- `app/static/js/sidepeek.js` — desktop reader slide-over for same-wiki page links, opened by Shift+click (article, peek, sidebar page rows), the hover "open in side peek" icon, or Shift+Enter; plain click navigates (wikihub-9i28). Fetches rendered body JSON via `?fragment=1`
 - `app/auth_utils.py` — password hashing, API key gen/verify, Bearer auth decorators
 - `app/routes/` — blueprints: main, auth, api, api_wikis, wiki, agent_surfaces, upload
 - `hooks/post-receive` — git→DB sync (installed into each wiki's bare repo)

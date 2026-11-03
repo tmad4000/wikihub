@@ -218,6 +218,22 @@
 @media (max-width: 767px) {
   .peek-panel { width: 100vw; min-width: 0; max-width: none; }
 }
+/* wikihub-9i28: hover/focus "open in side peek" affordance after peekable links.
+   Plain click navigates; this button (or Shift+click / Shift+Enter) peeks. */
+.peek-trigger {
+  display: inline-flex; align-items: center; justify-content: center;
+  vertical-align: middle; width: 0; height: 18px; opacity: 0; overflow: hidden;
+  margin-left: 2px; padding: 0; border: 0; border-radius: var(--radius-sm);
+  background: none; color: var(--text-muted); cursor: pointer;
+  transition: width .12s ease, opacity .12s ease;
+}
+a:hover + .peek-trigger, a:focus-visible + .peek-trigger,
+.peek-trigger:hover, .peek-trigger:focus-visible { width: 16px; opacity: 1; }
+.peek-trigger:hover, .peek-trigger:focus-visible { color: var(--accent); }
+.peek-trigger:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+@media (prefers-reduced-motion: reduce) {
+  .peek-trigger, .peek-overlay, .peek-panel { transition: none; }
+}
 
 .breadcrumb {
   font-size: 0.8125rem; color: var(--text-muted); margin-bottom: 12px;

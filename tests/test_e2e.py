@@ -9752,7 +9752,7 @@ const vm = require("vm");
       button: 0,
       metaKey: false,
       ctrlKey: false,
-      shiftKey: false,
+      shiftKey: !inPeek, // wikihub-9i28: article links peek on Shift+click
       altKey: false,
       target: anchor,
       preventDefault() { prevented = true; }
@@ -9946,7 +9946,7 @@ const vm = require("vm");
       button: 0,
       metaKey: false,
       ctrlKey: false,
-      shiftKey: false,
+      shiftKey: true, // wikihub-9i28: Shift+click opens the peek
       altKey: false,
       target: anchor,
       preventDefault() {}
@@ -9993,6 +9993,239 @@ const vm = require("vm");
         capture_output=True,
     )
     assert r.returncode == 0, r.stderr or r.stdout
+
+
+_SIDEPEEK_HARNESS = r"""
+const fs = require("fs");
+const path = require("path");
+const vm = require("vm");
+
+function makeHarness(opts) {
+  opts = opts || {};
+  const sidepeekPath = path.join(process.cwd(), "app/static/js/sidepeek.js");
+  const source = fs.readFileSync(sidepeekPath, "utf8");
+  const h = { handlers: {}, docHandlers: {}, fetched: [], pushed: [], replaced: [], inserted: [], anchors: [] };
+  function container(name) {
+    return {
+      name,
+      handlers: {},
+      addEventListener(type, fn) { this.handlers[type] = fn; },
+      querySelectorAll() { return h.anchors.filter((a) => a._container === name); }
+    };
+  }
+  const article = container("article");
+  const tree = container("sidebar");
+  const bodyEl = {
+    scrollTop: 0, handlers: {},
+    classList: { add() {}, remove() {} },
+    addEventListener(type, fn) { this.handlers[type] = fn; },
+    set innerHTML(_v) {},
+    querySelector() { return null; },
+    querySelectorAll() { return []; }
+  };
+  const noopEl = {
+    classList: { add() {}, remove() {}, contains() { return false; } },
+    setAttribute() {}, removeAttribute() {}, addEventListener() {},
+    querySelector() { return noopEl; }, set href(_v) {}, textContent: ""
+  };
+  const overlay = {
+    offsetWidth: 1, _open: false,
+    classList: { add(c) { if (c === "open") overlay._open = true; }, remove(c) { if (c === "open") overlay._open = false; }, contains(c) { return c === "open" && overlay._open; } },
+    setAttribute() {}, removeAttribute() {}, addEventListener() {},
+    querySelector(sel) { return sel === "#peek-body" ? bodyEl : noopEl; },
+    set innerHTML(_v) {}
+  };
+  const location = {
+    href: "http://example.test/@agent1/peek-wiki/wiki/source",
+    origin: "http://example.test",
+    pathname: "/@agent1/peek-wiki/wiki/source",
+    search: ""
+  };
+  const document = {
+    activeElement: null,
+    body: { appendChild() {}, classList: { add() {}, remove() {} } },
+    createElement(tag) {
+      if (tag === "button") {
+        const btn = {
+          tag, attrs: {}, className: "", type: "", innerHTML: "",
+          setAttribute(k, v) { this.attrs[k] = v; },
+          closest(sel) { return sel === ".peek-trigger" ? this : null; }
+        };
+        return btn;
+      }
+      return overlay;
+    },
+    querySelector(sel) {
+      if (sel.indexOf(".article") >= 0) return article;
+      if (sel === "#sidebar-tree") return tree;
+      return null;
+    },
+    addEventListener(type, fn) { h.docHandlers[type] = fn; }
+  };
+  const context = {
+    URL, URLSearchParams, location, document,
+    window: { __wikihubPeek: { base: "/@agent1/peek-wiki" }, innerWidth: opts.width || 1024, addEventListener() {}, location },
+    history: {
+      state: null,
+      pushState(state, _t, url) { this.state = state; h.pushed.push(url); },
+      replaceState(state, _t, url) { this.state = state; h.replaced.push(url); },
+      back() {}
+    },
+    navigator: {},
+    fetch(url) {
+      h.fetched.push(url);
+      return Promise.resolve({
+        ok: true,
+        headers: { get() { return "application/json"; } },
+        json() { return Promise.resolve({ title: "Target", html: "<p>t</p>", url: "/@agent1/peek-wiki/wiki/target" }); }
+      });
+    },
+    setTimeout
+  };
+  h.article = article; h.tree = tree; h.document = document; h.context = context;
+  h.makeAnchor = function (rawHref, o) {
+    o = o || {};
+    const where = o.where || "article";
+    const parent = { insertBefore(node, _ref) { h.inserted.push({ node, anchor: a }); } };
+    const a = {
+      tagName: "A", _container: where, target: "", textContent: o.text || "Target page", parentNode: parent,
+      classList: { contains(c) { return (o.classes || []).indexOf(c) >= 0; } },
+      hasAttribute() { return false; },
+      getAttribute(name) { return name === "href" ? rawHref : null; },
+      querySelector() { return null; },
+      closest(sel) {
+        if (sel === "a") return this;
+        if (sel === ".article, .peek-body") return where === "article" ? article : (where === "peek" ? bodyEl : null);
+        if (sel === ".peek-body") return where === "peek" ? bodyEl : null;
+        if (sel === "#sidebar-tree, #async-sidebar") return where === "sidebar" ? tree : null;
+        if (sel === ".sidebar-folder-row") return o.folderRow ? {} : null;
+        if (sel.indexOf("h1") === 0) return o.heading ? {} : null;
+        return null;
+      }
+    };
+    h.anchors.push(a);
+    return a;
+  };
+  h.click = function (handler, target, mods) {
+    let prevented = false;
+    handler(Object.assign({
+      defaultPrevented: false, button: 0, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false,
+      target, preventDefault() { prevented = true; }
+    }, mods || {}));
+    return prevented;
+  };
+  h.boot = function () {
+    vm.runInNewContext(source, context, { filename: sidepeekPath });
+    if (!h.docHandlers.DOMContentLoaded) throw new Error("DOMContentLoaded not registered");
+    h.docHandlers.DOMContentLoaded();
+  };
+  h.tick = () => new Promise((r) => setTimeout(r, 0));
+  return h;
+}
+
+(async () => {
+  __BODY__
+})().catch((err) => { console.error(err && err.stack ? err.stack : err); process.exit(1); });
+"""
+
+
+def _run_sidepeek_node(body):
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    r = subprocess.run(
+        ["node", "-e", _SIDEPEEK_HARNESS.replace("__BODY__", body)],
+        cwd=repo_root, text=True, capture_output=True,
+    )
+    assert r.returncode == 0, r.stderr or r.stdout
+
+
+def test_side_peek_plain_click_navigates():
+    """wikihub-9i28: a plain click on a same-wiki article link navigates (no peek)."""
+    _run_sidepeek_node(r"""
+  const h = makeHarness();
+  h.boot();
+  const a = h.makeAnchor("/@agent1/peek-wiki/wiki/target");
+  if (h.click(h.article.handlers.click, a)) throw new Error("plain click was intercepted");
+  await h.tick();
+  if (h.fetched.length) throw new Error("plain click fetched a peek: " + h.fetched.join(","));
+  if (h.pushed.length) throw new Error("plain click pushed history");
+""")
+
+
+def test_side_peek_shift_click_opens_peek():
+    """wikihub-9i28: Shift+click opens the side peek and pushes ?peek=; Cmd/Ctrl/Alt stay native."""
+    _run_sidepeek_node(r"""
+  const h = makeHarness();
+  h.boot();
+  const a = h.makeAnchor("/@agent1/peek-wiki/wiki/target");
+  for (const mods of [{ metaKey: true, shiftKey: true }, { ctrlKey: true }, { altKey: true, shiftKey: true }, { button: 1 }]) {
+    if (h.click(h.article.handlers.click, a, mods)) throw new Error("modifier click hijacked: " + JSON.stringify(mods));
+  }
+  if (!h.click(h.article.handlers.click, a, { shiftKey: true })) throw new Error("shift+click not intercepted");
+  await h.tick();
+  if (h.fetched.length !== 1 || h.fetched[0].indexOf("/@agent1/peek-wiki/wiki/target?fragment=1") < 0) {
+    throw new Error("unexpected fetch: " + h.fetched.join(","));
+  }
+  if (h.pushed.join(",") !== "/@agent1/peek-wiki/wiki/source?peek=wiki%2Ftarget") {
+    throw new Error("unexpected history push: " + h.pushed.join(","));
+  }
+""")
+
+
+def test_side_peek_trigger_button_injected():
+    """wikihub-9i28: one hover 'open in side peek' button per peekable article link
+    (not external, not in headings); clicking it peeks; none on mobile widths."""
+    _run_sidepeek_node(r"""
+  const h = makeHarness();
+  h.makeAnchor("/@agent1/peek-wiki/wiki/target", { text: "Harvard" });
+  h.makeAnchor("https://example.com/", { classes: ["external-link"] });
+  h.makeAnchor("/@agent1/peek-wiki/wiki/other", { heading: true });
+  h.boot();
+  if (h.inserted.length !== 1) throw new Error("expected exactly one trigger, got " + h.inserted.length);
+  const btn = h.inserted[0].node;
+  if (btn.className !== "peek-trigger") throw new Error("bad trigger class " + btn.className);
+  if ((btn.attrs["aria-label"] || "").indexOf("Harvard") < 0) throw new Error("aria-label lacks link text: " + btn.attrs["aria-label"]);
+  if (!h.click(h.article.handlers.click, btn)) throw new Error("trigger click not intercepted");
+  await h.tick();
+  if (h.fetched.length !== 1 || h.fetched[0].indexOf("wiki/target?fragment=1") < 0) throw new Error("trigger did not open peek: " + h.fetched.join(","));
+
+  const m = makeHarness({ width: 600 });
+  m.makeAnchor("/@agent1/peek-wiki/wiki/target");
+  m.boot();
+  if (m.inserted.length !== 0) throw new Error("trigger injected on mobile width");
+""")
+
+
+def test_side_peek_shift_enter_opens_peek():
+    """wikihub-9i28: Shift+Enter on a focused peekable link opens the peek; Enter is untouched."""
+    _run_sidepeek_node(r"""
+  const h = makeHarness();
+  h.boot();
+  const a = h.makeAnchor("/@agent1/peek-wiki/wiki/target");
+  h.document.activeElement = a;
+  let prevented = false;
+  h.docHandlers.keydown({ key: "Enter", shiftKey: false, preventDefault() { prevented = true; } });
+  if (prevented || h.fetched.length) throw new Error("plain Enter was intercepted");
+  h.docHandlers.keydown({ key: "Enter", shiftKey: true, preventDefault() { prevented = true; } });
+  if (!prevented) throw new Error("Shift+Enter not intercepted");
+  await h.tick();
+  if (h.fetched.length !== 1) throw new Error("Shift+Enter did not open peek");
+""")
+
+
+def test_side_peek_sidebar_shift_click():
+    """wikihub-9i28: Shift+click on a sidebar page row peeks; plain click and folder rows navigate."""
+    _run_sidepeek_node(r"""
+  const h = makeHarness();
+  h.boot();
+  if (!h.tree.handlers.click) throw new Error("sidebar click handler not bound");
+  const row = h.makeAnchor("/@agent1/peek-wiki/wiki/target", { where: "sidebar" });
+  const folder = h.makeAnchor("/@agent1/peek-wiki/wiki/", { where: "sidebar", folderRow: true });
+  if (h.click(h.tree.handlers.click, row)) throw new Error("plain sidebar click intercepted");
+  if (h.click(h.tree.handlers.click, folder, { shiftKey: true })) throw new Error("folder row shift+click intercepted");
+  if (!h.click(h.tree.handlers.click, row, { shiftKey: true })) throw new Error("sidebar shift+click not intercepted");
+  await h.tick();
+  if (h.fetched.length !== 1 || h.fetched[0].indexOf("wiki/target?fragment=1") < 0) throw new Error("sidebar peek fetch wrong: " + h.fetched.join(","));
+""")
 
 
 def test_page_meta_liveness_endpoint(client, api_key):
@@ -10702,6 +10935,11 @@ def run_all():
             ("templates keep user values out of inline JS (wikihub-l1w4)", lambda: test_templates_do_not_interpolate_user_values_into_inline_js(app, client, key)),
             ("concurrent repo writes keep every commit (wikihub-xkmk)", lambda: test_concurrent_repo_writes_keep_every_commit(app, client, key)),
             # READER_SIDEBAR_TESTS
+            ("side peek: plain click navigates (wikihub-9i28)", lambda: test_side_peek_plain_click_navigates()),
+            ("side peek: Shift+click opens peek (wikihub-9i28)", lambda: test_side_peek_shift_click_opens_peek()),
+            ("side peek: hover trigger injected (wikihub-9i28)", lambda: test_side_peek_trigger_button_injected()),
+            ("side peek: Shift+Enter opens peek (wikihub-9i28)", lambda: test_side_peek_shift_enter_opens_peek()),
+            ("side peek: sidebar Shift+click (wikihub-9i28)", lambda: test_side_peek_sidebar_shift_click()),
             ("profile owner sees pages when auth repo unreadable (wikihub-325p)", lambda: test_profile_owner_sees_pages_when_auth_repo_unreadable(app, client)),
         ]
 
