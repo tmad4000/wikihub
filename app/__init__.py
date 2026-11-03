@@ -81,7 +81,10 @@ def create_app(config_class="config.Config"):
 
     @login_manager.user_loader
     def load_user(user_id):
-        return db.session.get(User, int(user_id))
+        user = db.session.get(User, int(user_id))
+        if user is not None and user.suspended_at is not None:
+            return None  # suspended accounts lose existing sessions too
+        return user
 
     from app.routes import main_bp, auth_bp, api_bp, wiki_bp
     app.register_blueprint(main_bp)
@@ -105,6 +108,10 @@ def create_app(config_class="config.Config"):
 
     from app.routes.auth import init_oauth
     init_oauth(app)
+
+    from app import moderation
+    app.before_request(moderation.before_request)
+    app.after_request(moderation.after_request)
 
     from app.canonical_redirect import maybe_redirect
     app.before_request(maybe_redirect)
@@ -154,6 +161,13 @@ def create_app(config_class="config.Config"):
         db.session.execute(db.text(
             "ALTER TABLE wikis ADD COLUMN IF NOT EXISTS subdomain VARCHAR(63) UNIQUE"
         ))
+        # trust & safety columns (migrations/2026-11-03_spam_defenses.sql)
+        for ddl in (
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS trusted BOOLEAN NOT NULL DEFAULT false",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_at TIMESTAMPTZ NULL",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_reason TEXT NULL",
+        ):
+            db.session.execute(db.text(ddl))
         db.session.commit()
         from app.wiki_ops import ensure_official_wiki
         ensure_official_wiki()
@@ -285,6 +299,9 @@ def create_app(config_class="config.Config"):
             acl_rules = load_acl_rules(wiki.owner.username, wiki.slug)
             regenerate_public_mirror(wiki.owner.username, wiki.slug, acl_rules)
             click.echo(f"rebuilt mirror {wiki.owner.username}/{wiki.slug}")
+
+    from app.moderation_cli import register_moderation_commands
+    register_moderation_commands(wikihub_cli)
 
     from flask import jsonify, request as req, render_template
 

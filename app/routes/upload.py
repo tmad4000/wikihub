@@ -92,6 +92,12 @@ def create_wiki_anonymous():
     if not slug:
         return {"error": "bad_request", "message": "slug is required"}, 400
 
+    # Shared (Postgres) per-IP limit on minting anonymous accounts. wikihub-1ug3
+    from app.rate_limit import signup_limited_response
+    limited = signup_limited_response("signup_anon_upload", "ANON_UPLOAD_MAX_PER_IP_PER_HOUR")
+    if limited:
+        return limited
+
     anon_name = None
     for _ in range(8):
         candidate = f"anon-{secrets.token_hex(4)}"

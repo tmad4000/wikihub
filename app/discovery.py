@@ -10,7 +10,10 @@ def _is_self_viewer(viewer, owner):
     return bool(viewer and getattr(viewer, "is_authenticated", False) and viewer.id == owner.id)
 
 
-def discoverable_wiki_ids(visibilities=DISCOVERABLE_VISIBILITIES):
+def discoverable_wiki_ids(visibilities=DISCOVERABLE_VISIBILITIES, trusted_only=True):
+    """Wiki ids with at least one discoverable page. With trusted_only (the
+    default) wikis owned by untrusted or suspended accounts are dropped —
+    see app/trust.py (wikihub-9ras)."""
     safe_ids = {
         wiki_id for (wiki_id,) in db.session.query(Page.wiki_id)
         .filter(Page.visibility.in_(visibilities))
@@ -27,7 +30,18 @@ def discoverable_wiki_ids(visibilities=DISCOVERABLE_VISIBILITIES):
         .all()
         if is_content_page_path(path)
     }
-    return safe_ids | risky_ids
+    ids = safe_ids | risky_ids
+    if trusted_only and ids:
+        from app.models import User
+        from app.trust import trusted_user_clause
+        allowed = {
+            wiki_id for (wiki_id,) in db.session.query(Wiki.id)
+            .join(User, Wiki.owner_id == User.id)
+            .filter(trusted_user_clause())
+            .all()
+        }
+        ids &= allowed
+    return ids
 
 
 def visible_wikis_for_owner(owner, viewer=None):
@@ -35,7 +49,7 @@ def visible_wikis_for_owner(owner, viewer=None):
     if _is_self_viewer(viewer, owner):
         return wikis
 
-    visible_ids = discoverable_wiki_ids()
+    visible_ids = discoverable_wiki_ids(trusted_only=False)
     return [wiki for wiki in wikis if wiki.id in visible_ids]
 
 

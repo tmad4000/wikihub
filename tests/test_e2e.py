@@ -41,6 +41,8 @@ def setup():
     app = create_app()
     app.config["TESTING"] = True
     app.config["WTF_CSRF_ENABLED"] = False
+    # Brand-new test accounts are untrusted; the spam tests opt back in.
+    app.config["TRUST_GATE_ENABLED"] = False
     with app.app_context():
         db.create_all()
         reset_database()
@@ -73,6 +75,7 @@ def reset_database():
         "audit_log",
         "sessions",
         "external_identities",
+        "rate_limit_buckets",
         "users",
     ]:
         try:
@@ -10213,6 +10216,304 @@ def test_nav_header_nowrap(client):
     assert "@media (max-width: 480px)" in body, "narrow-width nav breakpoint must exist"
 
 
+
+# --- spam defenses + moderation (wikihub-1okv, 9ras, 1ug3, i8lo, x77k, mnjc) ---
+
+def _spam_new_account(app, username):
+    r = app.test_client().post("/api/v1/accounts", json={"username": username})
+    assert r.status_code == 201, (username, r.status_code, r.data[:200])
+    return {"Authorization": f"Bearer {r.get_json()['api_key']}"}
+
+
+def _spam_public_page(app, h, owner, slug, path, body):
+    c = app.test_client()
+    if slug != owner:
+        r = c.post("/api/v1/wikis", json={"slug": slug, "title": slug.title()}, headers=h)
+        assert r.status_code in (201, 409), r.data[:200]
+    r = c.post(f"/api/v1/wikis/{owner}/{slug}/pages", json={
+        "path": path,
+        "content": f"---\ntitle: {path}\nvisibility: public\n---\n\n{body}\n",
+        "visibility": "public",
+    }, headers=h)
+    assert r.status_code == 201, r.data[:200]
+
+
+def test_foreign_owner_path_never_renders_under_other_host(app, client, key):
+    """F1: /@other/... requested on agent1's subdomain, a wiki subdomain, or a
+    custom domain redirects to the apex instead of rendering with 200."""
+    h = _spam_new_account(app, "f1-other")
+    _spam_public_page(app, h, "f1-other", "f1wiki", "guide.md", "# Guide\n\nOther user's page.")
+    anon = app.test_client()
+
+    # control: the owner's own page on the owner's host still renders
+    r = anon.get("/f1wiki/guide", base_url="https://f1-other.wikihub.md")
+    assert r.status_code == 200, r.status_code
+
+    for suffix in ("/f1wiki/guide", "", "/f1wiki", "/f1wiki/llms.txt", "/f1wiki/graph.json", "/f1wiki/history"):
+        r = anon.get(f"/@f1-other{suffix}?x=1", base_url="https://agent1.wikihub.md", follow_redirects=False)
+        assert r.status_code in (301, 302), (suffix, r.status_code)
+        assert r.headers["Location"] == f"https://wikihub.md/@f1-other{suffix}?x=1", r.headers["Location"]
+
+    # wiki subdomain + custom domain owned by agent1
+    owner = User.query.filter_by(username="agent1").first()
+    wiki = Wiki.query.filter_by(owner_id=owner.id, slug="agent1").first()
+    wiki.subdomain = "f1-agent1-notes"
+    db.session.add(CustomDomain(wiki_id=wiki.id, hostname="f1-docs.example.com", status="active",
+                                verification_token="f1-token-xyz", tls_status="active"))
+    db.session.commit()
+    try:
+        for base in ("https://f1-agent1-notes.wikihub.md", "https://f1-docs.example.com"):
+            r = anon.get("/@f1-other/f1wiki/guide", base_url=base, follow_redirects=False)
+            assert r.status_code in (301, 302), (base, r.status_code)
+            assert r.headers["Location"] == "https://wikihub.md/@f1-other/f1wiki/guide", r.headers["Location"]
+            assert b"Other user's page" not in r.data
+    finally:
+        CustomDomain.query.filter_by(hostname="f1-docs.example.com").delete()
+        wiki.subdomain = None
+        db.session.commit()
+
+
+def test_untrusted_content_nofollow_noindex_and_hidden_from_discovery(app, client, key):
+    """F2: untrusted owners' external links are nofollow ugc, their pages are
+    noindex, and they stay out of every discovery surface until trusted."""
+    from datetime import timedelta
+    h = _spam_new_account(app, "f2-spammer")
+    _spam_public_page(app, h, "f2-spammer", "f2cards", "cards.md",
+                      "# Cards F2Marker\n\nBuy at [shop](https://f2-spam.example.com/buy).")
+    anon = app.test_client()
+    app.config["TRUST_GATE_ENABLED"] = True
+    try:
+        r = anon.get("/@f2-spammer/f2cards/cards")
+        assert r.status_code == 200
+        html = r.get_data(as_text=True)
+        assert 'href="https://f2-spam.example.com/buy"' in html
+        assert 'rel="nofollow ugc noopener noreferrer"' in html, "untrusted external link must be nofollow ugc"
+        assert '<meta name="robots" content="noindex">' in html
+        assert "noindex" in r.headers.get("X-Robots-Tag", "")
+        assert "noindex" in anon.get("/@f2-spammer/f2cards/llms.txt").headers.get("X-Robots-Tag", "")
+
+        def surfaces():
+            out = {}
+            for path in ("/explore", "/activity", "/activity.rss", "/people", "/llms.txt", "/llms-full.txt", "/api/v1/wikis?limit=200"):
+                out[path] = anon.get(path).get_data(as_text=True)
+            return out
+
+        for path, body in surfaces().items():
+            assert "f2-spammer" not in body, f"untrusted account leaked into {path}"
+
+        # admin trust flag -> discoverable, indexable, links followed
+        user = User.query.filter_by(username="f2-spammer").first()
+        user.trusted = True
+        db.session.commit()
+        for path, body in surfaces().items():
+            if path in ("/activity", "/activity.rss", "/llms-full.txt", "/api/v1/wikis?limit=200"):
+                assert "f2-spammer" in body, f"trusted account missing from {path}"
+        r = anon.get("/@f2-spammer/f2cards/cards")
+        assert "nofollow" not in r.get_data(as_text=True).split("f2-spam.example.com/buy", 1)[1][:80]
+        assert "X-Robots-Tag" not in r.headers
+        assert 'name="robots"' not in r.get_data(as_text=True)
+
+        # age >= 14 days + verified email also makes an account trusted; age alone does not
+        user.trusted = False
+        user.created_at = utcnow() - timedelta(days=30)
+        db.session.commit()
+        assert "f2-spammer" not in anon.get("/llms-full.txt").get_data(as_text=True)
+        user.email_verified_at = utcnow()
+        db.session.commit()
+        assert "f2-spammer" in anon.get("/llms-full.txt").get_data(as_text=True)
+    finally:
+        app.config["TRUST_GATE_ENABLED"] = False
+
+
+def test_signup_rate_limit_is_shared_per_ip(app):
+    """F3: POST /api/v1/accounts and /new-anonymous use a Postgres-backed
+    per-IP limit (shared by every worker) and capabilities documents it."""
+    db.session.execute(text("DELETE FROM rate_limit_buckets"))
+    db.session.commit()
+    app.config["SHARED_RATE_LIMITS_IN_TESTS"] = True
+    try:
+        env = {"REMOTE_ADDR": "203.0.113.77"}
+        codes = []
+        for i in range(6):
+            # a fresh client per call mimics separate workers/processes
+            r = app.test_client().post("/api/v1/accounts", json={"username": f"f3-bot-{i}"}, environ_base=env)
+            codes.append(r.status_code)
+        assert codes[:5] == [201] * 5, codes
+        assert codes[5] == 429, codes
+        assert int(r.headers["Retry-After"]) > 0
+        assert User.query.filter_by(username="f3-bot-5").first() is None
+        row = db.session.execute(text(
+            "SELECT count FROM rate_limit_buckets WHERE key LIKE 'signup_api:ip:203.0.113.77:h'")).scalar()
+        assert row == 6, row
+        # another IP is unaffected
+        r = app.test_client().post("/api/v1/accounts", json={"username": "f3-human"},
+                                   environ_base={"REMOTE_ADDR": "203.0.113.78"})
+        assert r.status_code == 201
+
+        anon_env = {"REMOTE_ADDR": "203.0.113.90"}
+        app.config["ANON_UPLOAD_MAX_PER_IP_PER_HOUR"] = 1
+        from flask import g as _flask_g
+        _flask_g.pop("_login_user", None)  # harness keeps one app context
+        r = app.test_client().post("/new-anonymous", data={"slug": "f3anon"}, environ_base=anon_env)
+        assert r.status_code in (200, 201), (r.status_code, r.data[:200])
+        _flask_g.pop("_login_user", None)
+        r = app.test_client().post("/new-anonymous", data={"slug": "f3anon2"}, environ_base=anon_env)
+        assert r.status_code == 429, r.status_code
+
+    finally:
+        app.config["SHARED_RATE_LIMITS_IN_TESTS"] = False
+        app.config.pop("ANON_UPLOAD_MAX_PER_IP_PER_HOUR", None)
+    caps = app.test_client().get("/api/v1/me/capabilities", headers=_spam_new_account(app, "f3-caps")).get_json()
+    signup = caps["rate_limits"]["signup_per_ip"]
+    assert signup["per_hour"] == 5 and signup["per_day"] == 20 and signup["shared"] is True, signup
+
+
+def test_suspend_blocks_auth_hides_content_and_purges(app, client, key):
+    """F4: a suspended account cannot authenticate (API key, session, git) and
+    its content is 410 everywhere; --purge deletes wikis and keys; dry run
+    is the default."""
+    from flask import g as _flask_g
+    from app.models import ApiKey
+    h = _spam_new_account(app, "f4-farm")
+    _spam_public_page(app, h, "f4-farm", "f4vcc", "nokyc.md", "# F4FarmMarker\n\n[x](https://vccbusiness.com/)")
+    raw_key = h["Authorization"][7:]
+    runner = app.test_cli_runner()
+
+    browser = app.test_client()
+    r = browser.post("/auth/login", data={"api_key": raw_key}, follow_redirects=False)
+    assert r.status_code in (302, 303), r.status_code
+
+    # dry run changes nothing
+    res = runner.invoke(args=["wikihub", "suspend", "f4-farm", "--purge", "--reason", "link farm"])
+    assert res.exit_code == 0, res.output
+    assert "DRY RUN" in res.output and "f4vcc" in res.output
+    db.session.expire_all()
+    assert User.query.filter_by(username="f4-farm").first().suspended_at is None
+    assert app.test_client().get("/api/v1/accounts/me", headers=h).status_code == 200
+
+    res = runner.invoke(args=["wikihub", "suspend", "f4-farm", "--reason", "link farm", "--execute"])
+    assert res.exit_code == 0, res.output
+    db.session.expire_all()
+    _flask_g.pop("_login_user", None)
+    anon = app.test_client()
+    assert anon.get("/api/v1/accounts/me", headers=h).status_code == 401
+    _flask_g.pop("_login_user", None)
+    r = browser.get("/settings", follow_redirects=False)
+    assert r.status_code in (302, 401), f"suspended session still signed in: {r.status_code}"
+    _flask_g.pop("_login_user", None)
+    import base64
+    basic = {"Authorization": "Basic " + base64.b64encode(f"f4-farm:{raw_key}".encode()).decode()}
+    r = anon.get("/@f4-farm/f4vcc.git/info/refs?service=git-receive-pack", headers=basic)
+    assert r.status_code in (401, 410), r.status_code
+
+    for path in ("/@f4-farm/f4vcc/nokyc", "/@f4-farm", "/@f4-farm/f4vcc/llms.txt",
+                 "/api/v1/wikis/f4-farm/f4vcc/pages", "/api/v1/wikis/f4-farm/f4vcc/pages/nokyc.md"):
+        r = anon.get(path)
+        assert r.status_code == 410, (path, r.status_code)
+        assert b"F4FarmMarker" not in r.data
+    r = anon.get("/nokyc", base_url="https://f4-farm.wikihub.md")
+    assert r.status_code == 410, r.status_code
+    assert "F4FarmMarker" not in anon.get("/api/v1/search?q=F4FarmMarker").get_data(as_text=True)
+    assert "f4-farm" not in anon.get("/people").get_data(as_text=True)
+    assert "f4-farm" not in anon.get("/llms-full.txt").get_data(as_text=True)
+
+    res = runner.invoke(args=["wikihub", "suspend", "f4-farm", "--purge", "--execute"])
+    assert res.exit_code == 0, res.output
+    db.session.expire_all()
+    user = User.query.filter_by(username="f4-farm").first()
+    assert user.suspended_at is not None and user.suspended_reason == "link farm"
+    assert Wiki.query.filter_by(owner_id=user.id).count() == 0
+    assert ApiKey.query.filter_by(user_id=user.id).count() == 0
+    assert not os.path.exists(os.path.join(os.environ["REPOS_DIR"], "f4-farm"))
+
+
+def test_abuse_report_flags_link_farm(app, key):
+    """F4: abuse-report flags denylisted domains, repeated outbound domains and
+    page velocity for untrusted accounts, and ignores normal accounts."""
+    h = _spam_new_account(app, "f4-report-farm")
+    c = app.test_client()
+    c.post("/api/v1/wikis", json={"slug": "farm", "title": "Farm"}, headers=h)
+    for i in range(10):
+        c.post("/api/v1/wikis/f4-report-farm/farm/pages", json={
+            "path": f"p{i}.md", "visibility": "public",
+            "content": f"# P{i}\n\n[card](https://www.vccbusiness.com/a{i}) [seo](https://linkpilot-ai.ramerlabs.com/)",
+        }, headers=h)
+    normal = _spam_new_account(app, "f4-report-normal")
+    _spam_public_page(app, normal, "f4-report-normal", "notes", "one.md", "# One\n\nSee [docs](https://example.org/).")
+    runner = app.test_cli_runner()
+    app.config["TRUST_GATE_ENABLED"] = True
+    try:
+        res = runner.invoke(args=["wikihub", "abuse-report", "--json", "--velocity", "10", "--same-domain", "3"])
+    finally:
+        app.config["TRUST_GATE_ENABLED"] = False
+    assert res.exit_code == 0, res.output
+    rows = {r["username"]: r for r in json.loads(res.output)}
+    assert "f4-report-farm" in rows, rows.keys()
+    reasons = " ".join(rows["f4-report-farm"]["reasons"])
+    assert "denylist:vccbusiness.com" in reasons and "ramerlabs.com" in reasons, reasons
+    assert "velocity:" in reasons and "same_domain:" in reasons, reasons
+    assert "f4-report-normal" not in rows, "an account without spam signals must not be flagged"
+
+
+def test_user_search_is_not_an_email_oracle(app, client, key):
+    """F5: users/search requires auth, never prefix-matches email, allows an
+    exact full-email match for signed-in callers, and escapes LIKE wildcards."""
+    target = User(username="f5-target", email="f5.secret.person@example.org", display_name="Fifth Target")
+    db.session.add(target)
+    db.session.commit()
+    h = {"Authorization": f"Bearer {key}"}
+    anon = app.test_client()
+    assert anon.get("/api/v1/users/search?q=f5").status_code == 401
+    names = lambda r: [u["username"] for u in r.get_json()["users"]]
+    assert "f5-target" not in names(anon.get("/api/v1/users/search?q=f5.secret", headers=h))
+    assert "f5-target" not in names(anon.get("/api/v1/users/search?q=f5.secret.person@", headers=h))
+    assert names(anon.get("/api/v1/users/search?q=f5.secret.person@example.org", headers=h)) == ["f5-target"]
+    assert anon.get("/api/v1/users/search?q=f5.secret.person@example.org", headers=h).get_json()["users"][0]["match"] == "email"
+    assert "f5-target" in names(anon.get("/api/v1/users/search?q=f5-ta", headers=h))
+    # LIKE wildcards are literal
+    assert names(anon.get("/api/v1/users/search?q=%25%25", headers=h)) == []
+    assert "f5-target" not in names(anon.get("/api/v1/users/search?q=f5_t", headers=h))
+
+
+def test_unlisted_pages_not_in_public_page_list(app, client, key):
+    """F6: GET /pages lists unlisted pages only for the owner (or an explicit
+    grantee); the page itself stays readable by direct link."""
+    h = {"Authorization": f"Bearer {key}"}
+    c = app.test_client()
+    c.post("/api/v1/wikis", json={"slug": "f6wiki", "title": "F6"}, headers=h)
+    for path, vis in (("open.md", "public"), ("hidden.md", "unlisted")):
+        r = c.post("/api/v1/wikis/agent1/f6wiki/pages", json={
+            "path": path, "visibility": vis, "content": f"---\nvisibility: {vis}\n---\n\n# {path}\n"}, headers=h)
+        assert r.status_code == 201, r.data[:200]
+    other = _spam_new_account(app, "f6-viewer")
+    for headers in ({}, other):
+        paths = [p["path"] for p in c.get("/api/v1/wikis/agent1/f6wiki/pages", headers=headers).get_json()["pages"]]
+        assert "open.md" in paths and "hidden.md" not in paths, paths
+    owner_paths = [p["path"] for p in c.get("/api/v1/wikis/agent1/f6wiki/pages", headers=h).get_json()["pages"]]
+    assert "hidden.md" in owner_paths
+    assert c.get("/api/v1/wikis/agent1/f6wiki/pages/hidden.md").status_code == 200
+
+
+def test_auth_crawler_hygiene(app, client):
+    """Crawlers: auth links are nofollow, robots.txt disallows /auth/ on every
+    host, /auth/* is noindex, and bare OAuth callbacks fail fast with 400."""
+    anon = app.test_client()
+    for base in ("https://wikihub.md", "https://agent1.wikihub.md"):
+        r = anon.get("/robots.txt", base_url=base)
+        assert r.status_code == 200 and "Disallow: /auth/" in r.get_data(as_text=True), base
+    for path in ("/auth/ideaflow/callback", "/auth/google/callback",
+                 "/auth/ideaflow/callback?code=abc", "/auth/google/callback?state=abc"):
+        r = anon.get(path, follow_redirects=False)
+        assert r.status_code == 400, (path, r.status_code)
+        assert "noindex" in r.headers.get("X-Robots-Tag", "")
+        assert "Set-Cookie" not in r.headers, path
+    r = anon.get("/auth/login")
+    assert "noindex" in r.headers.get("X-Robots-Tag", "")
+    html = anon.get("/@agent1").get_data(as_text=True) + anon.get("/").get_data(as_text=True)
+    for m in re.finditer(r'<a\b[^>]*href="/auth/[^"]*"[^>]*>', html):
+        assert 'rel="nofollow"' in m.group(0), m.group(0)
+
+
 def run_all():
     app = setup()
 
@@ -10250,6 +10551,14 @@ def run_all():
             ("zip upload", lambda: test_zip_upload(client, key)),
             ("anonymous upload (wikihub-i2xm)", lambda: test_anonymous_upload(app)),
             ("agent surfaces", lambda: test_agent_surfaces(client)),
+            ("F1 foreign /@owner path never renders under another host (wikihub-1okv)", lambda: test_foreign_owner_path_never_renders_under_other_host(app, client, key)),
+            ("F2 untrusted content nofollow+noindex, hidden from discovery (wikihub-9ras)", lambda: test_untrusted_content_nofollow_noindex_and_hidden_from_discovery(app, client, key)),
+            ("F3 shared per-IP signup rate limit (wikihub-1ug3)", lambda: test_signup_rate_limit_is_shared_per_ip(app)),
+            ("F4 suspend blocks auth, 410s content, purges (wikihub-i8lo)", lambda: test_suspend_blocks_auth_hides_content_and_purges(app, client, key)),
+            ("F4 abuse-report flags link farm (wikihub-i8lo)", lambda: test_abuse_report_flags_link_farm(app, key)),
+            ("F5 user search is not an email oracle (wikihub-x77k)", lambda: test_user_search_is_not_an_email_oracle(app, client, key)),
+            ("F6 unlisted pages not in public page list (wikihub-mnjc)", lambda: test_unlisted_pages_not_in_public_page_list(app, client, key)),
+            ("auth crawler hygiene: nofollow, robots, noindex, fast 400 callback", lambda: test_auth_crawler_hygiene(app, client)),
             ("A2HS banner mobile-only (wikihub-2q0d)", lambda: test_a2hs_banner_gated_to_mobile(client)),
             ("token + settings", lambda: test_token_and_settings(client)),
             ("client_config hint", lambda: test_client_config_hint(client)),

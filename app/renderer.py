@@ -461,8 +461,31 @@ def _prepend_frontmatter_h1(content, html):
     return f'<h1 id="{_escape(slug)}">{_escape(fm_title)}</h1>\n{html}'
 
 
-def render_page(content, wiki_owner=None, wiki_slug=None, current_page_path=None):
+_EXTERNAL_A_RE = re.compile(r'<a\s[^>]*?href="(?:https?:)?//[^"]*"[^>]*>', re.IGNORECASE)
+_REL_ATTR_RE = re.compile(r'\srel="[^"]*"', re.IGNORECASE)
+UNTRUSTED_LINK_REL = "nofollow ugc noopener noreferrer"
+
+
+def mark_external_links_ugc(html):
+    """Force rel="nofollow ugc noopener noreferrer" on every absolute link
+    (wikihub-9ras). Applied to content owned by untrusted accounts so link
+    farms gain nothing from publishing here."""
+    if "<a" not in html:
+        return html
+
+    def fix(match):
+        tag = match.group(0)
+        if _REL_ATTR_RE.search(tag):
+            return _REL_ATTR_RE.sub(f' rel="{UNTRUSTED_LINK_REL}"', tag, count=1)
+        return tag[:-1] + f' rel="{UNTRUSTED_LINK_REL}">'
+
+    return _EXTERNAL_A_RE.sub(fix, html)
+
+
+def render_page(content, wiki_owner=None, wiki_slug=None, current_page_path=None, ugc_links=None):
     """render a wiki page with wikilink resolution.
+    ugc_links: force nofollow/ugc on external links. None = decide from the
+    wiki owner's trust (app.trust); callers pass True for anonymous pages.
     current_page_path: the page's path in the repo (e.g. 'wiki/courses/cs224n.md')
     used to resolve relative markdown links like ../raw/foo.md"""
     from app.models import Page, User, Wiki
@@ -572,6 +595,15 @@ def render_page(content, wiki_owner=None, wiki_slug=None, current_page_path=None
     html = _retarget_non_md_file_links(html)
 
     html = _prepend_frontmatter_h1(content, html)
+
+    if ugc_links is None:
+        try:
+            from app.moderation import owner_untrusted
+            ugc_links = owner_untrusted(wiki_owner)
+        except RuntimeError:  # outside a request/app context
+            ugc_links = False
+    if ugc_links:
+        html = mark_external_links_ugc(html)
 
     return html
 

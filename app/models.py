@@ -27,6 +27,12 @@ class User(UserMixin, db.Model):
     # (e.g. the owner) without hardcoding usernames anywhere. See
     # effective_wiki_limit().
     wiki_limit = db.Column(db.Integer, nullable=True)
+    # Trust & safety (wikihub-9ras / wikihub-i8lo). `trusted` is an admin-set
+    # override; see app/trust.py for the full rule. A suspended account cannot
+    # authenticate and its content is gone (410) everywhere.
+    trusted = db.Column(db.Boolean, default=False, nullable=False, server_default=db.text("false"))
+    suspended_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    suspended_reason = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow, nullable=False)
 
     wikis = db.relationship("Wiki", backref="owner", lazy="dynamic")
@@ -41,6 +47,15 @@ class User(UserMixin, db.Model):
             postgresql_where=db.text("email_verified_at IS NOT NULL"),
         ),
     )
+
+    @property
+    def is_suspended(self):
+        return self.suspended_at is not None
+
+    @property
+    def is_active(self):
+        # Flask-Login refuses login_user() for inactive users.
+        return self.suspended_at is None
 
     def effective_wiki_limit(self):
         """Resolve this user's wiki cap: per-user override wins, else the
@@ -457,3 +472,15 @@ class WikiSlugRedirect(db.Model):
     )
 
     wiki = db.relationship("Wiki")
+
+
+class RateLimitBucket(db.Model):
+    """Fixed-window counters shared by every gunicorn worker (wikihub-1ug3).
+
+    One row per (bucket key, window start). Incremented atomically with
+    INSERT ... ON CONFLICT DO UPDATE in app.rate_limit.hit()."""
+    __tablename__ = "rate_limit_buckets"
+
+    key = db.Column(db.String(200), primary_key=True)
+    window_start = db.Column(db.DateTime(timezone=True), primary_key=True)
+    count = db.Column(db.Integer, nullable=False, default=0)
