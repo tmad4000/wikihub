@@ -34,7 +34,8 @@ class DirectoryScalingTest(unittest.TestCase):
                 with app.app_context():
                     # More accounts than production's 106, plus both public and private profiles.
                     for i in range(120):
-                        user = User(username=f'directory-{i:03d}')
+                        # trusted so the directory lists them (app/trust.py)
+                        user = User(username=f'directory-{i:03d}', trusted=True)
                         db.session.add(user); db.session.flush()
                         personal = Wiki(owner_id=user.id, slug=user.username)
                         project = Wiki(owner_id=user.id, slug='public-project')
@@ -46,6 +47,13 @@ class DirectoryScalingTest(unittest.TestCase):
                             Page(wiki_id=project.id, path='notes.md', visibility='public', excerpt='project'),
                             Page(wiki_id=secret.id, path='notes.md', visibility='private', excerpt='hidden'),
                         ])
+                    # A brand-new, unverified account with public content is untrusted
+                    # and must stay out of the directory.
+                    newbie = User(username='directory-untrusted-new')
+                    db.session.add(newbie); db.session.flush()
+                    newbie_wiki = Wiki(owner_id=newbie.id, slug=newbie.username)
+                    db.session.add(newbie_wiki); db.session.flush()
+                    db.session.add(Page(wiki_id=newbie_wiki.id, path='README.md', visibility='public', excerpt='SPAM'))
                     db.session.commit(); db.session.remove()
                     engine = db.engine
                 for own in (False, True):
@@ -64,6 +72,7 @@ class DirectoryScalingTest(unittest.TestCase):
                         self.assertLessEqual(len(statements), 7, f'{len(statements)} queries for 120 accounts')
                         self.assertGreaterEqual(len(cards), 120)
                         indexed = {card['user'].username: card for card in cards}
+                        self.assertNotIn('directory-untrusted-new', indexed)
                         for i in range(120):
                             card = indexed[f'directory-{i:03d}']
                             owner = own and i == 0
