@@ -5172,6 +5172,32 @@ def test_folder_async_sidebar_passes_current_context(client, api_key):
     )
 
 
+def test_folder_index_gets_article_typography(client, api_key):
+    """REGRESSION: a folder view that renders the folder's index.md must load the
+    same .article typography as the page reader. Before the fix, folder.html had
+    no .article rules, so headings had no spacing/rule and list bullets hung
+    outside the text column (seen on @yush/aayush-art/wiki/)."""
+    h = {"Authorization": f"Bearer {api_key}"}
+    r = client.post("/api/v1/wikis", json={"slug": "folder-typo", "title": "Folder Typo"}, headers=h)
+    assert r.status_code == 201
+    for name, body in (("wiki/index.md", "# Person\n\n## Links\n\n- one\n- two"), ("wiki/apps.md", "# apps")):
+        r = client.post(
+            "/api/v1/wikis/agent1/folder-typo/pages",
+            json={"path": name, "content": body, "visibility": "public"},
+            headers=h,
+        )
+        assert r.status_code == 201, r.data
+    r = client.get("/@agent1/folder-typo/wiki/")
+    assert r.status_code == 200
+    html = r.data.decode()
+    assert '<article class="article">' in html and "<h2" in html
+    assert ".article h2 {" in html and ".article ul, .article ol {" in html, (
+        "folder.html must include the shared .article typography (_article_styles.css.html)"
+    )
+    r = client.get("/@agent1/folder-typo/wiki/apps")
+    assert ".article h2 {" in r.data.decode(), "reader must still include .article typography"
+
+
 def test_relative_links_resolve_inside_wiki_on_subdomain(client, api_key):
     """wikihub-qmx6 REGRESSION: in-content relative links must resolve inside the
     wiki even on the canonical subdomain root (no trailing slash).
