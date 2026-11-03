@@ -227,9 +227,12 @@
   background: none; color: var(--text-muted); cursor: pointer;
   transition: width .12s ease, opacity .12s ease;
 }
-a:hover + .peek-trigger, a:focus-visible + .peek-trigger,
-.peek-trigger:hover, .peek-trigger:focus-visible { width: 16px; opacity: 1; }
-.peek-trigger:hover, .peek-trigger:focus-visible { color: var(--accent); }
+a:focus-visible + .peek-trigger, .peek-trigger:focus-visible { width: 16px; opacity: 1; }
+.peek-trigger:focus-visible { color: var(--accent); }
+@media (hover: hover) {
+  a:hover + .peek-trigger, .peek-trigger:hover { width: 16px; opacity: 1; }
+  .peek-trigger:hover { color: var(--accent); }
+}
 .peek-trigger:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
 @media (prefers-reduced-motion: reduce) {
   .peek-trigger, .peek-overlay, .peek-panel { transition: none; }

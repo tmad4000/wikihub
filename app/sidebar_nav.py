@@ -32,8 +32,15 @@ from urllib.parse import unquote
 SIDEBAR_FILE_PATH = ".wikihub/sidebar.md"
 MAX_DEPTH = 4
 
-_HEADING_RE = re.compile(r"^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$")
-_LIST_RE = re.compile(r"^([ \t]*)[-*+]\s+(.*?)\s*$")
+# Linear-time patterns only (review: a lazy group followed by \s*…$ was
+# O(N^2)/O(N^3) on long whitespace runs, and this file is parsed on every
+# anonymous sidebar build). Lines are rstripped before matching and trailing
+# '#'s are trimmed in Python.
+_HEADING_RE = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.*)$")
+_LIST_RE = re.compile(r"^([ \t]*)[-*+][ \t]+(.*)$")
+MAX_FILE_BYTES = 64 * 1024
+MAX_LINE_CHARS = 500
+MAX_ENTRIES = 2000
 _WIKILINK_RE = re.compile(r"^\[\[([^\]|]+)(?:\|([^\]]+))?\]\]")
 _MDLINK_RE = re.compile(r"^\[([^\]]*)\]\(\s*<?([^)\s>]+)>?\s*\)")
 _SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:")
@@ -45,12 +52,20 @@ def parse_sidebar_md(text):
     top = []
     container = top
     stack = []  # (level, node) for the list items of the current container
-    for raw in (text or "").splitlines():
-        if not raw.strip():
+    text = (text or "")
+    if len(text.encode("utf-8", "replace")) > MAX_FILE_BYTES:
+        text = text.encode("utf-8", "replace")[:MAX_FILE_BYTES].decode("utf-8", "ignore")
+    entries = 0
+    for raw in text.splitlines():
+        raw = raw.rstrip()
+        if not raw or len(raw) > MAX_LINE_CHARS:
             continue
+        entries += 1
+        if entries > MAX_ENTRIES:
+            break
         heading = _HEADING_RE.match(raw)
         if heading:
-            label = heading.group(2).strip()
+            label = heading.group(2).rstrip("#").rstrip()
             if not label:
                 continue
             group = {"type": "group", "label": label, "children": []}
@@ -63,7 +78,7 @@ def parse_sidebar_md(text):
             continue
         indent = len(item.group(1).replace("\t", "  "))
         level = min(indent // 2, MAX_DEPTH - 1)
-        node = _parse_entry(item.group(2))
+        node = _parse_entry(item.group(2).strip())
         if node is None:
             continue
         while stack and stack[-1][0] >= level:

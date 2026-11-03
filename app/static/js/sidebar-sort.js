@@ -218,7 +218,7 @@
         btn.type = "button";
         btn.className = "sidebar-sort-btn";
         btn.dataset.sort = "custom";
-        btn.title = "Custom order (.wikihub/sidebar.md)";
+        btn.title = "Custom order set by the wiki owner";
         btn.setAttribute("aria-label", "Custom order");
         btn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>';
         btn.addEventListener("click", function () {

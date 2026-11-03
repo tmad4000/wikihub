@@ -34,7 +34,7 @@
   <p class="subtitle">Order and group the left sidebar of <a href="{{ wiki_url }}">{{ wiki.title or wiki.slug }}</a>. Saved to <code>.wikihub/sidebar.md</code> in the wiki's git repo, so agents can edit it too.</p>
   <div class="sidebar-edit-hint" id="sidebar-format-hint">
     <code># Heading</code> starts a group · <code>- [[page]]</code> or <code>- [[page|Label]]</code> lists a page · <code>- folder/</code> inserts a folder (indent two spaces to place pages inside it first) · <code>- [Label](https://…)</code> adds an external link.<br>
-    Pages you don't list are never hidden: they appear where <code>- ...</code> sits, or at the end under "Other pages". Entries a reader can't see are skipped for them.
+    Pages you don't list are never hidden: they appear where <code>- ...</code> sits, or at the end under "Other pages". Page entries a reader can't open are skipped for them, but group headings with visible rows and external links are shown to everyone who can see the sidebar, so don't put private information in them.
   </div>
   <form method="post">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

@@ -10064,7 +10064,8 @@ function makeHarness(opts) {
   };
   const context = {
     URL, URLSearchParams, location, document,
-    window: { __wikihubPeek: { base: "/@agent1/peek-wiki" }, innerWidth: opts.width || 1024, addEventListener() {}, location },
+    window: Object.assign({ __wikihubPeek: { base: "/@agent1/peek-wiki" }, innerWidth: opts.width || 1024, addEventListener() {}, location },
+      opts.hover === false ? { matchMedia() { return { matches: false }; } } : {}),
     history: {
       state: null,
       pushState(state, _t, url) { this.state = state; h.pushed.push(url); },
@@ -10192,6 +10193,11 @@ def test_side_peek_trigger_button_injected():
   m.makeAnchor("/@agent1/peek-wiki/wiki/target");
   m.boot();
   if (m.inserted.length !== 0) throw new Error("trigger injected on mobile width");
+
+  const t = makeHarness({ hover: false });
+  t.makeAnchor("/@agent1/peek-wiki/wiki/target");
+  t.boot();
+  if (t.inserted.length !== 0) throw new Error("trigger injected on a touch (no-hover) device");
 """)
 
 
@@ -10935,6 +10941,8 @@ def run_all():
             ("templates keep user values out of inline JS (wikihub-l1w4)", lambda: test_templates_do_not_interpolate_user_values_into_inline_js(app, client, key)),
             ("concurrent repo writes keep every commit (wikihub-xkmk)", lambda: test_concurrent_repo_writes_keep_every_commit(app, client, key)),
             # READER_SIDEBAR_TESTS
+            ("sidebar.md parser is linear time (PR #46 review)", lambda: test_sidebar_md_parser_is_linear_time()),
+            ("sidebar.md hidden from history/diff + curator (PR #46 review)", lambda: test_sidebar_md_hidden_from_history_diff_and_curator(app, client, key)),
             ("people sort modes (wikihub-hnp4)", lambda: test_people_sort_modes(app, client, key)),
             ("people sort no leak (wikihub-hnp4)", lambda: test_people_sort_no_leak(app, client, key)),
             ("subdomain nav shows site identity (wikihub-m0pr)", lambda: test_subdomain_nav_identity(app, client)),
@@ -11664,6 +11672,8 @@ def test_sidebar_md_write_guard(app, client, key):
     assert r.status_code == 403, r.status_code
     r = client.get("/api/v1/wikis/agent1/nav-guard/pages/.wikihub/sidebar.md", headers=oh)
     assert r.status_code == 404
+    r = client.put("/api/v1/wikis/agent1/nav-guard/pages/.wikihub/sidebar.md", json={"content": ["not", "text"]}, headers=h)
+    assert r.status_code == 400, f"non-string sidebar content must be a 400, got {r.status_code}"
     r = client.post("/api/v1/wikis/agent1/nav-guard/pages", json={"path": ".wikihub/foo.md", "content": "x"}, headers=h)
     assert r.status_code == 400, "other plumbing paths stay rejected for the owner"
 
@@ -11960,6 +11970,60 @@ def test_people_sort_no_leak(app, client, key):
     self_b = _login_browser(app, "leakpb")
     self_html = _get(self_b, "/people?sort=recent").get_data(as_text=True)
     assert _people_order(self_html, "leakpa", "leakpb") == ["leakpb", "leakpa"], "own unlisted edit counts for self-viewer"
+
+
+
+def test_sidebar_md_parser_is_linear_time():
+    """PR #46 review: sidebar.md is parsed on every anonymous sidebar build, so
+    the parser must stay fast on hostile input (long whitespace runs used to
+    backtrack O(N^2)/O(N^3)). Also checks the patterns directly, without caps."""
+    import time
+    from app import sidebar_nav
+    spaces = " " * 200_000
+    hostile = [
+        "#" + spaces + "x", "# " + spaces + "#" + spaces, "- " + spaces + "x" + spaces,
+        spaces, ("# a" + " " * 400 + "\n") * 5000, ("- [[x]]" + " " * 400 + "\n") * 5000,
+    ]
+    start = time.monotonic()
+    for text in hostile:
+        sidebar_nav.parse_sidebar_md(text)
+        line = text.rstrip()
+        sidebar_nav._HEADING_RE.match(line)
+        sidebar_nav._LIST_RE.match(line)
+    elapsed = time.monotonic() - start
+    assert elapsed < 1.0, f"sidebar.md parsing took {elapsed:.2f}s on hostile input"
+    nodes = sidebar_nav.parse_sidebar_md("# Start ##   \n- [[c]]   \n  - [[d|D]]\n")
+    assert nodes[0]["label"] == "Start" and nodes[0]["children"][0]["target"] == "c"
+    many = "".join(f"- [[p{i}]]\n" for i in range(5000))
+    assert len(sidebar_nav.parse_sidebar_md(many)) <= sidebar_nav.MAX_ENTRIES
+
+
+def test_sidebar_md_hidden_from_history_diff_and_curator(app, client, key):
+    """PR #46 review: .wikihub/sidebar.md (which can name private pages) never
+    shows in history/commit diffs for partial grantees, and the Curator API
+    proxy cannot write it."""
+    from app.routes.agent_chat import _wikihub_api_allowed
+    h = _setup_nav_wiki(client, key, "nav-hist")
+    _put_page(client, key, "agent1", "nav-hist", "hidden.md", "---\ntitle: hidden\nvisibility: private\n---\n\n# hidden\n", visibility="private")
+    _write_sidebar(client, h, "nav-hist", "# Secret Group Label\n- [[hidden|Hush label]]\n# Open\n- [[a]]\n")
+    _put_page(client, key, "agent1", "nav-hist", "shared.md", "---\ntitle: shared\nvisibility: private\n---\n\n# shared\n", visibility="private")
+    _make_account(client, "navhistgrantee")
+    r = client.post("/api/v1/wikis/agent1/nav-hist/pages/shared.md/share",
+                    json={"username": "navhistgrantee", "role": "read"}, headers=h)
+    assert r.status_code in (200, 201), r.get_data(as_text=True)[:200]
+    from app.git_backend import _repo_path
+    repo = _repo_path("agent1", "nav-hist", public=False)
+    shas = subprocess.run(["git", "-C", repo, "log", "--format=%H"], capture_output=True, text=True).stdout.split()
+    grantee = _login_browser(app, "navhistgrantee")
+    for url in ["/@agent1/nav-hist/history", "/api/v1/wikis/agent1/nav-hist/history?limit=100"] + [f"/@agent1/nav-hist/commit/{sha}" for sha in shas]:
+        body = _get(grantee, url).get_data(as_text=True)
+        for needle in (".wikihub/sidebar.md", "Hush label", "Secret Group Label"):
+            i = body.find(needle)
+            assert i < 0, f"{url} leaks {needle!r}: ...{body[max(0, i - 300):i + 80]}"
+    sess = {"owner": "agent1", "wiki_slug": "nav-hist"}
+    assert not _wikihub_api_allowed(sess, "POST", "/wikis/agent1/nav-hist/pages", {"path": ".wikihub/sidebar.md", "content": "# x"})
+    assert not _wikihub_api_allowed(sess, "PUT", "/wikis/agent1/nav-hist/pages/.wikihub/sidebar.md", {"content": "# x"})
+    assert not _wikihub_api_allowed(sess, "GET", "/wikis/agent1/nav-hist/pages/.wikihub/sidebar.md", None)
 
 
 if __name__ == "__main__":

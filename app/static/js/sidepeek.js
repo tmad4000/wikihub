@@ -33,6 +33,17 @@
     return window.innerWidth <= MOBILE_MAX;
   }
 
+  // Hover affordances only make sense with a fine hovering pointer; touch
+  // devices (including wide tablets) keep plain navigation only.
+  function canHover() {
+    if (typeof window.matchMedia !== "function") return true;
+    try {
+      return window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+    } catch (e) {
+      return true;
+    }
+  }
+
   var overlay, panel, bodyEl, titleEl, openLink, copyBtn;
   var currentFullUrl = null;
   var currentPeekPath = null;
@@ -272,8 +283,9 @@
     if (!isPlainPrimary(e)) return;
     var trigger = e.target && e.target.closest ? e.target.closest(".peek-trigger") : null;
     if (trigger) {
-      var tt = peekTarget(trigger.__peekAnchor || trigger.previousElementSibling);
       e.preventDefault();
+      if (isMobile()) return;
+      var tt = peekTarget(trigger.__peekAnchor || trigger.previousElementSibling);
       if (!tt || tt.selfHash) return;
       loadPeek(tt.rest, tt.inPeek ? "replace" : "push");
       return;
@@ -308,7 +320,7 @@
 
   // Inject a hover/focus "open in side peek" button after each peekable link.
   function decorateLinks(root) {
-    if (!root || typeof root.querySelectorAll !== "function" || isMobile()) return;
+    if (!root || typeof root.querySelectorAll !== "function" || isMobile() || !canHover()) return;
     var links = root.querySelectorAll("a[href]");
     for (var i = 0; i < links.length; i++) {
       var a = links[i];

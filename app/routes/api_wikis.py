@@ -152,6 +152,8 @@ def _sidebar_file_forbidden():
 
 
 def _write_sidebar_file(owner_user, wiki, content, status=200):
+    if content is not None and not isinstance(content, str):
+        return {"error": "bad_request", "message": "content must be a string"}, 400
     max_page = current_app.config["MAX_PAGE_SIZE"]
     if len((content or "").encode("utf-8")) > max_page:
         return {"error": "too_large", "message": "Sidebar file is too large"}, 413

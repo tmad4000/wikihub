@@ -1867,7 +1867,16 @@ def wiki_commit(username, slug, sha):
 
     # parse diff into structured hunks for rendering
     diff_lines = []
+    skipping_plumbing = False
     for line in diff_text.splitlines():
+        if line.startswith("diff --git"):
+            # Defense in depth (review of PR #46): the git pathspec already
+            # excludes .wikihub/*, but never render a plumbing file section
+            # (e.g. .wikihub/sidebar.md labels) even via a rename/copy header.
+            paths = [part[2:] for part in line.split()[2:4] if part[:2] in ("a/", "b/")]
+            skipping_plumbing = any(_is_wikihub_plumbing_path(p) for p in paths)
+        if skipping_plumbing:
+            continue
         if line.startswith("+++") or line.startswith("---"):
             diff_lines.append(("meta", line))
         elif line.startswith("@@"):
