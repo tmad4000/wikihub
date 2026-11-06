@@ -14,6 +14,7 @@ Recipe: WIT docs/widget-host-integration-guide.md#menu-launched-identity-verifie
 
 import base64
 import hashlib
+import json
 from datetime import datetime, timedelta, timezone
 
 import requests
@@ -37,8 +38,21 @@ def _fernet():
     return Fernet(base64.urlsafe_b64encode(key))
 
 
+def _exp_from_jwt(id_token):
+    """`exp` from the payload of an ID token Authlib has already verified."""
+    try:
+        payload = id_token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        exp = json.loads(base64.urlsafe_b64decode(payload)).get("exp")
+        return exp if isinstance(exp, (int, float)) else None
+    except Exception:
+        return None
+
+
 def remember_id_token(id_token, *, issuer, subject, exp):
     """Store a just-verified Ideaflow ID token. Best effort: never breaks sign-in."""
+    if id_token and not isinstance(exp, (int, float)):
+        exp = _exp_from_jwt(id_token)
     if not id_token or not issuer or not subject or not isinstance(exp, (int, float)):
         return
     expires_at = datetime.fromtimestamp(exp, tz=timezone.utc)
