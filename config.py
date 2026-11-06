@@ -33,10 +33,19 @@ class Config:
     IDEAFLOW_AUTO_SIGNIN = os.environ.get("IDEAFLOW_AUTO_SIGNIN", "true").lower() in ("1", "true", "yes")
     IDEAFLOW_OIDC_CLIENT_ID = os.environ.get("IDEAFLOW_OIDC_CLIENT_ID")
     IDEAFLOW_OIDC_CLIENT_SECRET = os.environ.get("IDEAFLOW_OIDC_CLIENT_SECRET")
+    # In-app "Send feedback" (WIT widget): the backend exchanges the signed-in
+    # user's Ideaflow ID token here for a 15-minute create-issue-only token.
+    WIT_FEEDBACK_TOKEN_URL = os.environ.get(
+        "WIT_FEEDBACK_TOKEN_URL", "https://api.worldissuetracker.com/functions/v1/feedback-token"
+    )
     SERVER_NAME = os.environ.get("SERVER_NAME")  # e.g. wikihub.md
     BASE_URL = os.environ.get("BASE_URL", "http://localhost:5000")
     CUSTOM_DOMAIN_TARGET = os.environ.get("CUSTOM_DOMAIN_TARGET", "domains.wikihub.md")
     ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
+    # Token written into each repo's hooks/wikihub.conf for the post-receive
+    # sync callbacks. Keep it distinct from ADMIN_TOKEN; when unset, hooks
+    # fall back to ADMIN_TOKEN for back-compat.
+    HOOK_TOKEN = os.environ.get("HOOK_TOKEN", "")
     # Curator agent (inline AI sidebar on wiki reader pages). wikihub-2jn.2
     # Default ON so the feature is live as soon as the endpoint is deployed.
     # Set CURATOR_ENABLED=false to hide the panel and return 503 from /api/v1/agent/chat.

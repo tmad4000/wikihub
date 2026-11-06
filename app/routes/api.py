@@ -16,7 +16,7 @@ from app.models import User, ApiKey, MagicLoginToken, UsernameRedirect, utcnow, 
 from app.auth_utils import (
     generate_api_key, generate_magic_login_token, hash_password, check_password,
     api_auth_required, api_auth_optional, get_current_user_from_request, rate_limit_writes,
-    client_ip, security_event,
+    client_ip, security_event, set_user_email,
 )
 from app.credentials_hint import build_client_config, resolve_server_url
 from app.git_backend import _repo_path
@@ -415,8 +415,8 @@ def update_account():
         if new_email and new_email != user.email:
             if User.query.filter_by(email=new_email).first():
                 return {"error": "conflict", "message": "Email taken"}, 409
-            user.email = new_email
-            email_changed_to = new_email
+            if set_user_email(user, new_email):
+                email_changed_to = new_email
 
     if user.username != old_username:
         old_repo_root = os.path.dirname(_repo_path(old_username, "placeholder"))
@@ -431,6 +431,9 @@ def update_account():
     db.session.commit()
     if email_changed_to:
         security_event("account.email_change", "success", user_id=user.id, via="api", email=email_changed_to)
+        from app.routes.auth import send_verification_if_needed
+
+        send_verification_if_needed(user)
     if user.username != old_username:
         security_event("account.username_change", "success", user_id=user.id, via="api")
     return jsonify({
@@ -452,11 +455,13 @@ def claim_email():
     existing = User.query.filter_by(email=email).first()
     if existing and existing.id != user.id:
         return {"error": "conflict", "message": "Email already claimed"}, 409
-    changed = (user.email or "").lower() != email
-    user.email = email
+    changed = set_user_email(user, email)
     db.session.commit()
     if changed:
         security_event("account.email_change", "success", user_id=user.id, via="api_claim", email=email)
+        from app.routes.auth import send_verification_if_needed
+
+        send_verification_if_needed(user)
     return jsonify({"email": user.email})
 
 

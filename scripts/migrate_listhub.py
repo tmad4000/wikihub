@@ -22,7 +22,7 @@ DRY_RUN = "--dry-run" in sys.argv
 DB_PATH = "/home/ubuntu/listhub/listhub.db"
 REPOS_DIR = "/home/ubuntu/listhub/repos"
 HOST = "listhub.globalbr.ai"
-ADMIN_TOKEN = "ec5107d6eb59357642976d61aafad1ad"
+ADMIN_TOKEN = os.environ.get("WIKIHUB_ADMIN_TOKEN", "")
 TARGET_USER = "jacobreal"
 
 # ── Path restructuring rules ──────────────────────────────────────────
@@ -345,6 +345,8 @@ def git_remove_file(repo_path, file_path):
 
 def main():
     print(f"{'DRY RUN' if DRY_RUN else 'LIVE RUN'}", file=sys.stderr)
+    if not DRY_RUN and not ADMIN_TOKEN:
+        sys.exit("set WIKIHUB_ADMIN_TOKEN in the environment")
 
     conn = get_db()
     jr_items = get_items(conn, "jacobreal")

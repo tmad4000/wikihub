@@ -1,0 +1,45 @@
+{# In-app feedback (WIT widget, world-issue-tracker-julr.6). No launcher:
+   "Send feedback" in the account menu and the mobile menu opens it. The
+   backend mints a 15-minute create-issue-only token from the signed-in
+   user's Ideaflow ID token (/auth/wit-feedback-token); without one the
+   report is submitted anonymously. Recipe: WIT
+   docs/widget-host-integration-guide.md#menu-launched-identity-verified-install #}
+<script>
+(function(){
+  var csrf = {{ csrf_token()|tojson }};
+  var signedIn = {{ (current_user and current_user.is_authenticated)|tojson }};
+  var cached = null;
+  function wit(method){
+    var args = Array.prototype.slice.call(arguments, 1);
+    if (window.WitFeedback && typeof window.WitFeedback[method] === 'function') return window.WitFeedback[method].apply(null, args);
+    (window.__witFeedbackQueue = window.__witFeedbackQueue || []).push([method, args]);
+  }
+  wit('setUserToken', signedIn ? function(){
+    if (cached && cached.expires_at * 1000 - Date.now() > 60000) return cached.token;
+    return fetch('/auth/wit-feedback-token', {
+      method: 'POST', credentials: 'same-origin', cache: 'no-store',
+      headers: {'X-CSRFToken': csrf}
+    }).then(function(r){ return r.status === 200 ? r.json() : null; })
+      .then(function(body){ cached = body && body.token ? body : null; return cached ? cached.token : null; })
+      .catch(function(){ return null; });
+  } : null);
+  document.addEventListener('click', function(e){
+    var item = e.target.closest && e.target.closest('[data-wit-feedback]');
+    if (!item) return;
+    e.preventDefault();
+    var mobileClose = document.querySelector('#nav-mobile-menu.open [data-nav-close]');
+    if (mobileClose) mobileClose.click();
+    document.querySelectorAll('[data-account-menu].open').forEach(function(menu){
+      menu.classList.remove('open');
+      var trigger = menu.querySelector('[data-account-trigger]');
+      if (trigger) trigger.setAttribute('aria-expanded', 'false');
+    });
+    wit('open');
+  });
+})();
+</script>
+<script defer src="https://worldissuetracker.com/widget/wit-feedback.js"
+  data-tracker-slug="wikihub-feedback"
+  data-trigger="none"
+  data-app="WikiHub"
+  data-app-version="{{ app_version }}"></script>

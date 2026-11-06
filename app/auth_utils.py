@@ -6,6 +6,7 @@ Bearer token extraction from requests.
 """
 
 import hashlib
+import hmac
 import json
 import logging
 import secrets
@@ -311,3 +312,49 @@ def rate_limit_writes(
             return f(*args, **kwargs)
         return wrapped
     return decorator
+
+
+def _token_matches(presented, expected):
+    if not expected or not presented:
+        return False
+    return hmac.compare_digest(presented.encode("utf-8"), expected.encode("utf-8"))
+
+
+def check_admin_token(req=None, *, config_keys=("ADMIN_TOKEN",), log=True, log_success=True):
+    """Single gate for admin-token endpoints.
+
+    Accepts only `Authorization: Bearer <token>` (never a query string, which
+    leaks into logs and history) and compares in constant time. `config_keys`
+    lists the app config values that are acceptable tokens (e.g. the git-hook
+    token plus the admin token for back-compat)."""
+    from flask import current_app
+
+    req = req if req is not None else request
+    auth = req.headers.get("Authorization", "")
+    presented = auth[7:].strip() if auth[:7].lower() == "bearer " else ""
+    ok = False
+    for key in config_keys:
+        if _token_matches(presented, current_app.config.get(key, "") or ""):
+            ok = True
+    if log:
+        if not ok:
+            security_event("admin.auth", "denied", admin_endpoint=req.endpoint, token_present=bool(auth))
+        elif log_success:
+            security_event("admin.action", "success", admin_endpoint=req.endpoint)
+    return ok
+
+
+def set_user_email(user, new_email):
+    """The one way to change a user's email address.
+
+    Any actual change clears email_verified_at: ownership of the new address
+    is unproven until the verification link is used, and verified-email
+    features (pending-invite materialization, OAuth/OIDC email auto-link)
+    must not trust it before then. Returns True when the address changed.
+    Callers commit, then call send_verification_if_needed(user)."""
+    new_email = (new_email or "").strip().lower() or None
+    if (user.email or "").strip().lower() == (new_email or ""):
+        return False
+    user.email = new_email
+    user.email_verified_at = None
+    return True

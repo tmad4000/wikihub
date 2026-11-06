@@ -36,6 +36,7 @@ def main():
         sys.path.insert(0, app_root)
 
     from app.acl import validate_acl
+    from app.git_sync import symlink_paths_in_tree
 
     repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     null_sha = "0" * 40
@@ -45,7 +46,24 @@ def main():
         if len(parts) < 3:
             continue
         _, new_sha, refname = parts
-        if refname not in ("refs/heads/main", "refs/heads/master") or new_sha == null_sha:
+        if new_sha == null_sha:
+            continue
+
+        # WikiHub content is plain files only. Symbolic links (git mode
+        # 120000) are refused on every branch so no checkout made by the
+        # server can be redirected outside the repository.
+        try:
+            symlinks = symlink_paths_in_tree(repo_dir, new_sha)
+        except subprocess.CalledProcessError:
+            print("Push rejected: could not read pushed tree", file=sys.stderr)
+            return 1
+        if symlinks:
+            print("Push rejected: symbolic links are not supported", file=sys.stderr)
+            for path in symlinks[:20]:
+                print(f"  - {path}", file=sys.stderr)
+            return 1
+
+        if refname not in ("refs/heads/main", "refs/heads/master"):
             continue
 
         acl_text = read_file_content(new_sha, ".wikihub/acl", repo_dir)
