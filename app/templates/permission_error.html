@@ -65,9 +65,9 @@
   {% endif %}
   <div class="error-actions">
     {% if current_user.is_authenticated %}
-    <a href="/auth/switch-account?next={{ request.path|urlencode }}" class="btn btn-primary">Switch account</a>
+    <a rel="nofollow" href="/auth/switch-account?next={{ request.path|urlencode }}" class="btn btn-primary">Switch account</a>
     {% else %}
-    <a href="/auth/login?next={{ request.path|urlencode }}" class="btn btn-primary">Sign in</a>
+    <a rel="nofollow" href="/auth/login?next={{ request.path|urlencode }}" class="btn btn-primary">Sign in</a>
     {% endif %}
     <button type="button" class="btn btn-secondary" id="request-access-toggle">Request access</button>
     <a href="/explore" class="btn btn-secondary">Go to Explore</a>

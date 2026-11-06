@@ -57,6 +57,45 @@ def _is_skipped(path: str) -> bool:
     return False
 
 
+def _path_belongs_to_host(host_kind, host_name, username, slug):
+    if host_kind == "user":
+        return host_name == username
+    if host_kind == "wiki":
+        wiki = Wiki.query.filter(Wiki.subdomain == host_name).first()
+    elif host_kind == "custom":
+        domain = CustomDomain.query.filter_by(hostname=host_name).first()
+        wiki = domain.wiki if domain else None
+    else:
+        return True
+    return bool(wiki and wiki.owner.username == username and wiki.slug == slug)
+
+
+def _foreign_owner_redirect(path):
+    """wikihub-1okv: on a user/wiki/custom host, a /@<other>/... path must
+    never render under that host — it made any user's page look like it was
+    published by the subdomain's owner. Send it to the apex (which then picks
+    the owner's canonical host). Covers the skipped suffixes too (llms.txt,
+    graph.json, history, ...). Git transport paths are left alone."""
+    host_kind = request.environ.get("wikihub.host_kind")
+    if host_kind is None or ".git" in path:
+        return None
+    m = _USER_PATH_RE.match(path)
+    if not m:
+        return None
+    username, slug = m.group(1), m.group(2)
+    host_name = request.environ.get("wikihub.host_name")
+    if _path_belongs_to_host(host_kind, host_name, username, slug):
+        return None
+    host = (request.host or "").lower().split(":")[0]
+    if host_kind in ("user", "wiki") and "." in host:
+        apex = host.split(".", 1)[1]
+    else:
+        apex = CANONICAL_SUFFIX.lstrip(".")
+    scheme = "http" if apex.endswith("localhost") else "https"
+    qs = "?" + request.query_string.decode() if request.query_string else ""
+    return redirect(f"{scheme}://{apex}{path}{qs}", code=302)
+
+
 def maybe_redirect():
     """before_request handler. returns a Response if redirecting, else None."""
     if request.method not in ("GET", "HEAD"):
@@ -69,6 +108,11 @@ def maybe_redirect():
     path = request.path
     if not path.startswith("/@"):
         return None
+
+    foreign = _foreign_owner_redirect(path)
+    if foreign is not None:
+        return foreign
+
     if _is_skipped(path):
         return None
 

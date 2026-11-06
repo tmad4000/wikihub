@@ -16,6 +16,7 @@ from flask import Response, current_app, jsonify, render_template, request
 from app.models import Wiki, Page, User
 from app.page_utils import content_page_path_filter, is_content_page_path
 from app.routes import main_bp
+from app.trust import trusted_user_clause
 from app.url_utils import url_path_from_page_path
 
 
@@ -81,6 +82,7 @@ def llms_txt():
             .filter(content_page_path_filter(Page.path))
             .join(Wiki)
             .join(User, Wiki.owner_id == User.id)
+            .filter(trusted_user_clause())
             .order_by(User.username.asc(), Wiki.slug.asc(), Page.path.asc())
             .offset(offset)
             .limit(batch_size)
@@ -113,7 +115,7 @@ def llms_full_txt():
 
     pages = Page.query.filter(
         Page.visibility.in_(["public", "public-edit"])
-    ).join(Wiki).join(User, Wiki.owner_id == User.id).order_by(
+    ).join(Wiki).join(User, Wiki.owner_id == User.id).filter(trusted_user_clause()).order_by(
         User.username, Wiki.slug, Page.path
     ).all()
     pages = [page for page in pages if is_content_page_path(page.path)]

@@ -17,6 +17,7 @@ from flask import jsonify, request
 from app import db
 from app.auth_utils import api_auth_required, _write_timestamps
 from app.models import Wiki
+from app.rate_limit import limit_value
 from app.routes import api_bp
 
 
@@ -89,6 +90,24 @@ def get_capabilities():
                 "limit": _WRITE_LIMIT_PER_MIN,
                 "remaining": writes_remaining,
                 "reset_at": writes_reset,
+            },
+            # Shared (Postgres) limits keyed on client IP / account. These
+            # are fixed windows; `shared` = enforced across all workers.
+            "signup_per_ip": {
+                "endpoint": "POST /api/v1/accounts",
+                "per_hour": limit_value("SIGNUP_API_MAX_PER_IP_PER_HOUR"),
+                "per_day": limit_value("SIGNUP_API_MAX_PER_IP_PER_DAY"),
+                "shared": True,
+            },
+            "anonymous_upload_per_ip": {
+                "endpoint": "POST /new-anonymous",
+                "per_hour": limit_value("ANON_UPLOAD_MAX_PER_IP_PER_HOUR"),
+                "shared": True,
+            },
+            "user_search_per_minute": {
+                "endpoint": "GET /api/v1/users/search",
+                "limit": limit_value("USER_SEARCH_MAX_PER_MINUTE"),
+                "shared": True,
             },
             "feedback_per_minute": {
                 "limit": _FEEDBACK_LIMIT_PER_MIN,

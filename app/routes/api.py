@@ -60,6 +60,14 @@ def create_account():
     if email and User.query.filter_by(email=email).first():
         return {"error": "conflict", "message": "Email already registered"}, 409
 
+    # Shared (Postgres) per-IP signup limit; counted only for requests that
+    # would otherwise create an account. wikihub-1ug3
+    from app.rate_limit import signup_limited_response
+    limited = signup_limited_response(
+        "signup_api", "SIGNUP_API_MAX_PER_IP_PER_HOUR", "SIGNUP_API_MAX_PER_IP_PER_DAY")
+    if limited:
+        return limited
+
     user = User(
         username=username,
         email=email,
@@ -522,21 +530,51 @@ def list_keys():
 
 
 @api_bp.route("/users/search", methods=["GET"])
+@api_auth_required
 def search_users():
-    """search users by username, email prefix, or display name.
-    GET /api/v1/users/search?q=<query>
-    -> {users: [{username, display_name}]}"""
-    q = request.args.get("q", "").strip().lower()
+    """autocomplete users for sharing (wikihub-x77k).
+    GET /api/v1/users/search?q=<query>   (auth required)
+    -> {users: [{username, display_name, match}]}
+
+    Matches username prefix or display-name substring. A full email address
+    matches only exactly (never by prefix) so the endpoint is not an email
+    enumeration oracle. Suspended accounts are never returned."""
+    from app.rate_limit import hit, limit_value
+    user = request.current_user
+    allowed, retry_after = hit(
+        f"user_search:u:{user.id}", limit_value("USER_SEARCH_MAX_PER_MINUTE"), 60)
+    if not allowed:
+        security_event("rate_limit", "denied", scope="user_search")
+        return {"error": "rate_limited", "message": f"Too many searches. Retry in {retry_after}s.",
+                "retry_after": retry_after}, 429, {"Retry-After": str(retry_after)}
+
+    q = request.args.get("q", "").strip().lower().lstrip("@")
     if len(q) < 2:
         return jsonify({"users": []})
-    users = User.query.filter(
-        db.or_(
-            User.username.ilike(f"{q}%"),
-            User.email.ilike(f"{q}%"),
-            User.display_name.ilike(f"%{q}%"),
-        )
-    ).limit(10).all()
+
+    results = []
+    seen = set()
+    if "@" in q:
+        exact = User.query.filter(
+            db.func.lower(User.email) == q, User.suspended_at.is_(None)
+        ).first()
+        if exact:
+            results.append((exact, "email"))
+            seen.add(exact.id)
+    else:
+        esc = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        users = User.query.filter(
+            User.suspended_at.is_(None),
+            db.or_(
+                User.username.ilike(f"{esc}%", escape="\\"),
+                User.display_name.ilike(f"%{esc}%", escape="\\"),
+            ),
+        ).order_by(User.username.asc()).limit(10).all()
+        for u in users:
+            if u.id not in seen:
+                results.append((u, "username" if u.username.startswith(q) else "display_name"))
+                seen.add(u.id)
     return jsonify({"users": [
-        {"username": u.username, "display_name": u.display_name}
-        for u in users
+        {"username": u.username, "display_name": u.display_name, "match": how}
+        for u, how in results
     ]})

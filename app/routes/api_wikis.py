@@ -28,7 +28,7 @@ from app.git_sync import (
     sync_page_to_repo,
     update_mirror_page,
 )
-from app.acl import can_read, can_write, list_all_grants, normalize_page_visibility, remove_grant, resolve_grants, resolve_visibility
+from app.acl import can_read, can_write, is_discoverable, list_all_grants, normalize_page_visibility, remove_grant, resolve_grants, resolve_visibility
 from app.email_service import send_share_invite_existing_user, send_share_invite_pending
 from app.credentials_hint import resolve_server_url
 from app.discovery import discoverable_wiki_ids
@@ -1044,7 +1044,13 @@ def list_pages(owner, slug):
     for page in Page.query.filter_by(wiki_id=wiki.id).order_by(Page.path.asc()).all():
         if _is_wikihub_plumbing_path(page.path):
             continue
-        if is_owner or can_read(page.path, acl_rules, username, page.visibility):
+        # wikihub-mnjc: a listing is discovery. Non-owners see public pages
+        # plus pages explicitly granted to them — never unlisted ones, which
+        # stay readable only by direct link.
+        if is_owner or is_discoverable(page.path, acl_rules, page.visibility) or (
+            username and any(u == username for u, _r in resolve_grants(page.path, acl_rules))
+            and can_read(page.path, acl_rules, username, page.visibility)
+        ):
             pages.append({
                 "path": page.path,
                 "title": page.title,
@@ -2123,7 +2129,7 @@ def search_pages():
     limit = min(int(request.args.get("limit", 20)), 100)
     offset = int(request.args.get("offset", 0))
 
-    query = Page.query.join(Wiki).join(User, Wiki.owner_id == User.id)
+    query = Page.query.join(Wiki).join(User, Wiki.owner_id == User.id).filter(User.suspended_at.is_(None))
     public_search_visibilities = ("public", "public-view", "public-edit")
 
     # scope to specific wiki

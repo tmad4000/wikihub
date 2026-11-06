@@ -43,7 +43,7 @@
   {% endif %}
   {% endwith %}
 
-  <a href="{{ url_for('auth.google_login', next=request.args.get('next') or None, email=prefill_email or None, it=prefill_token or None) }}" class="btn btn-google">Sign up with Google</a>
+  <a rel="nofollow" href="{{ url_for('auth.google_login', next=request.args.get('next') or None, email=prefill_email or None, it=prefill_token or None) }}" class="btn btn-google">Sign up with Google</a>
   {% if ideaflow_login_enabled %}
   <a rel="nofollow" href="{{ url_for('auth.ideaflow_login', next=request.args.get('next') or None) }}" class="btn btn-google">Continue with Ideaflow</a>
   {% endif %}
@@ -64,7 +64,7 @@
     <button type="submit" class="btn btn-primary">Create account</button>
   </form>
 
-  <div class="footer">Already have an account? <a href="{{ url_for('auth.login') }}">Sign in</a></div>
+  <div class="footer">Already have an account? <a rel="nofollow" href="{{ url_for('auth.login') }}">Sign in</a></div>
 </div>
 <script>
 (function() {

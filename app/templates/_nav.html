@@ -97,12 +97,12 @@
           <span class="menu-hint">report</span>
         </a>
         {% if ideaflow_login_enabled %}
-        <a href="/auth/switch-account" class="nav-account-item" role="menuitem" data-account-action="switch">
+        <a rel="nofollow" href="/auth/switch-account" class="nav-account-item" role="menuitem" data-account-action="switch">
           <span>Switch account</span>
           <span class="menu-hint">ideaflow</span>
         </a>
         {% endif %}
-        <a href="/auth/logout" class="nav-account-item logout" role="menuitem" data-account-action="sign-out">
+        <a rel="nofollow" href="/auth/logout" class="nav-account-item logout" role="menuitem" data-account-action="sign-out">
           <span>Sign out</span>
           <span class="menu-hint">exit</span>
         </a>
@@ -134,8 +134,8 @@
       <a href="/shared" class="nav-mobile-item" role="menuitem">Shared</a>
       <a href="/settings" class="nav-mobile-item" role="menuitem">Settings</a>
       <a href="https://worldissuetracker.com/tracker/wikihub-feedback" class="nav-mobile-item" role="menuitem" data-wit-feedback>Send feedback</a>
-      {% if ideaflow_login_enabled %}<a href="/auth/switch-account" class="nav-mobile-item" role="menuitem">Switch account</a>{% endif %}
-      <a href="/auth/logout" class="nav-mobile-item nav-mobile-item-danger" role="menuitem">Sign out</a>
+      {% if ideaflow_login_enabled %}<a rel="nofollow" href="/auth/switch-account" class="nav-mobile-item" role="menuitem">Switch account</a>{% endif %}
+      <a rel="nofollow" href="/auth/logout" class="nav-mobile-item nav-mobile-item-danger" role="menuitem">Sign out</a>
     {% else %}
       <a href="https://worldissuetracker.com/tracker/wikihub-feedback" class="nav-mobile-item" role="menuitem" data-wit-feedback>Send feedback</a>
       <a rel="nofollow" href="/auth/login?next={{ request.path|urlencode }}" class="nav-mobile-item" role="menuitem">Sign in</a>

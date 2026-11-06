@@ -53,7 +53,7 @@
     You were invited at <strong>{{ prefill_email }}</strong>. Sign in below and your invite will apply automatically.
   </p>
   {% endif %}
-  <a href="{{ url_for('auth.google_login', next=next_value or None, email=prefill_email or None, it=invite_token or None) }}" class="btn btn-google" data-login-method="google">Sign in with Google {{ last_used('google') }}</a>
+  <a rel="nofollow" href="{{ url_for('auth.google_login', next=next_value or None, email=prefill_email or None, it=invite_token or None) }}" class="btn btn-google" data-login-method="google">Sign in with Google {{ last_used('google') }}</a>
   <div class="divider">or</div>
 
   <form method="POST" action="{{ url_for('auth.login') }}">
@@ -66,7 +66,7 @@
     <label for="password">Password</label>
     <input type="password" id="password" name="password" autocomplete="current-password">
     <div style="text-align:right;margin-top:-8px;margin-bottom:16px;">
-      <a href="{{ url_for('auth.forgot_password') }}" style="font-size:0.8125rem;color:var(--accent);text-decoration:none;">Forgot password?</a>
+      <a rel="nofollow" href="{{ url_for('auth.forgot_password') }}" style="font-size:0.8125rem;color:var(--accent);text-decoration:none;">Forgot password?</a>
     </div>
     <button type="submit" class="btn btn-primary" data-login-method="password">Sign in {{ last_used('password') }}</button>
   </form>
@@ -97,7 +97,7 @@
   </div>
   {% endif %}
 
-  <div class="footer">Don't have an account? <a href="{{ url_for('auth.signup') }}">Sign up</a></div>
+  <div class="footer">Don't have an account? <a rel="nofollow" href="{{ url_for('auth.signup') }}">Sign up</a></div>
 </div>
 </body>
 </html>

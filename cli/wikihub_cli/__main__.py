@@ -690,11 +690,12 @@ def cmd_share_rm(args: argparse.Namespace) -> int:
         field = _id_to_grant_field(identifier)
         username = field.get("username")
         if not username and "email" in field:
-            # resolve email → username via user search (email prefix matches)
+            # resolve email → username via user search. Only an exact
+            # full-email match counts (the server never prefix-matches emails).
             r = api_request("GET", f"{server}/api/v1/users/search", headers, params={"q": field["email"]})
             if r.status_code == 200:
-                matches = r.json().get("users", [])
-                if matches:
+                matches = [u for u in r.json().get("users", []) if u.get("match") == "email"]
+                if len(matches) == 1:
                     username = matches[0]["username"]
         if not username:
             print(f"failed  {identifier} — could not resolve to a username", file=sys.stderr)

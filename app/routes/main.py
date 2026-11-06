@@ -14,6 +14,7 @@ from app.git_sync import read_file_from_repo
 from app.models import Wiki, Page, ApiKey, User, Star, Fork, MagicLoginToken, UsernameRedirect, ExternalIdentity, utcnow
 from app.page_utils import content_page_path_filter, is_content_page_path
 from app.routes import main_bp
+from app.trust import trusted_user_clause
 import os
 import shutil
 from app.wiki_ops import delete_wiki_repos
@@ -45,10 +46,16 @@ def index():
     return resp
 
 
+# Served identically on the apex, every user/wiki subdomain and custom domain
+# (/robots.txt is a global path in SubdomainMiddleware), so the auth rules
+# cover all hosts.
 _ROBOTS_TXT = """User-agent: *
 # Sign-in/sign-up endpoints start an OAuth round trip at id.ideaflow.app;
 # crawlers following them only generate authorize traffic.
 Disallow: /auth/
+Disallow: /login
+Disallow: /signup
+Disallow: /logout
 """
 
 
@@ -119,6 +126,7 @@ def _global_activity_query():
         .join(User, Wiki.owner_id == User.id)
         .filter(Page.visibility.in_(DISCOVERABLE_VISIBILITIES))
         .filter(content_page_path_filter(Page.path))
+        .filter(trusted_user_clause())
         .order_by(Page.updated_at.desc(), Page.id.desc())
     )
 
@@ -477,7 +485,10 @@ def _people_directory(limit=None, sort=None):
     for wiki in Wiki.query.filter(visibility).order_by(Wiki.updated_at.desc()).all():
         by_owner[wiki.owner_id].append(wiki)
 
-    for user in User.query.order_by(User.created_at.asc()).all():
+    listed = trusted_user_clause()
+    if viewer_id is not None:
+        listed = or_(listed, User.id == viewer_id)
+    for user in User.query.filter(listed).order_by(User.created_at.asc()).all():
         visible_wikis = by_owner[user.id]
         personal_wiki = next((wiki for wiki in visible_wikis if wiki.slug == user.username), None)
         project_wikis = [wiki for wiki in visible_wikis if wiki.slug != user.username]

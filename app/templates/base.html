@@ -24,7 +24,8 @@
 <meta property="og:description" content="{% block og_desc %}GitHub for LLM wikis. Publish markdown knowledge bases in seconds.{% endblock %}">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="wikihub">
-<meta name="description" content="{% block meta_desc %}GitHub for LLM wikis. Publish markdown knowledge bases in seconds.{% endblock %}">
+{% if request.environ.get('wikihub.noindex') %}<meta name="robots" content="noindex">
+{% endif %}<meta name="description" content="{% block meta_desc %}GitHub for LLM wikis. Publish markdown knowledge bases in seconds.{% endblock %}">
 {% include '_theme.html' %}
 {% include '_analytics.html' %}
 <link rel="preconnect" href="https://fonts.googleapis.com">
