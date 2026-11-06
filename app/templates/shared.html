@@ -98,7 +98,7 @@
           </span>
           <span class="grant-user"><a href="/@{{ g.username }}">@{{ g.username }}</a></span>
           <span class="grant-role role-{{ g.role }}">{{ g.role }}</span>
-          <button class="grant-revoke" onclick="revokeGrant('{{ current_user.username }}', '{{ entry.wiki.slug }}', '{{ g.pattern }}', '{{ g.username }}', this)">revoke</button>
+          <button class="grant-revoke" data-owner="{{ current_user.username }}" data-slug="{{ entry.wiki.slug }}" data-pattern="{{ g.pattern }}" data-username="{{ g.username }}">revoke</button>
         </div>
         {% endfor %}
       </div>
@@ -151,10 +151,15 @@
 </div>
 
 <script>
+// wikihub-l1w4: grant values travel in data-* attributes, not inline JS.
+document.addEventListener('click', function(event) {
+  var btn = event.target.closest && event.target.closest('.grant-revoke');
+  if (btn) revokeGrant(btn.dataset.owner, btn.dataset.slug, btn.dataset.pattern, btn.dataset.username, btn);
+});
 function revokeGrant(owner, slug, pattern, username, btn) {
   if (!confirm('Revoke ' + username + "'s access to " + pattern + '?')) return;
   btn.textContent = '...';
-  fetch('/api/v1/wikis/' + owner + '/' + slug + '/share', {
+  fetch('/api/v1/wikis/' + encodeURIComponent(owner) + '/' + encodeURIComponent(slug) + '/share', {
     method: 'DELETE',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({pattern: pattern, username: username})

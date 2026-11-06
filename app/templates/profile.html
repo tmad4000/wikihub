@@ -342,7 +342,7 @@
           <span>{{ wiki.fork_count }} forks</span>
         </div>
         {% if is_owner %}
-        <button class="wiki-card-delete" title="Delete wiki" onclick="event.preventDefault(); event.stopPropagation(); deleteWiki('{{ wiki.slug }}', '{{ wiki.title or wiki.slug }}')">
+        <button class="wiki-card-delete" title="Delete wiki" data-slug="{{ wiki.slug }}" data-title="{{ wiki.title or wiki.slug }}">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
         </button>
         {% endif %}
@@ -584,10 +584,18 @@ document.addEventListener('click', function(e) {
 })();
 
 {% if current_user.is_authenticated and current_user.id == owner.id %}
+// wikihub-l1w4: wiki slug/title travel in data-* attributes, not inline JS.
+document.addEventListener('click', function(event) {
+  var btn = event.target.closest && event.target.closest('.wiki-card-delete');
+  if (!btn) return;
+  event.preventDefault();
+  event.stopPropagation();
+  deleteWiki(btn.dataset.slug, btn.dataset.title);
+});
 async function deleteWiki(slug, title) {
   if (!confirm('Delete "' + title + '"? All pages and history will be lost. This cannot be undone.')) return;
   if (!confirm('Are you sure? Click OK to permanently delete this wiki.')) return;
-  const resp = await fetch('/api/v1/wikis/{{ owner.username }}/' + slug, {method: 'DELETE'});
+  const resp = await fetch('/api/v1/wikis/{{ owner.username }}/' + encodeURIComponent(slug), {method: 'DELETE'});
   if (resp.ok) location.reload();
   else { const d = await resp.json(); alert(d.message || 'Delete failed'); }
 }

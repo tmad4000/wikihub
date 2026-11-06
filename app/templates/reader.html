@@ -951,7 +951,7 @@
           </a>
           <span class="vis-pill {{ item.visibility }}" style="font-size:0.7rem;padding:2px 6px;">{{ item.visibility | replace('mixed', 'Mixed') | replace('public-view', 'Public View') | replace('public-edit', 'Public Edit') | replace('unlisted-view', 'Unlisted') | replace('unlisted-edit', 'Unlisted Edit') | replace('public', 'Public View') | replace('private', 'Private') | replace('unlisted', 'Unlisted') }}</span>
           <span style="font-size:0.7rem;color:var(--text-muted);font-family:var(--font-mono);">{{ item.updated_at.strftime('%Y-%m-%d') if item.updated_at else '' }}</span>
-          <button style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border:none;background:transparent;color:var(--text-muted);cursor:pointer;border-radius:var(--radius-sm);" title="Delete" onclick="deleteMgmtItem('{{ item.path }}{{ '/' if item.kind == 'folder' else '' }}', '{{ item.name }}', '{{ item.kind }}')">
+          <button style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border:none;background:transparent;color:var(--text-muted);cursor:pointer;border-radius:var(--radius-sm);" title="Delete" class="mgmt-delete" data-path="{{ item.path }}{{ '/' if item.kind == 'folder' else '' }}" data-name="{{ item.name }}" data-kind="{{ item.kind }}">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
           </button>
         </div>
@@ -1517,10 +1517,15 @@ async function mgmtBulkDel() {
   var r = await fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}/bulk-delete', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({paths:paths})});
   if (r.ok) location.reload(); else { btn.classList.remove('btn-loading'); btn.textContent = 'Delete'; alert('Failed'); }
 }
-async function deleteMgmtItem(path, name, kind) {
+// wikihub-l1w4: values come from data-* attributes (never interpolated into
+// inline JS), so a page/folder name containing quotes cannot break out.
+document.addEventListener('click', function(event) {
+  var btn = event.target.closest && event.target.closest('.mgmt-delete');
+  if (btn) deleteMgmtItem(btn.dataset.path, btn.dataset.name, btn.dataset.kind, btn);
+});
+async function deleteMgmtItem(path, name, kind, btn) {
   var label = kind === 'folder' ? 'folder "' + name + '" and all contents' : '"' + name + '"';
   if (!confirm('Delete ' + label + '? This cannot be undone.')) return;
-  var btn = event.currentTarget;
   btn.disabled = true;
   btn.style.opacity = '0.5';
   var r = await fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}/bulk-delete', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({paths:[path]})});
@@ -1719,7 +1724,7 @@ async function sendCuratorMessage() {
 
         if (data.type === 'text') {
           fullText += data.content;
-          msgDiv.innerHTML = curatorRenderMarkdown(fullText);
+          msgDiv.replaceChildren(curatorRenderMarkdown(fullText));
           const msgs = document.getElementById('curator-messages');
           msgs.scrollTop = msgs.scrollHeight;
         } else if (data.type === 'tool_use' && data.input && Object.keys(data.input).length > 0) {
@@ -1761,7 +1766,7 @@ function curatorAppendMessage(role, content) {
     if (role === 'user') {
       div.textContent = content;
     } else {
-      div.innerHTML = curatorRenderMarkdown(content);
+      curatorRenderMarkdown(content, div);
     }
   }
   messages.appendChild(div);
@@ -1775,16 +1780,57 @@ function curatorEscape(s) {
   return d.innerHTML;
 }
 
-function curatorRenderMarkdown(text) {
-  return text
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" style="color:var(--accent)">$1</a>')
-    .replace(/\n\n/g, '</p><p>')
-    .replace(/\n/g, '<br>')
-    .replace(/^/, '<p>').replace(/$/, '</p>')
-    .replace(/<p><\/p>/g, '');
+// wikihub-l1w4: Curator output is influenced by page content, so it is built
+// as DOM nodes (text via textContent) — never assigned as an HTML string — and
+// links only keep http(s) or same-site relative URLs.
+function curatorSafeHref(url) {
+  var raw = String(url || '').trim();
+  if (/^(https?:)?\/\//i.test(raw) || /^[\/#?.]/.test(raw)) {
+    try {
+      var parsed = new URL(raw, window.location.href);
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return parsed.href;
+    } catch (e) {}
+  }
+  return null;
+}
+
+function curatorAppendInline(parent, text) {
+  var re = /\*\*(.+?)\*\*|`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)\)/g;
+  var last = 0, m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) parent.appendChild(document.createTextNode(text.slice(last, m.index)));
+    if (m[1] !== undefined) {
+      var strong = document.createElement('strong'); strong.textContent = m[1]; parent.appendChild(strong);
+    } else if (m[2] !== undefined) {
+      var code = document.createElement('code'); code.textContent = m[2]; parent.appendChild(code);
+    } else {
+      var href = curatorSafeHref(m[4]);
+      if (href) {
+        var a = document.createElement('a');
+        a.href = href; a.textContent = m[3]; a.style.color = 'var(--accent)';
+        if (/^https?:/i.test(m[4]) && new URL(href).origin !== window.location.origin) a.rel = 'noopener noreferrer';
+        parent.appendChild(a);
+      } else {
+        parent.appendChild(document.createTextNode(m[0]));
+      }
+    }
+    last = re.lastIndex;
+  }
+  if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
+}
+
+function curatorRenderMarkdown(text, container) {
+  var target = container || document.createDocumentFragment();
+  String(text).split(/\n\n/).forEach(function(block) {
+    if (!block) return;
+    var p = document.createElement('p');
+    block.split('\n').forEach(function(line, i) {
+      if (i) p.appendChild(document.createElement('br'));
+      curatorAppendInline(p, line);
+    });
+    target.appendChild(p);
+  });
+  return target;
 }
 
 // Auto-resize textarea + Enter to send
@@ -1946,7 +1992,7 @@ document.addEventListener('DOMContentLoaded', function() {
           <a href="/@{{ username }}">@{{ username }}</a>
           <span class="role-badge role-{{ role }}">{{ role }}</span>
         </span>
-        <button class="revoke-btn" onclick="revokeShare('{{ username }}')">revoke</button>
+        <button class="revoke-btn" data-revoke-user="{{ username }}">revoke</button>
       </li>
       {% endfor %}
     </ul>
@@ -1970,7 +2016,7 @@ function submitShare() {
   status.style.color = 'var(--text-muted)';
   status.textContent = 'Sharing...';
   // Detect email vs username
-  var body = {pattern: '{{ page.path }}', role: role};
+  var body = {pattern: {{ page.path|tojson }}, role: role};
   if (input.includes('@') && input.includes('.')) {
     body.email = input;
   } else {
@@ -1999,7 +2045,20 @@ function submitShare() {
       if (empty) empty.remove();
       var li = document.createElement('li');
       li.setAttribute('data-user', grantedUser);
-      li.innerHTML = '<span class="grant-info"><a href="/@' + grantedUser + '">@' + grantedUser + '</a> <span class="role-badge role-' + role + '">' + role + '</span></span><button class="revoke-btn" onclick="revokeShare(\'' + grantedUser + '\')">revoke</button>';
+      var info = document.createElement('span');
+      info.className = 'grant-info';
+      var userLink = document.createElement('a');
+      userLink.href = '/@' + encodeURIComponent(grantedUser);
+      userLink.textContent = '@' + grantedUser;
+      var badge = document.createElement('span');
+      badge.className = 'role-badge role-' + role;
+      badge.textContent = role;
+      info.append(userLink, ' ', badge);
+      var revokeBtn = document.createElement('button');
+      revokeBtn.className = 'revoke-btn';
+      revokeBtn.dataset.revokeUser = grantedUser;
+      revokeBtn.textContent = 'revoke';
+      li.append(info, revokeBtn);
       document.getElementById('share-grants-list').appendChild(li);
     }
   });
@@ -2030,8 +2089,16 @@ shareInput.addEventListener('input', function() {
         d.users.forEach(function(u, i) {
           var div = document.createElement('div');
           div.className = 'share-suggestion';
-          div.innerHTML = '<span class="sg-user">@' + u.username + '</span>' +
-            (u.display_name ? '<span class="sg-name">' + u.display_name + '</span>' : '');
+          var sgUser = document.createElement('span');
+          sgUser.className = 'sg-user';
+          sgUser.textContent = '@' + u.username;
+          div.appendChild(sgUser);
+          if (u.display_name) {
+            var sgName = document.createElement('span');
+            sgName.className = 'sg-name';
+            sgName.textContent = u.display_name;
+            div.appendChild(sgName);
+          }
           div.addEventListener('click', function() {
             shareInput.value = u.username;
             closeSuggestions();
@@ -2067,14 +2134,18 @@ shareInput.addEventListener('keydown', function(e) {
 shareInput.addEventListener('blur', function() {
   setTimeout(closeSuggestions, 200);
 });
+document.getElementById('share-grants-list').addEventListener('click', function(event) {
+  var btn = event.target.closest('[data-revoke-user]');
+  if (btn) revokeShare(btn.dataset.revokeUser);
+});
 function revokeShare(username) {
   fetch('/api/v1/wikis/{{ owner.username }}/{{ wiki.slug }}/share', {
     method: 'DELETE',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({pattern: '{{ page.path }}', username: username})
+    body: JSON.stringify({pattern: {{ page.path|tojson }}, username: username})
   }).then(function(r) { return r.json(); }).then(function(d) {
     if (d.revoked) {
-      var li = document.querySelector('#share-grants-list li[data-user="' + username + '"]');
+      var li = Array.prototype.find.call(document.querySelectorAll('#share-grants-list li'), function(el) { return el.dataset.user === username; });
       if (li) li.remove();
       if (!document.querySelector('#share-grants-list li')) {
         var list = document.getElementById('share-grants-list');

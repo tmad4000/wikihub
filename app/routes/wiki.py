@@ -1,5 +1,6 @@
 import difflib
 import os
+import re
 import subprocess
 from datetime import timezone
 from urllib.parse import quote, unquote, urlparse
@@ -938,11 +939,25 @@ def _git_history(username, slug, public=False, path=None, limit=50):
     return [commit for commit in commits if commit["files_changed"]]
 
 
-def _git_diff(username, slug, sha, public=False, path=None):
-    """get the diff for a specific commit."""
+def _diff_pathspec(path=None, paths=None):
+    if paths is not None:
+        return ["--"] + [f":(literal){p}" for p in paths]
+    if path:
+        return ["--", path]
+    return ["--", ".", ":(exclude).wikihub", ":(exclude).wikihub/**"]
+
+
+def _git_diff(username, slug, sha, public=False, path=None, paths=None):
+    """get the diff for a specific commit.
+
+    `paths` (a list) restricts the diff to exactly those files, matched
+    literally; an empty list means "nothing visible" and returns None.
+    """
     from app.git_backend import _repo_path
 
     if _is_wikihub_plumbing_path(path):
+        return None
+    if paths is not None and not paths:
         return None
 
     repo = _repo_path(username, slug, public=public)
@@ -965,10 +980,7 @@ def _git_diff(username, slug, sha, public=False, path=None):
 
     if parent_check.returncode == 0:
         cmd = ["git", "-C", repo, "diff", f"{sha}~1", sha, "--no-color"]
-        if path:
-            cmd += ["--", path]
-        else:
-            cmd += ["--", ".", ":(exclude).wikihub", ":(exclude).wikihub/**"]
+        cmd += _diff_pathspec(path, paths)
         result = subprocess.run(cmd, capture_output=True, text=True, check=False)
         if result.returncode != 0:
             return None
@@ -976,14 +988,56 @@ def _git_diff(username, slug, sha, public=False, path=None):
 
     # first commit / no parent — use diff-tree --root which works in bare repos
     cmd = ["git", "-C", repo, "diff-tree", "-p", "--no-color", "--root", sha]
-    if path:
-        cmd += ["--", path]
-    else:
-        cmd += ["--", ".", ":(exclude).wikihub", ":(exclude).wikihub/**"]
+    cmd += _diff_pathspec(path, paths)
     result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         return None
     return result.stdout or None
+
+
+def _history_readable_paths(owner, wiki, access):
+    """Paths a partial ACL grantee may see in authoritative history (wikihub-vv7q).
+
+    Owners (`(False, None)`) and public-mirror viewers (`(True, None)`) need no
+    filter: the owner sees everything and the mirror only ever contains
+    publicly readable files. A grantee reads the AUTHORITATIVE repo, whose
+    history includes private pages they were never granted, so every history
+    or diff surface must be narrowed to the files they can read *now*.
+    Deleted files are deliberately excluded (fail closed: their visibility
+    can no longer be resolved from a Page row).
+    """
+    use_public, acl_filter_user = access
+    if use_public or not acl_filter_user:
+        return None
+    return set(_visible_files(owner.username, wiki.slug, wiki, public=False, acl_filter_user=acl_filter_user))
+
+
+def _filter_history_commits(commits, readable_paths):
+    """Drop files (and then whole commits) a grantee cannot read."""
+    if readable_paths is None:
+        return commits
+    filtered = []
+    for commit in commits:
+        files = [path for path in commit["files_changed"] if path in readable_paths]
+        if files:
+            filtered.append({**commit, "files_changed": files})
+    return filtered
+
+
+def _git_commit_files(username, slug, sha, public=False):
+    """Files touched by one commit (vs its first parent, or the empty tree for a root commit)."""
+    from app.git_backend import _repo_path
+
+    repo = _repo_path(username, slug, public=public)
+    if not os.path.isdir(repo):
+        return []
+    result = subprocess.run(
+        ["git", "-C", repo, "diff-tree", "--no-commit-id", "--name-only", "-r", "--root", "-z", sha, "--"],
+        capture_output=True, text=True, check=False,
+    )
+    if result.returncode != 0:
+        return []
+    return [path for path in result.stdout.split("\0") if path]
 
 
 @wiki_bp.route("/@<username>", strict_slashes=False)
@@ -1096,12 +1150,23 @@ def wiki_zip(username, slug):
 SIDEBAR_ASYNC_THRESHOLD = 200  # wikis with more pages than this get client-side sidebar
 
 
-def _sidebar_for_wiki(username, slug, wiki, public=False, current_path=None, acl_filter_user=None):
-    """return sidebar items, or None if the wiki is too large (use sidebar.json instead)."""
+def _sidebar_for_wiki(username, slug, wiki, *, access=None, current_path=None):
+    """return sidebar items, or None if the wiki is too large (use sidebar.json instead).
+
+    `access` is the `(use_public, acl_filter_user)` tuple from `_repo_access`.
+    It is deliberately one argument (wikihub-sk06): passing `use_public=False`
+    without the matching `acl_filter_user` makes `_visible_files` take the
+    owner branch and lists every private page to a partial ACL grantee. When
+    omitted it is derived from the current viewer, so callers cannot get it
+    wrong by forgetting it.
+    """
     page_count = _content_page_count(wiki)
     if page_count > SIDEBAR_ASYNC_THRESHOLD:
         return None  # template will fetch sidebar.json client-side
-    return _build_sidebar_tree(username, slug, wiki, public=public, current_path=current_path, acl_filter_user=acl_filter_user)
+    if access is None:
+        access = _repo_access(wiki, load_acl_rules(username, slug))
+    use_public, acl_filter_user = access
+    return _build_sidebar_tree(username, slug, wiki, public=use_public, current_path=current_path, acl_filter_user=acl_filter_user)
 
 
 @wiki_bp.route("/@<username>/<slug>/sidebar.json")
@@ -1159,7 +1224,7 @@ def wiki_index(username, slug):
             owner=owner,
             wiki=wiki,
             items=items,
-            sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, public=use_public, acl_filter_user=acl_filter_user),
+            sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, access=(use_public, acl_filter_user)),
             folder_path="",
             rendered_html=None,
             breadcrumb=[],
@@ -1187,7 +1252,7 @@ def wiki_index(username, slug):
         link_graph=_get_link_graph(page, wiki),
         full_graph_url=f"/@{owner.username}/{wiki.slug}/graph",
         recently_updated=recently_updated,
-        sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, public=use_public, current_path=page_path, acl_filter_user=acl_filter_user),
+        sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, access=(use_public, acl_filter_user), current_path=page_path),
         json_ld_author=owner.display_name or owner.username,
         management_items=management_items,
         sibling_wikis=siblings,
@@ -1559,7 +1624,7 @@ def wiki_tag_index(username, slug, tag_name):
             "updated_at": page.updated_at,
         }
         for page in pages
-    ], sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, public=not _is_owner(wiki)), folder_path=f"tag:{tag_name}", rendered_html=None, breadcrumb=[("Tags", None), (tag_name, None)])
+    ], sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki), folder_path=f"tag:{tag_name}", rendered_html=None, breadcrumb=[("Tags", None), (tag_name, None)])
 
 
 @wiki_bp.route("/@<username>/<slug>/history")
@@ -1569,13 +1634,16 @@ def wiki_history(username, slug):
     acl_rules = load_acl_rules(owner.username, wiki.slug)
     if not _viewer_can_see_any_page(wiki, acl_rules=acl_rules, owner=owner):
         return _render_permission_error(owner, wiki)
-    use_public, _ = _repo_access(wiki, acl_rules)
+    access = _repo_access(wiki, acl_rules)
+    use_public, _ = access
     # Authoritative history carries every past revision of private bands; only
-    # the owner may read it. Grantees get the band-stripped mirror history.
+    # the owner may read it. Grantees get the band-stripped mirror history,
+    # further limited to the paths they can read now (wikihub-vv7q).
     raw_commits = _git_history(owner.username, wiki.slug, public=not _is_owner(wiki))
+    raw_commits = _filter_history_commits(raw_commits, _history_readable_paths(owner, wiki, access))
     # filter out internal event log commits (noise)
     commits = [c for c in raw_commits if not c["message"].startswith("Log ")]
-    return render_template("folder.html", owner=owner, wiki=wiki, items=[], sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, public=use_public), folder_path="history", rendered_html=None, breadcrumb=[("History", None)], history_commits=commits)
+    return render_template("folder.html", owner=owner, wiki=wiki, items=[], sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, access=access), folder_path="history", rendered_html=None, breadcrumb=[("History", None)], history_commits=commits)
 
 
 @wiki_bp.route("/@<username>/<slug>/activity")
@@ -1591,7 +1659,7 @@ def wiki_activity(username, slug):
         owner=owner,
         wiki=wiki,
         activity_items=_wiki_activity_items(owner, wiki, acl_rules),
-        sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, public=use_public, current_path="activity", acl_filter_user=acl_filter_user),
+        sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, access=(use_public, acl_filter_user), current_path="activity"),
         recently_updated=_recently_updated_pages(wiki, public_only=use_public and not acl_filter_user),
         sibling_wikis=_sibling_wikis(owner, wiki),
     )
@@ -1691,25 +1759,38 @@ def page_history(username, slug, folder_path):
             return _render_permission_error(owner, wiki)
     elif not _viewer_can_see_any_page(wiki, acl_rules=acl_rules, owner=owner):
         return _render_permission_error(owner, wiki)
-    use_public, _ = _repo_access(wiki, acl_rules)
+    access = _repo_access(wiki, acl_rules)
+    use_public, _ = access
     raw_commits = _git_history(owner.username, wiki.slug, public=not _is_owner(wiki), path=path)
+    raw_commits = _filter_history_commits(raw_commits, _history_readable_paths(owner, wiki, access))
     commits = [c for c in raw_commits if not c["message"].startswith("Log ")]
-    return render_template("folder.html", owner=owner, wiki=wiki, items=[], sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, public=use_public, current_path=path), folder_path=f"{path} history", rendered_html=None, breadcrumb=[("History", None)], history_commits=commits)
+    return render_template("folder.html", owner=owner, wiki=wiki, items=[], sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, access=access, current_path=path), folder_path=f"{path} history", rendered_html=None, breadcrumb=[("History", None)], history_commits=commits)
 
 
 @wiki_bp.route("/@<username>/<slug>/commit/<sha>")
 def wiki_commit(username, slug, sha):
     """show diff for a single commit. wikihub-8888.1: never fall back to authoritative for non-owner/non-grantee."""
+    # Only object ids reach git argv (no refs, no option-looking strings).
+    if not re.fullmatch(r"[0-9a-fA-F]{4,64}", sha or ""):
+        abort(404)
     owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
     acl_rules = load_acl_rules(owner.username, wiki.slug)
     if not _viewer_can_see_any_page(wiki, acl_rules=acl_rules, owner=owner):
         return _render_permission_error(owner, wiki)
-    use_public, _ = _repo_access(wiki, acl_rules)
+    access = _repo_access(wiki, acl_rules)
+    use_public, _ = access
+    readable_paths = _history_readable_paths(owner, wiki, access)
 
     # Owners/grantees read authoritative directly; everyone else is hard-gated
     # to the public mirror (no fallback — falling back leaks private diffs).
     history_public = not _is_owner(wiki)  # private bands: owner-only authoritative diffs
-    diff_text = _git_diff(owner.username, wiki.slug, sha, public=history_public)
+    # Partial grantees only see the files of this commit they can read now
+    # (wikihub-vv7q); a commit touching none of them is a 404. Files, diff and
+    # history all come from the same repo so commit ids line up.
+    visible_paths = None
+    if readable_paths is not None:
+        visible_paths = [p for p in _git_commit_files(owner.username, wiki.slug, sha, public=history_public) if p in readable_paths]
+    diff_text = _git_diff(owner.username, wiki.slug, sha, public=history_public, paths=visible_paths)
     if diff_text is None:
         abort(404)
 
@@ -1730,7 +1811,7 @@ def wiki_commit(username, slug, sha):
             diff_lines.append(("ctx", line))
 
     # get commit metadata
-    history = _git_history(owner.username, wiki.slug, public=history_public, limit=200)
+    history = _filter_history_commits(_git_history(owner.username, wiki.slug, public=history_public, limit=200), readable_paths)
     commit = next((c for c in history if c["sha"] == sha), None)
 
     return render_template(
@@ -1744,7 +1825,7 @@ def wiki_commit(username, slug, sha):
         # fetches sidebar.json). diff.html iterates sidebar_items directly, so
         # coalesce to [] here AND guard the template loop to prevent
         # 'NoneType is not iterable'.
-        sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, public=use_public) or [],
+        sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, access=access) or [],
     )
 
 
@@ -1903,7 +1984,7 @@ def wiki_page(username, slug, page_path):
                     backlinks=[],
                     link_graph={"nodes": [], "edges": []},
                     recently_updated=_recently_updated_pages(wiki, public_only=use_public_viewer and not acl_filter_user_viewer),
-                    sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, public=use_public_viewer, current_path=page_path, acl_filter_user=acl_filter_user_viewer),
+                    sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, access=(use_public_viewer, acl_filter_user_viewer), current_path=page_path),
                     json_ld_author=owner.display_name or owner.username,
                     sibling_wikis=siblings,
                     page_grants=[],
@@ -1950,7 +2031,7 @@ def wiki_page(username, slug, page_path):
                     backlinks=[],
                     link_graph={"nodes": [], "edges": []},
                     recently_updated=_recently_updated_pages(wiki, public_only=use_public_viewer and not acl_filter_user_viewer),
-                    sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, public=use_public_viewer, current_path=page_path, acl_filter_user=acl_filter_user_viewer),
+                    sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, access=(use_public_viewer, acl_filter_user_viewer), current_path=page_path),
                     json_ld_author=owner.display_name or owner.username,
                     sibling_wikis=siblings,
                     page_grants=[],
@@ -2027,7 +2108,7 @@ def wiki_page(username, slug, page_path):
             owner=owner,
             wiki=wiki,
             items=items,
-            sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, public=use_public, current_path=page_path.strip("/"), acl_filter_user=acl_filter_user),
+            sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, access=(use_public, acl_filter_user), current_path=page_path.strip("/")),
             folder_path=page_path.strip("/"),
             rendered_html=render_page(content, owner.username, wiki.slug, current_page_path=content_path, mark_private_bands=_is_owner(wiki)) if content else None,
             breadcrumb=breadcrumb,
@@ -2093,9 +2174,22 @@ def wiki_page(username, slug, page_path):
             content = read_file_from_repo(owner.username, wiki.slug, file_path, public=False)
         else:
             content = read_file_from_repo(owner.username, wiki.slug, file_path, public=True)
-    if content is None:
-        # fallback: try authoritative repo (handles edge cases)
+    if content is None and (page is not None or not use_public):
+        # fallback: try authoritative repo (handles a stale mirror for an
+        # indexed page). Never for an unindexed file viewed through the public
+        # mirror: the mirror is the only safe source when there is no Page row.
         content = read_file_from_repo(owner.username, wiki.slug, file_path, public=False)
+    if content is not None and page is None and not is_owner:
+        # wikihub-l5oo: a .md can exist in git with no Page row (post-receive
+        # hook failure, admin row delete, revert of a deleted path, reindex
+        # race). The can_read gate above only ran for indexed pages, so resolve
+        # visibility from the file itself (frontmatter > ACL) and fail closed.
+        # (aliased: wiki_page imports parse_markdown_document locally above)
+        from app.content_utils import parse_markdown_document as _parse_unindexed
+        unindexed_frontmatter, _ = _parse_unindexed(content)
+        unindexed_vis = resolve_visibility(file_path, acl_rules, unindexed_frontmatter.get("visibility"))
+        if not can_read(file_path, acl_rules, user_name, unindexed_vis):
+            content = None
     # Private bands are owner-only on every surface (HTML, ?fragment=1,
     # text/markdown). Grantees read the authoritative repo, so `use_public`
     # alone is not enough — strip here for every non-owner.
@@ -2186,7 +2280,7 @@ def wiki_page(username, slug, page_path):
         backlinks=_get_backlinks(page, wiki),
         link_graph=_get_link_graph(page, wiki),
         recently_updated=_recently_updated_pages(wiki, public_only=use_public and not acl_filter_user),
-        sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, public=use_public, current_path=file_path, acl_filter_user=acl_filter_user),
+        sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, access=(use_public, acl_filter_user), current_path=file_path),
         json_ld_author=owner.display_name or owner.username,
         sibling_wikis=siblings,
         page_grants=page_grants,
@@ -2205,6 +2299,21 @@ def preview_page(username, slug):
     markdown = content.get("content", "")
     html = render_page(markdown, owner.username, wiki.slug, mark_private_bands=_is_owner(wiki))
     return {"html": html}
+
+
+def _non_owner_visibility_content(page_path, content, acl_rules):
+    """wikihub-tq01: contributors cannot choose a new page's visibility.
+
+    Mirrors API `create_page`: a non-owner's `visibility:` frontmatter that
+    differs from the ACL default is rewritten to that default, so an anonymous
+    contributor on an unlisted-edit wiki cannot publish globally (or hide a
+    page from everyone but the owner).
+    """
+    inherited = resolve_visibility(page_path, acl_rules)
+    frontmatter, _ = parse_markdown_document(content)
+    if frontmatter.get("visibility") and frontmatter.get("visibility") != inherited:
+        return set_visibility_in_content(content, inherited)
+    return content
 
 
 @wiki_bp.route("/@<username>/<slug>/<path:page_path>/edit", methods=["GET", "POST"])
@@ -2244,6 +2353,8 @@ def edit_page(username, slug, page_path):
             content = set_visibility_in_content(content, visibility)
         elif page:
             content = set_visibility_in_content(content, page.visibility)
+        else:
+            content = _non_owner_visibility_content(target_path, content, acl_rules)
 
         if not is_owner and page:
             # Non-owners edited the band-stripped text; merge it back so the
@@ -2341,6 +2452,8 @@ def new_page(username, slug):
         visibility = request.form.get("visibility", resolve_visibility(page_path, acl_rules))
         if is_owner:
             content = set_visibility_in_content(content, visibility)
+        else:
+            content = _non_owner_visibility_content(page_path, content, acl_rules)
 
         frontmatter, _ = parse_markdown_document(content)
         page_visibility = _stored_page_visibility(frontmatter.get("visibility"), resolve_visibility(page_path, acl_rules))
