@@ -10,16 +10,21 @@
   "dependencies": {
     "@milkdown/core": "7.20.0",
     "@milkdown/ctx": "7.20.0",
-    "@milkdown/preset-commonmark": "7.20.0",
     "@milkdown/plugin-history": "7.20.0",
     "@milkdown/plugin-listener": "7.20.0",
     "@milkdown/plugin-math": "7.5.9",
+    "@milkdown/preset-commonmark": "7.20.0",
+    "@milkdown/preset-gfm": "7.20.0",
     "@milkdown/prose": "7.20.0",
     "@milkdown/transformer": "7.20.0",
     "@milkdown/utils": "7.20.0",
-    "katex": "0.16.45"
+    "katex": "0.16.45",
+    "mdast-util-to-markdown": "2.1.2"
   },
   "devDependencies": {
     "esbuild": "0.27.7"
+  },
+  "overrides": {
+    "prosemirror-model": "1.25.11"
   }
 }

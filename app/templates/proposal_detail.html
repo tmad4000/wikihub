@@ -202,13 +202,21 @@
       {% if not stale %}
       <form method="POST" action="/@{{ owner.username }}/{{ wiki.slug }}/-/proposals/{{ proposal.id }}/accept">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        {% if base_changed %}
+        <input type="hidden" name="confirm_base_changed" value="1">
+        <button class="proposal-btn accept" type="submit" title="The page changed while this suggestion was being written">Accept anyway</button>
+        {% else %}
         <button class="proposal-btn accept" type="submit">Accept</button>
+        {% endif %}
       </form>
       {% endif %}
       {% endif %}
     </div>
   </div>
 
+  {% if base_changed and not stale %}
+  <div class="proposal-stale">The page changed while this suggestion was being written. The diff is against the current version, so it may undo those changes; review before accepting.</div>
+  {% endif %}
   {% if stale %}
   <div class="proposal-stale">This suggestion is based on an older version of the page.</div>
   {% endif %}
@@ -242,7 +250,8 @@
     <h2>Submit revision</h2>
     <form method="POST" action="/@{{ owner.username }}/{{ wiki.slug }}/-/proposals/{{ proposal.id }}/resubmit">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <textarea class="proposal-editor" name="content">{{ patch.proposed_content }}</textarea>
+      <input type="hidden" name="base_content_hash" value="{{ current_hash }}">
+      <textarea class="proposal-editor" name="content">{{ resubmit_body }}</textarea>
       <textarea name="note" placeholder="What changed in this revision?"></textarea>
       <div class="proposal-form-actions">
         <button class="proposal-btn accept" type="submit">Resubmit</button>

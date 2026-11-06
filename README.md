@@ -10,6 +10,7 @@ GitHub for LLM wikis. A hosting platform for markdown knowledge bases with per-f
 - Social: fork, star, explore, activity feeds, profiles
 - Rendering: KaTeX math, syntax highlighting, wikilinks, footnotes, Obsidian embeds, wiki-relative links
 - Reader side peek: same-wiki page links open in a right-side preview panel on desktop
+- Editing: the page editor and suggest-edit open in a **Visual** editor (tables, task lists, `[[wikilinks]]`, math, `/` block menu) with a **Markdown** tab for raw source. A page the Visual editor would reformat opens in Markdown with a notice; your last tab choice is remembered per browser, and `?mode=markdown` or `?mode=visual` on an edit URL forces a mode
 - Custom domains: verify ownership with DNS and map an external hostname to a wiki
 - Data tables: sortable, filterable CSV/TSV pages with optional public Google Sheets refresh
 - Every wiki is a real git repo — clone, push, blame, bisect
@@ -289,6 +290,12 @@ the default `wikihub_test` database or `/tmp/wikihub-test-repos` directory.
 End-to-end tests cover account creation, wiki lifecycle, search, social, upload,
 activity feeds, agent surfaces, ACL permissions, reader behavior, live-update
 polling, and regression cases.
+
+Browser-level editor checks (Visual default, toolbar/slash/`[[` sync, safety
+probe, suggest-edit) run against a live server:
+`BASE_URL=http://127.0.0.1:PORT node tests/browser/editor_visual.mjs`
+(needs Playwright). The Milkdown bundle has its own acceptance test:
+`cd milkdown-src && node test-roundtrip.mjs`.
 
 Separate PostgreSQL-backed runtime, scaling, and reader ACL regressions are
 documented in the [deployment guide](docs/deploy.md#production-workers).
