@@ -22,7 +22,14 @@ def _sanitize_for_json(obj):
         return [_sanitize_for_json(v) for v in obj]
     if isinstance(obj, (date, datetime)):
         return obj.isoformat()
+    if isinstance(obj, str):
+        return _pg_text(obj)
     return obj
+
+
+def _pg_text(value):
+    """PostgreSQL text/jsonb cannot hold NUL (0x00); drop it before indexing."""
+    return value.replace("\x00", "") if isinstance(value, str) else value
 
 
 def load_acl_rules(username, slug):
@@ -100,6 +107,9 @@ def update_page_metadata(page, content, frontmatter=None, content_bytes=None):
     page.frontmatter_json = _sanitize_for_json(frontmatter)
     hash_input = content_bytes if content_bytes is not None else content.encode("utf-8")
     page.content_hash = hashlib.sha256(hash_input).hexdigest()
+    # The hash covers the raw bytes; everything stored as text drops NUL.
+    body = _pg_text(body)
+    page.title = _pg_text(page.title)
     # The DB index (excerpt, search_vector) is served to NON-owners (search,
     # hover cards, <meta description>, llms-full.txt, explore cards), so it is
     # always built from the band-stripped body. Owners lose full-text hits on

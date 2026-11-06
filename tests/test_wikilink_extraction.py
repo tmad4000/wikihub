@@ -27,3 +27,7 @@ def test_oversized_target_is_ignored():
 def test_limit_is_in_bytes_not_characters():
     # 4-byte characters: 300 of them is 1200 bytes, over the limit.
     assert extract_wikilinks("[[" + "\U0001F600" * 300 + "]]") == []
+
+
+def test_nul_in_target_is_ignored():
+    assert extract_wikilinks("[[bad\x00target]] [[good]]") == ["good"]
