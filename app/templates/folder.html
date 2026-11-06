@@ -59,7 +59,6 @@
 .history-card { border: 1px solid var(--border-default); border-radius: var(--radius-md); padding: 14px 16px; background: var(--bg-surface); transition: border-color 0.15s ease; }
 .history-card:hover { border-color: var(--border-accent); }
 .history-meta { display: flex; gap: 12px; flex-wrap: wrap; font-size: 0.75rem; color: var(--text-muted); font-family: var(--font-mono); margin-bottom: 8px; }
-.private-band-warning { margin-bottom: 20px; padding: 12px 14px; border: 1px solid rgba(212, 160, 74, 0.2); background: rgba(212, 160, 74, 0.08); border-radius: var(--radius-md); color: var(--text-secondary); font-size: 0.8125rem; line-height: 1.5; }
 {% include "_sidebar_tree_styles.css.html" %}
 {% endblock %}
 
@@ -185,11 +184,6 @@
       {% endif %}
     </div>
 
-    {% if private_band_warning %}
-    <div class="private-band-warning">
-      This page has sections visible only to editors; not a security boundary. Don’t use private bands for real secrets.
-    </div>
-    {% endif %}
 
     {% if rendered_html %}
     <div class="folder-copy">

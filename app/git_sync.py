@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 
 from flask import current_app
 
-from app.content_utils import parse_markdown_document, strip_private_bands
+from app.content_utils import content_for_viewer, parse_markdown_document, strip_private_bands
 
 
 _AUTHOR_ENV = {
@@ -304,7 +304,10 @@ def _regenerate_public_mirror_once(auth_repo, pub_repo, acl_rules):
                 try:
                     content = strip_private_bands(content)
                 except Exception as e:
-                    print(f"WARNING: mirror skipped private-band stripping for {filepath}: {e}")
+                    # Fail CLOSED: never publish unstripped content. The file
+                    # is simply absent from the mirror until stripping works.
+                    print(f"WARNING: mirror skipped {filepath}: private-band stripping failed: {e}")
+                    continue
                 blob_input = content.encode("utf-8")
             else:
                 blob_input = content_bytes
@@ -416,10 +419,10 @@ def _update_mirror_page_locked(auth_repo, pub_repo, filepath, acl_rules=None, de
                     pass
             else:
                 if is_markdown:
-                    try:
-                        content = strip_private_bands(content)
-                    except Exception:
-                        pass
+                    # No try/except: a stripping failure must not publish the
+                    # raw file. The exception propagates to update_mirror_page,
+                    # whose full rebuild skips the file (fail closed).
+                    content = strip_private_bands(content)
                     blob_input = content.encode("utf-8")
                 else:
                     blob_input = content_bytes
@@ -456,6 +459,16 @@ def read_file_from_repo(username, slug, file_path, public=False):
         return content.decode("utf-8", errors="replace")
     except subprocess.CalledProcessError:
         return None
+
+
+def read_file_for_viewer(username, slug, file_path, *, viewer_is_owner, public=False):
+    """read_file_from_repo + content_for_viewer: the only safe way to hand
+    repo markdown to a (possibly) non-owner. Band-stripped unless the viewer
+    owns the wiki; raises (never falls back to raw) if stripping fails."""
+    return content_for_viewer(
+        read_file_from_repo(username, slug, file_path, public=public),
+        viewer_is_owner=viewer_is_owner,
+    )
 
 
 def read_file_bytes_from_repo(username, slug, file_path, public=False):

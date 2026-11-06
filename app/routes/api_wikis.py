@@ -33,7 +33,9 @@ from app.email_service import send_share_invite_existing_user, send_share_invite
 from app.credentials_hint import resolve_server_url
 from app.discovery import discoverable_wiki_ids
 from app.page_utils import content_page_path_filter, is_content_page_path, is_wikihub_plumbing_path
+from app.private_bands import CONFLICT_MESSAGE, PrivateBandConflict, create_conflict_proposal, merge_into_bands
 from app.content_utils import (
+    content_for_viewer,
     page_reference_aliases,
     parse_markdown_document,
     rewrite_wikilinks,
@@ -199,6 +201,40 @@ def _write_acl_file_and_reindex(owner_user, wiki, content, message):
 
 def _load_page_content(owner, slug, page_path, public=False):
     return read_file_from_repo(owner, slug, page_path, public=public)
+
+
+def _merge_non_owner_write(owner_user, wiki, page, submitted, current_full=None):
+    """3-way merge a non-owner's submission into the owner's full content so
+    private bands survive (see app/private_bands.py). Returns
+    (content_to_store, None) or (None, 409 response) after saving the
+    submission as a suggestion."""
+    if current_full is None:
+        current_full = read_file_from_repo(owner_user.username, wiki.slug, page.path, public=False)
+    try:
+        return merge_into_bands(
+            current_full,
+            submitted,
+            normalize=lambda text: _set_page_visibility_in_content(page.path, text, page.visibility),
+        ), None
+    except PrivateBandConflict:
+        user = getattr(request, "current_user", None)
+        proposal = create_conflict_proposal(
+            wiki=wiki,
+            page=page,
+            file_path=page.path,
+            base_content=content_for_viewer(current_full, viewer_is_owner=False),
+            proposed_content=submitted,
+            author_id=user.id if user else None,
+            author_name=user.username if user else "anonymous",
+        )
+        db.session.commit()
+        return None, (jsonify({
+            "error": "conflict",
+            "reason": "private_bands",
+            "message": CONFLICT_MESSAGE,
+            "proposal_id": proposal.id,
+            "proposal_url": f"/@{owner_user.username}/{wiki.slug}/-/proposals/{proposal.id}",
+        }), 409)
 
 
 def _stored_page_visibility(*candidates):
@@ -1085,6 +1121,9 @@ def read_page(owner, slug, page_path):
     content = read_file_from_repo(owner_user.username, wiki.slug, page.path, public=use_public_repo)
     if content is None and page.visibility == "private" and user:
         content = read_file_from_repo(owner_user.username, wiki.slug, page.path, public=False)
+    # Private bands are owner-only (grantees of private pages read the
+    # authoritative repo above). Fail closed: a stripping error raises.
+    content = content_for_viewer(content, viewer_is_owner=is_owner)
 
     etag = f'"{page.content_hash}"' if page.content_hash else None
 
@@ -1118,7 +1157,7 @@ def read_page(owner, slug, page_path):
     # ?include=backlinks,outgoing_links could be supported later in the same shape).
     includes = {tok.strip() for tok in (request.args.get("include") or "").split(",") if tok.strip()}
     if "backlinks" in includes:
-        sources = [src for src in get_backlinks_for_page(page) if not _is_wikihub_plumbing_path(src.path)]
+        sources = [src for src in get_backlinks_for_page(page, include_private_bands=is_owner) if not _is_wikihub_plumbing_path(src.path)]
         # Apply ACL: do not surface a private backlink source to a viewer who
         # can't read it. The fact that it links here is itself information.
         viewer_username = user.username if user else None
@@ -1161,7 +1200,7 @@ def page_backlinks(owner, slug, page_path):
     if not is_owner and not can_read(page.path, acl_rules, viewer_username, page.visibility):
         return {"error": "not_found", "message": "Page not found"}, 404
 
-    sources = [src for src in get_backlinks_for_page(page) if not _is_wikihub_plumbing_path(src.path)]
+    sources = [src for src in get_backlinks_for_page(page, include_private_bands=is_owner) if not _is_wikihub_plumbing_path(src.path)]
     visible = [
         src for src in sources
         if is_owner or can_read(src.path, acl_rules, viewer_username, src.visibility)
@@ -1225,6 +1264,9 @@ def replace_page(owner, slug, page_path):
         content = _set_page_visibility_in_content(page.path, content, new_visibility)
     elif not is_owner:
         content = _set_page_visibility_in_content(page.path, content, page.visibility)
+        content, conflict_response = _merge_non_owner_write(owner_user, wiki, page, content)
+        if conflict_response is not None:
+            return conflict_response
 
     frontmatter = _page_frontmatter(page.path, content)
     page.visibility = _stored_page_visibility(frontmatter.get("visibility"), new_visibility, page.visibility, resolve_visibility(page.path, acl_rules))
@@ -1307,6 +1349,13 @@ def patch_page(owner, slug, page_path):
 
     if content is not None:
         updated_content = content
+        if not is_owner:
+            # Non-owners only ever see the band-stripped text; merge their
+            # replacement back into the owner's full content.
+            updated_content = _set_page_visibility_in_content(page.path, updated_content, page.visibility)
+            updated_content, conflict_response = _merge_non_owner_write(owner_user, wiki, page, updated_content, current_full=current_content)
+            if conflict_response is not None:
+                return conflict_response
     elif append_section:
         heading = append_section.get("heading", "").strip()
         section_content = append_section.get("content", "").rstrip()

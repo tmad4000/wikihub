@@ -39,6 +39,7 @@ from app.wiki_ops import ensure_personal_wiki, materialize_pending_invites_for
 from app.credentials_hint import resolve_server_url
 from app import auto_signin
 from app import email_service
+from app import wit_feedback
 
 
 _EMAIL_VERIFY_TTL_HOURS = 24
@@ -744,6 +745,21 @@ def logout():
     return response
 
 
+@auth_bp.route("/wit-feedback-token", methods=["POST"])
+def wit_feedback_token():
+    """In-app feedback: a 15-minute create-issue-only WIT token for the
+    signed-in user (session cookie + CSRF; API keys cannot mint these).
+    204 means "submit anonymously" (signed out, no Ideaflow sign-in on
+    record, expired ID token, or WIT refused the exchange)."""
+    if not current_user.is_authenticated:
+        return "", 204, {"Cache-Control": "no-store"}
+    id_token = wit_feedback.id_token_for_user(current_user.id)
+    minted = wit_feedback.exchange_for_feedback_token(id_token) if id_token else None
+    if not minted:
+        return "", 204, {"Cache-Control": "no-store"}
+    return minted, 200, {"Cache-Control": "no-store"}
+
+
 @auth_bp.route("/switch-account")
 def switch_account():
     """Account-menu "Switch account": sign out of WikiHub locally, then start
@@ -1333,6 +1349,13 @@ def ideaflow_callback():
             return _silent_signin_return(oauth_context)
         flash("Unexpected Ideaflow ID issuer.")
         return redirect(url_for("auth.login"))
+
+    # In-app feedback (WIT widget): keep the verified ID token, encrypted,
+    # for minting short-lived feedback tokens. Usable only by the account this
+    # (issuer, subject) is linked to; never sent to the browser.
+    wit_feedback.remember_id_token(
+        token.get("id_token"), issuer=issuer, subject=subject, exp=userinfo.get("exp")
+    )
 
     mode = oauth_context.get("mode", "signin")
     if mode == "link":

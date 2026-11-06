@@ -328,7 +328,7 @@ export function buildServer(
     {
       title: 'Create a page',
       description:
-        'Create a new page in a wiki. Write access is governed by wiki ACL: owners always, `public-edit` pages allow anyone, otherwise the caller must be explicitly granted. Use `visibility` to override the default inherited visibility.',
+        'Create a new page in a wiki. Write access is governed by wiki ACL: owners always, `public-edit` pages allow anyone, otherwise the caller must be explicitly granted. Use `visibility` to override the default inherited visibility. Wrap lines in `<!-- private -->` … `<!-- /private -->` (own lines) to keep them visible only to the wiki owner; they are removed for everyone else, including search and clones.',
       inputSchema: {
         owner: z.string(),
         slug: z.string(),
@@ -369,7 +369,7 @@ export function buildServer(
     {
       title: 'Update a page',
       description:
-        'Patch an existing page\'s content, title, or visibility. Omit fields you don\'t want to change. Requires edit access.',
+        'Patch an existing page\'s content, title, or visibility. Omit fields you don\'t want to change. Requires edit access. Wrap lines in `<!-- private -->` … `<!-- /private -->` to keep them owner-only. Non-owners only see content with the owner\'s private sections removed; their edits are merged around them, or saved as a suggestion (409) when they cannot be.',
       inputSchema: {
         owner: z.string(),
         slug: z.string(),

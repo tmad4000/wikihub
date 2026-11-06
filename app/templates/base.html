@@ -421,6 +421,18 @@ a:hover { text-decoration: underline; }
 
 /* .theme-toggle styles live in _theme.html */
 
+/* Owner-only private bands (HTML-comment markers in the page source). Only the
+   wiki owner ever receives this markup; everyone else gets the band stripped
+   server-side. Border, not shadow; no tint so it prints cleanly. */
+.private-band { border-left: 2px solid var(--color-private); padding-left: 14px; margin: 1.25em 0; }
+.private-band-label {
+  display: inline-flex; align-items: center; gap: 5px; margin-bottom: 4px;
+  font-family: var(--font-mono); font-size: 0.6875rem; font-weight: 500;
+  text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-private);
+}
+.private-band > .private-band-label + * { margin-top: 6px; }
+.toc-private { color: var(--color-private); }
+
 {% block extra_css %}{% endblock %}
 </style>
 {% block head %}{% endblock %}
@@ -979,5 +991,6 @@ document.addEventListener('DOMContentLoaded', () => {
 })();
 </script>
 {% block scripts %}{% endblock %}
+{% include '_wit_feedback.html' %}
 </body>
 </html>

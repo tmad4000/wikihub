@@ -50,7 +50,7 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: postgresql://wikihub:wikihub@127.0.0.1:5432/wikihub_test
-      REPOS_DIR: ${{ runner.temp }}/wikihub-test-repos
+      REPOS_DIR: /tmp/wikihub-test-repos
       SECRET_KEY: ci-test-secret
       ADMIN_TOKEN: ci-test-admin-token
       PYTHONUNBUFFERED: "1"

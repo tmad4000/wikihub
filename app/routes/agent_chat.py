@@ -22,7 +22,9 @@ from flask import Blueprint, Response, current_app, jsonify, request, stream_wit
 
 from app.acl import can_read, can_write
 from app.auth_utils import check_admin_token, get_current_user_from_request
-from app.git_sync import list_files_in_repo, read_file_from_repo
+from app.content_utils import content_for_viewer
+from app.git_sync import list_files_in_repo, read_file_for_viewer
+from app.private_bands import PrivateBandConflict, merge_into_bands
 from app.models import Page, User, Wiki
 from app.page_utils import is_wikihub_plumbing_path
 from app.wiki_ops import load_acl_rules
@@ -271,6 +273,11 @@ def _check_path_access(session, path, write=False):
     return True, None
 
 
+def _session_is_owner(session):
+    username = session.get("username")
+    return bool(username and username == (session.get("owner") or ""))
+
+
 def _tool_read_file(session, path):
     """Read a file from the working directory, gated by ACL."""
     ok, err = _check_path_access(session, path, write=False)
@@ -286,6 +293,9 @@ def _tool_read_file(session, path):
     try:
         with os.fdopen(fd, "r", encoding="utf-8", errors="replace") as f:
             content = f.read()
+        if full.endswith(".md"):
+            # Private bands are owner-only; the clone is the authoritative repo.
+            content = content_for_viewer(content, viewer_is_owner=_session_is_owner(session))
         # Truncate very large files
         if len(content) > 50000:
             content = content[:50000] + "\n\n[... truncated, file is very large ...]"
@@ -302,6 +312,20 @@ def _tool_write_file(session, path, content):
     full = _resolve_in_work_dir(session, path)
     if full is None:
         return _ACL_DENIED
+    if full.endswith(".md") and not _session_is_owner(session) and os.path.isfile(full):
+        # The non-owner agent only saw band-stripped text; merge its write back
+        # so the owner's private bands survive (never silently deleted). Read
+        # through the resolved no-follow path.
+        try:
+            fd = os.open(full, os.O_RDONLY | os.O_NOFOLLOW)
+        except OSError:
+            return _ACL_DENIED
+        with os.fdopen(fd, "r", encoding="utf-8", errors="replace") as f:
+            current_full = f.read()
+        try:
+            content = merge_into_bands(current_full, content)
+        except PrivateBandConflict:
+            return "Error: this page has private sections the owner must merge; edit a different part of the page or suggest the change instead"
     try:
         os.makedirs(os.path.dirname(full), exist_ok=True)
         # Re-resolve after creating parents, then refuse to open a link.
@@ -371,6 +395,30 @@ def _tool_list_files(session, directory=""):
         return f"Error listing directory: {e}"
 
 
+def _line_is_public(scope_dir, fpath, rest, cache):
+    """For non-owners: may grep hit ``LINE:content`` be shown? Only if the
+    exact line text also exists in the band-stripped file (so the hit reveals
+    nothing that is not already public). Conservative by design."""
+    if fpath not in cache:
+        try:
+            fd = os.open(os.path.join(scope_dir, fpath), os.O_RDONLY | os.O_NOFOLLOW)
+            with os.fdopen(fd, "r", encoding="utf-8", errors="replace") as f:
+                original = f.read()
+        except OSError:
+            cache[fpath] = set()  # unreadable/symlink: show nothing (fail closed)
+            return False
+        stripped = content_for_viewer(original, viewer_is_owner=False)
+        cache[fpath] = set(stripped.splitlines()) if stripped != original else None
+    public = cache[fpath]
+    if public is None:
+        return True  # no bands in this file
+    try:
+        _lineno, text = rest.split(":", 1)
+    except ValueError:
+        return False
+    return text in public
+
+
 def _tool_search_content(session, query):
     """Search for content across files, ACL-filtered.
 
@@ -415,6 +463,7 @@ def _tool_search_content(session, query):
 
         # Filter lines by ACL. grep output: "./path/file.md:LINE:content"
         kept = []
+        public_lines_cache = {}
         for line in output.split("\n"):
             if not line.startswith("./"):
                 continue
@@ -428,8 +477,11 @@ def _tool_search_content(session, query):
                 fm = page_vis.get(fpath)
                 if not can_read(fpath, acl_rules, username, fm):
                     continue
+            rest = line[2 + len(fpath) + 1:]
+            if not is_owner and fpath.endswith(".md") and not _line_is_public(scope_dir, fpath, rest, public_lines_cache):
+                continue
             # Rewrite path to be agent-friendly: "owner/wiki/path:LINE:content"
-            kept.append(f"{scope}/{fpath}:{line[2 + len(fpath) + 1:]}")
+            kept.append(f"{scope}/{fpath}:{rest}")
 
         if not kept:
             return f"No matches found for: {query}"
@@ -789,7 +841,7 @@ def agent_chat():
                 page_path, acl_rules, user.username,
                 page_vis.get(page_path) or page_vis.get(page_path + ".md"),
             )):
-                page_content = read_file_from_repo(owner, wiki_slug, page_path) or ""
+                page_content = read_file_for_viewer(owner, wiki_slug, page_path, viewer_is_owner=is_owner) or ""
 
             # filtered file list
             for f in list_files_in_repo(owner, wiki_slug):

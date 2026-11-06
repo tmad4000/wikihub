@@ -10,6 +10,7 @@ GitHub for LLM wikis. A hosting platform for markdown knowledge bases with per-f
 - Social: fork, star, explore, activity feeds, profiles
 - Rendering: KaTeX math, syntax highlighting, wikilinks, footnotes, Obsidian embeds, wiki-relative links
 - Reader side peek: same-wiki page links open in a right-side preview panel on desktop
+- Editing: the page editor and suggest-edit open in a **Visual** editor (tables, task lists, `[[wikilinks]]`, math, `/` block menu) with a **Markdown** tab for raw source. A page the Visual editor would reformat opens in Markdown with a notice; your last tab choice is remembered per browser, and `?mode=markdown` or `?mode=visual` on an edit URL forces a mode
 - Custom domains: verify ownership with DNS and map an external hostname to a wiki
 - Data tables: sortable, filterable CSV/TSV pages with optional public Google Sheets refresh
 - Every wiki is a real git repo — clone, push, blame, bisect
@@ -259,6 +260,27 @@ they are not indexed as pages, never count toward `page_count`, and are omitted
 from discovery, backlinks, history, zip exports, agent context, and public git
 mirrors.
 
+### Private sections
+
+A page can hold owner-only sections inside otherwise public text:
+
+```markdown
+<!-- private -->
+### People
+- [[people/Alex]] - met at AGI House
+<!-- /private -->
+```
+
+The wiki owner sees these as a labelled "Private · only you" band. Everyone
+else, including ACL grantees and public-edit contributors, gets the page with
+the band removed on every surface: reader HTML, side peek, raw markdown, API,
+search and excerpts, history, `.zip`, public git clone, forks, and agent
+context. Private sections are as private as a private page (both are stored in
+the owner's authoritative git repo) and are not a place for secrets. Markers
+inside code blocks are literal; an unclosed band is private to the end of the
+file. Non-owner edits are 3-way merged around the bands; an edit that cannot
+merge is saved as a suggestion instead (HTTP 409).
+
 ## Feedback
 
 Send bug reports, feature requests, or praise to `POST /api/v1/feedback`
@@ -289,6 +311,12 @@ the default `wikihub_test` database or `/tmp/wikihub-test-repos` directory.
 End-to-end tests cover account creation, wiki lifecycle, search, social, upload,
 activity feeds, agent surfaces, ACL permissions, reader behavior, live-update
 polling, and regression cases.
+
+Browser-level editor checks (Visual default, toolbar/slash/`[[` sync, safety
+probe, suggest-edit) run against a live server:
+`BASE_URL=http://127.0.0.1:PORT node tests/browser/editor_visual.mjs`
+(needs Playwright). The Milkdown bundle has its own acceptance test:
+`cd milkdown-src && node test-roundtrip.mjs`.
 
 Separate PostgreSQL-backed runtime, scaling, and reader ACL regressions are
 documented in the [deployment guide](docs/deploy.md#production-workers).

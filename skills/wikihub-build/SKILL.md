@@ -513,6 +513,7 @@ Show stats: entries absorbed (from `_absorb_log.md`), articles by category (via 
 - **Never modify `_absorb_log.md` directly** — only append via `wikihub_append_section`.
 - **Rebuild `_index.md` only at checkpoint boundaries**, not on every write.
 - **Default visibility is `private`.** Only flip with `wikihub_set_visibility` when the user explicitly asks.
+- **Owner-only lines inside a public article:** wrap them in `<!-- private -->` … `<!-- /private -->` (each marker on its own line). Only the wiki owner sees them; they are removed from every other surface, including search and clones. Not for secrets.
 - **On public-edit raw wikis, anonymous writes are legal** — but don't use that path here. The raw wiki should be private-owner-only.
 - **Provenance is automatic.** The WikiHub MCP connector sets `X-Agent-Name: wikihub-mcp` on every write, so each page's `author` field records where it came from.
 

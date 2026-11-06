@@ -7,7 +7,7 @@ from datetime import date, datetime
 
 from app import db
 from app.acl import normalize_page_visibility, parse_acl, parse_serve_inline, resolve_visibility
-from app.content_utils import extract_wikilinks, parse_markdown_document
+from app.content_utils import band_wikilink_targets, extract_wikilinks, parse_markdown_document, strip_private_bands
 from app.git_backend import _repo_path, init_wiki_repo
 from app.git_sync import list_files_in_repo, read_file_bytes_from_repo, read_file_from_repo, regenerate_public_mirror, scaffold_wiki, sync_page_to_repo
 from app.models import Page, Wikilink, Wiki, Star, Fork, User, PendingInvite
@@ -100,8 +100,13 @@ def update_page_metadata(page, content, frontmatter=None, content_bytes=None):
     page.frontmatter_json = _sanitize_for_json(frontmatter)
     hash_input = content_bytes if content_bytes is not None else content.encode("utf-8")
     page.content_hash = hashlib.sha256(hash_input).hexdigest()
-    page.excerpt = _plain_excerpt(body) if body else ""
-    page.search_vector = db.func.to_tsvector("english", f"{page.title or ''} {body or ''}")
+    # The DB index (excerpt, search_vector) is served to NON-owners (search,
+    # hover cards, <meta description>, llms-full.txt, explore cards), so it is
+    # always built from the band-stripped body. Owners lose full-text hits on
+    # private-band words (documented v1 limitation).
+    public_body = strip_private_bands(body) if body else body
+    page.excerpt = _plain_excerpt(public_body) if public_body else ""
+    page.search_vector = db.func.to_tsvector("english", f"{page.title or ''} {public_body or ''}")
     return frontmatter, body
 
 
@@ -125,6 +130,8 @@ def refresh_wikilinks_for_page(page, content):
         if basename.endswith(".md"):
             basename_pages.setdefault(basename[:-3], candidate.id)
 
+    band_only = band_wikilink_targets(content)
+
     seen = set()
     for target in targets:
         if target in seen:
@@ -137,6 +144,7 @@ def refresh_wikilinks_for_page(page, content):
                 source_page_id=page.id,
                 target_path=target,
                 target_page_id=target_page_id,
+                in_private_band=target in band_only,
             )
         )
 

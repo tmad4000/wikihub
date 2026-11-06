@@ -158,6 +158,26 @@ def create_app(config_class="config.Config"):
     def page_url_filter(value):
         return url_path_from_page_path(value, strip_md=True)
 
+    _version_cache = []
+
+    def _app_version():
+        # Short git SHA of the running checkout (production deploys are a git
+        # pull), computed once per process; attached to in-app feedback.
+        if not _version_cache:
+            version = os.environ.get("WIKIHUB_VERSION", "")
+            if not version:
+                try:
+                    import subprocess
+                    version = subprocess.run(
+                        ["git", "-C", os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         "rev-parse", "--short", "HEAD"],
+                        capture_output=True, text=True, timeout=5,
+                    ).stdout.strip()
+                except Exception:
+                    version = ""
+            _version_cache.append(version or "dev")
+        return _version_cache[0]
+
     @app.context_processor
     def inject_feature_flags():
         # Expose feature flags to all templates (e.g. reader.html curator panel). wikihub-2jn.2
@@ -165,6 +185,7 @@ def create_app(config_class="config.Config"):
         return {
             "curator_enabled": bool(app.config.get("CURATOR_ENABLED", False)),
             "ideaflow_login_enabled": ideaflow_oidc_enabled(app.config),
+            "app_version": _app_version(),
         }
 
     @app.context_processor
@@ -209,6 +230,9 @@ def create_app(config_class="config.Config"):
         db.session.execute(db.text(
             "ALTER TABLE wikis ADD COLUMN IF NOT EXISTS subdomain VARCHAR(63) UNIQUE"
         ))
+        db.session.execute(db.text(
+            "ALTER TABLE wikilinks ADD COLUMN IF NOT EXISTS in_private_band BOOLEAN NOT NULL DEFAULT FALSE"
+        ))
         db.session.commit()
         from app.wiki_ops import ensure_official_wiki
         ensure_official_wiki()
@@ -221,7 +245,11 @@ def create_app(config_class="config.Config"):
     @wikihub_cli.command("reindex")
     @click.argument("wiki_ref", required=False)
     @click.option("--all", "all_wikis", is_flag=True, default=False)
-    def reindex_command(wiki_ref=None, all_wikis=False):
+    @click.option(
+        "--no-reset", "no_reset", is_flag=True, default=False,
+        help="Update Page rows in place (keeps page ids, stars, proposals) instead of deleting and recreating them.",
+    )
+    def reindex_command(wiki_ref=None, all_wikis=False, no_reset=False):
         from app.models import User, Wiki
         from app.wiki_ops import index_repo_pages
 
@@ -235,7 +263,7 @@ def create_app(config_class="config.Config"):
             raise click.ClickException("pass owner/slug or use --all")
 
         for wiki in filter(None, wikis):
-            index_repo_pages(wiki.owner.username, wiki.slug, wiki, reset=True)
+            index_repo_pages(wiki.owner.username, wiki.slug, wiki, reset=not no_reset)
             click.echo(f"reindexed {wiki.owner.username}/{wiki.slug}")
         db.session.commit()
 

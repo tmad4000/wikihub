@@ -1,0 +1,86 @@
+{#- Shared editing surface (wikihub-k7k5): Visual · Markdown · Preview.
+    Used by editor.html (surface_mode="page") and suggest_edit.html
+    (surface_mode="suggest"). Parameters:
+      content         markdown placed in the canonical #editor-textarea
+      preview_url     POST endpoint returning {"html": ...}
+      pages_url       JSON page list for [[ autocomplete
+      exclude_path    page path to omit from autocomplete (the page itself)
+      surface_mode    "page" | "suggest"
+      initial_mode    "visual" | "markdown" (server-side ?mode= hint; the
+                      script may still switch per stored preference / probe)
+    The textarea is the source of truth the form submits. -#}
+{%- set editor_asset_v = "k7k5-1" -%}
+{%- if not initial_mode -%}
+{%- set initial_mode = 'markdown' if request.args.get('mode') == 'markdown' else 'visual' -%}
+{%- endif -%}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/editor-surface.css') }}?v={{ editor_asset_v }}">
+<div class="editor-surface" id="editor-surface"
+  data-surface="{{ surface_mode }}"
+  data-initial-mode="{{ initial_mode }}"
+  data-mode="{{ initial_mode }}"
+  data-preview-url="{{ preview_url }}"
+  data-pages-url="{{ pages_url }}"
+  data-exclude-path="{{ exclude_path or '' }}"
+  data-bundle-url="{{ url_for('static', filename='js/milkdown-bundle.js') }}?v={{ editor_asset_v }}">
+
+  <div class="editor-banner info" id="editor-mode-notice" role="status" aria-live="polite">
+    <div class="editor-banner-text" id="editor-mode-notice-text"></div>
+    <div class="editor-banner-actions" id="editor-mode-notice-actions"></div>
+  </div>
+
+  <div class="editor-tabs" role="tablist" aria-label="Editor mode">
+    {%- for mode, label in [('visual', 'Visual'), ('markdown', 'Markdown'), ('preview', 'Preview')] %}
+    <button type="button" role="tab" class="editor-tab{{ ' active' if mode == initial_mode }}" data-mode="{{ mode }}"
+      aria-selected="{{ 'true' if mode == initial_mode else 'false' }}" tabindex="{{ '0' if mode == initial_mode else '-1' }}"
+      aria-controls="editor-wrap" title="{{ label }} (⌘⇧M cycles)">{{ label }}</button>
+    {%- endfor %}
+  </div>
+
+  <div class="editor-toolbar" id="editor-toolbar" role="toolbar" aria-label="Formatting"{{ ' hidden' if initial_mode != 'visual' }}>
+    <button type="button" class="tb-btn" data-cmd="bold" aria-label="Bold" title="Bold ⌘B" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 12h9a4 4 0 0 1 0 8H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h7a4 4 0 0 1 0 8"/></svg></button>
+    <button type="button" class="tb-btn" data-cmd="italic" aria-label="Italic" title="Italic ⌘I" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="19" x2="10" y1="4" y2="4"/><line x1="14" x2="5" y1="20" y2="20"/><line x1="15" x2="9" y1="4" y2="20"/></svg></button>
+    <button type="button" class="tb-btn" data-cmd="code" aria-label="Inline code" title="Inline code ⌘E" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></button>
+    <span class="tb-sep" aria-hidden="true"></span>
+    <select class="tb-select" data-heading aria-label="Heading" title="Heading">
+      <option value="0">Text</option>
+      <option value="1">Heading 1</option>
+      <option value="2">Heading 2</option>
+      <option value="3">Heading 3</option>
+    </select>
+    <span class="tb-sep" aria-hidden="true"></span>
+    <button type="button" class="tb-btn" data-cmd="bullet" aria-label="Bulleted list" title="Bulleted list ⌘⇧8" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" x2="21" y1="6" y2="6"/><line x1="8" x2="21" y1="12" y2="12"/><line x1="8" x2="21" y1="18" y2="18"/><line x1="3" x2="3.01" y1="6" y2="6"/><line x1="3" x2="3.01" y1="12" y2="12"/><line x1="3" x2="3.01" y1="18" y2="18"/></svg></button>
+    <button type="button" class="tb-btn" data-cmd="ordered" aria-label="Numbered list" title="Numbered list ⌘⇧7" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="10" x2="21" y1="6" y2="6"/><line x1="10" x2="21" y1="12" y2="12"/><line x1="10" x2="21" y1="18" y2="18"/><path d="M4 6h1v4"/><path d="M4 10h2"/><path d="M6 18H4c0-1 2-2 2-3s-1-1.5-2-1"/></svg></button>
+    <button type="button" class="tb-btn" data-cmd="task" aria-label="Task list" title="Task list" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="6" height="6" rx="1"/><path d="m3 17 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></svg></button>
+    <span class="tb-sep" aria-hidden="true"></span>
+    <button type="button" class="tb-btn" data-cmd="quote" aria-label="Quote" title="Quote" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 6H3"/><path d="M21 12H8"/><path d="M21 18H8"/><path d="M3 12v6"/></svg></button>
+    <button type="button" class="tb-btn" data-cmd="codeblock" aria-label="Code block" title="Code block" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m10 9-3 3 3 3"/><path d="m14 15 3-3-3-3"/><rect x="3" y="3" width="18" height="18" rx="2"/></svg></button>
+    <button type="button" class="tb-btn" data-cmd="table" aria-label="Table" title="Table"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/><path d="M12 3v18"/></svg></button>
+    <span class="tb-sep" aria-hidden="true"></span>
+    <button type="button" class="tb-btn" data-cmd="pagelink" aria-label="Link to a page" title="Link to a page [[">[[&thinsp;]]</button>
+    <button type="button" class="tb-btn" data-cmd="embed" aria-label="Embed" title="Embed"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg></button>
+    <span class="tb-sep" aria-hidden="true"></span>
+    <button type="button" class="tb-btn" data-cmd="undo" aria-label="Undo" title="Undo ⌘Z"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg></button>
+    <button type="button" class="tb-btn" data-cmd="redo" aria-label="Redo" title="Redo ⌘⇧Z"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7"/></svg></button>
+  </div>
+
+  <div class="editor-wrap" id="editor-wrap">
+    <textarea name="content" class="editor-textarea" id="editor-textarea" aria-label="Page Markdown" spellcheck="true">{{ content or '' }}</textarea>
+    <div id="milkdown-editor" aria-label="Page content"><div class="milkdown-loading">Loading editor…</div></div>
+    <div class="preview-wrap" id="preview-wrap">
+      <article class="article" id="preview-article"></article>
+    </div>
+    <div class="wikilink-menu" id="wikilink-menu" role="listbox" aria-label="Link to a page">
+      <div id="wikilink-items"></div>
+    </div>
+    <div class="slash-menu" id="slash-menu" role="listbox" aria-label="Insert block"></div>
+  </div>
+  <noscript><style>#editor-surface .editor-textarea { display: block !important; } #milkdown-editor { display: none !important; }</style></noscript>
+
+  <div class="editor-statusbar">
+    <span id="editor-mode-label">{{ 'Visual' if initial_mode == 'visual' else 'Markdown' }}</span>{% if is_owner %}
+    <span title="Markdown tab: Cmd/Ctrl+Shift+P wraps lines in a private section (only you can see it)">⌘⇧P private</span>{% endif %}
+    <span class="status-pill" id="save-status">Ready</span>
+    <span id="line-count"></span>
+  </div>
+</div>
+<script src="{{ url_for('static', filename='js/editor-surface.js') }}?v={{ editor_asset_v }}" defer></script>
