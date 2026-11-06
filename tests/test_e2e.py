@@ -1667,6 +1667,109 @@ def test_ideaflow_oidc_new_login_creates_local_session(app, client):
         assert "Connect Ideaflow" not in settings_html, "a connected account must not show a Connect action"
 
 
+def test_wit_feedback_menu_and_verified_token(app, client):
+    """world-issue-tracker-julr.6: "Send feedback" lives in the account and
+    mobile menus (no floating launcher), and /auth/wit-feedback-token mints a
+    WIT feedback token from the Ideaflow ID token seen at sign-in. The ID token
+    is stored encrypted, never rendered, and only usable by its own account;
+    every failure is a 204 (anonymous submission)."""
+    import time as _time
+    import app.routes.auth as auth_routes
+    import app.wit_feedback as wit_feedback_mod
+    from flask import g as _g
+    from app.models import IdeaflowFeedbackCredential
+
+    def post_token(test_client):
+        # The suite shares one app context: drop Flask-Login's cached user so
+        # each request resolves its own session (same as the tests above).
+        _g.pop("_login_user", None)
+        return test_client.post("/auth/wit-feedback-token")
+
+    issuer = app.config["IDEAFLOW_OIDC_ISSUER"]
+    id_token = "eyJ.fake-ideaflow-id-token-witfb.sig"
+    userinfo = {
+        "sub": "idfw-sub-witfb",
+        "iss": issuer,
+        "email": "witfb@example.com",
+        "email_verified": True,
+        "name": "WIT Feedback User",
+        "exp": int(_time.time()) + 3600,
+    }
+
+    anon = app.test_client()
+    r = post_token(anon)
+    assert r.status_code == 204
+    _g.pop("_login_user", None)
+    landing = anon.get("/").get_data(as_text=True)
+    assert 'data-trigger="none"' in landing and 'data-tracker-slug="wikihub-feedback"' in landing
+    assert "data-wit-feedback" in landing, "mobile menu offers Send feedback to signed-out visitors"
+
+    calls = []
+
+    class FakeResponse:
+        def __init__(self, status, body):
+            self.status_code = status
+            self._body = body
+
+        def json(self):
+            return self._body
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        calls.append({"url": url, "json": json})
+        return fake_post.response
+
+    fake_post.response = FakeResponse(200, {"token": "wfb1.minted", "expires_at": int(_time.time()) + 900})
+    original_post = wit_feedback_mod.requests.post
+    wit_feedback_mod.requests.post = fake_post
+    try:
+        with _ideaflow_oauth(app, userinfo):
+            auth_routes.oauth.ideaflow.authorize_access_token = lambda: {"userinfo": userinfo, "id_token": id_token}
+            browser = app.test_client()
+            browser.get("/auth/ideaflow?next=/settings", follow_redirects=False)
+            r = browser.get("/auth/ideaflow/callback?state=fake-ideaflow-state&code=fake", follow_redirects=False)
+            assert r.status_code == 302
+
+            row = db.session.get(IdeaflowFeedbackCredential, (issuer, "idfw-sub-witfb"))
+            assert row is not None, "verified ID token is kept for feedback minting"
+            assert id_token not in row.id_token_encrypted, "ID token must be encrypted at rest"
+
+            _g.pop("_login_user", None)
+            html = browser.get("/settings").get_data(as_text=True)
+            assert "Send feedback" in html and "data-wit-feedback" in html
+            assert id_token not in html, "the ID token never reaches the browser"
+
+            r = post_token(browser)
+            assert r.status_code == 200, r.status_code
+            assert r.get_json()["token"] == "wfb1.minted"
+            assert r.headers.get("Cache-Control") == "no-store"
+            assert calls[-1]["json"] == {"id_token": id_token, "app": "wikihub"}
+
+            # WIT refuses (e.g. client not yet allowlisted) -> anonymous.
+            fake_post.response = FakeResponse(401, {"error": "id_token_audience_not_allowed"})
+            assert post_token(browser).status_code == 204
+
+            # A different signed-in account without that identity gets nothing.
+            other = User(username="witfb-other", email="witfb-other@example.com")
+            db.session.add(other)
+            db.session.commit()
+            fake_post.response = FakeResponse(200, {"token": "wfb1.minted", "expires_at": int(_time.time()) + 900})
+            other_browser = app.test_client()
+            with other_browser.session_transaction() as sess:
+                sess["_user_id"] = str(other.id)
+                sess["_fresh"] = True
+            n = len(calls)
+            assert post_token(other_browser).status_code == 204
+            assert len(calls) == n, "no exchange is attempted without the caller's own identity"
+
+            # Expired stored token -> anonymous, no exchange.
+            row.expires_at = utcnow() - timedelta(minutes=1)
+            db.session.commit()
+            assert post_token(browser).status_code == 204
+            assert len(calls) == n
+    finally:
+        wit_feedback_mod.requests.post = original_post
+
+
 def test_ideaflow_oidc_repeat_exact_subject_login(app, client):
     """wikihub-39pe: signing in again with the exact same (issuer, subject)
     logs into the SAME local user — no duplicate account, no duplicate link."""
@@ -10266,6 +10369,7 @@ def run_all():
             ("login limiter ignores spoofed X-Forwarded-For; security events logged", lambda: test_login_rate_limit_ignores_spoofed_forwarded_for_and_logs_security_events(app, client)),
             ("Ideaflow OIDC feature flag off removes routes+UI (wikihub-39pe)", lambda: test_ideaflow_oidc_feature_flag_off(app, client)),
             ("Ideaflow OIDC new login creates local session (wikihub-39pe)", lambda: test_ideaflow_oidc_new_login_creates_local_session(app, client)),
+            ("WIT feedback menu + verified token (julr.6)", lambda: test_wit_feedback_menu_and_verified_token(app, client)),
             ("Ideaflow OIDC repeat exact subject login (wikihub-39pe)", lambda: test_ideaflow_oidc_repeat_exact_subject_login(app, client)),
             ("Ideaflow OIDC signed-in linking to existing user (wikihub-39pe)", lambda: test_ideaflow_oidc_signed_in_linking_to_existing_user(app, client)),
             ("Ideaflow OIDC 'Switch account' sends prompt=select_account only for the allowlisted flag (code-xbh.5)", lambda: test_ideaflow_oidc_switch_account_prompts_chooser_only_when_allowlisted(app, client)),

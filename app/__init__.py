@@ -135,6 +135,26 @@ def create_app(config_class="config.Config"):
     def page_url_filter(value):
         return url_path_from_page_path(value, strip_md=True)
 
+    _version_cache = []
+
+    def _app_version():
+        # Short git SHA of the running checkout (production deploys are a git
+        # pull), computed once per process; attached to in-app feedback.
+        if not _version_cache:
+            version = os.environ.get("WIKIHUB_VERSION", "")
+            if not version:
+                try:
+                    import subprocess
+                    version = subprocess.run(
+                        ["git", "-C", os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         "rev-parse", "--short", "HEAD"],
+                        capture_output=True, text=True, timeout=5,
+                    ).stdout.strip()
+                except Exception:
+                    version = ""
+            _version_cache.append(version or "dev")
+        return _version_cache[0]
+
     @app.context_processor
     def inject_feature_flags():
         # Expose feature flags to all templates (e.g. reader.html curator panel). wikihub-2jn.2
@@ -142,6 +162,7 @@ def create_app(config_class="config.Config"):
         return {
             "curator_enabled": bool(app.config.get("CURATOR_ENABLED", False)),
             "ideaflow_login_enabled": ideaflow_oidc_enabled(app.config),
+            "app_version": _app_version(),
         }
 
     os.makedirs(app.config["REPOS_DIR"], exist_ok=True)
