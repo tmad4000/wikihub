@@ -26,11 +26,14 @@ from app.models import Page, Wikilink
 from app.page_utils import is_wikihub_plumbing_path
 
 
-def get_backlinks_for_page(page):
+def get_backlinks_for_page(page, include_private_bands=False):
     """Return a list of Page objects that wikilink to `page`.
 
     Sorted by source page path for stable ordering. De-duplicated — even if
     one source page has multiple wikilinks to this target, it appears once.
+
+    Links that live only inside an owner-only private band are excluded unless
+    ``include_private_bands`` (pass True only when the viewer owns the wiki).
     """
     if not page or not getattr(page, "id", None):
         return []
@@ -39,15 +42,15 @@ def get_backlinks_for_page(page):
 
     # Two queries unioned at the Python level — easier to reason about than
     # a single SQL OR with a subquery, and the second is rare in practice.
-    primary_ids = {
-        wl.source_page_id
-        for wl in Wikilink.query.filter_by(target_page_id=page.id).all()
-    }
+    primary_query = Wikilink.query.filter_by(target_page_id=page.id)
+    if not include_private_bands:
+        primary_query = primary_query.filter(Wikilink.in_private_band.is_(False))
+    primary_ids = {wl.source_page_id for wl in primary_query.all()}
 
     # Forward-ref fallback: same wiki, unresolved target, alias match.
     alias_match_ids = set()
     if aliases:
-        rows = (
+        alias_query = (
             db.session.query(Wikilink.source_page_id)
             .join(Page, Wikilink.source_page_id == Page.id)
             .filter(
@@ -55,8 +58,10 @@ def get_backlinks_for_page(page):
                 Wikilink.target_page_id.is_(None),
                 Wikilink.target_path.in_(aliases),
             )
-            .all()
         )
+        if not include_private_bands:
+            alias_query = alias_query.filter(Wikilink.in_private_band.is_(False))
+        rows = alias_query.all()
         alias_match_ids = {row[0] for row in rows}
 
     source_ids = primary_ids | alias_match_ids

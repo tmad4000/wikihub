@@ -62,6 +62,7 @@ def llms_txt():
         "- Published Sheet tables: GET/PUT/DELETE /api/v1/wikis/{owner}/{slug}/data-sources/{table_path}; POST the /refresh suffix for CSV or TSV",
         "- MCP: /mcp (add to your agent's mcpServers config)",
         "- CLI: `pipx install wikihub-cli` then `wikihub signup`, `wikihub write`, `wikihub read`, `wikihub search` (see /AGENTS.md)",
+        "- Private sections: Wrap lines in `<!-- private -->` … `<!-- /private -->` to keep them visible only to the wiki owner; they are removed for everyone else, including ACL grantees, search, excerpts, history, clones, and exports.",
         "",
         "## Discovery feeds",
         "- [Recent activity](/activity): public page creations and updates",
@@ -632,6 +633,23 @@ Opted-in HTML is served as `text/html` but hardened with a
 `Content-Security-Policy: sandbox allow-scripts allow-popups allow-forms`
 (rendered in a null origin — no access to wikihub cookies or same-origin DOM)
 and `X-Content-Type-Options: nosniff`.
+
+## private sections
+
+Wrap lines in `<!-- private -->` … `<!-- /private -->` to keep them visible only to the wiki owner; they are removed for everyone else, including ACL grantees, search, excerpts, history, clones, and exports.
+
+```
+<!-- private -->
+### People
+- [[people/Alex]] - met at AGI House
+<!-- /private -->
+```
+
+Markers must sit on their own lines. Markers inside code blocks are literal;
+an unclosed band is private to the end of the file. If a non-owner edit cannot
+be merged around the owner's private sections, the API answers 409
+`{"error":"conflict","reason":"private_bands"}` and saves the edit as a
+suggestion. Private sections are not a place for secrets.
 
 ## discovery
 

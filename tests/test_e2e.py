@@ -218,11 +218,275 @@ def test_wysiwyg_editor_surface(client, api_key):
     assert r.status_code == 200, f"editor GET failed: {r.status_code} {r.get_data(as_text=True)[:200]}"
     html = r.get_data(as_text=True)
     assert "milkdown-bundle.js" in html, "Milkdown bundle not referenced in editor"
+    assert "js/editor-surface.js" in html, "shared editor surface script missing"
     assert 'id="milkdown-editor"' in html, "Milkdown mount div missing"
-    assert ">WYSIWYG<" in html, "WYSIWYG tab missing"
     assert 'id="editor-textarea"' in html, "canonical markdown textarea missing"
-    # WYSIWYG is the default (active) tab (wikihub-scay)
-    assert "class=\"editor-tab active\" onclick=\"showTab('wysiwyg')\"" in html, "WYSIWYG should be the default tab"
+    # Visual (WYSIWYG) is the default (active) tab, listed first (wikihub-scay, wikihub-k7k5)
+    tab_labels = re.findall(r'role="tab"[^>]*data-mode="(\w+)"', html)
+    assert tab_labels == ["visual", "markdown", "preview"], f"tab order wrong: {tab_labels}"
+    assert 'class="editor-tab active" data-mode="visual"' in html, "Visual should be the default tab"
+    assert ">Visual</button>" in html, "Visual tab label missing"
+    assert 'data-initial-mode="visual"' in html
+    assert 'role="toolbar"' in html and 'data-cmd="bold"' in html, "formatting toolbar missing"
+    # The developer-facing hint is gone (wikihub-k7k5 D4).
+    assert "round-trip losslessly" not in html, "old WYSIWYG hint should be removed"
+    assert ">WYSIWYG<" not in html, "tab should say Visual, not WYSIWYG"
+
+
+def test_editor_mode_query_param(client, api_key):
+    """wikihub-k7k5 D2: ?mode=markdown|wysiwyg|visual is a server-visible override
+    (data-initial-mode + active tab) so links and agents can force a mode."""
+    h = {"Authorization": f"Bearer {api_key}"}
+    r = client.post("/api/v1/wikis/agent1/test-wiki/pages", json={
+        "path": "wiki/mode-param.md",
+        "content": "---\ntitle: Mode Param\nvisibility: public-edit\n---\n\n# Mode Param\n\nBody.",
+        "visibility": "public-edit",
+    }, headers=h)
+    assert r.status_code == 201
+
+    r = client.get("/@agent1/test-wiki/wiki/mode-param/edit?mode=markdown")
+    assert r.status_code == 200
+    html = r.get_data(as_text=True)
+    assert 'data-initial-mode="markdown"' in html
+    assert 'class="editor-tab active" data-mode="markdown"' in html, "?mode=markdown must activate the Markdown tab"
+    assert 'class="editor-tab active" data-mode="visual"' not in html
+
+    for alias in ("wysiwyg", "visual"):
+        r = client.get(f"/@agent1/test-wiki/wiki/mode-param/edit?mode={alias}")
+        assert r.status_code == 200
+        html = r.get_data(as_text=True)
+        assert 'class="editor-tab active" data-mode="visual"' in html, f"?mode={alias} must activate Visual"
+
+
+def _suggest_textarea_value(html):
+    match = re.search(r'<textarea name="content"[^>]*id="editor-textarea"[^>]*>(.*?)</textarea>', html, re.S)
+    assert match, "suggest page must render the shared editor textarea"
+    return match.group(1)
+
+
+def test_suggest_edit_uses_visual_editor(client, api_key):
+    """wikihub-k7k5: suggest-edit uses the shared Visual editor surface and never
+    shows or accepts frontmatter. The POSTed body is re-attached to the page's
+    current frontmatter, so proposals stay full-file diffs and accept keeps
+    title/visibility intact."""
+    from app.content_utils import parse_markdown_document
+    from app.models import ProposalPagePatch
+
+    h = {"Authorization": f"Bearer {api_key}"}
+    r = client.post("/api/v1/wikis", json={"slug": "suggest-visual", "title": "Suggest Visual"}, headers=h)
+    assert r.status_code == 201
+    original = "---\ntitle: Visual Draft\nvisibility: public-edit\n---\n\n# Visual Draft\n\nOriginal visual line."
+    r = client.post("/api/v1/wikis/agent1/suggest-visual/pages", json={
+        "path": "draft.md", "content": original, "visibility": "public-edit",
+    }, headers=h)
+    assert r.status_code == 201
+
+    anon = client.application.test_client()
+    r = anon.get("/@agent1/suggest-visual/-/suggest/draft")
+    assert r.status_code == 200, r.status_code
+    html = r.get_data(as_text=True)
+    assert 'id="milkdown-editor"' in html, "suggest page must mount the Visual editor"
+    assert 'data-surface="suggest"' in html
+    assert 'class="editor-tab active" data-mode="visual"' in html, "Visual is the default suggest mode"
+    assert "js/editor-surface.js" in html and "milkdown-bundle.js" in html
+    body = _suggest_textarea_value(html)
+    assert "visibility: public-edit" not in html, "frontmatter must not be shown to contributors"
+    assert "title: Visual Draft" not in body
+    assert body.startswith("# Visual Draft"), f"textarea should hold the body only: {body[:60]!r}"
+    page = Page.query.join(Wiki).filter(Wiki.slug == "suggest-visual", Page.path == "draft.md").first()
+    assert f'name="base_content_hash" value="{page.content_hash}"' in html
+
+    # Contributor submits only a body (as the Visual editor does), plus a
+    # sneaky frontmatter block in a second suggestion that must be ignored.
+    r = anon.post("/@agent1/suggest-visual/-/suggest/draft", data={
+        "title": "Visual tweak",
+        "author_name": "student",
+        "content": "# Visual Draft\r\n\r\nSuggested visual line.",
+        "base_content_hash": page.content_hash,
+    }, follow_redirects=False)
+    assert r.status_code in (302, 303), r.get_data(as_text=True)[:200]
+    proposal_path = urlparse(r.headers["Location"]).path
+    assert "stale=1" not in r.headers["Location"]
+    patch = ProposalPagePatch.query.filter_by(page_path="draft.md").order_by(ProposalPagePatch.id.desc()).first()
+    assert patch.proposed_content.startswith("---\n"), patch.proposed_content[:40]
+    meta, proposed_body = parse_markdown_document(patch.proposed_content)
+    assert meta.get("title") == "Visual Draft"
+    assert meta.get("visibility") == "public-edit"
+    assert proposed_body.strip() == "# Visual Draft\n\nSuggested visual line.", repr(proposed_body)
+    assert "\r" not in patch.proposed_content
+
+    r = anon.post("/@agent1/suggest-visual/-/suggest/draft", data={
+        "title": "Frontmatter smuggle",
+        "content": "---\ntitle: Hacked\nvisibility: private\n---\n\n# Visual Draft\n\nSmuggled.",
+    }, follow_redirects=False)
+    assert r.status_code in (302, 303)
+    smuggle = ProposalPagePatch.query.filter_by(page_path="draft.md").order_by(ProposalPagePatch.id.desc()).first()
+    meta, smuggle_body = parse_markdown_document(smuggle.proposed_content)
+    assert meta.get("title") == "Visual Draft", "suggestions must not change the title"
+    assert meta.get("visibility") == "public-edit"
+    assert "Hacked" not in smuggle.proposed_content
+    assert smuggle_body.strip().endswith("Smuggled.")
+
+    # Owner accepts the first suggestion: body replaced, frontmatter preserved.
+    owner = client.application.test_client()
+    r = owner.get(f"/auth/login?api_key={api_key}&next={proposal_path}", follow_redirects=False)
+    assert r.status_code == 302
+    r = owner.post(proposal_path + "/accept", follow_redirects=False)
+    assert r.status_code in (302, 303)
+    r = client.get("/api/v1/wikis/agent1/suggest-visual/pages/draft.md", headers=h)
+    accepted = r.get_json()["content"]
+    meta, accepted_body = parse_markdown_document(accepted)
+    assert meta.get("title") == "Visual Draft"
+    assert meta.get("visibility") == "public-edit"
+    assert "Suggested visual line." in accepted_body
+    assert "Original visual line." not in accepted
+    # The re-attached frontmatter is kept byte-for-byte (no YAML re-dump).
+    assert accepted.startswith("---\ntitle: Visual Draft\nvisibility: public-edit\n---\n"), accepted[:80]
+
+    # Pages WITHOUT frontmatter (git push / zip): any leading block the
+    # frontmatter parser would read as metadata must be dropped, including
+    # YAML comment lines, quoted keys, indented keys and `--- ` boundaries.
+    from app.git_sync import sync_page_to_repo
+    r = client.post("/api/v1/wikis/agent1/suggest-visual/pages", json={
+        "path": "bare.md", "content": "# Bare\n\nNo frontmatter here.", "visibility": "public-edit",
+    }, headers=h)
+    assert r.status_code == 201
+    sync_page_to_repo("agent1", "suggest-visual", "bare.md", "# Bare\n\nNo frontmatter here.\n")
+    injections = [
+        "---\n# just a comment\ntitle: Hacked\npinned: true\n---\n\n# Bare\n\nInjected A.",
+        "---\n\"title\": Hacked\n'tags': [x]\n---\n\n# Bare\n\nInjected B.",
+        "---\n  title: Hacked\n---\n\n# Bare\n\nInjected C.",
+        "--- \ntitle: Hacked\n---\n\n# Bare\n\nInjected D.",
+    ]
+    for index, payload in enumerate(injections):
+        r = anon.post("/@agent1/suggest-visual/-/suggest/bare", data={
+            "title": f"Injection {index}", "content": payload,
+        }, follow_redirects=False)
+        assert r.status_code in (302, 303), r.get_data(as_text=True)[:200]
+        patch = ProposalPagePatch.query.filter_by(page_path="bare.md").order_by(ProposalPagePatch.id.desc()).first()
+        meta, injected_body = parse_markdown_document(patch.proposed_content)
+        assert "Hacked" not in patch.proposed_content, f"case {index}: {patch.proposed_content[:120]!r}"
+        assert meta.get("title") is None and meta.get("pinned") is None and meta.get("tags") in (None, []), meta
+        assert meta.get("visibility") == "public-edit"
+        assert injected_body.strip().endswith("Injected " + "ABCD"[index] + "."), injected_body
+    # A body that merely opens with a horizontal rule is not frontmatter.
+    r = anon.post("/@agent1/suggest-visual/-/suggest/draft", data={
+        "title": "Rule first", "content": "---\n\nAfter a rule.",
+    }, follow_redirects=False)
+    assert r.status_code in (302, 303)
+    patch = ProposalPagePatch.query.filter_by(page_path="draft.md").order_by(ProposalPagePatch.id.desc()).first()
+    assert "After a rule." in patch.proposed_content
+
+
+def test_suggest_resubmit_keeps_frontmatter_lock(client, api_key):
+    """wikihub-k7k5 review: the changes-requested resubmit form shows the body
+    only, and resubmitted frontmatter is ignored like the first submission."""
+    from app.content_utils import parse_markdown_document
+    from app.models import ProposalPagePatch
+
+    h = {"Authorization": f"Bearer {api_key}"}
+    r = client.post("/api/v1/accounts", json={"username": "resubber", "password": "testpass12345"})
+    assert r.status_code == 201
+    r = client.post("/api/v1/wikis", json={"slug": "resubmit-lock", "title": "Resubmit Lock"}, headers=h)
+    assert r.status_code == 201
+    original = "---\ntitle: Locked Draft\nvisibility: public-edit\n---\n\n# Locked Draft\n\nOriginal."
+    r = client.post("/api/v1/wikis/agent1/resubmit-lock/pages", json={
+        "path": "draft.md", "content": original, "visibility": "public-edit",
+    }, headers=h)
+    assert r.status_code == 201
+
+    # One browser that switches identity, like the existing proposal tests.
+    author = owner = client.application.test_client()
+    r = author.post("/auth/login", data={"username": "resubber", "password": "testpass12345"}, follow_redirects=False)
+    assert r.status_code == 302
+    r = author.post("/@agent1/resubmit-lock/-/suggest/draft", data={
+        "title": "First pass", "content": "# Locked Draft\n\nFirst.",
+    }, follow_redirects=False)
+    proposal_path = urlparse(r.headers["Location"]).path
+
+    r = owner.get(f"/auth/login?api_key={api_key}&next={proposal_path}", follow_redirects=False)
+    assert r.status_code == 302
+    r = owner.post(proposal_path + "/request-changes", data={"body": "More please."}, follow_redirects=False)
+    assert r.status_code in (302, 303)
+
+    r = author.post("/auth/login", data={"username": "resubber", "password": "testpass12345"}, follow_redirects=False)
+    assert r.status_code == 302
+    r = author.get(proposal_path)
+    html = r.get_data(as_text=True)
+    assert "Submit revision" in html
+    form = html[html.index("Submit revision"):]
+    form = form[:form.index("</form>")]
+    assert "visibility: public-edit" not in form and "title: Locked Draft" not in form, form[:400]
+    assert "# Locked Draft" in form
+
+    r = author.post(proposal_path + "/resubmit", data={
+        "note": "Second pass.",
+        "content": "---\ntitle: Hacked\nvisibility: private\n---\n\n# Locked Draft\n\nSecond.",
+    }, follow_redirects=False)
+    assert r.status_code in (302, 303)
+    patch = ProposalPagePatch.query.filter_by(page_path="draft.md").order_by(ProposalPagePatch.id.desc()).first()
+    meta, body = parse_markdown_document(patch.proposed_content)
+    assert meta.get("title") == "Locked Draft" and meta.get("visibility") == "public-edit", meta
+    assert "Hacked" not in patch.proposed_content
+    assert body.strip().endswith("Second.")
+
+
+def test_suggest_edit_stale_base_flag(client, api_key):
+    """wikihub-k7k5: a suggestion started against an older page version is
+    flagged (stale=1) on redirect so the proposal page can say so."""
+    h = {"Authorization": f"Bearer {api_key}"}
+    r = client.post("/api/v1/wikis", json={"slug": "suggest-stale", "title": "Suggest Stale"}, headers=h)
+    assert r.status_code == 201
+    r = client.post("/api/v1/wikis/agent1/suggest-stale/pages", json={
+        "path": "draft.md",
+        "content": "---\ntitle: Stale Draft\nvisibility: public-edit\n---\n\n# Stale Draft\n\nLine.",
+        "visibility": "public-edit",
+    }, headers=h)
+    assert r.status_code == 201
+
+    anon = client.application.test_client()
+    r = anon.post("/@agent1/suggest-stale/-/suggest/draft", data={
+        "title": "From an old tab",
+        "content": "# Stale Draft\n\nChanged line.",
+        "base_content_hash": "0" * 64,
+    }, follow_redirects=False)
+    assert r.status_code in (302, 303)
+    location = r.headers["Location"]
+    assert "stale=1" in location, location
+
+    owner = client.application.test_client()
+    path = urlparse(location).path
+    r = owner.get(f"/auth/login?api_key={api_key}&next={path}", follow_redirects=False)
+    assert r.status_code == 302
+    # The flag is persisted on the proposal, not just the redirect URL.
+    r = owner.get(path)
+    assert r.status_code == 200
+    assert b"The page changed while this suggestion was being written" in r.data
+    assert b"Accept anyway" in r.data
+
+    # Accept without explicit confirmation is refused and leaves the page alone.
+    r = owner.post(path + "/accept", follow_redirects=False)
+    assert r.status_code in (302, 303)
+    assert "/-/proposals/" in r.headers["Location"]
+    r = client.get("/api/v1/wikis/agent1/suggest-stale/pages/draft.md", headers=h)
+    assert "Changed line." not in r.get_json()["content"]
+
+    r = owner.post(path + "/accept", data={"confirm_base_changed": "1"}, follow_redirects=False)
+    assert r.status_code in (302, 303)
+    r = client.get("/api/v1/wikis/agent1/suggest-stale/pages/draft.md", headers=h)
+    assert "Changed line." in r.get_json()["content"]
+
+    # A suggestion made against the current version shows no banner.
+    r = client.get("/api/v1/wikis/agent1/suggest-stale/pages/draft.md", headers=h)
+    current_hash = r.get_json()["content_hash"]
+    r = anon.post("/@agent1/suggest-stale/-/suggest/draft", data={
+        "title": "Fresh", "content": "# Stale Draft\n\nFresh line.", "base_content_hash": current_hash,
+    }, follow_redirects=False)
+    assert "stale=1" not in r.headers["Location"]
+    fresh = urlparse(r.headers["Location"]).path
+    r = owner.get(fresh)
+    assert b"The page changed while this suggestion was being written" not in r.data
+    assert b"Accept anyway" not in r.data
 
 
 def test_page_etag_conflict(client, api_key):
@@ -1668,6 +1932,109 @@ def test_ideaflow_oidc_new_login_creates_local_session(app, client):
         settings_html = browser.get("/settings").get_data(as_text=True)
         assert 'data-ideaflow-status="connected"' in settings_html
         assert "Connect Ideaflow" not in settings_html, "a connected account must not show a Connect action"
+
+
+def test_wit_feedback_menu_and_verified_token(app, client):
+    """world-issue-tracker-julr.6: "Send feedback" lives in the account and
+    mobile menus (no floating launcher), and /auth/wit-feedback-token mints a
+    WIT feedback token from the Ideaflow ID token seen at sign-in. The ID token
+    is stored encrypted, never rendered, and only usable by its own account;
+    every failure is a 204 (anonymous submission)."""
+    import time as _time
+    import app.routes.auth as auth_routes
+    import app.wit_feedback as wit_feedback_mod
+    from flask import g as _g
+    from app.models import IdeaflowFeedbackCredential
+
+    def post_token(test_client):
+        # The suite shares one app context: drop Flask-Login's cached user so
+        # each request resolves its own session (same as the tests above).
+        _g.pop("_login_user", None)
+        return test_client.post("/auth/wit-feedback-token")
+
+    issuer = app.config["IDEAFLOW_OIDC_ISSUER"]
+    id_token = "eyJ.fake-ideaflow-id-token-witfb.sig"
+    userinfo = {
+        "sub": "idfw-sub-witfb",
+        "iss": issuer,
+        "email": "witfb@example.com",
+        "email_verified": True,
+        "name": "WIT Feedback User",
+        "exp": int(_time.time()) + 3600,
+    }
+
+    anon = app.test_client()
+    r = post_token(anon)
+    assert r.status_code == 204
+    _g.pop("_login_user", None)
+    landing = anon.get("/").get_data(as_text=True)
+    assert 'data-trigger="none"' in landing and 'data-tracker-slug="wikihub-feedback"' in landing
+    assert "data-wit-feedback" in landing, "mobile menu offers Send feedback to signed-out visitors"
+
+    calls = []
+
+    class FakeResponse:
+        def __init__(self, status, body):
+            self.status_code = status
+            self._body = body
+
+        def json(self):
+            return self._body
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        calls.append({"url": url, "json": json})
+        return fake_post.response
+
+    fake_post.response = FakeResponse(200, {"token": "wfb1.minted", "expires_at": int(_time.time()) + 900})
+    original_post = wit_feedback_mod.requests.post
+    wit_feedback_mod.requests.post = fake_post
+    try:
+        with _ideaflow_oauth(app, userinfo):
+            auth_routes.oauth.ideaflow.authorize_access_token = lambda: {"userinfo": userinfo, "id_token": id_token}
+            browser = app.test_client()
+            browser.get("/auth/ideaflow?next=/settings", follow_redirects=False)
+            r = browser.get("/auth/ideaflow/callback?state=fake-ideaflow-state&code=fake", follow_redirects=False)
+            assert r.status_code == 302
+
+            row = db.session.get(IdeaflowFeedbackCredential, (issuer, "idfw-sub-witfb"))
+            assert row is not None, "verified ID token is kept for feedback minting"
+            assert id_token not in row.id_token_encrypted, "ID token must be encrypted at rest"
+
+            _g.pop("_login_user", None)
+            html = browser.get("/settings").get_data(as_text=True)
+            assert "Send feedback" in html and "data-wit-feedback" in html
+            assert id_token not in html, "the ID token never reaches the browser"
+
+            r = post_token(browser)
+            assert r.status_code == 200, r.status_code
+            assert r.get_json()["token"] == "wfb1.minted"
+            assert r.headers.get("Cache-Control") == "no-store"
+            assert calls[-1]["json"] == {"id_token": id_token, "app": "wikihub"}
+
+            # WIT refuses (e.g. client not yet allowlisted) -> anonymous.
+            fake_post.response = FakeResponse(401, {"error": "id_token_audience_not_allowed"})
+            assert post_token(browser).status_code == 204
+
+            # A different signed-in account without that identity gets nothing.
+            other = User(username="witfb-other", email="witfb-other@example.com")
+            db.session.add(other)
+            db.session.commit()
+            fake_post.response = FakeResponse(200, {"token": "wfb1.minted", "expires_at": int(_time.time()) + 900})
+            other_browser = app.test_client()
+            with other_browser.session_transaction() as sess:
+                sess["_user_id"] = str(other.id)
+                sess["_fresh"] = True
+            n = len(calls)
+            assert post_token(other_browser).status_code == 204
+            assert len(calls) == n, "no exchange is attempted without the caller's own identity"
+
+            # Expired stored token -> anonymous, no exchange.
+            row.expires_at = utcnow() - timedelta(minutes=1)
+            db.session.commit()
+            assert post_token(browser).status_code == 204
+            assert len(calls) == n
+    finally:
+        wit_feedback_mod.requests.post = original_post
 
 
 def test_ideaflow_oidc_repeat_exact_subject_login(app, client):
@@ -10512,6 +10879,788 @@ def test_auth_crawler_hygiene(app, client):
     html = anon.get("/@agent1").get_data(as_text=True) + anon.get("/").get_data(as_text=True)
     for m in re.finditer(r'<a\b[^>]*href="/auth/[^"]*"[^>]*>', html):
         assert 'rel="nofollow"' in m.group(0), m.group(0)
+# ---------------------------------------------------------------------------
+# Private bands ("private sections"): owner-only <!-- private --> regions.
+# One regression per leak path from the 2026-11-03 audit (wikihub-oorq).
+# ---------------------------------------------------------------------------
+
+_BAND_NOTES = (
+    "---\ntitle: Band Notes\nvisibility: public-edit\n---\n"
+    "# Notes\n\npublic intro\n\n"
+    "<!-- private -->\n## Secret heading\n\n- SECRETTOKEN alpha [[band-target]]\n<!-- /private -->\n\n"
+    "public outro\n"
+)
+_BAND_STATE = {}
+
+
+def _band_req(c, method, url, **kw):
+    """Issue a request with a clean flask-login cache (tests share one app
+    context, so g._login_user would otherwise leak between clients)."""
+    from flask import g as _flask_g
+    _flask_g.pop("_login_user", None)
+    _write_timestamps.clear()
+    _ip_write_timestamps.clear()
+    return getattr(c, method)(url, **kw)
+
+
+def _band_browser(app, api_key=None):
+    c = app.test_client()
+    if api_key:
+        r = _band_req(c, "get", f"/auth/login?api_key={api_key}&next=/", follow_redirects=False)
+        assert r.status_code == 302, f"login failed: {r.status_code}"
+    return c
+
+
+def _assert_no_band(text, where):
+    assert "SECRETTOKEN" not in text, f"{where}: band text leaked"
+    assert "Secret heading" not in text, f"{where}: band heading leaked"
+    assert "<!-- private" not in text and "&lt;!-- private" not in text, f"{where}: band marker leaked"
+
+
+def _band_fixture(client, api_key):
+    """wiki agent1/bands: notes.md (public-edit) with one band, band-target.md
+    (public), granted.md (private, read-granted to bandreader). Resets notes.md
+    to the canonical content on every call."""
+    app = client.application
+    h = {"Authorization": f"Bearer {api_key}"}
+    if not _BAND_STATE:
+        r = _band_req(client, "post", "/api/v1/wikis", json={"slug": "bands", "title": "Bands"}, headers=h)
+        assert r.status_code == 201, r.data
+        for path, vis, body in [
+            ("notes.md", "public-edit", _BAND_NOTES),
+            ("band-target.md", "public", "---\ntitle: Band Target\nvisibility: public\n---\n# Band Target\n"),
+            ("granted.md", "private", "---\ntitle: Granted\nvisibility: private\n---\n# Granted\n\nshared line\n\n<!-- private -->\nGRANTEDSECRET\n<!-- /private -->\n"),
+        ]:
+            r = _band_req(client, "post", "/api/v1/wikis/agent1/bands/pages", json={"path": path, "content": body, "visibility": vis}, headers=h)
+            assert r.status_code == 201, r.data
+        for name in ("bandreader", "bandeditor"):
+            r = _band_req(app.test_client(), "post", "/api/v1/accounts", json={"username": name})
+            assert r.status_code == 201, r.data
+            _BAND_STATE[name] = r.get_json()["api_key"]
+        acl = "* private\nnotes.md @bandreader:read\ngranted.md @bandreader:read\nnotes.md @bandeditor:edit\n"
+        r = _band_req(client, "post", "/api/v1/wikis/agent1/bands/pages", json={"path": ".wikihub/acl", "content": acl}, headers=h)
+        assert r.status_code in (200, 201), r.data
+    r = _band_req(client, "put", "/api/v1/wikis/agent1/bands/pages/notes.md", json={"content": _BAND_NOTES}, headers=h)
+    assert r.status_code == 200, r.data
+    return h
+
+
+def test_private_bands_owner_render(client, api_key):
+    _band_fixture(client, api_key)
+    owner = _band_browser(client.application, api_key)
+    r = _band_req(owner, "get", "/@agent1/bands/notes")
+    assert r.status_code == 200
+    body = r.get_data(as_text=True)
+    assert 'class="private-band"' in body, "owner should see the labelled band"
+    assert "Private · only you" in body
+    assert "SECRETTOKEN" in body
+    assert "&lt;!-- private" not in body, "owner must not see the raw marker as text"
+    assert "This page has sections visible only to editors" not in body, "old banner removed"
+    # TOC lock for the private heading (rendered when >= 3 headings; check extract_toc directly)
+    from app.renderer import extract_toc, render_page
+    toc = extract_toc(render_page(_BAND_NOTES, mark_private_bands=True))
+    assert any(text == "Secret heading" and private for _, _, text, private in toc), toc
+    r = _band_req(owner, "get", "/@agent1/bands/notes", headers={"Accept": "text/markdown"})
+    assert "<!-- private -->" in r.get_data(as_text=True), "owner raw markdown keeps markers verbatim"
+
+
+def test_private_bands_anon_reader_surfaces(client, api_key):
+    _band_fixture(client, api_key)
+    anon = client.application.test_client()
+    checks = {
+        "reader html": ("get", "/@agent1/bands/notes", {}),
+        "fragment": ("get", "/@agent1/bands/notes?fragment=1", {}),
+        "text/markdown": ("get", "/@agent1/bands/notes", {"headers": {"Accept": "text/markdown"}}),
+        ".md url": ("get", "/@agent1/bands/notes.md", {"headers": {"Accept": "text/markdown"}}),
+        "api json": ("get", "/api/v1/wikis/agent1/bands/pages/notes.md", {}),
+        "api markdown": ("get", "/api/v1/wikis/agent1/bands/pages/notes.md", {"headers": {"Accept": "text/markdown"}}),
+        "wiki llms-full": ("get", "/@agent1/bands/llms-full.txt", {}),
+        "site llms-full": ("get", "/llms-full.txt", {}),
+    }
+    for where, (method, url, kw) in checks.items():
+        r = _band_req(anon, method, url, **kw)
+        assert r.status_code == 200, f"{where}: {r.status_code}"
+        text = r.get_data(as_text=True)
+        _assert_no_band(text, where)
+        assert 'class="private-band' not in text and "Private · only you" not in text, f"{where}: band wrapper leaked"
+        if where != "site llms-full" and where != "wiki llms-full":
+            assert "public outro" in text, f"{where}: public text missing"
+    data = _band_req(anon, "get", "/api/v1/wikis/agent1/bands/pages/notes.md").get_json()
+    _assert_no_band(data["excerpt"] or "", "api excerpt")
+
+
+def test_private_bands_search_and_excerpt(client, api_key):
+    _band_fixture(client, api_key)
+    app = client.application
+    anon = app.test_client()
+    r = _band_req(anon, "get", "/api/v1/search?q=SECRETTOKEN")
+    assert r.get_json()["total"] == 0, "band words must not be searchable"
+    r = _band_req(anon, "get", "/api/v1/search?q=SECRETTOKEN", headers={"Authorization": f"Bearer {_BAND_STATE['bandreader']}"})
+    assert r.get_json()["total"] == 0, "grantee search must not hit band words"
+    r = _band_req(anon, "get", "/api/v1/search?q=outro&scope=wiki&wiki=agent1/bands")
+    hits = [res for res in r.get_json()["results"] if res.get("path") == "notes.md"] or r.get_json()["results"]
+    assert hits, "public words remain searchable"
+    for res in hits:
+        _assert_no_band(json.dumps(res), "search result")
+    r = _band_req(anon, "get", "/@agent1/bands/notes")
+    meta = re.findall(r'<meta[^>]+(?:description)[^>]*>', r.get_data(as_text=True))
+    for tag in meta:
+        _assert_no_band(tag, "meta description")
+    # Owner search over band words is a documented v1 limitation (index is band-free).
+    r = _band_req(anon, "get", "/api/v1/search?q=SECRETTOKEN", headers={"Authorization": f"Bearer {api_key}"})
+    assert r.get_json()["total"] == 0
+
+
+def test_private_bands_acl_grantee_stripped(client, api_key):
+    _band_fixture(client, api_key)
+    reader = _band_browser(client.application, _BAND_STATE["bandreader"])
+    for url in ("/@agent1/bands/notes", "/@agent1/bands/granted", "/@agent1/bands/granted?fragment=1"):
+        r = _band_req(reader, "get", url)
+        assert r.status_code == 200, f"{url}: {r.status_code}"
+        text = r.get_data(as_text=True)
+        _assert_no_band(text, f"grantee {url}")
+        assert "GRANTEDSECRET" not in text, f"grantee {url}: band on private page leaked"
+    r = _band_req(reader, "get", "/@agent1/bands/granted")
+    assert "shared line" in r.get_data(as_text=True), "grantee still reads the granted private page"
+    hb = {"Authorization": f"Bearer {_BAND_STATE['bandreader']}"}
+    for path in ("notes.md", "granted.md"):
+        r = _band_req(client.application.test_client(), "get", f"/api/v1/wikis/agent1/bands/pages/{path}", headers=hb)
+        assert r.status_code == 200, r.data
+        text = r.get_data(as_text=True)
+        _assert_no_band(text, f"grantee api {path}")
+        assert "GRANTEDSECRET" not in text
+    r = _band_req(reader, "get", "/@agent1/bands/sidebar.json")
+    assert "notes.md" in r.get_data(as_text=True) or "notes" in r.get_data(as_text=True), "sidebar still lists the page"
+
+
+def test_private_bands_editor_and_suggest_do_not_load_bands(client, api_key):
+    _band_fixture(client, api_key)
+    anon = client.application.test_client()
+    for url in ("/@agent1/bands/notes/edit", "/@agent1/bands/-/suggest/notes.md"):
+        r = _band_req(anon, "get", url)
+        assert r.status_code == 200, f"{url}: {r.status_code}"
+        text = r.get_data(as_text=True)
+        _assert_no_band(text, f"anon {url}")
+        assert "public outro" in text
+    owner = _band_browser(client.application, api_key)
+    r = _band_req(owner, "get", "/@agent1/bands/notes/edit")
+    assert "SECRETTOKEN" in r.get_data(as_text=True), "owner editor loads the band"
+
+
+def _band_owner_content(client, api_key):
+    r = _band_req(client.application.test_client(), "get", "/api/v1/wikis/agent1/bands/pages/notes.md",
+                  headers={"Authorization": f"Bearer {api_key}", "Accept": "text/markdown"})
+    return r.get_data(as_text=True)
+
+
+def test_private_bands_survive_non_owner_edit(client, api_key):
+    from app.models import Proposal
+    _band_fixture(client, api_key)
+    anon = client.application.test_client()
+    shown = _band_req(anon, "get", "/api/v1/wikis/agent1/bands/pages/notes.md").get_json()["content"]
+    _assert_no_band(shown, "edit base")
+    r = _band_req(anon, "post", "/@agent1/bands/notes/edit", data={"content": shown.replace("public outro", "public outro edited")})
+    assert r.status_code == 302, f"merge edit: {r.status_code}"
+    full = _band_owner_content(client, api_key)
+    assert "public outro edited" in full, "edit applied"
+    assert "<!-- private -->" in full and "SECRETTOKEN" in full, "band survived non-owner edit"
+    # A rewrite that overlaps the band cannot merge: 409 + suggestion, page unchanged.
+    before = Proposal.query.count()
+    r = _band_req(anon, "post", "/@agent1/bands/notes/edit", data={"content": "# Rewritten\n\nall new text\n"})
+    assert r.status_code == 409, f"conflicting edit should 409, got {r.status_code}"
+    assert Proposal.query.count() == before + 1, "conflicting edit saved as a suggestion"
+    proposal = Proposal.query.order_by(Proposal.id.desc()).first()
+    for revision in proposal.revisions:
+        for patch in revision.patches:
+            _assert_no_band(patch.base_content, "conflict proposal base")
+    assert "SECRETTOKEN" in _band_owner_content(client, api_key), "stored page unchanged by conflicting edit"
+
+
+def test_private_bands_api_write_paths(client, api_key):
+    _band_fixture(client, api_key)
+    he = {"Authorization": f"Bearer {_BAND_STATE['bandeditor']}"}
+    c = client.application.test_client()
+    shown = _band_req(c, "get", "/api/v1/wikis/agent1/bands/pages/notes.md", headers=he).get_json()["content"]
+    _assert_no_band(shown, "editor api read")
+    r = _band_req(c, "put", "/api/v1/wikis/agent1/bands/pages/notes.md", headers=he,
+                  json={"content": shown.replace("public intro", "public intro via put")})
+    assert r.status_code == 200, r.data
+    _assert_no_band(r.get_data(as_text=True), "put response")
+    full = _band_owner_content(client, api_key)
+    assert "public intro via put" in full and "SECRETTOKEN" in full, "PUT merged around the band"
+    r = _band_req(c, "patch", "/api/v1/wikis/agent1/bands/pages/notes.md", headers=he,
+                  json={"append_section": {"heading": "Appended", "content": "appended line"}})
+    assert r.status_code == 200, r.data
+    full = _band_owner_content(client, api_key)
+    assert "appended line" in full and "SECRETTOKEN" in full, "append keeps the band"
+    r = _band_req(c, "patch", "/api/v1/wikis/agent1/bands/pages/notes.md", headers=he,
+                  json={"content": shown.replace("public outro", "public outro via patch")})
+    assert r.status_code == 200, r.data
+    assert "SECRETTOKEN" in _band_owner_content(client, api_key), "PATCH content merged around the band"
+    r = _band_req(c, "put", "/api/v1/wikis/agent1/bands/pages/notes.md", headers=he, json={"content": "# Replaced\n"})
+    assert r.status_code == 409, f"conflicting PUT should 409, got {r.status_code}"
+    data = r.get_json()
+    assert data["reason"] == "private_bands" and data["proposal_id"], data
+    _assert_no_band(r.get_data(as_text=True), "409 body")
+    assert "SECRETTOKEN" in _band_owner_content(client, api_key)
+
+
+def test_private_bands_suggest_accept_merges(client, api_key):
+    from app.models import Proposal
+    _band_fixture(client, api_key)
+    anon = client.application.test_client()
+    shown = _band_req(anon, "get", "/api/v1/wikis/agent1/bands/pages/notes.md").get_json()["content"]
+    r = _band_req(anon, "post", "/@agent1/bands/-/suggest/notes.md",
+                  data={"content": shown.replace("public intro", "public intro suggested"), "title": "band suggestion"})
+    assert r.status_code == 302, r.status_code
+    proposal = Proposal.query.filter_by(title="band suggestion").order_by(Proposal.id.desc()).first()
+    assert proposal is not None
+    owner = _band_browser(client.application, api_key)
+    r = _band_req(owner, "post", f"/@agent1/bands/-/proposals/{proposal.id}/accept")
+    assert r.status_code == 302, r.status_code
+    assert "conflict=1" not in r.headers.get("Location", ""), r.headers.get("Location")
+    full = _band_owner_content(client, api_key)
+    assert "public intro suggested" in full, "suggestion applied"
+    assert "SECRETTOKEN" in full, "band survived accepted suggestion"
+
+
+def test_private_bands_agent_chat_context(client, api_key):
+    import tempfile
+    from app.routes import agent_chat as ac
+    _band_fixture(client, api_key)
+    app = client.application
+    reader = User.query.filter_by(username="bandreader").first()
+    owner = User.query.filter_by(username="agent1").first()
+    # Captured system prompt for a non-owner vs the owner.
+    captured = []
+    original = ac._build_system_prompt
+    ac._build_system_prompt = lambda *a, **kw: captured.append(a[4]) or original(*a, **kw)
+    app.config["CURATOR_ENABLED"] = True
+    try:
+        for key in (_BAND_STATE["bandreader"], api_key):
+            # No LLM key is configured in tests, so the request ends after the
+            # system prompt is built; only the captured prompt matters here.
+            _band_req(app.test_client(), "post", "/api/v1/agent/chat",
+                      json={"message": "hi", "context": {"owner": "agent1", "wiki": "bands", "page_path": "notes.md"}},
+                      headers={"Authorization": f"Bearer {key}"})
+    finally:
+        ac._build_system_prompt = original
+        app.config["CURATOR_ENABLED"] = False
+    assert len(captured) >= 2, f"system prompt not built: {len(captured)}"
+    _assert_no_band(captured[0], "non-owner curator prompt")
+    assert "SECRETTOKEN" in captured[-1], "owner curator prompt includes the band"
+    # Tool layer: non-owner read_file/search_content never see band text.
+    with tempfile.TemporaryDirectory() as work_dir:
+        session = _make_curator_session(app, work_dir, "agent1", "bands", "bandreader", reader.id)
+        out = ac._execute_tool("read_file", {"path": "agent1/bands/notes.md"}, session)
+        _assert_no_band(out, "curator read_file")
+        assert "public outro" in out
+        out = ac._execute_tool("search_content", {"query": "SECRETTOKEN"}, session)
+        assert out.startswith("No matches found"), f"curator search leaked: {out}"
+        out = ac._execute_tool("search_content", {"query": "outro"}, session)
+        assert "public outro" in out, f"curator search lost public text: {out}"
+    with tempfile.TemporaryDirectory() as work_dir:
+        session = _make_curator_session(app, work_dir, "agent1", "bands", "agent1", owner.id)
+        out = ac._execute_tool("read_file", {"path": "agent1/bands/notes.md"}, session)
+        assert "SECRETTOKEN" in out, "owner curator read_file includes the band"
+
+
+def test_private_bands_history_and_diff(client, api_key):
+    _band_fixture(client, api_key)
+    app = client.application
+    owner = _band_browser(app, api_key)
+    body = _band_req(owner, "get", "/@agent1/bands/notes/history").get_data(as_text=True)
+    shas = list(dict.fromkeys(re.findall(r"\b[0-9a-f]{40}\b", body)))
+    assert shas, "owner history lists commits"
+    r = _band_req(owner, "get", f"/@agent1/bands/commit/{shas[0]}")
+    assert r.status_code == 200
+    anon = app.test_client()
+    reader = _band_browser(app, _BAND_STATE["bandreader"])
+    for who, c in (("anon", anon), ("grantee", reader)):
+        for url in ("/@agent1/bands/history", "/@agent1/bands/notes/history", "/api/v1/wikis/agent1/bands/history"):
+            r = _band_req(c, "get", url)
+            _assert_no_band(r.get_data(as_text=True), f"{who} {url}")
+        for sha in shas[:3]:
+            r = _band_req(c, "get", f"/@agent1/bands/commit/{sha}")
+            _assert_no_band(r.get_data(as_text=True), f"{who} authoritative commit {sha[:8]}")
+        mirror_shas = re.findall(r"\b[0-9a-f]{40}\b", _band_req(c, "get", "/@agent1/bands/history").get_data(as_text=True))
+        for sha in mirror_shas[:2]:
+            r = _band_req(c, "get", f"/@agent1/bands/commit/{sha}")
+            _assert_no_band(r.get_data(as_text=True), f"{who} mirror commit {sha[:8]}")
+    r = _band_req(app.test_client(), "get", "/api/v1/wikis/agent1/bands/history",
+                  headers={"Authorization": f"Bearer {_BAND_STATE['bandreader']}"})
+    _assert_no_band(r.get_data(as_text=True), "grantee api history")
+
+
+def test_private_bands_mirror_zip_clone_fork(client, api_key):
+    from app.git_backend import _repo_path
+    _band_fixture(client, api_key)
+    app = client.application
+    r = _band_req(app.test_client(), "get", "/@agent1/bands.zip")
+    assert r.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(r.data)) as zf:
+        names = [n for n in zf.namelist() if n.endswith("notes.md")]
+        assert names, zf.namelist()
+        _assert_no_band(zf.read(names[0]).decode(), "anon zip")
+    pub = _repo_path("agent1", "bands", public=True)
+    shown = subprocess.run(["git", "-C", pub, "show", "HEAD:notes.md"], capture_output=True, text=True, check=True).stdout
+    _assert_no_band(shown, "public mirror")
+    assert "public outro" in shown
+    count = subprocess.run(["git", "-C", pub, "rev-list", "--count", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+    assert count == "1", f"mirror must be a parentless snapshot, got {count} commits"
+    r = _band_req(app.test_client(), "post", "/api/v1/wikis/agent1/bands/fork",
+                  headers={"Authorization": f"Bearer {_BAND_STATE['bandreader']}"})
+    assert r.status_code in (200, 201), r.data
+    forked = subprocess.run(["git", "-C", _repo_path("bandreader", "bands"), "show", "HEAD:notes.md"], capture_output=True, text=True)
+    _assert_no_band(forked.stdout, "fork")
+
+
+def test_private_bands_mirror_fail_closed(client, api_key):
+    import app.git_sync as gs
+    from app.git_backend import _repo_path
+    from app.renderer import render_page
+    _band_fixture(client, api_key)
+    original = gs.strip_private_bands
+
+    def boom(_content):
+        raise RuntimeError("stripper exploded")
+
+    gs.strip_private_bands = boom
+    try:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            gs.regenerate_public_mirror("agent1", "bands", [])
+        assert "notes.md" in buf.getvalue(), "regen should warn about the skipped file"
+    finally:
+        gs.strip_private_bands = original
+    pub = _repo_path("agent1", "bands", public=True)
+    listing = subprocess.run(["git", "-C", pub, "ls-tree", "-r", "--name-only", "HEAD"], capture_output=True, text=True).stdout
+    assert "notes.md" not in listing, "fail closed: unstrippable file must be absent from the mirror"
+    from app.wiki_ops import load_acl_rules
+    gs.regenerate_public_mirror("agent1", "bands", load_acl_rules("agent1", "bands"))
+    # Defence in depth: render_page strips when not told to mark bands.
+    _assert_no_band(render_page(_BAND_NOTES), "render_page default")
+
+
+def test_private_bands_wikilinks_hidden(client, api_key):
+    _band_fixture(client, api_key)
+    app = client.application
+    anon = app.test_client()
+    r = _band_req(anon, "get", "/api/v1/wikis/agent1/bands/pages/band-target.md?include=backlinks")
+    assert all(b["path"] != "notes.md" for b in r.get_json()["backlinks"]), "anon backlinks expose band link"
+    r = _band_req(anon, "get", "/api/v1/wikis/agent1/bands/pages/band-target.md/backlinks")
+    assert all(b["path"] != "notes.md" for b in r.get_json()["backlinks"])
+    r = _band_req(anon, "get", "/@agent1/bands/band-target/graph.json")
+    assert "Band Notes" not in r.get_data(as_text=True), "anon graph exposes band link"
+    r = _band_req(anon, "get", "/@agent1/bands/notes/graph.json")
+    assert "Band Target" not in r.get_data(as_text=True), "anon outgoing graph exposes band link"
+    r = _band_req(anon, "get", "/@agent1/bands/graph.json")
+    assert not any(l for l in r.get_json().get("links", [])), "anon full graph exposes band edge"
+    h = {"Authorization": f"Bearer {api_key}"}
+    r = _band_req(app.test_client(), "get", "/api/v1/wikis/agent1/bands/pages/band-target.md?include=backlinks", headers=h)
+    assert any(b["path"] == "notes.md" for b in r.get_json()["backlinks"]), "owner keeps band backlinks"
+
+
+def test_private_bands_unclosed_and_protected(client, api_key):
+    h = _band_fixture(client, api_key)
+    app = client.application
+    body = ("---\ntitle: Edge\nvisibility: public\n---\n# Edge\n\nvisible start\n\n"
+            "```\n<!-- private -->\nliteral code\n```\n\nafter code\n\n"
+            "<!-- private @alice -->\nUNCLOSEDSECRET to the end\n\nmore hidden\n")
+    r = _band_req(client, "post", "/api/v1/wikis/agent1/bands/pages", json={"path": "edge.md", "content": body, "visibility": "public"}, headers=h)
+    if r.status_code == 409:
+        r = _band_req(client, "put", "/api/v1/wikis/agent1/bands/pages/edge.md", json={"content": body}, headers=h)
+    assert r.status_code in (200, 201), r.data
+    anon = app.test_client()
+    html = _band_req(anon, "get", "/@agent1/bands/edge").get_data(as_text=True)
+    assert "UNCLOSEDSECRET" not in html and "more hidden" not in html, "unclosed band strips to EOF"
+    assert "&lt;!-- private --&gt;" in html and "literal code" in html, "marker inside code is literal"
+    assert "after code" in html
+
+
+def test_private_bands_agent_surface_docs(client):
+    anon = client.application.test_client()
+    for url in ("/agents", "/llms.txt", "/AGENTS.md"):
+        text = _band_req(anon, "get", url).get_data(as_text=True)
+        assert "<!-- private -->" in text or "&lt;!-- private --&gt;" in text, f"{url} documents private sections"
+
+
+def test_private_bands_fence_injection_rejected(client, api_key):
+    """Review CRITICAL 1: a contributor prepending an unclosed ``` fence must not
+    turn the owner's markers into literal code and publish the band."""
+    from app.models import Proposal
+    _band_fixture(client, api_key)
+    app = client.application
+    anon = app.test_client()
+    shown = _band_req(anon, "get", "/api/v1/wikis/agent1/bands/pages/notes.md").get_json()["content"]
+    attacked = shown.replace("# Notes\n", "# Notes\n\n```\n", 1)
+    before = Proposal.query.count()
+    r = _band_req(anon, "post", "/@agent1/bands/notes/edit", data={"content": attacked})
+    assert r.status_code == 409, f"fence injection via web edit must 409, got {r.status_code}"
+    he = {"Authorization": f"Bearer {_BAND_STATE['bandeditor']}"}
+    r = _band_req(app.test_client(), "put", "/api/v1/wikis/agent1/bands/pages/notes.md", headers=he, json={"content": attacked})
+    assert r.status_code == 409, f"fence injection via API must 409, got {r.status_code}"
+    assert Proposal.query.count() == before + 2, "both attempts saved as suggestions"
+    for url, kw in (("/@agent1/bands/notes", {}), ("/api/v1/wikis/agent1/bands/pages/notes.md", {})):
+        _assert_no_band(_band_req(anon, "get", url, **kw).get_data(as_text=True), f"after fence attack {url}")
+    from app.content_utils import strip_private_bands
+    from app.private_bands import PrivateBandConflict, merge_into_bands
+    try:
+        merge_into_bands(_BAND_NOTES, attacked)
+        raise AssertionError("merge_into_bands accepted a fence injection")
+    except PrivateBandConflict:
+        pass
+    assert "SECRETTOKEN" not in strip_private_bands(_band_owner_content(client, api_key)), "stored page still hides the band"
+
+
+def test_private_bands_normalized_merge_is_clean(client, api_key):
+    """Review 2: band at EOF + unsorted frontmatter; a non-owner editing only the
+    first paragraph must merge cleanly (base normalized like the submission)."""
+    h = _band_fixture(client, api_key)
+    app = client.application
+    body = ("---\nvisibility: public-edit\ntitle: Tail Band\nzeta: 1\nalpha: 2\n---\n"
+            "first paragraph\n\nmiddle paragraph\n\n<!-- private -->\nTAILSECRET\n<!-- /private -->\n")
+    r = _band_req(client, "post", "/api/v1/wikis/agent1/bands/pages", json={"path": "tail.md", "content": body, "visibility": "public-edit"}, headers=h)
+    if r.status_code == 409:
+        r = _band_req(client, "put", "/api/v1/wikis/agent1/bands/pages/tail.md", json={"content": body}, headers=h)
+    assert r.status_code in (200, 201), r.data
+    # The owner's stored file keeps its unsorted frontmatter.
+    from app.git_sync import sync_page_to_repo
+    sync_page_to_repo("agent1", "bands", "tail.md", body)
+    anon = app.test_client()
+    shown = _band_req(anon, "get", "/api/v1/wikis/agent1/bands/pages/tail.md").get_json()["content"]
+    assert "TAILSECRET" not in shown
+    r = _band_req(anon, "post", "/@agent1/bands/tail/edit", data={"content": shown.replace("first paragraph", "first paragraph edited")})
+    assert r.status_code == 302, f"web edit should merge cleanly, got {r.status_code}"
+    he = {"Authorization": f"Bearer {_BAND_STATE['bandeditor']}"}
+    shown = _band_req(anon, "get", "/api/v1/wikis/agent1/bands/pages/tail.md").get_json()["content"]
+    r = _band_req(app.test_client(), "put", "/api/v1/wikis/agent1/bands/pages/tail.md", headers=he,
+                  json={"content": shown.replace("first paragraph edited", "first paragraph edited twice")})
+    assert r.status_code == 200, f"API PUT should merge cleanly, got {r.status_code} {r.data[:200]}"
+    full = _band_req(app.test_client(), "get", "/api/v1/wikis/agent1/bands/pages/tail.md",
+                     headers={"Authorization": f"Bearer {api_key}", "Accept": "text/markdown"}).get_data(as_text=True)
+    assert "first paragraph edited twice" in full and "TAILSECRET" in full, full
+
+
+def test_private_bands_scanner_edge_cases(client, api_key):
+    """Review 3 + 4: non-\\n line separators must not shift code ranges, and a
+    leading '---' horizontal rule is not frontmatter."""
+    from app.content_utils import strip_private_bands
+    from app.renderer import render_page
+    # Extra str.splitlines() breaks (\x0b etc.) before a fence used to shift the
+    # fence's computed range back over the band, so both markers looked like
+    # "code" and nothing was stripped.
+    for sep in ("\x0b", "\x0c", "\x1c", "\x85", "\u2028", "\u2029"):
+        doc = f"a{sep}b{sep}c{sep}d\n<!-- private -->\nSEPSECRET\n<!-- /private -->\n```\ncode\n```\n"
+        assert "SEPSECRET" not in strip_private_bands(doc), repr(sep)
+        assert "SEPSECRET" not in render_page(doc), repr(sep)
+    hr = "---\n<!-- private -->\nHRSECRET\n<!-- /private -->\n---\nbody text\n"
+    assert "HRSECRET" not in strip_private_bands(hr), "band inside a leading hr block leaked"
+    hr2 = "---\n\nIntro line that is not yaml: really, it is prose\n\n<!-- private -->\nHR2SECRET\n<!-- /private -->\n\n---\nmore\n"
+    assert "HR2SECRET" not in strip_private_bands(hr2)
+    # Real frontmatter is still preserved byte-for-byte.
+    fm = "---\nzeta: 1\ntitle: X\n---\nA\n<!-- private -->\nS\n<!-- /private -->\n"
+    assert strip_private_bands(fm).startswith("---\nzeta: 1\ntitle: X\n---\n")
+    # And through the live API/mirror for a page whose body starts with an hr.
+    h = _band_fixture(client, api_key)
+    r = _band_req(client, "post", "/api/v1/wikis/agent1/bands/pages",
+                  json={"path": "hr.md", "content": "---\nvisibility: public\n---\n" + hr2, "visibility": "public"}, headers=h)
+    assert r.status_code in (201, 409), r.data
+    anon = client.application.test_client()
+    for url, kw in (("/@agent1/bands/hr", {}), ("/@agent1/bands/hr", {"headers": {"Accept": "text/markdown"}})):
+        assert "HR2SECRET" not in _band_req(anon, "get", url, **kw).get_data(as_text=True), url
+
+# --- audit 2026-11-03 security regressions -----------------------------------
+# Each test below fails on origin/main 8f6882e/f3bea68 and passes with the fix.
+
+
+def _secfix_get(browser, path, **kwargs):
+    """GET with a fresh flask-login user lookup. The harness keeps one outer
+    app context, so `g._login_user` would otherwise leak between clients."""
+    from flask import g
+    g.pop("_login_user", None)
+    return browser.get(path, **kwargs)
+
+
+def _secfix_post(browser, path, **kwargs):
+    from flask import g
+    g.pop("_login_user", None)
+    return browser.post(path, **kwargs)
+
+
+def _secfix_signed_in(app, api_key):
+    browser = app.test_client()
+    r = _secfix_get(browser, f"/auth/login?api_key={api_key}&next=/", follow_redirects=False)
+    assert r.status_code == 302, f"api-key login failed: {r.status_code}"
+    return browser
+
+
+def _secfix_partial_grant_fixture(client, api_key, slug):
+    h = {"Authorization": f"Bearer {api_key}"}
+    r = client.post("/api/v1/wikis", json={"slug": slug, "title": "Partial Grant"}, headers=h)
+    assert r.status_code == 201, r.data
+    for path, title, body in [
+        ("research/paper.md", "Granted Paper", "granted-body-marker"),
+        ("zqxsecret.md", "Zqx Hidden Title", "zqx-private-body-marker"),
+    ]:
+        r = client.post(f"/api/v1/wikis/agent1/{slug}/pages", json={
+            "path": path,
+            "content": f"---\ntitle: {title}\nvisibility: private\ntags: [audtag]\n---\n\n{body}",
+            "visibility": "private",
+        }, headers=h)
+        assert r.status_code == 201, r.data
+    grantee = f"{slug}-guest"
+    r = client.post("/api/v1/accounts", json={"username": grantee})
+    assert r.status_code == 201, r.data
+    guest_key = r.get_json()["api_key"]
+    r = client.post(f"/api/v1/wikis/agent1/{slug}/share", json={
+        "pattern": "research/*", "username": grantee, "role": "read",
+    }, headers=h)
+    assert r.status_code == 200, r.data
+    return h, guest_key
+
+
+def test_partial_grantee_history_and_diff_hide_private_pages(app, client, api_key):
+    """wikihub-vv7q + wikihub-sk06: a user granted only `research/*` must not
+    read other private pages through /history, /commit/<sha>, page history,
+    or the sidebar those routes render (tag index included)."""
+    slug = "secfix-hist"
+    _, guest_key = _secfix_partial_grant_fixture(client, api_key, slug)
+    repo = os.path.join(os.environ["REPOS_DIR"], "agent1", f"{slug}.git")
+    secret_sha = subprocess.check_output(
+        ["git", "-C", repo, "log", "-1", "--format=%H", "--", "zqxsecret.md"], text=True).strip()
+    granted_sha = subprocess.check_output(
+        ["git", "-C", repo, "log", "-1", "--format=%H", "--", "research/paper.md"], text=True).strip()
+    assert secret_sha and granted_sha
+
+    guest = _secfix_signed_in(app, guest_key)
+    leak_markers = ("zqxsecret", "Zqx Hidden Title", "zqx-private-body-marker")
+
+    r = _secfix_get(guest, f"/@agent1/{slug}/history")
+    assert r.status_code == 200, r.status_code
+    body = r.get_data(as_text=True)
+    assert "research/paper.md" in body, "grantee should still see history of granted pages"
+    for marker in leak_markers:
+        assert marker not in body, f"/history leaked {marker!r} to a partial grantee"
+
+    r = _secfix_get(guest, f"/@agent1/{slug}/commit/{secret_sha}")
+    assert r.status_code == 404, f"private commit diff must 404 for partial grantee, got {r.status_code}"
+    for marker in leak_markers:
+        assert marker not in r.get_data(as_text=True)
+
+    # Non-owners read the band-stripped mirror history (wikihub-oorq), which
+    # does not carry private pages, so a granted *private* page's commits are
+    # not served to the grantee (fail closed; a band-stripped authoritative
+    # diff is follow-up work). The authoritative id must 404, without leaks.
+    r = _secfix_get(guest, f"/@agent1/{slug}/commit/{granted_sha}")
+    assert r.status_code == 404, f"authoritative commit must 404 for a non-owner, got {r.status_code}"
+    body = r.get_data(as_text=True)
+    for marker in leak_markers:
+        assert marker not in body, f"/commit sidebar leaked {marker!r}"
+
+    r = _secfix_get(guest, f"/@agent1/{slug}/research/paper/history")
+    assert r.status_code == 200, r.status_code
+    for marker in leak_markers:
+        assert marker not in r.get_data(as_text=True), f"page history leaked {marker!r}"
+
+    r = _secfix_get(guest, f"/@agent1/{slug}/tag/audtag")
+    assert r.status_code == 200, r.status_code
+    body = r.get_data(as_text=True)
+    assert "Granted Paper" in body
+    for marker in leak_markers:
+        assert marker not in body, f"tag index leaked {marker!r}"
+
+    # Malformed object ids never reach git.
+    assert _secfix_get(guest, f"/@agent1/{slug}/commit/--output=x").status_code == 404
+
+    # The owner keeps the full record.
+    owner = _secfix_signed_in(app, api_key)
+    r = _secfix_get(owner, f"/@agent1/{slug}/history")
+    assert "zqxsecret.md" in r.get_data(as_text=True)
+    r = _secfix_get(owner, f"/@agent1/{slug}/commit/{secret_sha}")
+    assert r.status_code == 200 and "zqx-private-body-marker" in r.get_data(as_text=True)
+
+
+def test_unindexed_private_markdown_fails_closed(app, client, api_key):
+    """wikihub-l5oo: a .md that exists in git without a Page row (hook
+    failure, admin row delete, revert of a deleted path) must be ACL-checked
+    from its own frontmatter before the reader serves it."""
+    h = {"Authorization": f"Bearer {api_key}"}
+    slug = "secfix-unindexed"
+    r = client.post("/api/v1/wikis", json={"slug": slug, "title": "Unindexed"}, headers=h)
+    assert r.status_code == 201
+    for path, vis, marker in [("hookfail.md", "private", "unindexed-private-marker"),
+                              ("openfile.md", "public", "unindexed-public-marker")]:
+        r = client.post(f"/api/v1/wikis/agent1/{slug}/pages", json={
+            "path": path, "visibility": vis,
+            "content": f"---\nvisibility: {vis}\n---\n\n{marker}",
+        }, headers=h)
+        assert r.status_code == 201, r.data
+    wiki = Wiki.query.join(User, Wiki.owner_id == User.id).filter(User.username == "agent1", Wiki.slug == slug).one()
+    Page.query.filter(Page.wiki_id == wiki.id, Page.path.in_(["hookfail.md", "openfile.md"])).delete(synchronize_session=False)
+    db.session.commit()
+
+    anon = app.test_client()
+    r = _secfix_get(anon, f"/@agent1/{slug}/hookfail")
+    assert r.status_code == 404, f"anon read unindexed private page: {r.status_code}"
+    assert "unindexed-private-marker" not in r.get_data(as_text=True)
+    r = _secfix_get(anon, f"/@agent1/{slug}/hookfail", headers={"Accept": "text/markdown"})
+    assert r.status_code == 401 and "unindexed-private-marker" not in r.get_data(as_text=True)
+
+    r = client.post("/api/v1/accounts", json={"username": "secfix-stranger"})
+    stranger = _secfix_signed_in(app, r.get_json()["api_key"])
+    r = _secfix_get(stranger, f"/@agent1/{slug}/hookfail")
+    assert r.status_code == 404 and "unindexed-private-marker" not in r.get_data(as_text=True)
+
+    # No over-restriction: public unindexed content and the owner still read.
+    r = _secfix_get(app.test_client(), f"/@agent1/{slug}/openfile")
+    assert r.status_code == 200 and "unindexed-public-marker" in r.get_data(as_text=True)
+    owner = _secfix_signed_in(app, api_key)
+    r = _secfix_get(owner, f"/@agent1/{slug}/hookfail")
+    assert r.status_code == 200 and "unindexed-private-marker" in r.get_data(as_text=True)
+
+
+def test_web_new_page_ignores_contributor_visibility_frontmatter(app, client, api_key):
+    """wikihub-tq01: like the API, web /new must not let a non-owner pick a
+    page's visibility through frontmatter on an unlisted-edit wiki."""
+    h = {"Authorization": f"Bearer {api_key}"}
+    slug = "secfix-newvis"
+    r = client.post("/api/v1/wikis", json={"slug": slug, "title": "New Vis"}, headers=h)
+    assert r.status_code == 201
+    r = client.put(f"/api/v1/wikis/agent1/{slug}/pages/.wikihub/acl", json={"content": "* unlisted-edit\n"}, headers=h)
+    assert r.status_code in (200, 201), r.data
+
+    anon = app.test_client()
+    for path, requested in [("contrib-public", "public-edit"), ("contrib-private", "private")]:
+        r = _secfix_post(anon, f"/@agent1/{slug}/new", data={
+            "path": path,
+            "content": f"---\ntitle: Contribution\nvisibility: {requested}\n---\n\nanon contribution",
+        }, follow_redirects=False)
+        assert r.status_code == 302, f"anon /new on unlisted-edit wiki: {r.status_code}"
+        r = client.get(f"/api/v1/wikis/agent1/{slug}/pages/{path}.md", headers=h)
+        assert r.status_code == 200, r.data
+        data = r.get_json()
+        assert data["visibility"] == "unlisted-edit", f"contributor chose {requested!r}, stored {data['visibility']!r}"
+        assert f"visibility: {requested}" not in data["content"]
+
+
+def test_service_worker_never_caches_signed_in_html(app, client, api_key):
+    """wikihub-miq4: only signed-out HTML is offered to the service worker for
+    offline storage; sign-out clears caches."""
+    h = {"Authorization": f"Bearer {api_key}"}
+    slug = "secfix-sw"
+    r = client.post("/api/v1/wikis", json={"slug": slug, "title": "SW"}, headers=h)
+    assert r.status_code == 201
+    r = client.post(f"/api/v1/wikis/agent1/{slug}/pages", json={
+        "path": "open.md", "visibility": "public", "content": "---\nvisibility: public\n---\n\nopen page"}, headers=h)
+    assert r.status_code == 201
+
+    r = _secfix_get(app.test_client(), f"/@agent1/{slug}/open")
+    assert r.status_code == 200
+    assert r.headers.get("X-WikiHub-Offline-Cache") == "public"
+    assert "private" not in r.headers.get("Cache-Control", "")
+
+    owner = _secfix_signed_in(app, api_key)
+    r = _secfix_get(owner, f"/@agent1/{slug}/open")
+    assert r.status_code == 200
+    assert "X-WikiHub-Offline-Cache" not in r.headers, "signed-in HTML must not opt into offline caching"
+    assert "private" in r.headers.get("Cache-Control", "")
+
+    r = _secfix_get(owner, "/auth/logout", follow_redirects=False)
+    assert r.status_code == 302
+    assert "cache" in r.headers.get("Clear-Site-Data", "")
+
+    sw = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app", "static", "sw.js")).read()
+    assert "X-WikiHub-Offline-Cache" in sw and "isOfflineCacheable(fresh)" in sw
+    assert "v3-2026-04-25" not in sw, "CACHE_VERSION must change so v3 page caches are dropped"
+    assert "/auth/logout" in sw and "purgePageCache" in sw
+
+
+def test_templates_do_not_interpolate_user_values_into_inline_js(app, client, api_key):
+    """wikihub-l1w4: names, titles, grant patterns and Curator output must
+    not reach inline event handlers or innerHTML as markup."""
+    h = {"Authorization": f"Bearer {api_key}"}
+    slug = "secfix-xss"
+    r = client.post("/api/v1/wikis", json={"slug": slug, "title": "Q'uote</x> Wiki"}, headers=h)
+    assert r.status_code == 201
+    r = client.post(f"/api/v1/wikis/agent1/{slug}/pages", json={
+        "path": "it's.md", "visibility": "private", "content": "---\ntitle: It's\n---\n\nquote page"}, headers=h)
+    assert r.status_code == 201, r.data
+    r = client.post("/api/v1/accounts", json={"username": "secfix-xss-guest"})
+    r = client.post(f"/api/v1/wikis/agent1/{slug}/share", json={
+        "pattern": "it's.md", "username": "secfix-xss-guest", "role": "read"}, headers=h)
+    assert r.status_code == 200, r.data
+
+    owner = _secfix_signed_in(app, api_key)
+    pages = {
+        "wiki index": _secfix_get(owner, f"/@agent1/{slug}").get_data(as_text=True),
+        "reader": _secfix_get(owner, f"/@agent1/{slug}/it's").get_data(as_text=True),
+        "profile": _secfix_get(owner, "/@agent1").get_data(as_text=True),
+        "shared": _secfix_get(owner, "/shared").get_data(as_text=True),
+    }
+    inline_calls = re.compile(r"on\w+=\"[^\"]*\b(deleteMgmtItem|deleteWiki|revokeGrant|revokeShare)\('")
+    for name, html in pages.items():
+        assert not inline_calls.search(html), f"{name}: user values interpolated into an inline handler"
+    assert "Q&#39;uote&lt;/x&gt; Wiki" in pages["profile"]
+    assert 'data-pattern="it&#39;s.md"' in pages["shared"]
+    assert 'data-revoke-user="secfix-xss-guest"' in pages["reader"]
+
+    reader_src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app", "templates", "reader.html")).read()
+    assert '<a href="$2"' not in reader_src, "Curator renderer must not build links from raw markdown"
+    assert "innerHTML = curatorRenderMarkdown" not in reader_src
+    assert "curatorSafeHref" in reader_src
+    assert "'<span class=\"sg-name\">' + u.display_name" not in reader_src
+
+
+def test_concurrent_repo_writes_keep_every_commit(app, client, api_key):
+    """wikihub-xkmk: parallel writers to one wiki must not lose each other's
+    files (lock + compare-and-swap ref update), and a ref that moved under
+    a writer (e.g. a git push) is rebuilt on, not overwritten."""
+    import threading
+    from app import git_sync
+
+    h = {"Authorization": f"Bearer {api_key}"}
+    slug = "secfix-race"
+    r = client.post("/api/v1/wikis", json={"slug": slug, "title": "Race"}, headers=h)
+    assert r.status_code == 201
+    errors = []
+
+    def writer(i):
+        try:
+            with app.app_context():
+                git_sync.sync_page_to_repo("agent1", slug, f"race/{i}.md", f"race {i}\n")
+        except Exception as exc:  # pragma: no cover - reported below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=writer, args=(i,)) for i in range(12)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors, errors
+    files = git_sync.list_files_in_repo("agent1", slug)
+    missing = [i for i in range(12) if f"race/{i}.md" not in files]
+    assert not missing, f"lost concurrent writes: {missing}"
+
+    # Simulate a push landing between our read-tree and update-ref.
+    repo = git_sync._repo_path("agent1", slug)
+    real_cas = git_sync._cas_update_main
+    state = {"moved": False}
+
+    def racing_cas(repo_path, new_commit, expected_old):
+        if not state["moved"] and repo_path == repo:
+            state["moved"] = True
+            git_sync._apply_repo_changes_once(repo, [{"action": "write", "path": "pushed.md", "content": "pushed\n"}],
+                                              "simulated push", "pusher", "p@x")
+        return real_cas(repo_path, new_commit, expected_old)
+
+    git_sync._cas_update_main = racing_cas
+    try:
+        assert git_sync.sync_page_to_repo("agent1", slug, "mine.md", "mine\n")
+    finally:
+        git_sync._cas_update_main = real_cas
+    files = git_sync.list_files_in_repo("agent1", slug)
+    assert "pushed.md" in files and "mine.md" in files, "a concurrent ref move discarded a commit"
 
 
 def run_all():
@@ -10575,6 +11724,7 @@ def run_all():
             ("login limiter ignores spoofed X-Forwarded-For; security events logged", lambda: test_login_rate_limit_ignores_spoofed_forwarded_for_and_logs_security_events(app, client)),
             ("Ideaflow OIDC feature flag off removes routes+UI (wikihub-39pe)", lambda: test_ideaflow_oidc_feature_flag_off(app, client)),
             ("Ideaflow OIDC new login creates local session (wikihub-39pe)", lambda: test_ideaflow_oidc_new_login_creates_local_session(app, client)),
+            ("WIT feedback menu + verified token (julr.6)", lambda: test_wit_feedback_menu_and_verified_token(app, client)),
             ("Ideaflow OIDC repeat exact subject login (wikihub-39pe)", lambda: test_ideaflow_oidc_repeat_exact_subject_login(app, client)),
             ("Ideaflow OIDC signed-in linking to existing user (wikihub-39pe)", lambda: test_ideaflow_oidc_signed_in_linking_to_existing_user(app, client)),
             ("Ideaflow OIDC 'Switch account' sends prompt=select_account only for the allowlisted flag (code-xbh.5)", lambda: test_ideaflow_oidc_switch_account_prompts_chooser_only_when_allowlisted(app, client)),
@@ -10648,6 +11798,10 @@ def run_all():
             ("list wikis API", lambda: test_list_wikis_api(client, key)),
             ("bulk sharing (wikihub-iga9)", lambda: test_bulk_sharing(client, key)),
             ("suggested edit proposal flow (wikihub-b6lc)", lambda: test_suggested_edit_proposal_flow(client, key)),
+            ("editor ?mode= override (wikihub-k7k5)", lambda: test_editor_mode_query_param(client, key)),
+            ("suggest edit uses Visual editor, hides frontmatter (wikihub-k7k5)", lambda: test_suggest_edit_uses_visual_editor(client, key)),
+            ("suggest edit stale-base flag (wikihub-k7k5)", lambda: test_suggest_edit_stale_base_flag(client, key)),
+            ("suggest resubmit keeps frontmatter lock (wikihub-k7k5)", lambda: test_suggest_resubmit_keeps_frontmatter_lock(client, key)),
             ("proposal comments + revisions (wikihub-7cus)", lambda: test_proposal_comments_and_revision_flow(client, key)),
             ("pending invite lifecycle (wikihub-skp7)", lambda: test_pending_invite_lifecycle(client, key)),
             ("share sends email (wikihub-exj1 mock)", lambda: test_share_sends_email(client, key)),
@@ -10714,13 +11868,41 @@ def run_all():
             ("global activity rows avoid nested anchors", lambda: test_global_activity_rows_do_not_nest_anchors(client, key)),
             ("global activity pagination", lambda: test_activity_pagination(client, key)),
             ("anonymous search total filters normalized plumbing", lambda: test_anonymous_search_total_filters_normalized_plumbing(client, key)),
+            ("private bands: owner render + label (wikihub-oorq)", lambda: test_private_bands_owner_render(client, key)),
+            ("private bands: anon reader surfaces stripped", lambda: test_private_bands_anon_reader_surfaces(client, key)),
+            ("private bands: search + excerpt band-free", lambda: test_private_bands_search_and_excerpt(client, key)),
+            ("private bands: ACL grantee stripped", lambda: test_private_bands_acl_grantee_stripped(client, key)),
+            ("private bands: editor/suggest forms band-free", lambda: test_private_bands_editor_and_suggest_do_not_load_bands(client, key)),
+            ("private bands: survive non-owner web edit / 409", lambda: test_private_bands_survive_non_owner_edit(client, key)),
+            ("private bands: API write paths merge / 409", lambda: test_private_bands_api_write_paths(client, key)),
+            ("private bands: accepted suggestion merges", lambda: test_private_bands_suggest_accept_merges(client, key)),
+            ("private bands: curator context + tools", lambda: test_private_bands_agent_chat_context(client, key)),
+            ("private bands: history + diff", lambda: test_private_bands_history_and_diff(client, key)),
+            ("private bands: mirror/zip/clone/fork", lambda: test_private_bands_mirror_zip_clone_fork(client, key)),
+            ("private bands: mirror fail closed", lambda: test_private_bands_mirror_fail_closed(client, key)),
+            ("private bands: wikilinks hidden", lambda: test_private_bands_wikilinks_hidden(client, key)),
+            ("private bands: unclosed + code-protected", lambda: test_private_bands_unclosed_and_protected(client, key)),
+            ("private bands: agent surface docs", lambda: test_private_bands_agent_surface_docs(client)),
+            ("private bands: unclosed-fence injection rejected (review C1)", lambda: test_private_bands_fence_injection_rejected(client, key)),
+            ("private bands: normalized merge base is clean (review 2)", lambda: test_private_bands_normalized_merge_is_clean(client, key)),
+            ("private bands: scanner line breaks + leading hr (review 3/4)", lambda: test_private_bands_scanner_edge_cases(client, key)),
+            ("partial grantee history/diff/sidebar hide private pages (wikihub-vv7q, wikihub-sk06)", lambda: test_partial_grantee_history_and_diff_hide_private_pages(app, client, key)),
+            ("unindexed private markdown fails closed (wikihub-l5oo)", lambda: test_unindexed_private_markdown_fails_closed(app, client, key)),
+            ("web /new ignores contributor visibility frontmatter (wikihub-tq01)", lambda: test_web_new_page_ignores_contributor_visibility_frontmatter(app, client, key)),
+            ("service worker never caches signed-in HTML (wikihub-miq4)", lambda: test_service_worker_never_caches_signed_in_html(app, client, key)),
+            ("templates keep user values out of inline JS (wikihub-l1w4)", lambda: test_templates_do_not_interpolate_user_values_into_inline_js(app, client, key)),
+            ("concurrent repo writes keep every commit (wikihub-xkmk)", lambda: test_concurrent_repo_writes_keep_every_commit(app, client, key)),
         ]
 
         passed = 1  # account creation already passed
         failed = 0
+        from app.routes.auth import _login_attempts
         for name, fn in test_funcs:
             _write_timestamps.clear()
             _ip_write_timestamps.clear()
+            # Each test starts with a fresh login limiter too; tests that
+            # exercise the limiter fill it themselves.
+            _login_attempts.clear()
             try:
                 fn()
                 print(f"  PASS  {name}")

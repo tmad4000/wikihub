@@ -33,6 +33,11 @@ class Config:
     IDEAFLOW_AUTO_SIGNIN = os.environ.get("IDEAFLOW_AUTO_SIGNIN", "true").lower() in ("1", "true", "yes")
     IDEAFLOW_OIDC_CLIENT_ID = os.environ.get("IDEAFLOW_OIDC_CLIENT_ID")
     IDEAFLOW_OIDC_CLIENT_SECRET = os.environ.get("IDEAFLOW_OIDC_CLIENT_SECRET")
+    # In-app "Send feedback" (WIT widget): the backend exchanges the signed-in
+    # user's Ideaflow ID token here for a 15-minute create-issue-only token.
+    WIT_FEEDBACK_TOKEN_URL = os.environ.get(
+        "WIT_FEEDBACK_TOKEN_URL", "https://api.worldissuetracker.com/functions/v1/feedback-token"
+    )
     SERVER_NAME = os.environ.get("SERVER_NAME")  # e.g. wikihub.md
     BASE_URL = os.environ.get("BASE_URL", "http://localhost:5000")
     CUSTOM_DOMAIN_TARGET = os.environ.get("CUSTOM_DOMAIN_TARGET", "domains.wikihub.md")

@@ -68,6 +68,22 @@ class User(UserMixin, db.Model):
         return current_app.config["MAX_WIKIS_PER_USER"]
 
 
+class IdeaflowFeedbackCredential(db.Model):
+    """The latest verified Ideaflow ID token seen at sign-in for an external
+    identity, encrypted at rest (world-issue-tracker-julr.6). Used only to mint
+    short-lived WIT feedback tokens for in-app "Send feedback"; never sent to
+    the browser. Keyed by (issuer, subject) so it is usable only by the local
+    account that identity is linked to. Rows past `expires_at` are dead weight
+    and are replaced on the next sign-in."""
+    __tablename__ = "ideaflow_feedback_credentials"
+
+    issuer = db.Column(db.String(256), primary_key=True)
+    subject = db.Column(db.String(256), primary_key=True)
+    id_token_encrypted = db.Column(db.Text, nullable=False)
+    expires_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    updated_at = db.Column(db.DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+
 class ExternalIdentity(db.Model):
     """Immutable link from an external OIDC identity to a local WikiHub user
     (wikihub-39pe). The global identity key is the pair (issuer, subject) —
@@ -203,6 +219,10 @@ class Wikilink(db.Model):
     source_page_id = db.Column(db.Integer, db.ForeignKey("pages.id", ondelete="CASCADE"), nullable=False)
     target_path = db.Column(db.Text, nullable=False)  # raw link target before resolution
     target_page_id = db.Column(db.Integer, db.ForeignKey("pages.id", ondelete="SET NULL"), nullable=True)
+    # True when the link appears only inside an owner-only private band; such
+    # edges are hidden from non-owner backlinks/graphs.
+    # migrations/2026-11-03_wikilink_private_band.sql
+    in_private_band = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
 
     source_page = db.relationship("Page", foreign_keys=[source_page_id])
     target_page = db.relationship("Page", foreign_keys=[target_page_id])

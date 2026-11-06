@@ -22,7 +22,12 @@ from mdit_py_plugins.dollarmath import dollarmath_plugin
 from mdit_py_plugins.amsmath import amsmath_plugin
 from mdit_py_plugins.anchors import anchors_plugin
 
-from app.content_utils import parse_markdown_document
+from app.content_utils import (
+    _scan_private_markers,
+    _split_frontmatter_raw,
+    parse_markdown_document,
+    strip_private_bands,
+)
 from markupsafe import escape as _escape
 
 
@@ -33,15 +38,31 @@ def _heading_slug(title):
     return slug
 
 
+_PRIVATE_BAND_OPEN_HTML = '<section class="private-band"'
+_PRIVATE_BAND_CLOSE_HTML = '</section><!--/private-band-->'
+
+
 def extract_toc(html):
     """extract table of contents entries from rendered HTML headings.
-    returns list of (level, id, text) tuples for h2-h4 elements."""
+    returns list of (level, id, text, is_private) tuples for h2-h4 elements;
+    is_private is True for headings inside an owner-only private band."""
     toc = []
+    band_spans = []
+    pos = 0
+    while True:
+        start = html.find(_PRIVATE_BAND_OPEN_HTML, pos)
+        if start < 0:
+            break
+        end = html.find(_PRIVATE_BAND_CLOSE_HTML, start)
+        end = len(html) if end < 0 else end
+        band_spans.append((start, end))
+        pos = end + 1
     for match in re.finditer(r'<h([2-4])\s+id="([^"]+)"[^>]*>(.*?)</h\1>', html, re.DOTALL):
         level = int(match.group(1))
         heading_id = match.group(2)
         text = re.sub(r'<[^>]+>', '', match.group(3)).strip()
-        toc.append((level, heading_id, text))
+        is_private = any(start <= match.start() < end for start, end in band_spans)
+        toc.append((level, heading_id, text, is_private))
     return toc
 
 
@@ -482,12 +503,74 @@ def mark_external_links_ugc(html):
     return _EXTERNAL_A_RE.sub(fix, html)
 
 
-def render_page(content, wiki_owner=None, wiki_slug=None, current_page_path=None, ugc_links=None):
+_BAND_OPEN_SENTINEL = "WHPRIVATEBANDOPEN7f3c"
+_BAND_CLOSE_SENTINEL = "WHPRIVATEBANDCLOSE7f3c"
+_LOCK_SVG = (
+    '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+    'stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>'
+)
+_BAND_TITLE = "Only you can see this section. Everyone else, including people you share this wiki with, sees nothing here."
+
+
+def _mark_private_band_sentinels(content):
+    """Owner view: replace each active band's open/close marker with a sentinel
+    paragraph so the rendered HTML can wrap the band in a labelled section.
+    Markers inside code blocks are left literal."""
+    prefix, body = _split_frontmatter_raw(content)
+    markers = _scan_private_markers(body)
+    if not markers:
+        return content, False
+    out = []
+    cursor = 0
+    in_band = False
+    for start, end, kind in markers:
+        if kind == "open" and not in_band:
+            out.append(body[cursor:start])
+            out.append(f"\n\n{_BAND_OPEN_SENTINEL}\n\n")
+            cursor = end
+            in_band = True
+        elif kind == "close" and in_band:
+            out.append(body[cursor:start])
+            out.append(f"\n\n{_BAND_CLOSE_SENTINEL}\n\n")
+            cursor = end
+            in_band = False
+    out.append(body[cursor:])
+    if in_band:
+        out.append(f"\n\n{_BAND_CLOSE_SENTINEL}\n")  # unclosed: private to EOF
+    return prefix + "".join(out), True
+
+
+def _wrap_private_band_html(html):
+    open_html = (
+        f'{_PRIVATE_BAND_OPEN_HTML} aria-label="Private section, only you can see this">'
+        f'<span class="private-band-label" title="{_BAND_TITLE}">{_LOCK_SVG} Private · only you</span>'
+    )
+    html = re.sub(rf"<p>\s*{_BAND_OPEN_SENTINEL}\s*</p>", open_html, html)
+    html = re.sub(rf"<p>\s*{_BAND_CLOSE_SENTINEL}\s*</p>", _PRIVATE_BAND_CLOSE_HTML, html)
+    # Sentinels that did not land in their own paragraph (e.g. a marker inside
+    # a list item) still must not render as text.
+    html = html.replace(_BAND_OPEN_SENTINEL, "").replace(_BAND_CLOSE_SENTINEL, "")
+    return html
+
+
+def render_page(content, wiki_owner=None, wiki_slug=None, current_page_path=None, mark_private_bands=False, ugc_links=None):
     """render a wiki page with wikilink resolution.
     ugc_links: force nofollow/ugc on external links. None = decide from the
     wiki owner's trust (app.trust); callers pass True for anonymous pages.
     current_page_path: the page's path in the repo (e.g. 'wiki/courses/cs224n.md')
-    used to resolve relative markdown links like ../raw/foo.md"""
+    used to resolve relative markdown links like ../raw/foo.md
+
+    mark_private_bands: True only when the viewer owns the wiki. Bands are then
+    rendered inside a labelled ``<section class="private-band">``. When False,
+    any band still present is STRIPPED here (defence in depth: a route that
+    forgot content_for_viewer degrades to "stripped", never "rendered")."""
+    bands_marked = False
+    if content:
+        if mark_private_bands:
+            content, bands_marked = _mark_private_band_sentinels(content)
+        else:
+            content = strip_private_bands(content)
     from app.models import Page, User, Wiki
     from app import db
     from app.page_utils import is_content_page_path
@@ -596,6 +679,8 @@ def render_page(content, wiki_owner=None, wiki_slug=None, current_page_path=None
 
     html = _prepend_frontmatter_h1(content, html)
 
+    if bands_marked:
+        html = _wrap_private_band_html(html)
     if ugc_links is None:
         try:
             from app.moderation import owner_untrusted

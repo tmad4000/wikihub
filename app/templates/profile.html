@@ -135,13 +135,6 @@
 .profile-wiki .article strong { color: var(--text-primary); }
 .profile-wiki .article .katex-display { margin: 24px 0; overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
 .profile-wiki .article .math.amsmath { margin: 24px 0; overflow-x: auto; overflow-y: hidden; text-align: center; }
-.private-band-warning {
-  margin-bottom: 20px; padding: 12px 14px;
-  border: 1px solid rgba(212, 160, 74, 0.2);
-  background: rgba(212, 160, 74, 0.08);
-  border-radius: var(--radius-md); color: var(--text-secondary);
-  font-size: 0.8125rem; line-height: 1.5;
-}
 .hamburger {
   display: inline-flex; align-items: center; justify-content: center;
   width: 32px; height: 32px; background: none; border: none;
@@ -285,11 +278,6 @@
         <a href="/@{{ owner.username }}/{{ personal_wiki.slug }}/index/edit" class="action-btn secondary" style="font-size:0.75rem;padding:4px 12px;min-height:28px;">Edit profile</a>
       </div>
       {% endif %}
-      {% if private_band_warning %}
-      <div class="private-band-warning">
-        This page has sections visible only to editors; not a security boundary. Don’t use private bands for real secrets.
-      </div>
-      {% endif %}
       <article class="article">
         {{ personal_rendered_html | safe }}
       </article>
@@ -354,7 +342,7 @@
           <span>{{ wiki.fork_count }} forks</span>
         </div>
         {% if is_owner %}
-        <button class="wiki-card-delete" title="Delete wiki" onclick="event.preventDefault(); event.stopPropagation(); deleteWiki('{{ wiki.slug }}', '{{ wiki.title or wiki.slug }}')">
+        <button class="wiki-card-delete" title="Delete wiki" data-slug="{{ wiki.slug }}" data-title="{{ wiki.title or wiki.slug }}">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
         </button>
         {% endif %}
@@ -596,10 +584,18 @@ document.addEventListener('click', function(e) {
 })();
 
 {% if current_user.is_authenticated and current_user.id == owner.id %}
+// wikihub-l1w4: wiki slug/title travel in data-* attributes, not inline JS.
+document.addEventListener('click', function(event) {
+  var btn = event.target.closest && event.target.closest('.wiki-card-delete');
+  if (!btn) return;
+  event.preventDefault();
+  event.stopPropagation();
+  deleteWiki(btn.dataset.slug, btn.dataset.title);
+});
 async function deleteWiki(slug, title) {
   if (!confirm('Delete "' + title + '"? All pages and history will be lost. This cannot be undone.')) return;
   if (!confirm('Are you sure? Click OK to permanently delete this wiki.')) return;
-  const resp = await fetch('/api/v1/wikis/{{ owner.username }}/' + slug, {method: 'DELETE'});
+  const resp = await fetch('/api/v1/wikis/{{ owner.username }}/' + encodeURIComponent(slug), {method: 'DELETE'});
   if (resp.ok) location.reload();
   else { const d = await resp.json(); alert(d.message || 'Delete failed'); }
 }
