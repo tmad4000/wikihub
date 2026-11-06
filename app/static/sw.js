@@ -5,9 +5,17 @@
 //   - /api/*:              never cache (auth + freshness matter; let the network handle it)
 //   - Offline fallback:    /offline.html shown when both network and cache fail
 //
+// Privacy (wikihub-miq4): a navigation response is stored ONLY when the server
+// opts it in with `X-WikiHub-Offline-Cache: public` and its Cache-Control has
+// no `private` / `no-store`. The server sends that header only to signed-out
+// viewers, so signed-in pages (which can hold private pages and titles) are
+// never written to Cache Storage, and offline.html can only list public URLs.
+// Signing out (or switching account) purges the page cache.
+//
 // Bump CACHE_VERSION whenever the offline page or shell changes; old caches are cleaned on activate.
+// v4 drops every v3 page cache, which could contain signed-in pages.
 
-const CACHE_VERSION = 'v3-2026-04-25';
+const CACHE_VERSION = 'v4-2026-11-03';
 const SHELL_CACHE = `wikihub-shell-${CACHE_VERSION}`;
 const PAGES_CACHE = `wikihub-pages-${CACHE_VERSION}`;
 const STATIC_CACHE = `wikihub-static-${CACHE_VERSION}`;
@@ -44,6 +52,17 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+function isOfflineCacheable(resp) {
+  if (!resp || !resp.ok) return false;
+  if (resp.headers.get('X-WikiHub-Offline-Cache') !== 'public') return false;
+  const cc = (resp.headers.get('Cache-Control') || '').toLowerCase();
+  return !cc.includes('private') && !cc.includes('no-store');
+}
+
+function purgePageCache() {
+  return caches.delete(PAGES_CACHE);
+}
+
 // Trim a cache to a max number of entries (LRU-ish: keep newest by inserting trimmed first)
 async function trimCache(cacheName, maxEntries) {
   const cache = await caches.open(cacheName);
@@ -61,6 +80,12 @@ self.addEventListener('fetch', (event) => {
 
   // Same-origin only — let cross-origin pass through (Cloudflare, PostHog, etc.)
   if (url.origin !== self.location.origin) return;
+
+  // Signing out / switching account: forget every stored page first.
+  if (url.pathname === '/auth/logout' || url.pathname === '/auth/switch-account') {
+    event.waitUntil(purgePageCache());
+    return;
+  }
 
   // Never cache APIs (auth, mutations, fresh data)
   if (url.pathname.startsWith('/api/')) return;
@@ -88,11 +113,14 @@ self.addEventListener('fetch', (event) => {
     event.respondWith((async () => {
       try {
         const fresh = await fetch(req);
-        if (fresh && fresh.ok) {
-          const cache = await caches.open(PAGES_CACHE);
+        const cache = await caches.open(PAGES_CACHE);
+        if (isOfflineCacheable(fresh)) {
           cache.put(req, fresh.clone());
           // Async trim — don't block the response
           trimCache(PAGES_CACHE, PAGES_CACHE_MAX);
+        } else {
+          // Signed-in or non-public now: drop any older copy of this URL.
+          cache.delete(req);
         }
         return fresh;
       } catch (_) {
@@ -116,4 +144,5 @@ self.addEventListener('fetch', (event) => {
 // Allow page to ask for an immediate update
 self.addEventListener('message', (event) => {
   if (event.data === 'SKIP_WAITING') self.skipWaiting();
+  if (event.data === 'PURGE_PAGES') event.waitUntil(purgePageCache());
 });

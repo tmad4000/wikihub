@@ -738,7 +738,11 @@ def verify_email(token):
 @login_required
 def logout():
     logout_user()
-    return _mark_choose_account_next(redirect(url_for("main.index")))
+    response = _mark_choose_account_next(redirect(url_for("main.index")))
+    # wikihub-miq4: drop any signed-in pages the browser kept (HTTP cache);
+    # the service worker purges its page cache on this navigation too.
+    response.headers["Clear-Site-Data"] = '"cache"'
+    return response
 
 
 @auth_bp.route("/wit-feedback-token", methods=["POST"])

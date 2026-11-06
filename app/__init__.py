@@ -109,6 +109,28 @@ def create_app(config_class="config.Config"):
     from app.canonical_redirect import maybe_redirect
     app.before_request(maybe_redirect)
 
+    def _mark_html_cacheability(response):
+        """wikihub-miq4: only anonymous, successful HTML may be kept offline.
+
+        The service worker stores a navigation response ONLY when it carries
+        `X-WikiHub-Offline-Cache: public` and no `private`/`no-store`
+        Cache-Control. Signed-in (session or Bearer) responses can contain
+        private pages and titles, so they are marked `private` and never get
+        the opt-in header; a shared device must not replay them offline.
+        """
+        from flask import request as _req
+        from flask_login import current_user as _cu
+
+        existing = response.headers.get("Cache-Control", "")
+        authenticated = bool(getattr(_cu, "is_authenticated", False)) or bool(_req.headers.get("Authorization"))
+        if authenticated:
+            if "private" not in existing and "no-store" not in existing:
+                response.headers["Cache-Control"] = (existing + ", private") if existing else "private"
+            response.headers.pop("X-WikiHub-Offline-Cache", None)
+            return
+        if response.status_code == 200 and "private" not in existing and "no-store" not in existing:
+            response.headers["X-WikiHub-Offline-Cache"] = "public"
+
     @app.after_request
     def _disable_proxy_html_transforms(response):
         """Cloudflare's HTML transformations (Email Obfuscation, legacy Auto
@@ -120,6 +142,7 @@ def create_app(config_class="config.Config"):
         ct = response.headers.get("Content-Type", "")
         if not ct.startswith("text/html"):
             return response
+        _mark_html_cacheability(response)
         existing = response.headers.get("Cache-Control", "")
         if "no-transform" in existing:
             return response

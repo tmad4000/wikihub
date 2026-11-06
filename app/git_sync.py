@@ -11,6 +11,8 @@ to a single commit containing only public files with private bands stripped.
 ported from listhub's git_sync.py with multi-wiki path generalization.
 """
 
+import contextlib
+import fcntl
 import os
 import json
 import subprocess
@@ -84,12 +86,65 @@ def _head_tree(repo_path):
         return None
 
 
+_REF_UPDATE_ATTEMPTS = 5
+
+
+class RefUpdateConflict(RuntimeError):
+    """refs/heads/main moved under us on every retry (wikihub-xkmk)."""
+
+
+@contextlib.contextmanager
+def _repo_write_lock(repo_path):
+    """Serialize WikiHub's own writers to one bare repo across threads and
+    gunicorn workers (wikihub-xkmk). A git push does not take this lock; the
+    compare-and-swap in `_cas_update_main` covers that case."""
+    lock_path = os.path.join(repo_path, "wikihub-write.lock")
+    with open(lock_path, "a") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _cas_update_main(repo_path, new_commit, expected_old):
+    """Move refs/heads/main to `new_commit` only if it still points at
+    `expected_old` (None = ref must not exist yet). Returns False when another
+    writer got there first, so the caller can rebuild on the new head instead
+    of silently discarding that writer's commit."""
+    try:
+        _git(repo_path, "update-ref", "refs/heads/main", new_commit, expected_old or "")
+        return True
+    except subprocess.CalledProcessError:
+        current = _head_commit(repo_path)
+        if current == new_commit:
+            return True
+        if current != expected_old:
+            return False
+        raise
+
+
 def apply_repo_changes(username, slug, changes, message, author_name="wikihub", author_email="sync@wikihub"):
-    """apply one or more file writes/deletes to the authoritative repo in a single commit."""
+    """apply one or more file writes/deletes to the authoritative repo in a single commit.
+
+    Concurrency (wikihub-xkmk): writers hold a per-repo lock and move the ref
+    with a compare-and-swap; if a push moved main meanwhile, the change set is
+    re-applied on the new head rather than overwriting it.
+    """
     repo = _repo_path(username, slug)
     if not os.path.isdir(repo):
         return False
 
+    with _repo_write_lock(repo):
+        for _attempt in range(_REF_UPDATE_ATTEMPTS):
+            result = _apply_repo_changes_once(repo, changes, message, author_name, author_email)
+            if result is not None:
+                return result
+    raise RefUpdateConflict(f"refs/heads/main kept moving in {username}/{slug}; gave up after {_REF_UPDATE_ATTEMPTS} attempts")
+
+
+def _apply_repo_changes_once(repo, changes, message, author_name, author_email):
+    """One read-tree → commit → CAS attempt. None means the ref moved; retry."""
     head = _head_commit(repo)
     idx = tempfile.mktemp(prefix="wikihub-sync-", suffix=".idx")
     env = {"GIT_INDEX_FILE": idx}
@@ -139,7 +194,8 @@ def apply_repo_changes(username, slug, changes, message, author_name="wikihub", 
             commit_args[2:2] = ["-p", head]
 
         new_commit = _git(repo, *commit_args, env={**env, **author_env})
-        _git(repo, "update-ref", "refs/heads/main", new_commit)
+        if not _cas_update_main(repo, new_commit, head):
+            return None
         return True
     finally:
         if os.path.exists(idx):
@@ -179,24 +235,35 @@ def remove_page_from_repo(username, slug, file_path):
 def regenerate_public_mirror(username, slug, acl_rules=None):
     """regenerate the public mirror from the authoritative repo.
     strips private files (per ACL), private bands, and .wikihub/* plumbing.
-    force-updates to a single commit."""
-    from app.acl import resolve_visibility
-
+    force-updates to a single commit (under the mirror's write lock, with a
+    compare-and-swap so a concurrent incremental update is not lost)."""
     auth_repo = _repo_path(username, slug)
     pub_repo = _repo_path(username, slug, public=True)
 
-    if not os.path.isdir(auth_repo):
+    if not os.path.isdir(auth_repo) or not os.path.isdir(pub_repo):
         return
 
+    with _repo_write_lock(pub_repo):
+        for _attempt in range(_REF_UPDATE_ATTEMPTS):
+            if _regenerate_public_mirror_once(auth_repo, pub_repo, acl_rules):
+                return
+    raise RefUpdateConflict(f"public mirror ref kept moving in {username}/{slug}")
+
+
+def _regenerate_public_mirror_once(auth_repo, pub_repo, acl_rules):
+    """Build one snapshot; False means the mirror ref moved and we must retry."""
+    from app.acl import resolve_visibility
+
+    mirror_head = _head_commit(pub_repo)
     head = _head_commit(auth_repo)
     if not head:
-        return
+        return True
 
     # list all regular files in HEAD (symlinks are never mirrored)
     try:
-        mirror_paths = [path for mode, path in list_tree_entries(auth_repo) if mode != GIT_SYMLINK_MODE]
+        mirror_paths = [path for mode, path in list_tree_entries(auth_repo, head) if mode != GIT_SYMLINK_MODE]
     except subprocess.CalledProcessError:
-        return
+        return True
 
     idx = tempfile.mktemp(prefix="wikihub-mirror-", suffix=".idx")
     env = {"GIT_INDEX_FILE": idx}
@@ -211,9 +278,9 @@ def regenerate_public_mirror(username, slug, acl_rules=None):
             if filepath.startswith(".wikihub/"):
                 continue
 
-            # read file content from authoritative repo
+            # read file content from the same authoritative snapshot
             try:
-                content_bytes = _git_bytes(auth_repo, "cat-file", "blob", f"HEAD:{filepath}")
+                content_bytes = _git_bytes(auth_repo, "cat-file", "blob", f"{head}:{filepath}")
             except subprocess.CalledProcessError as e:
                 print(f"WARNING: mirror skipped {filepath}: git cat-file failed: {e}")
                 continue
@@ -258,7 +325,7 @@ def regenerate_public_mirror(username, slug, acl_rules=None):
             "-m", f"Public snapshot @ {head[:12]}",
             env={**env, **_AUTHOR_ENV},
         )
-        _git(pub_repo, "update-ref", "refs/heads/main", new_commit)
+        return _cas_update_main(pub_repo, new_commit, mirror_head)
     finally:
         if os.path.exists(idx):
             os.unlink(idx)
@@ -277,13 +344,18 @@ def update_mirror_page(username, slug, filepath, acl_rules=None, deleted=False):
 
 
 def _update_mirror_page_impl(username, slug, filepath, acl_rules=None, deleted=False):
-    from app.acl import resolve_visibility
-
     auth_repo = _repo_path(username, slug)
     pub_repo = _repo_path(username, slug, public=True)
 
     if not os.path.isdir(auth_repo) or not os.path.isdir(pub_repo):
         return
+
+    with _repo_write_lock(pub_repo):
+        _update_mirror_page_locked(auth_repo, pub_repo, filepath, acl_rules, deleted)
+
+
+def _update_mirror_page_locked(auth_repo, pub_repo, filepath, acl_rules=None, deleted=False):
+    from app.acl import resolve_visibility
 
     head = _head_commit(auth_repo)
     if not head:
@@ -294,9 +366,19 @@ def _update_mirror_page_impl(username, slug, filepath, acl_rules=None, deleted=F
 
     try:
         # load current mirror state
+        mirror_head = _head_commit(pub_repo)
         mirror_tree = _head_tree(pub_repo)
         if mirror_tree:
             _git(pub_repo, "read-tree", mirror_tree, env=env)
+
+        if not deleted and not filepath.startswith(".wikihub/"):
+            # symlinks are never mirrored (their target text would be published)
+            try:
+                entry = _git(auth_repo, "ls-tree", "HEAD", "--", filepath).strip()
+            except subprocess.CalledProcessError:
+                entry = ""
+            if entry.startswith(GIT_SYMLINK_MODE + " "):
+                deleted = True
 
         if deleted or filepath.startswith(".wikihub/"):
             # remove from mirror (ignore if file wasn't in mirror)
@@ -354,7 +436,10 @@ def _update_mirror_page_impl(username, slug, filepath, acl_rules=None, deleted=F
             "-m", f"Update {filepath} @ {head[:12]}",
             env={**env, **_AUTHOR_ENV},
         )
-        _git(pub_repo, "update-ref", "refs/heads/main", new_commit)
+        if not _cas_update_main(pub_repo, new_commit, mirror_head):
+            # Another mirror writer moved the ref; update_mirror_page falls
+            # back to a full rebuild, which reflects both changes.
+            raise RefUpdateConflict(f"public mirror moved while updating {filepath}")
     finally:
         if os.path.exists(idx):
             os.unlink(idx)
