@@ -165,7 +165,7 @@ MAX_WIKILINK_TARGET_BYTES = 1024
 
 
 def _is_link_target(target):
-    return bool(target) and "\n" not in target and "\r" not in target and len(target.encode("utf-8")) <= MAX_WIKILINK_TARGET_BYTES
+    return bool(target) and not any(ch in target for ch in "\n\r\x00") and len(target.encode("utf-8")) <= MAX_WIKILINK_TARGET_BYTES
 
 
 def extract_wikilinks(content):
