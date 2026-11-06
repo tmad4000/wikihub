@@ -10705,9 +10705,13 @@ def run_all():
 
         passed = 1  # account creation already passed
         failed = 0
+        from app.routes.auth import _login_attempts
         for name, fn in test_funcs:
             _write_timestamps.clear()
             _ip_write_timestamps.clear()
+            # Each test starts with a fresh login limiter too; tests that
+            # exercise the limiter fill it themselves.
+            _login_attempts.clear()
             try:
                 fn()
                 print(f"  PASS  {name}")
