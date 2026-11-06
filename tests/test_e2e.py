@@ -1334,7 +1334,7 @@ def test_signin_flow_redirects_back_to_target(app, client):
     # wikihub-dkp8: existing-but-private page → restricted (403); the sign-in CTA
     # must still round-trip back to the requested target.
     assert r.status_code == 403
-    assert b"This page is restricted" in r.data
+    assert b"You're not signed in" in r.data
     assert f'/auth/login?next={encoded_target}'.encode() in r.data
 
     r = anon.get("/@signinowner/private-wiki/settings")
@@ -7154,7 +7154,7 @@ def test_permission_error_offers_request_access(client, api_key):
     # restricted screen still offers the request-access affordance.
     r = client.get("/@agent1/private-cta/team/secret")
     assert r.status_code == 403
-    assert b"This page is restricted" in r.data
+    assert b"You're not signed in" in r.data or b"Your account doesn't have access" in r.data
     assert b"Request access" in r.data
     assert b"/api/v1/access-requests" in r.data
 
@@ -8960,7 +8960,7 @@ def test_unauth_private_page_renders_permission_error_with_sign_in(client):
     )
     body = r.data.decode("utf-8", errors="replace")
     # Must render the restricted variant of permission_error (recognizable heading).
-    assert "This page is restricted" in body, (
+    assert "You're not signed in" in body, (
         "expected restricted permission_error.html template, got something else. "
         "If welcome.html is returned, the nginx intercept or a Flask routing "
         "bug is hiding the real error template."
@@ -9009,14 +9009,14 @@ def test_restricted_vs_not_found_distinction(client):
     r = anon.get("/@dkp8owner/dkp8-wiki/vault/secret")
     assert r.status_code == 403, f"anon private page expected 403 restricted, got {r.status_code}"
     body = r.data.decode("utf-8", errors="replace")
-    assert "This page is restricted" in body, "expected the restricted screen heading"
+    assert "You're not signed in" in body, "expected the restricted screen heading"
     assert "ZZSECRETMARKER" not in body and "TopSecret" not in body, "restricted screen leaked content/title"
 
     # --- Case 2: anon on a truly-missing path → 404 (not restricted) ---
     r = anon.get("/@dkp8owner/dkp8-wiki/no/such/page")
     assert r.status_code == 404, f"missing page expected 404, got {r.status_code}"
     body = r.data.decode("utf-8", errors="replace")
-    assert "This page is restricted" not in body, "missing page must NOT show the restricted screen"
+    assert "You're not signed in" not in body and "doesn't have access" not in body, "missing page must NOT show the restricted screen"
 
     # --- Case 4: unlisted page stays readable by direct link (200) ---
     r = anon.get("/@dkp8owner/dkp8-wiki/unlisted-note")
@@ -9027,7 +9027,7 @@ def test_restricted_vs_not_found_distinction(client):
     # A user subdomain (dkp8owner.wikihub.md) rewrites /<slug>/<path> → /@dkp8owner/<slug>/<path>.
     r = anon.get("/dkp8-wiki/vault/secret", headers={"Host": "dkp8owner.wikihub.md"})
     assert r.status_code == 403, f"subdomain-form private page expected 403, got {r.status_code}"
-    assert "This page is restricted" in r.data.decode("utf-8", errors="replace")
+    assert "You're not signed in" in r.data.decode("utf-8", errors="replace")
     # subdomain-form missing path still 404
     r = anon.get("/dkp8-wiki/vault/does-not-exist", headers={"Host": "dkp8owner.wikihub.md"})
     assert r.status_code == 404, f"subdomain-form missing page expected 404, got {r.status_code}"
