@@ -157,9 +157,21 @@ def set_visibility_in_content(content, visibility):
     return upsert_frontmatter_value(content, "visibility", normalized)
 
 
+# A real link target is one line and short. `[[` inside code or prose can
+# otherwise capture kilobytes across newlines, which exceeds the btree row
+# limit of ix_wikilinks_unresolved_target_path (2704 bytes) and aborts the
+# whole write or reindex.
+MAX_WIKILINK_TARGET_BYTES = 1024
+
+
+def _is_link_target(target):
+    return bool(target) and "\n" not in target and "\r" not in target and len(target.encode("utf-8")) <= MAX_WIKILINK_TARGET_BYTES
+
+
 def extract_wikilinks(content):
     _, body = parse_markdown_document(content)
-    return [match.group(1).strip() for match in WIKILINK_RE.finditer(body)]
+    targets = (match.group(1).strip() for match in WIKILINK_RE.finditer(body))
+    return [target for target in targets if _is_link_target(target)]
 
 
 def page_reference_aliases(path, title=None):
