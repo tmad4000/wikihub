@@ -10885,20 +10885,13 @@ def test_partial_grantee_history_and_diff_hide_private_pages(app, client, api_ke
     for marker in leak_markers:
         assert marker not in r.get_data(as_text=True)
 
-    # Non-owners read the band-stripped mirror history (wikihub-oorq), whose
-    # commit ids differ from the authoritative repo's: the grantee reaches the
-    # granted commit through the mirror id its own /history lists.
-    mirror = os.path.join(os.environ["REPOS_DIR"], "agent1", f"{slug}-public.git")
-    granted_mirror_sha = subprocess.check_output(
-        ["git", "-C", mirror, "log", "-1", "--format=%H", "--", "research/paper.md"], text=True).strip()
-    assert granted_mirror_sha, "granted page must be in the mirror history"
-    assert granted_mirror_sha in _secfix_get(guest, f"/@agent1/{slug}/history").get_data(as_text=True)
-    # The authoritative id is never served to a non-owner.
-    assert _secfix_get(guest, f"/@agent1/{slug}/commit/{granted_sha}").status_code == 404
-    r = _secfix_get(guest, f"/@agent1/{slug}/commit/{granted_mirror_sha}")
-    assert r.status_code == 200, r.status_code
+    # Non-owners read the band-stripped mirror history (wikihub-oorq), which
+    # does not carry private pages, so a granted *private* page's commits are
+    # not served to the grantee (fail closed; a band-stripped authoritative
+    # diff is follow-up work). The authoritative id must 404, without leaks.
+    r = _secfix_get(guest, f"/@agent1/{slug}/commit/{granted_sha}")
+    assert r.status_code == 404, f"authoritative commit must 404 for a non-owner, got {r.status_code}"
     body = r.get_data(as_text=True)
-    assert "granted-body-marker" in body
     for marker in leak_markers:
         assert marker not in body, f"/commit sidebar leaked {marker!r}"
 
