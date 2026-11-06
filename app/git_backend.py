@@ -56,6 +56,9 @@ def _check_basic_auth():
     if not user:
         security_event("auth.git_basic", "failure", user_id=None, reason="unknown_user")
         return None
+    if user.suspended_at is not None:
+        security_event("auth.git_basic", "denied", user_id=user.id, reason="suspended")
+        return None
 
     # try bcrypt password
     if user.password_hash:

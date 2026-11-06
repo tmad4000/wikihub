@@ -70,6 +70,15 @@ class Config:
     WRITE_RATE_LIMIT_AUTHENTICATED_IP_PER_MINUTE = int(os.environ.get("WRITE_RATE_LIMIT_AUTHENTICATED_IP_PER_MINUTE", "360"))
     WRITE_RATE_LIMIT_ANONYMOUS_IP_PER_MINUTE = int(os.environ.get("WRITE_RATE_LIMIT_ANONYMOUS_IP_PER_MINUTE", "10"))
     WRITE_RATE_LIMITS_IN_TESTS = os.environ.get("WRITE_RATE_LIMITS_IN_TESTS", "").lower() in ("1", "true", "yes")
+    # Spam defenses (wikihub-9ras / wikihub-1ug3). See app/trust.py and app/rate_limit.py.
+    TRUST_GATE_ENABLED = os.environ.get("TRUST_GATE_ENABLED", "true").lower() in ("1", "true", "yes")
+    TRUST_MIN_ACCOUNT_AGE_DAYS = int(os.environ.get("TRUST_MIN_ACCOUNT_AGE_DAYS", "14"))
+    SIGNUP_API_MAX_PER_IP_PER_HOUR = int(os.environ.get("SIGNUP_API_MAX_PER_IP_PER_HOUR", "5"))
+    SIGNUP_API_MAX_PER_IP_PER_DAY = int(os.environ.get("SIGNUP_API_MAX_PER_IP_PER_DAY", "20"))
+    ANON_UPLOAD_MAX_PER_IP_PER_HOUR = int(os.environ.get("ANON_UPLOAD_MAX_PER_IP_PER_HOUR", "10"))
+    USER_SEARCH_MAX_PER_MINUTE = int(os.environ.get("USER_SEARCH_MAX_PER_MINUTE", "30"))
+    SHARED_RATE_LIMITS_IN_TESTS = os.environ.get("SHARED_RATE_LIMITS_IN_TESTS", "").lower() in ("1", "true", "yes")
+    ABUSE_LINK_DENYLIST = [d.strip() for d in os.environ.get("ABUSE_LINK_DENYLIST", "vccbusiness.com,ramerlabs.com").split(",") if d.strip()]
     MAGIC_LOGIN_TTL_SECONDS = int(os.environ.get("MAGIC_LOGIN_TTL_SECONDS", "900"))
     TESTING_LOGIN = os.environ.get("TESTING_LOGIN", "").lower() in ("1", "true", "yes")
     SESSION_COOKIE_SECURE = os.environ.get("SESSION_COOKIE_SECURE", "1").lower() in ("1", "true", "yes")

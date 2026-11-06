@@ -81,7 +81,10 @@ def create_app(config_class="config.Config"):
 
     @login_manager.user_loader
     def load_user(user_id):
-        return db.session.get(User, int(user_id))
+        user = db.session.get(User, int(user_id))
+        if user is not None and user.suspended_at is not None:
+            return None  # suspended accounts lose existing sessions too
+        return user
 
     from app.routes import main_bp, auth_bp, api_bp, wiki_bp
     app.register_blueprint(main_bp)
@@ -105,6 +108,10 @@ def create_app(config_class="config.Config"):
 
     from app.routes.auth import init_oauth
     init_oauth(app)
+
+    from app import moderation
+    app.before_request(moderation.before_request)
+    app.after_request(moderation.after_request)
 
     from app.canonical_redirect import maybe_redirect
     app.before_request(maybe_redirect)
@@ -202,6 +209,27 @@ def create_app(config_class="config.Config"):
             "ALTER TABLE wikilinks ADD COLUMN IF NOT EXISTS in_private_band BOOLEAN NOT NULL DEFAULT FALSE"
         ))
         db.session.commit()
+        # trust & safety columns (migrations/2026-11-03_spam_defenses.sql).
+        # Only ALTER when a column is actually missing: ALTER TABLE takes an
+        # ACCESS EXCLUSIVE lock even when IF NOT EXISTS makes it a no-op, and
+        # gunicorn workers boot while siblings are already serving requests
+        # (a booting worker holding wikis while waiting on users can deadlock
+        # a reader that holds users and wants wikis). Commit per statement.
+        existing = {
+            name for (name,) in db.session.execute(db.text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = current_schema() AND table_name = 'users'"
+            ))
+        }
+        db.session.commit()
+        for column, ddl in (
+            ("trusted", "ALTER TABLE users ADD COLUMN IF NOT EXISTS trusted BOOLEAN NOT NULL DEFAULT false"),
+            ("suspended_at", "ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_at TIMESTAMPTZ NULL"),
+            ("suspended_reason", "ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_reason TEXT NULL"),
+        ):
+            if column not in existing:
+                db.session.execute(db.text(ddl))
+                db.session.commit()
         from app.wiki_ops import ensure_official_wiki
         ensure_official_wiki()
         db.session.commit()
@@ -336,6 +364,9 @@ def create_app(config_class="config.Config"):
             acl_rules = load_acl_rules(wiki.owner.username, wiki.slug)
             regenerate_public_mirror(wiki.owner.username, wiki.slug, acl_rules)
             click.echo(f"rebuilt mirror {wiki.owner.username}/{wiki.slug}")
+
+    from app.moderation_cli import register_moderation_commands
+    register_moderation_commands(wikihub_cli)
 
     from flask import jsonify, request as req, render_template
 

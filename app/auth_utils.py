@@ -181,7 +181,11 @@ def get_current_user_from_request():
             if agent_version:
                 api_key.agent_version = agent_version
             db.session.commit()
-            return User.query.get(api_key.user_id)
+            key_user = User.query.get(api_key.user_id)
+            if key_user is not None and key_user.suspended_at is not None:
+                security_event("auth.suspended", "denied", user_id=key_user.id, via="bearer")
+                return None
+            return key_user
         security_event(
             "auth.api_key_invalid", "failure", user_id=None,
             via="bearer", key_prefix=token[:3] if token.startswith("wh_") else "other",

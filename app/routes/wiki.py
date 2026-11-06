@@ -2297,7 +2297,11 @@ def wiki_page(username, slug, page_path):
     if not page:
         page = type("Page", (), {"path": file_path, "title": os.path.basename(file_path).replace(".md", ""), "visibility": resolve_visibility(file_path, acl_rules), "updated_at": wiki.updated_at})()
 
-    rendered_html = render_page(content, owner.username, wiki.slug, current_page_path=file_path, mark_private_bands=is_owner)
+    rendered_html = render_page(
+        content, owner.username, wiki.slug, current_page_path=file_path,
+        mark_private_bands=is_owner,
+        ugc_links=True if getattr(page, "anonymous", False) else None,
+    )
 
     # Side peek (wikihub-9k18): ?fragment=1 returns the rendered article body
     # only (no chrome) so a reader can open a same-wiki link in a slide-over

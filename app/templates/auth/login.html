@@ -43,7 +43,7 @@
   {% if needs_fallback %}
   {# Only after an Ideaflow sign-in could not be matched to an existing
      WikiHub account: offer that account's own sign-in so nobody is locked out. #}
-  <p class="fallback"><a href="{{ url_for('auth.login_password', next=next_value or None) }}" data-login-action="password-fallback">Sign in with your WikiHub password instead</a></p>
+  <p class="fallback"><a rel="nofollow" href="{{ url_for('auth.login_password', next=next_value or None) }}" data-login-action="password-fallback">Sign in with your WikiHub password instead</a></p>
   {% endif %}
   {% endwith %}
 </div>
