@@ -208,6 +208,8 @@ class Page(db.Model):
         db.UniqueConstraint("wiki_id", "path", name="uq_page_wiki_path"),
         db.Index("ix_page_visibility", "visibility"),
         db.Index("ix_page_search", "search_vector", postgresql_using="gin"),
+        # migrations/2026-11-03_pages_wiki_updated_idx.sql (wikihub-hnp4)
+        db.Index("ix_pages_wiki_updated_at", "wiki_id", "updated_at"),
     )
 
 

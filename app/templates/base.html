@@ -93,6 +93,22 @@ a:hover { text-decoration: underline; }
   .nav-link { font-size: 0.8125rem; }
   .nav-hide-narrow { display: none; }
 }
+/* wikihub-m0pr: on a user/wiki/custom host the left slot is the site's own
+   identity (links to "/" = that site's home); the platform is a small mark. */
+.nav-site {
+  display: inline-flex; align-items: center; gap: 8px; min-width: 0;
+  color: var(--text-primary); text-decoration: none; flex-shrink: 1;
+}
+.nav-site:hover { text-decoration: none; color: var(--text-primary); }
+.nav-site:hover .nav-site-title { color: var(--accent); }
+.nav-site svg { flex-shrink: 0; color: var(--text-tertiary); }
+.nav-site-title { font-weight: 600; font-size: 0.9375rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 32ch; }
+.nav-site-host { font-family: var(--font-mono); font-size: 0.6875rem; color: var(--text-muted); white-space: nowrap; }
+@media (max-width: 767px) { .nav-site-host { display: none; } }
+.nav-platform-mark { font-family: var(--font-mono); font-size: 0.8125rem; color: var(--text-tertiary); text-decoration: none; white-space: nowrap; flex-shrink: 0; }
+.nav-platform-mark .bracket { color: var(--text-muted); }
+.nav-platform-mark:hover { color: var(--text-primary); text-decoration: none; }
+.nav-account-group { padding: 6px 12px 2px; font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); }
 .nav-agents { color: var(--accent); font-weight: 500; font-family: var(--font-mono); font-size: 0.8125rem; }
 .nav-agents:hover { color: var(--accent-hover); }
 /* wikihub-pz27: hide secondary nav links below 1024px (covers iPad portrait

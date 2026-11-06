@@ -182,7 +182,8 @@ def _process_uploads(username, slug, wiki_id, files):
     has_uploaded_acl = ".wikihub/acl" in uploaded_paths
 
     for path, text in entries:
-        if is_wikihub_plumbing_path(path) and path != ".wikihub/acl":
+        # Owner-writable plumbing: .wikihub/acl and .wikihub/sidebar.md (wikihub-hnfm).
+        if is_wikihub_plumbing_path(path) and path not in (".wikihub/acl", ".wikihub/sidebar.md"):
             continue
         sync_page_to_repo(username, slug, path, text)
 

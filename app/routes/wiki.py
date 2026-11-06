@@ -6,7 +6,7 @@ from datetime import timezone
 from urllib.parse import quote, unquote, urlparse
 from sqlalchemy.orm import defer
 
-from flask import Response, abort, jsonify, redirect, render_template, render_template_string, request, url_for
+from flask import Response, abort, current_app, has_request_context, jsonify, redirect, render_template, render_template_string, request, url_for
 
 from app.url_utils import page_path_from_url_path, url_path_from_page_path
 from flask_login import current_user
@@ -25,7 +25,7 @@ from app.content_utils import (
 from app.discovery import discoverable_page_for_wiki, visible_wikis_for_owner
 from app.git_backend import _repo_path
 from app.private_bands import CONFLICT_MESSAGE, PrivateBandConflict, create_conflict_proposal, merge_into_bands
-from app.git_sync import read_file_for_viewer, read_file_from_repo, read_file_bytes_from_repo, list_files_in_repo, regenerate_public_mirror, remove_page_from_repo, sync_page_to_repo, update_mirror_page
+from app.git_sync import RefUpdateConflict, read_file_for_viewer, read_file_from_repo, read_file_bytes_from_repo, list_files_in_repo, regenerate_public_mirror, remove_page_from_repo, sync_page_to_repo, update_mirror_page
 from app.page_utils import content_page_path_filter, is_content_page_path, is_wikihub_plumbing_path
 from app.models import (
     Page,
@@ -42,6 +42,7 @@ from app.models import (
     Wikilink,
     utcnow,
 )
+from app.sidebar_nav import SIDEBAR_FILE_PATH, apply_nav, default_sidebar_md, parse_sidebar_md
 from app.renderer import build_html_embed_figure, extract_toc, render_page
 from app.routes import wiki_bp
 from app.wiki_ops import index_repo_pages, load_acl_rules, load_page_redirects, load_serve_inline_patterns, refresh_wikilinks_for_page, sync_wiki_counters, update_page_metadata
@@ -410,20 +411,37 @@ def _visible_files(username, slug, wiki, public=False, acl_filter_user=None, pag
         pages_by_path: Pre-loaded {path: Page} dict to avoid duplicate DB queries.
     """
     files = list_files_in_repo(username, slug, public=public)
+    if not public and (acl_filter_user or (has_request_context() and _is_owner(wiki))):
+        # Authoritative-repo viewers (owner / ACL grantee): union git with the
+        # DB page index (wikihub-325p). The DB is the derived index of git, so
+        # in a healthy repo this adds nothing; when the authoritative repo is
+        # unreadable (permissions, dangling HEAD, moved dir) git returns []
+        # and the owner used to see "(none yet)" while the API reported pages.
+        # Git still contributes non-markdown assets that have no Page row.
+        # Only the real owner (no filtering needed) or an ACL grantee (every
+        # path still gated by can_read below) gets the union; a public=False
+        # call for anyone else never gains DB-only pages. The public-mirror
+        # branch is deliberately NOT unioned: the mirror is the no-leak
+        # boundary for anonymous viewers.
+        if pages_by_path is None:
+            pages_by_path = {p.path: p for p in _content_pages(_content_pages_query(wiki))}
+        files = list(dict.fromkeys(list(files) + [path for path in pages_by_path if is_content_page_path(path)]))
     if not public and not acl_filter_user:
         # owner view — everything
         return [path for path in files if not path.startswith(".wikihub/") and not path.endswith(".gitkeep")]
 
     if acl_filter_user:
-        # non-owner with ACL grants — read authoritative repo, filter by can_read
+        # non-owner with ACL grants — read authoritative repo, filter by can_read.
+        # Fail closed on unindexed markdown (wikihub-l5oo): a .md in git with
+        # no Page row may carry private frontmatter we have not resolved, so a
+        # partial grantee never sees it listed (or in history narrowing).
         acl_rules = load_acl_rules(username, slug)
-        if pages_by_path is None:
-            pages_by_path = {p.path: p for p in _content_pages(_content_pages_query(wiki))}
         return [
             path
             for path in files
-            if not path.startswith(".wikihub/")
+            if not _is_wikihub_plumbing_path(path)
             and not path.endswith(".gitkeep")
+            and not (path.lower().endswith(".md") and path not in pages_by_path)
             and can_read(path, acl_rules, acl_filter_user, (pages_by_path[path].visibility if path in pages_by_path else None))
         ]
 
@@ -443,6 +461,31 @@ def _visible_files(username, slug, wiki, public=False, acl_filter_user=None, pag
         and not path.endswith(".gitkeep")
         and can_read(path, acl_rules, None, (pages_by_path[path].visibility if path in pages_by_path else None))
     ]
+
+
+def _owner_content_fallback(owner, wiki, page):
+    """Owner-only degraded read when the authoritative repo is unreadable.
+
+    wikihub-325p: a Page row exists (the DB index knows the page) but git
+    returned nothing for the owner. Prefer the public mirror's copy (present
+    for public/unlisted pages); otherwise render the indexed excerpt with an
+    explicit notice. Either way log a warning so ops learn the repo is broken
+    instead of the owner seeing a silent 404.
+    """
+    current_app.logger.warning(
+        "authoritative repo read failed for %s/%s:%s; serving owner fallback",
+        owner.username, wiki.slug, page.path,
+    )
+    content = read_file_from_repo(owner.username, wiki.slug, page.path, public=True)
+    if content is not None:
+        return content
+    excerpt = (page.excerpt or "").strip()
+    notice = (
+        "> **This page's stored content could not be read right now.** "
+        "Only the indexed excerpt is shown. The wiki's repository may need repair; "
+        "the problem has been logged.\n\n"
+    )
+    return notice + (excerpt + "\n" if excerpt else "")
 
 
 def _folder_url(username, slug, folder_path):
@@ -684,7 +727,29 @@ def _build_sidebar_tree(username, slug, wiki, public=False, current_path=None, a
             ),
         )
 
-    return normalize(root["children"])
+    tree = normalize(root["children"])
+    nav_text = _sidebar_nav_text(username, slug)
+    if nav_text:
+        tree, _applied = apply_nav(parse_sidebar_md(nav_text), tree)
+    return tree
+
+
+def _sidebar_nav_text(username, slug):
+    """Read `.wikihub/sidebar.md` from the AUTHORITATIVE repo (the public mirror
+    strips .wikihub/*), cached per request. Visibility filtering happens in
+    apply_nav against the viewer's already-filtered tree, so reading the file
+    for every viewer is safe (wikihub-hnfm)."""
+    if not has_request_context():
+        return read_file_from_repo(username, slug, SIDEBAR_FILE_PATH, public=False)
+    cache = request.environ.setdefault("wikihub.sidebar_nav", {})
+    key = (username, slug)
+    if key not in cache:
+        cache[key] = read_file_from_repo(username, slug, SIDEBAR_FILE_PATH, public=False)
+    return cache[key]
+
+
+def _sidebar_is_custom(items):
+    return bool(items) and any(item.get("order") is not None for item in items)
 
 
 def _activity_time(value):
@@ -1070,6 +1135,10 @@ def user_profile(username):
     if personal_wiki:
         use_public = not is_owner
         _, personal_content = _folder_index_content(owner.username, personal_wiki.slug, "", public=use_public, wiki=personal_wiki)
+        if personal_content is None and is_owner:
+            # wikihub-325p: authoritative repo unreadable → the mirror's copy
+            # of a public index is still better than an empty profile.
+            _, personal_content = _folder_index_content(owner.username, personal_wiki.slug, "", public=True, wiki=personal_wiki)
         if personal_content:
             personal_rendered_html = render_page(personal_content, owner.username, personal_wiki.slug, mark_private_bands=is_owner)
             personal_sidebar = _build_sidebar_tree(owner.username, personal_wiki.slug, personal_wiki, public=use_public, current_path="index.md")
@@ -1190,7 +1259,11 @@ def sidebar_json(username, slug):
         current_path=_sidebar_current_path_from_request(owner.username, wiki.slug),
         acl_filter_user=acl_filter_user,
     )
-    return jsonify(tree)
+    resp = jsonify(tree)
+    # Array payload kept for existing consumers; custom order is also
+    # discoverable from per-item `order` (wikihub-hnfm).
+    resp.headers["X-Wikihub-Sidebar-Custom"] = "1" if _sidebar_is_custom(tree) else "0"
+    return resp
 
 
 @wiki_bp.route("/@<username>/<slug>/settings", strict_slashes=False)
@@ -1265,6 +1338,49 @@ def wiki_index(username, slug):
         sibling_wikis=siblings,
         user_can_edit=user_can_edit,
     )
+
+
+@wiki_bp.route("/@<username>/<slug>/-/sidebar", methods=["GET", "POST"])
+def edit_sidebar(username, slug):
+    """Owner-only editor for `.wikihub/sidebar.md` (wikihub-hnfm).
+
+    A dedicated plain-text form rather than the page editor: the file is git
+    plumbing (no Page row, no frontmatter, no visibility), not wiki content.
+    """
+    owner, wiki, redirect_row = _get_owner_and_wiki_or_404(username, slug)
+    if redirect_row:
+        return redirect(url_for("wiki.edit_sidebar", username=owner.username, slug=wiki.slug), code=302)
+    if not _is_owner(wiki):
+        return _render_permission_error(owner, wiki)
+    wiki_url = f"/@{owner.username}" if wiki.slug == owner.username else f"/@{owner.username}/{wiki.slug}"
+    if request.method == "POST":
+        try:
+            _save_sidebar_form(owner, wiki)
+        except RefUpdateConflict:
+            return Response("The wiki changed while saving; reload and try again.", status=409, content_type="text/plain; charset=utf-8")
+        return redirect(wiki_url)
+    existing = read_file_from_repo(owner.username, wiki.slug, SIDEBAR_FILE_PATH, public=False)
+    if existing is None:
+        content = default_sidebar_md(_build_sidebar_tree(owner.username, wiki.slug, wiki, public=False))
+    else:
+        content = existing
+    return render_template("sidebar_edit.html", owner=owner, wiki=wiki, content=content, has_file=existing is not None, wiki_url=wiki_url)
+
+
+def _save_sidebar_form(owner, wiki):
+    """Write or reset `.wikihub/sidebar.md` from the owner form."""
+    if request.form.get("reset"):
+        if read_file_from_repo(owner.username, wiki.slug, SIDEBAR_FILE_PATH, public=False) is not None:
+            remove_page_from_repo(owner.username, wiki.slug, SIDEBAR_FILE_PATH)
+    else:
+        content = request.form.get("content", "").replace("\r\n", "\n")
+        if len(content.encode("utf-8")) > current_app.config["MAX_PAGE_SIZE"]:
+            abort(413)
+        sync_page_to_repo(
+            owner.username, wiki.slug, SIDEBAR_FILE_PATH, content,
+            message="Update .wikihub/sidebar.md",
+            author_name=current_user.username, author_email=f"{current_user.username}@wikihub",
+        )
 
 
 _CONTENT_HASH_RE = re.compile(r"\A[0-9a-f]{64}\Z")
@@ -1852,7 +1968,16 @@ def wiki_commit(username, slug, sha):
 
     # parse diff into structured hunks for rendering
     diff_lines = []
+    skipping_plumbing = False
     for line in diff_text.splitlines():
+        if line.startswith("diff --git"):
+            # Defense in depth (review of PR #46): the git pathspec already
+            # excludes .wikihub/*, but never render a plumbing file section
+            # (e.g. .wikihub/sidebar.md labels) even via a rename/copy header.
+            paths = [part[2:] for part in line.split()[2:4] if part[:2] in ("a/", "b/")]
+            skipping_plumbing = any(_is_wikihub_plumbing_path(p) for p in paths)
+        if skipping_plumbing:
+            continue
         if line.startswith("+++") or line.startswith("---"):
             diff_lines.append(("meta", line))
         elif line.startswith("@@"):
@@ -2246,6 +2371,8 @@ def wiki_page(username, slug, page_path):
         unindexed_vis = resolve_visibility(file_path, acl_rules, unindexed_frontmatter.get("visibility"))
         if not can_read(file_path, acl_rules, user_name, unindexed_vis):
             content = None
+    if content is None and page is not None and is_owner:
+        content = _owner_content_fallback(owner, wiki, page)
     # Private bands are owner-only on every surface (HTML, ?fragment=1,
     # text/markdown). Grantees read the authoritative repo, so `use_public`
     # alone is not enough — strip here for every non-owner.

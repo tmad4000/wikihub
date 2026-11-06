@@ -1,19 +1,26 @@
-/* Side peek (wikihub-9k18) — Notion-style slide-over for internal wiki links.
+/* Side peek (wikihub-9k18, wikihub-9i28) — Notion-style slide-over for
+ * internal wiki links.
  *
- * Clicking a normal (unmodified) same-wiki page link inside the article opens
- * the target page in a right-side panel instead of navigating away, so the
- * reader keeps their place. Modified clicks (cmd/ctrl/shift/alt/middle) and
- * external / broken links keep their default behavior. The panel content is
- * the server-rendered article body fetched from `?fragment=1` (one shared
- * renderer + ACL path — no client-side duplication, no private-content leak).
+ * Link model (design 2026-11-03, matches Roam/Logseq/Tana/Notion):
+ *   - Plain click on a same-wiki link NAVIGATES (full page), on every device.
+ *   - Shift+click opens the target in the side peek — in the article, inside an
+ *     open peek, and on page rows of the left sidebar tree (folders excluded).
+ *   - A hover/focus "open in side peek" button (.peek-trigger) is injected
+ *     after each peekable article link on desktop widths (never in headings).
+ *   - Shift+Enter on a focused peekable link opens the peek; Enter navigates.
+ *   - Cmd/Ctrl/Alt/middle clicks are never touched (new tab etc. stay native).
+ *   - Inside an open peek a plain click replaces the panel content (you chose a
+ *     reading-aside context — stay in it). Cmd/Ctrl+Enter or the header button
+ *     opens the peeked page as a full page; Esc closes.
+ * External / broken links, `/-/` routes, same-page anchors keep their default
+ * behavior. The panel content is the server-rendered article body fetched from
+ * `?fragment=1` (one shared renderer + ACL path — no private-content leak).
  *
  * Deep-linkable: `?peek=<page-path>` restores the peek on load and is pushed
  * to history when a peek opens, so the browser back button (and the close
  * controls) close it and the URL is shareable.
  *
- * One level only: navigating a link inside the peek replaces the panel content
- * (it never spawns a second stacked panel). Below the mobile breakpoint peeks
- * are disabled and links navigate normally.
+ * Below the mobile breakpoint peeks are disabled and links navigate normally.
  */
 (function () {
   "use strict";
@@ -24,6 +31,17 @@
 
   function isMobile() {
     return window.innerWidth <= MOBILE_MAX;
+  }
+
+  // Hover affordances only make sense with a fine hovering pointer; touch
+  // devices (including wide tablets) keep plain navigation only.
+  function canHover() {
+    if (typeof window.matchMedia !== "function") return true;
+    try {
+      return window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+    } catch (e) {
+      return true;
+    }
   }
 
   var overlay, panel, bodyEl, titleEl, openLink, copyBtn;
@@ -39,7 +57,7 @@
     overlay.innerHTML =
       '<div class="peek-panel" role="dialog" aria-modal="true" aria-label="Page preview">' +
       '  <div class="peek-head">' +
-      '    <div class="peek-title" id="peek-title"></div>' +
+      '    <div class="peek-title" id="peek-title" title="Tip: Shift+click any link to open it here"></div>' +
       '    <div class="peek-actions">' +
       '      <a class="peek-btn peek-open" title="Open as full page" aria-label="Open as full page">' +
       '        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7"/><path d="M8 7h9v9"/></svg>' +
@@ -68,6 +86,7 @@
     copyBtn.addEventListener("click", onCopy);
     // Links clicked inside the peek navigate within the peek (one level).
     bodyEl.addEventListener("click", onLinkClick);
+    bodyEl.addEventListener("mousedown", onLinkMouseDown);
   }
 
   function showDom() {
@@ -130,6 +149,9 @@
         if (hash) {
           scrollPeekHash(hash);
         }
+        try {
+          decorateLinks(bodyEl);
+        } catch (e) {}
       })
       .catch(function () {
         if (requestId !== loadRequestSeq) return;
@@ -214,42 +236,110 @@
     }
   }
 
-  function onLinkClick(e) {
-    if (e.defaultPrevented) return;
-    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-    var a = e.target.closest("a");
-    if (!a) return;
-    // Only content links that live in the article or the peek body.
-    if (!a.closest(".article, .peek-body")) return;
-    if (a.target && a.target !== "" && a.target !== "_self") return;
-    if (a.classList.contains("external-link") || a.classList.contains("wikilink-broken")) return;
-    if (a.hasAttribute("download")) return;
+  // Resolve an anchor to a peek target, or null when the link must keep its
+  // native behavior. Returns {rest, inPeek} for a peekable same-wiki page, or
+  // {selfHash} for an in-peek anchor to the page currently shown in the panel.
+  function peekTarget(a) {
+    if (!a || !a.closest) return null;
+    var inContent = a.closest(".article, .peek-body");
+    var inSidebar = !inContent && a.closest("#sidebar-tree, #async-sidebar");
+    if (!inContent && !inSidebar) return null;
+    // Folder rows navigate to the folder listing; only page rows can peek.
+    if (inSidebar && a.closest(".sidebar-folder-row")) return null;
+    if (a.target && a.target !== "" && a.target !== "_self") return null;
+    if (a.classList.contains("external-link") || a.classList.contains("wikilink-broken")) return null;
+    if (a.hasAttribute("download")) return null;
     var href = a.getAttribute("href") || "";
-    if (href.charAt(0) === "#") return;
+    if (!href || href.charAt(0) === "#") return null;
     var inPeek = !!a.closest(".peek-body");
     var url;
     try {
       url = new URL(href, inPeek && currentFullUrl ? currentFullUrl : location.href);
     } catch (err) {
-      return;
+      return null;
     }
     var currentPath = location.pathname;
     if (inPeek && currentPeekPath) {
       currentPath = currentPeekPath;
     }
     if (inPeek && currentPeekPath && url.pathname === currentPeekPath && url.hash) {
+      return { selfHash: url.hash };
+    }
+    if (url.pathname === currentPath) return null;
+    if (url.origin !== location.origin) return null;
+    if (url.search) return null; // e.g. HTML deck viewer (?view=1)
+    if (!url.pathname.startsWith(wikiBase + "/")) return null;
+    var rest = url.pathname.slice(wikiBase.length + 1);
+    if (!rest || rest.indexOf("/-/") >= 0) return null; // proposals / suggest etc.
+    return { rest: rest + url.hash, inPeek: inPeek };
+  }
+
+  function isPlainPrimary(e) {
+    return e.button === 0 && !e.metaKey && !e.ctrlKey && !e.altKey;
+  }
+
+  function onLinkClick(e) {
+    if (e.defaultPrevented) return;
+    if (!isPlainPrimary(e)) return;
+    var trigger = e.target && e.target.closest ? e.target.closest(".peek-trigger") : null;
+    if (trigger) {
       e.preventDefault();
-      scrollPeekHash(url.hash);
+      if (isMobile()) return;
+      var tt = peekTarget(trigger.__peekAnchor || trigger.previousElementSibling);
+      if (!tt || tt.selfHash) return;
+      loadPeek(tt.rest, tt.inPeek ? "replace" : "push");
       return;
     }
-    if (url.pathname === currentPath) return;
-    if (url.origin !== location.origin) return;
-    if (!url.pathname.startsWith(wikiBase + "/")) return;
-    var rest = url.pathname.slice(wikiBase.length + 1);
-    if (!rest || rest.indexOf("/-/") >= 0) return; // proposals / suggest etc.
+    var a = e.target.closest("a");
+    var t = peekTarget(a);
+    if (!t) return;
+    if (t.selfHash) {
+      e.preventDefault();
+      scrollPeekHash(t.selfHash);
+      return;
+    }
+    // Plain click navigates; Shift+click (or any click inside an open peek)
+    // opens in the panel.
+    if (!e.shiftKey && !t.inPeek) return;
     if (isMobile()) return; // small screens: normal navigation
     e.preventDefault();
-    loadPeek(rest + url.hash, inPeek ? "replace" : "push");
+    loadPeek(t.rest, t.inPeek ? "replace" : "push");
+  }
+
+  // Shift+mousedown would extend the text selection before the click lands;
+  // suppress that only for links we are about to open in the peek.
+  function onLinkMouseDown(e) {
+    if (!e.shiftKey || !isPlainPrimary(e) || isMobile()) return;
+    var a = e.target && e.target.closest ? e.target.closest("a") : null;
+    var t = peekTarget(a);
+    if (t && !t.selfHash) e.preventDefault();
+  }
+
+  var TRIGGER_ICON =
+    '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M14 4v16"/></svg>';
+
+  // Inject a hover/focus "open in side peek" button after each peekable link.
+  function decorateLinks(root) {
+    if (!root || typeof root.querySelectorAll !== "function" || isMobile() || !canHover()) return;
+    var links = root.querySelectorAll("a[href]");
+    for (var i = 0; i < links.length; i++) {
+      var a = links[i];
+      if (!a || typeof a.closest !== "function" || a.__peekDecorated) continue;
+      if (a.closest("h1, h2, h3, h4, h5, h6")) continue;
+      if (a.querySelector && a.querySelector("img")) continue;
+      var t = peekTarget(a);
+      if (!t || t.selfHash) continue;
+      var label = (a.textContent || "").replace(/\s+/g, " ").trim() || "page";
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "peek-trigger";
+      btn.setAttribute("aria-label", "Open " + label + " in side peek");
+      btn.setAttribute("title", "Open in side peek (Shift+click)");
+      btn.innerHTML = TRIGGER_ICON;
+      btn.__peekAnchor = a;
+      a.__peekDecorated = true;
+      if (a.parentNode) a.parentNode.insertBefore(btn, a.nextSibling);
+    }
   }
 
   window.addEventListener("popstate", function () {
@@ -262,14 +352,39 @@
   });
 
   document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape" && overlay && overlay.classList.contains("open")) {
+    var peekOpen = !!(overlay && overlay.classList.contains("open"));
+    if (e.key === "Escape" && peekOpen) {
       closePeek();
+      return;
     }
+    if (e.key !== "Enter") return;
+    if (peekOpen && (e.metaKey || e.ctrlKey) && currentFullUrl) {
+      e.preventDefault();
+      location.href = currentFullUrl;
+      return;
+    }
+    if (!e.shiftKey || e.metaKey || e.ctrlKey || e.altKey || isMobile()) return;
+    var active = document.activeElement;
+    if (!active || active.tagName !== "A") return;
+    var t = peekTarget(active);
+    if (!t || t.selfHash) return;
+    e.preventDefault();
+    loadPeek(t.rest, t.inPeek ? "replace" : "push");
   });
 
   document.addEventListener("DOMContentLoaded", function () {
     var main = document.querySelector(".reader-layout .article") || document.querySelector(".article");
-    if (main) main.addEventListener("click", onLinkClick);
+    if (main) {
+      main.addEventListener("click", onLinkClick);
+      main.addEventListener("mousedown", onLinkMouseDown);
+      decorateLinks(main);
+    }
+    // Shift+click on sidebar page rows (async rows live inside #sidebar-tree).
+    var tree = document.querySelector("#sidebar-tree");
+    if (tree) {
+      tree.addEventListener("click", onLinkClick);
+      tree.addEventListener("mousedown", onLinkMouseDown);
+    }
     // Restore a deep-linked peek.
     var p = new URLSearchParams(location.search).get("peek");
     if (p && !isMobile()) loadPeek(p, false);

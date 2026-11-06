@@ -37,12 +37,30 @@
   color: var(--text-secondary); font-size: 0.8125rem;
 }
 .person-wiki strong { color: var(--text-primary); font-weight: 600; }
+/* wikihub-hnp4: URL-driven sort control (links, no JS). */
+.people-sort { display: flex; flex-wrap: wrap; gap: 2px; margin: -12px 0 20px; }
+.people-sort a {
+  font-size: 0.75rem; color: var(--text-tertiary); text-decoration: none;
+  padding: 4px 10px; border: 1px solid transparent; border-radius: var(--radius-sm);
+}
+.people-sort a:hover { color: var(--text-primary); background: var(--control-bg-hover); text-decoration: none; }
+.people-sort a[aria-current="true"] { color: var(--accent); border-color: var(--border-default); }
+.people-sort a:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+.person-meta .person-sort-meta { color: var(--text-secondary); }
 {% endblock %}
 
 {% block body %}
 <div class="people-page">
   <h1>People</h1>
   <p class="subtitle">Every account has a first-class personal wiki at <code>/@username</code>. Browse people here, then drill into their personal wiki and project wikis from their person page.</p>
+
+  {% if sorts %}
+  <nav class="people-sort" aria-label="Sort people">
+    {% for key, label in sorts %}
+    <a href="/people?sort={{ key }}"{% if key == sort %} aria-current="true"{% endif %}>{{ label }}</a>
+    {% endfor %}
+  </nav>
+  {% endif %}
 
   <div class="people-grid">
     {% for person in people %}
@@ -60,8 +78,9 @@
       </div>
       {% endif %}
       <div class="person-meta">
+        {% if person.sort_meta %}<span class="person-sort-meta">{{ person.sort_meta }}</span>{% endif %}
         <span>{{ person.project_count }} public {{ 'wiki' if person.project_count == 1 else 'wikis' }}</span>
-        <span>{{ person.total_stars }} stars</span>
+        {% if sort != 'stars' %}<span>{{ person.total_stars }} {{ 'star' if person.total_stars == 1 else 'stars' }}</span>{% endif %}
         <span>{{ 'Personal wiki published' if person.profile_is_public else 'Personal wiki private' }}</span>
       </div>
       <div class="person-wikis">

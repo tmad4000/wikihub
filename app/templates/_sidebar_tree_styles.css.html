@@ -1,0 +1,31 @@
+/* Shared sidebar row kinds (wikihub-e8pj Home row, wikihub-hnfm groups/dividers/externals).
+   Included from reader/folder/profile/diff extra_css. Existing tokens only. */
+.sidebar-home {
+  font-weight: 500; color: var(--text-secondary);
+  margin-bottom: 4px; padding-left: 12px;
+}
+.sidebar-home + #sidebar-tree, .sidebar-home-wrap {
+  border-top: 1px solid var(--border-default); padding-top: 4px;
+}
+.sidebar-heading[href]:hover { color: var(--accent); }
+.sidebar-group + .sidebar-group, .sidebar-group:not(:first-child) { margin-top: 12px; }
+.sidebar-group-heading { padding: 4px 12px 2px; margin-bottom: 0; }
+.sidebar-divider {
+  border-top: 1px solid var(--border-default);
+  margin: 6px 0 4px; height: 0;
+}
+.sidebar-divider-labeled { height: auto; padding-top: 6px; }
+.sidebar-divider-labeled .sidebar-heading { display: block; padding: 2px 12px; margin: 0; }
+.sidebar-external .sidebar-icon { color: var(--text-muted); }
+.sidebar-icon { display: inline-flex; flex-shrink: 0; }
+.sidebar-vis { margin-left: auto; flex-shrink: 0; color: var(--text-muted); opacity: 0.6; display: inline-flex; }
+.sidebar-edit-link { color: var(--text-tertiary); }
+.sidebar-sort-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 20px; border: none; background: transparent;
+  color: var(--text-muted); cursor: pointer; padding: 0; border-radius: var(--radius-sm);
+  font-size: 0.625rem; font-family: var(--font-mono); opacity: 0.5;
+}
+.sidebar-sort-btn:hover { opacity: 1; background: var(--control-bg-hover); }
+.sidebar-sort-btn.active { opacity: 1; color: var(--accent); }
+.sidebar-sort-btn:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; opacity: 1; }

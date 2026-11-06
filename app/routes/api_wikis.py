@@ -18,6 +18,7 @@ from app.models import CustomDomain, User, Wiki, Page, Star, Fork, Wikilink, Wik
 from app.auth_utils import api_auth_optional, api_auth_required, check_admin_token, rate_limit_writes, security_event
 from app.git_backend import init_wiki_repo
 from app.git_sync import (
+    RefUpdateConflict,
     apply_repo_changes,
     append_event_to_repo,
     list_files_in_repo,
@@ -55,6 +56,9 @@ from app.url_utils import page_path_from_url_path, url_path_from_page_path
 
 
 ACL_FILE_PATH = ".wikihub/acl"
+# Owner-writable sidebar order (wikihub-hnfm). Plain git content: no reindex,
+# no mirror (the mirror strips .wikihub/*), computed per request by readers.
+SIDEBAR_FILE_PATH = ".wikihub/sidebar.md"
 
 
 def _resolve_owner_username(username):
@@ -140,6 +144,31 @@ def _is_acl_file_path(path):
 
 def _is_wikihub_plumbing_path(path):
     return is_wikihub_plumbing_path(path)
+
+
+def _is_sidebar_file_path(path):
+    return (path or "").strip().replace("\\", "/") == SIDEBAR_FILE_PATH
+
+
+def _sidebar_file_forbidden():
+    return {"error": "forbidden", "message": "Only the owner can update the wiki sidebar"}, 403
+
+
+def _write_sidebar_file(owner_user, wiki, content, status=200):
+    if content is not None and not isinstance(content, str):
+        return {"error": "bad_request", "message": "content must be a string"}, 400
+    max_page = current_app.config["MAX_PAGE_SIZE"]
+    if len((content or "").encode("utf-8")) > max_page:
+        return {"error": "too_large", "message": "Sidebar file is too large"}, 413
+    author_name, author_email = _current_author()
+    try:
+        sync_page_to_repo(
+            owner_user.username, wiki.slug, SIDEBAR_FILE_PATH, content or "",
+            message="Update .wikihub/sidebar.md", author_name=author_name, author_email=author_email,
+        )
+    except RefUpdateConflict:
+        return {"error": "conflict", "message": "The wiki changed while saving; retry"}, 409
+    return jsonify({"path": SIDEBAR_FILE_PATH}), status
 
 
 def _reject_wikihub_plumbing_path():
@@ -930,6 +959,10 @@ def create_page(owner, slug):
         _write_acl_file_and_reindex(owner_user, wiki, content, "Update .wikihub/acl")
         db.session.commit()
         return jsonify({"path": ACL_FILE_PATH, "reindexed": True}), 201
+    if _is_sidebar_file_path(path):
+        if not _current_user_is_owner(wiki):
+            return _sidebar_file_forbidden()
+        return _write_sidebar_file(owner_user, wiki, content, status=201)
     if _is_wikihub_plumbing_path(path):
         return _reject_wikihub_plumbing_path()
 
@@ -1035,6 +1068,11 @@ def read_page(owner, slug, page_path):
         return err
 
     normalized_page_path = _normalize_page_path_param(page_path)
+    if _is_sidebar_file_path(normalized_page_path) and _current_user_is_owner(wiki):
+        content = read_file_from_repo(owner_user.username, wiki.slug, SIDEBAR_FILE_PATH, public=False)
+        if content is None:
+            return {"error": "not_found", "message": "No sidebar file"}, 404
+        return jsonify({"path": SIDEBAR_FILE_PATH, "content": content})
     if _is_wikihub_plumbing_path(normalized_page_path):
         return {"error": "not_found", "message": "Page not found"}, 404
 
@@ -1197,6 +1235,10 @@ def replace_page(owner, slug, page_path):
         _write_acl_file_and_reindex(owner_user, wiki, content, "Update .wikihub/acl")
         db.session.commit()
         return jsonify({"path": ACL_FILE_PATH, "reindexed": True})
+    if _is_sidebar_file_path(normalized_page_path):
+        if not _current_user_is_owner(wiki):
+            return _sidebar_file_forbidden()
+        return _write_sidebar_file(owner_user, wiki, (request.get_json(silent=True) or {}).get("content", ""))
     if _is_wikihub_plumbing_path(normalized_page_path):
         return _reject_wikihub_plumbing_path()
 
@@ -1268,6 +1310,16 @@ def patch_page(owner, slug, page_path):
         _write_acl_file_and_reindex(owner_user, wiki, content, "Update .wikihub/acl")
         db.session.commit()
         return jsonify({"path": ACL_FILE_PATH, "reindexed": True})
+    if _is_sidebar_file_path(normalized_page_path):
+        if not _current_user_is_owner(wiki):
+            return _sidebar_file_forbidden()
+        data = request.get_json(silent=True) or {}
+        if data.get("new_path") or data.get("append_section"):
+            return {"error": "bad_request", "message": ".wikihub/sidebar.md supports content replacement only"}, 400
+        content = data.get("content")
+        if content is None:
+            content = read_file_from_repo(owner_user.username, wiki.slug, SIDEBAR_FILE_PATH, public=False) or ""
+        return _write_sidebar_file(owner_user, wiki, content)
     if _is_wikihub_plumbing_path(normalized_page_path):
         return _reject_wikihub_plumbing_path()
 
@@ -1406,6 +1458,14 @@ def delete_page(owner, slug, page_path):
         remove_page_from_repo(owner_user.username, wiki.slug, ACL_FILE_PATH)
         reindex_wiki_pages_and_mirror(owner_user.username, wiki.slug, wiki)
         db.session.commit()
+        return "", 204
+    if _is_sidebar_file_path(normalized_page_path):
+        if not _current_user_is_owner(wiki):
+            return _sidebar_file_forbidden()
+        try:
+            remove_page_from_repo(owner_user.username, wiki.slug, SIDEBAR_FILE_PATH)
+        except RefUpdateConflict:
+            return {"error": "conflict", "message": "The wiki changed while saving; retry"}, 409
         return "", 204
     if _is_wikihub_plumbing_path(normalized_page_path):
         return _reject_wikihub_plumbing_path()

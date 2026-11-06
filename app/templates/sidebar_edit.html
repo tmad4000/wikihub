@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Edit sidebar — {{ wiki.title or wiki.slug }} — wikihub{% endblock %}
+
+{% block extra_css %}
+.sidebar-edit-page { max-width: 760px; margin: 0 auto; padding: 32px 16px 72px; }
+@media (min-width: 640px) { .sidebar-edit-page { padding: 48px 24px 80px; } }
+.sidebar-edit-page h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 6px; }
+.sidebar-edit-page .subtitle { color: var(--text-secondary); margin-bottom: 20px; font-size: 0.9375rem; }
+.sidebar-edit-hint {
+  margin-bottom: 12px; padding: 10px 12px; border: 1px solid var(--border-default);
+  border-radius: var(--radius-md); color: var(--text-secondary); font-size: 0.8125rem; line-height: 1.6;
+}
+.sidebar-edit-hint code { font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-primary); }
+.sidebar-edit-page textarea {
+  width: 100%; min-height: 420px; resize: vertical; box-sizing: border-box;
+  background: var(--bg-elevated); color: var(--text-primary);
+  border: 1px solid var(--control-border); border-radius: var(--radius-md);
+  padding: 12px; font-family: var(--font-mono); font-size: 0.8125rem; line-height: 1.6;
+}
+.sidebar-edit-page textarea:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+.form-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; min-height: 40px;
+  padding: 8px 16px; border-radius: var(--radius-sm); font-size: 0.875rem; cursor: pointer;
+  text-decoration: none; border: 1px solid var(--border-emphasis); background: transparent;
+  color: var(--text-secondary); font-family: var(--font-body);
+}
+.btn-primary { background: var(--accent); color: #0f0e0c; border-color: var(--accent); font-weight: 600; }
+{% endblock %}
+
+{% block body %}
+<div class="sidebar-edit-page">
+  <h1>Edit sidebar</h1>
+  <p class="subtitle">Order and group the left sidebar of <a href="{{ wiki_url }}">{{ wiki.title or wiki.slug }}</a>. Saved to <code>.wikihub/sidebar.md</code> in the wiki's git repo, so agents can edit it too.</p>
+  <div class="sidebar-edit-hint" id="sidebar-format-hint">
+    <code># Heading</code> starts a group · <code>- [[page]]</code> or <code>- [[page|Label]]</code> lists a page · <code>- folder/</code> inserts a folder (indent two spaces to place pages inside it first) · <code>- [Label](https://…)</code> adds an external link.<br>
+    Pages you don't list are never hidden: they appear where <code>- ...</code> sits, or at the end under "Other pages". Page entries a reader can't open are skipped for them, but group headings with visible rows and external links are shown to everyone who can see the sidebar, so don't put private information in them.
+  </div>
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label for="sidebar-content" class="visually-hidden" style="position:absolute;left:-9999px;">Sidebar file</label>
+    <textarea id="sidebar-content" name="content" aria-describedby="sidebar-format-hint" spellcheck="false">{{ content }}</textarea>
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary">Save sidebar</button>
+      <a href="{{ wiki_url }}" class="btn">Cancel</a>
+      {% if has_file %}<button type="submit" name="reset" value="1" class="btn" title="Delete .wikihub/sidebar.md and go back to automatic order">Reset to automatic order</button>{% endif %}
+    </div>
+  </form>
+</div>
+{% endblock %}

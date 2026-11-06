@@ -59,55 +59,23 @@
 .history-card { border: 1px solid var(--border-default); border-radius: var(--radius-md); padding: 14px 16px; background: var(--bg-surface); transition: border-color 0.15s ease; }
 .history-card:hover { border-color: var(--border-accent); }
 .history-meta { display: flex; gap: 12px; flex-wrap: wrap; font-size: 0.75rem; color: var(--text-muted); font-family: var(--font-mono); margin-bottom: 8px; }
+{% include "_sidebar_tree_styles.css.html" %}
 {% endblock %}
 
 {% block body %}
-{% macro render_sidebar(items, level=0) %}
-  {% for item in items %}
-    {% if item.kind == 'folder' %}
-    <div class="sidebar-folder {{ 'open' if item.active else '' }}" data-folder-path="{{ item.path }}" data-name="{{ item.name }}" data-kind="folder" data-updated="{{ item.updated_at or '' }}" data-level="{{ level }}">
-      <div class="sidebar-folder-row">
-        <button type="button" class="sidebar-folder-toggle">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
-        </button>
-        <a href="{{ item.url }}" class="sidebar-item {{ 'active' if item.active else '' }}" style="padding-left: {{ 12 + (level * 16) }}px;">
-          <span class="sidebar-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h5l2 2h11v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg></span>
-          <span>{{ item.name }}</span>
-        </a>
-      </div>
-      <div class="sidebar-children">
-        {{ render_sidebar(item.children, level + 1) }}
-      </div>
-    </div>
-    {% else %}
-    <a href="{{ item.url }}" class="sidebar-item {{ 'sidebar-pinned' if item.pinned else '' }} {{ 'active' if item.active else '' }}" data-name="{{ item.name }}" data-kind="page" data-pinned="{{ '1' if item.pinned else '0' }}" data-updated="{{ item.updated_at or '' }}" data-path="{{ item.path }}" data-level="{{ level }}" style="padding-left: {{ 28 + (level * 16) }}px;">
-      <span class="sidebar-icon">{% if item.pinned %}<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>{% else %}<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>{% endif %}</span>
-      <span>{{ item.name }}</span>
-      {% if item.visibility is defined and item.visibility == 'private' %}
-      <span class="sidebar-vis" title="Private"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
-      {% elif item.visibility is defined and item.visibility == 'unlisted' %}
-      <span class="sidebar-vis" title="Unlisted"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></span>
-      {% endif %}
-    </a>
-    {% endif %}
-  {% endfor %}
-{% endmacro %}
+{% from "_sidebar_tree.html" import render_sidebar, sidebar_home_row, sidebar_sort_buttons, sidebar_edit_link %}
+{% set sidebar_custom = (sidebar_items or []) | selectattr("order", "defined") | list | length > 0 %}
 
 <div class="folder-shell">
   <aside class="sidebar">
     <div class="sidebar-section">
       {% if wiki.slug == owner.username %}
-      <a href="/@{{ owner.username }}" class="sidebar-heading" style="text-decoration:none;display:block;">{{ owner.display_name or owner.username }}</a>
+      <a href="/@{{ owner.username }}" class="sidebar-heading" title="Wiki home" style="text-decoration:none;display:block;">{{ owner.display_name or owner.username }}</a>
       {% else %}
-      <a href="/@{{ owner.username }}/{{ wiki.slug }}" class="sidebar-heading" style="text-decoration:none;display:block;">{{ wiki.title or wiki.slug }}</a>
+      <a href="/@{{ owner.username }}/{{ wiki.slug }}" class="sidebar-heading" title="Wiki home" style="text-decoration:none;display:block;">{{ wiki.title or wiki.slug }}</a>
       {% endif %}
-      <div class="sidebar-sort" style="padding:0 12px 4px;display:flex;gap:2px;">
-        <button class="sidebar-sort-btn active" data-sort="alpha" title="A → Z" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:20px;border:none;background:transparent;color:var(--text-muted);cursor:pointer;padding:0;border-radius:var(--radius-sm);font-size:0.625rem;font-family:var(--font-mono);opacity:0.5;">A↓</button>
-        <button class="sidebar-sort-btn" data-sort="alpha-desc" title="Z → A" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:20px;border:none;background:transparent;color:var(--text-muted);cursor:pointer;padding:0;border-radius:var(--radius-sm);font-size:0.625rem;font-family:var(--font-mono);opacity:0.5;">Z↓</button>
-        <button class="sidebar-sort-btn" data-sort="recent" title="Recently updated" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:20px;border:none;background:transparent;color:var(--text-muted);cursor:pointer;padding:0;border-radius:var(--radius-sm);opacity:0.5;">
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-        </button>
-      </div>
+      {{ sidebar_sort_buttons(sidebar_custom) }}
+      {{ sidebar_home_row(owner, wiki, not folder_path) }}
       <div id="sidebar-tree">
       {% if sidebar_items %}
       {{ render_sidebar(sidebar_items or []) }}
@@ -126,6 +94,7 @@
       {% if current_user.is_authenticated and current_user.id == wiki.owner_id %}
       <a href="/@{{ owner.username }}/{{ wiki.slug }}/new{% if folder_path %}?path={{ (folder_path ~ '/') | urlencode }}{% endif %}" class="sidebar-item" style="color:var(--accent);margin-top:8px;">New page</a>
       <a href="/@{{ owner.username }}/{{ wiki.slug }}/new-folder{% if folder_path %}?parent={{ folder_path | urlencode }}{% endif %}" class="sidebar-item" style="color:var(--accent);">New folder</a>
+      {{ sidebar_edit_link(owner, wiki) }}
       {% endif %}
     </div>
     {% if recently_updated %}
@@ -270,6 +239,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="{{ url_for('static', filename='js/sidebar-sort.js') }}"></script>
 <script>
 function toggleSidebar() {
   document.querySelector('.sidebar').classList.toggle('open');
@@ -316,107 +286,23 @@ requestAnimationFrame(() => {
   if (active) active.scrollIntoView({ block: 'nearest', behavior: 'instant' });
 });
 
-// --- Sidebar sort ---
-const sortStorageKey = 'wikihub-sidebar-sort';
-
-function sortSidebarChildren(container, mode) {
-  var items = [];
-  Array.from(container.children).forEach(function(el) {
-    if (el.classList.contains('sidebar-folder') || (el.tagName === 'A' && el.classList.contains('sidebar-item'))) {
-      items.push(el);
-    }
-  });
-  if (items.length < 2) return;
-  items.sort(function(a, b) {
-    var aKind = a.dataset.kind || (a.classList.contains('sidebar-folder') ? 'folder' : 'page');
-    var bKind = b.dataset.kind || (b.classList.contains('sidebar-folder') ? 'folder' : 'page');
-    var aName = (a.dataset.name || '').toLowerCase();
-    var bName = (b.dataset.name || '').toLowerCase();
-    var aUpdated = a.dataset.updated || '';
-    var bUpdated = b.dataset.updated || '';
-    var aPath = a.dataset.path || a.dataset.folderPath || '';
-    var bPath = b.dataset.path || b.dataset.folderPath || '';
-    var aPinned = a.dataset.pinned === '1';
-    var bPinned = b.dataset.pinned === '1';
-    if (aPinned !== bPinned) return aPinned ? -1 : 1;
-    if (aKind !== bKind) return aKind === 'folder' ? -1 : 1;
-    if (mode === 'alpha') {
-      return aName < bName ? -1 : aName > bName ? 1 : (aPath < bPath ? -1 : aPath > bPath ? 1 : 0);
-    } else if (mode === 'alpha-desc') {
-      return aName > bName ? -1 : aName < bName ? 1 : (aPath > bPath ? -1 : aPath < bPath ? 1 : 0);
-    } else if (mode === 'recent') {
-      if (!aUpdated && !bUpdated) return aName < bName ? -1 : aName > bName ? 1 : 0;
-      if (!aUpdated) return 1;
-      if (!bUpdated) return -1;
-      return aUpdated > bUpdated ? -1 : aUpdated < bUpdated ? 1 : 0;
-    }
-    return 0;
-  });
-  items.forEach(function(el) { container.appendChild(el); });
-  container.querySelectorAll(':scope > .sidebar-folder > .sidebar-children').forEach(function(sub) {
-    sortSidebarChildren(sub, mode);
-  });
-}
-
-function applySidebarSort(mode) {
-  localStorage.setItem(sortStorageKey, mode);
-  document.querySelectorAll('.sidebar-sort-btn').forEach(function(btn) {
-    btn.classList.toggle('active', btn.dataset.sort === mode);
-    btn.style.opacity = btn.dataset.sort === mode ? '1' : '0.5';
-    btn.style.color = btn.dataset.sort === mode ? 'var(--accent)' : 'var(--text-muted)';
-  });
-  var tree = document.getElementById('sidebar-tree');
-  if (tree) sortSidebarChildren(tree, mode);
-}
-
-document.querySelectorAll('.sidebar-sort-btn').forEach(function(btn) {
-  btn.addEventListener('click', function() { applySidebarSort(btn.dataset.sort); });
+// --- Sidebar sort (shared: app/static/js/sidebar-sort.js) ---
+const sidebarSort = window.WikihubSidebar.init({
+  scope: sidebarStorageScope,
+  // Rendered by sidebar_sort_buttons(); block-scoped Jinja vars don't reach here.
+  custom: !!(document.querySelector('.sidebar .sidebar-sort') && document.querySelector('.sidebar .sidebar-sort').dataset.custom === '1'),
+  container: document.querySelector('.sidebar .sidebar-sort'),
+  buttons: Array.from(document.querySelectorAll('.sidebar .sidebar-sort-btn')),
+  tree: function() { return document.getElementById('sidebar-tree'); },
 });
+if (!document.getElementById('async-sidebar')) sidebarSort.restore();
 
-(function() {
-  var saved = localStorage.getItem(sortStorageKey) || 'alpha';
-  if (saved !== 'alpha') applySidebarSort(saved);
-  document.querySelectorAll('.sidebar-sort-btn').forEach(function(btn) {
-    var isActive = btn.dataset.sort === saved;
-    btn.classList.toggle('active', isActive);
-    btn.style.opacity = isActive ? '1' : '0.5';
-    btn.style.color = isActive ? 'var(--accent)' : 'var(--text-muted)';
-  });
-})();
-
-// async sidebar for large wikis
+// async sidebar for large wikis (rows: WikihubSidebar.renderItem)
 (function() {
   const el = document.getElementById('async-sidebar');
   if (!el) return;
   const url = el.dataset.url;
   const currentPath = el.dataset.current || '';
-
-  function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
-
-  function renderItem(item, level) {
-    if (item.kind === 'folder') {
-      const isActive = item.active ? ' open' : '';
-      const upd = item.updated_at ? esc(item.updated_at) : '';
-      let html = `<div class="sidebar-folder${isActive}" data-folder-path="${esc(item.path)}" data-name="${esc(item.name)}" data-kind="folder" data-updated="${upd}" data-level="${level}">`;
-      html += `<div class="sidebar-folder-row">`;
-      html += `<button type="button" class="sidebar-folder-toggle">`;
-      html += `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>`;
-      html += `</button>`;
-      html += `<a href="${esc(item.url)}" class="sidebar-item${item.active ? ' active' : ''}" style="padding-left:${12 + (level * 16)}px;">`;
-      html += `<span class="sidebar-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h5l2 2h11v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg></span>`;
-      html += `<span>${esc(item.name)}</span></a></div>`;
-      html += `<div class="sidebar-children">${(item.children || []).map(c => renderItem(c, level + 1)).join('')}</div>`;
-      html += `</div>`;
-      return html;
-    } else {
-      const upd = item.updated_at ? esc(item.updated_at) : '';
-      const pin = item.pinned ? ' sidebar-pinned' : '';
-      const pinIcon = item.pinned
-        ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>'
-        : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
-      return `<a href="${esc(item.url)}" class="sidebar-item${pin}${item.active || item.path === currentPath ? ' active' : ''}" data-name="${esc(item.name)}" data-kind="page" data-pinned="${item.pinned ? '1' : '0'}" data-updated="${upd}" data-path="${esc(item.path)}" data-level="${level}" style="padding-left:${28 + (level * 16)}px;"><span class="sidebar-icon">${pinIcon}</span><span>${esc(item.name)}</span></a>`;
-    }
-  }
 
   fetch(url)
     .then(r => r.json())
@@ -425,7 +311,7 @@ document.querySelectorAll('.sidebar-sort-btn').forEach(function(btn) {
         el.innerHTML = '<div class="sidebar-empty" style="padding:8px 12px;color:var(--text-muted);font-size:0.8125rem;">No listed pages visible to you.</div>';
         return;
       }
-      el.innerHTML = items.map(item => renderItem(item, 0)).join('');
+      el.innerHTML = items.map(item => window.WikihubSidebar.renderItem(item, 0, currentPath)).join('');
       const state = loadFolders();
       document.querySelectorAll('.sidebar-folder').forEach(folder => {
         const path = folder.dataset.folderPath;
@@ -434,9 +320,8 @@ document.querySelectorAll('.sidebar-sort-btn').forEach(function(btn) {
         else if (folder.classList.contains('open') || shouldOpenCurrent) folder.classList.add('open');
         else folder.classList.remove('open');
       });
-      // Apply saved sort after async render
-      var saved = localStorage.getItem(sortStorageKey) || 'alpha';
-      if (saved !== 'alpha') applySidebarSort(saved);
+      sidebarSort.setCustom(window.WikihubSidebar.isCustomTree(items), document);
+      sidebarSort.restore();
     })
     .catch(() => {
       el.innerHTML = '<div style="padding:8px 12px;color:var(--text-muted);font-size:0.75rem;">Search to navigate</div>';

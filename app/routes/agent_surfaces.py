@@ -25,10 +25,10 @@ MCP_TOOLS = [
     {"name": "search", "description": "Full-text search across content pages"},
     {"name": "read_page", "description": "Read a content page; 404 means missing, 403/401 means restricted"},
     {"name": "list_pages", "description": "List readable content pages in a wiki"},
-    {"name": "create_page", "description": "Create a page; owner may create .wikihub/acl"},
-    {"name": "update_page", "description": "Replace or patch a page; owner may update .wikihub/acl"},
+    {"name": "create_page", "description": "Create a page; owner may create .wikihub/acl or .wikihub/sidebar.md (sidebar order + groups)"},
+    {"name": "update_page", "description": "Replace or patch a page; owner may update .wikihub/acl or .wikihub/sidebar.md (sidebar order + groups)"},
     {"name": "append_section", "description": "Append a section to a content page"},
-    {"name": "delete_page", "description": "Delete a page; owner may delete .wikihub/acl"},
+    {"name": "delete_page", "description": "Delete a page; owner may delete .wikihub/acl or .wikihub/sidebar.md"},
     {"name": "set_visibility", "description": "Set content page visibility"},
     {"name": "share", "description": "Grant page/folder/wiki read/edit access"},
     {"name": "unshare", "description": "Revoke page/folder/wiki read/edit access"},
@@ -61,6 +61,7 @@ def llms_txt():
         "- Custom domains: GET/POST /api/v1/wikis/{owner}/{slug}/custom-domains; verify or delete by domain ID",
         "- Published Sheet tables: GET/PUT/DELETE /api/v1/wikis/{owner}/{slug}/data-sources/{table_path}; POST the /refresh suffix for CSV or TSV",
         "- MCP: /mcp (add to your agent's mcpServers config)",
+        "- Sidebar order: owners write .wikihub/sidebar.md via the page API (# Heading = group, - [[page|Label]], - folder/, - ... = rest); see /AGENTS.md",
         "- CLI: `pipx install wikihub-cli` then `wikihub signup`, `wikihub write`, `wikihub read`, `wikihub search` (see /AGENTS.md)",
         "- Private sections: Wrap lines in `<!-- private -->` … `<!-- /private -->` to keep them visible only to the wiki owner; they are removed for everyone else, including ACL grantees, search, excerpts, history, clones, and exports.",
         "",
@@ -353,10 +354,18 @@ search, explore, global activity, global RSS, and profiles.
 Set frontmatter `pinned: true` to float a readable page to the top of the wiki
 sidebar; pinning never overrides read permissions and there is no dedicated
 pinning API or MCP tool.
+Order and group a wiki's sidebar by writing `.wikihub/sidebar.md` (owner only,
+via the normal page write for that path). `# Heading` starts a group,
+`- [[page]]` / `- [[page|Label]]` lists a page, `- folder/` inserts a folder,
+two-space indents nest, `- [Label](https://...)` adds an external link, and
+`- ...` marks where every unlisted page goes (otherwise they are appended under
+"Other pages" — never hidden). Entries a viewer cannot read are skipped for that
+viewer. Owners can also edit it at `/@owner/wiki/-/sidebar`.
 
 `.wikihub/*` paths are wiki plumbing, not normal pages. Owners may write, patch,
 delete, or revert `.wikihub/acl` through the page API; ACL changes reindex
-inherited visibility and refresh the public mirror. Other `.wikihub/*` paths are
+inherited visibility and refresh the public mirror. Owners may also write,
+replace, read, or delete `.wikihub/sidebar.md` (sidebar order). Other `.wikihub/*` paths are
 rejected by generic page writes and hidden from page lists, search/discovery,
 backlinks, history, zip exports, agent context, and public git mirrors.
 

@@ -49,6 +49,11 @@ Pinned pages use normal markdown frontmatter, not a dedicated MCP tool. Set
 sidebar; remove the field or set it false to unpin. Pinning never bypasses ACL
 or visibility checks.
 
+Sidebar order and groups also need no dedicated tool: as the wiki owner, write
+`.wikihub/sidebar.md` with `wikihub_create_page` / `wikihub_update_page`
+(`# Heading` = group, `- [[page|Label]]`, `- folder/`, `- ...` = every unlisted
+page; unlisted pages are never hidden).
+
 `.wikihub/*` paths are wiki plumbing, not normal pages. `wikihub_create_page`,
 `wikihub_update_page`, and `wikihub_delete_page` may target `.wikihub/acl` only
 when the caller owns the wiki; those ACL changes reindex inherited visibility
