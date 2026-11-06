@@ -1,0 +1,23 @@
+-- wikihub-oorq / private sections: NO DDL. This file documents a required
+-- post-deploy data backfill.
+--
+-- Why: pages.excerpt and pages.search_vector used to be computed from the
+-- UNSTRIPPED page body, so text inside <!-- private --> bands was searchable
+-- and shown in excerpts (search results, hover cards, <meta description>,
+-- llms-full.txt, explore cards) to everyone. The fix computes both from the
+-- band-stripped body, but only on the next write of each page. Existing rows
+-- keep stale values until reindexed. wikilinks.in_private_band is likewise
+-- only correct after a reindex.
+--
+-- Backfill (production, after deploying the code):
+--   gcloud compute ssh wikihub-prod --project=wikihub-prod --zone=us-east1-b --tunnel-through-iap \
+--     --command='cd /opt/wikihub-app && sudo -u <app-user> env $(sudo cat /etc/wikihub.env | xargs) .venv/bin/flask --app wsgi wikihub reindex --all --no-reset'
+-- (confirm the service user/env file from the systemd unit first; the CLI is
+-- defined in app/__init__.py `wikihub reindex`; --no-reset keeps page ids.) Or, per wiki, as the owner:
+--   POST https://wikihub.md/@<user>/<slug>/reindex
+--
+-- Then scrub the public mirror's unreachable objects once per affected wiki:
+--   sudo -u <app-user> git -C $REPOS_DIR/<user>/<slug>-public.git gc --prune=now
+-- and purge Cloudflare for the affected page URLs.
+
+SELECT 1;

@@ -857,6 +857,25 @@
     var bannerText = document.getElementById('editor-banner-text');
     var bannerActions = document.getElementById('editor-banner-actions');
 
+    if (editorConfig.isOwner) {
+      // Private sections (Markdown tab): Cmd/Ctrl+Shift+P wraps the selected
+      // lines (or the current line) in owner-only <!-- private --> markers, each
+      // on its own line. Non-owner editors never load band markers.
+      ta.addEventListener('keydown', function (event) {
+        if (!((event.metaKey || event.ctrlKey) && event.shiftKey && (event.key === 'p' || event.key === 'P'))) return;
+        event.preventDefault();
+        var value = ta.value;
+        var lineStart = value.lastIndexOf('\n', ta.selectionStart - 1) + 1;
+        var lineEnd = value.indexOf('\n', Math.max(ta.selectionEnd - (ta.selectionEnd > ta.selectionStart ? 1 : 0), ta.selectionStart));
+        if (lineEnd === -1) lineEnd = value.length;
+        var block = value.slice(lineStart, lineEnd);
+        ta.setRangeText('<!-- private -->\n' + block + '\n<!-- /private -->', lineStart, lineEnd, 'end');
+        ta.selectionStart = lineStart + '<!-- private -->\n'.length;
+        ta.selectionEnd = ta.selectionStart + block.length;
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+    }
+
     var editorState = {
       baseContent: ta.value,
       baseVisibility: visibilityInput.value,
@@ -998,6 +1017,14 @@
             var targetPath = data.path || payload.new_path || editorConfig.initialPath;
             surface.markSubmitting(true);
             window.location.href = '/@' + editorConfig.owner + '/' + editorConfig.slug + '/' + targetPath.replace(/\.md$/, '').split('/').map(encodeURIComponent).join('/');
+            return;
+          }
+          if (response.status === 409 && data.reason === 'private_bands') {
+            // The owner's private sections overlap this edit; the server saved it
+            // as a suggestion instead of writing (nothing is lost).
+            setBanner(data.message || 'Saved as a suggestion.', data.proposal_url ? [
+              { label: 'View suggestion', onClick: function () { window.location.href = data.proposal_url; }, primary: true },
+            ] : [], 'conflict');
             return;
           }
           if (response.status === 409) {

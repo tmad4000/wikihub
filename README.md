@@ -260,6 +260,27 @@ they are not indexed as pages, never count toward `page_count`, and are omitted
 from discovery, backlinks, history, zip exports, agent context, and public git
 mirrors.
 
+### Private sections
+
+A page can hold owner-only sections inside otherwise public text:
+
+```markdown
+<!-- private -->
+### People
+- [[people/Alex]] - met at AGI House
+<!-- /private -->
+```
+
+The wiki owner sees these as a labelled "Private · only you" band. Everyone
+else, including ACL grantees and public-edit contributors, gets the page with
+the band removed on every surface: reader HTML, side peek, raw markdown, API,
+search and excerpts, history, `.zip`, public git clone, forks, and agent
+context. Private sections are as private as a private page (both are stored in
+the owner's authoritative git repo) and are not a place for secrets. Markers
+inside code blocks are literal; an unclosed band is private to the end of the
+file. Non-owner edits are 3-way merged around the bands; an edit that cannot
+merge is saved as a suggestion instead (HTTP 409).
+
 ## Feedback
 
 Send bug reports, feature requests, or praise to `POST /api/v1/feedback`

@@ -135,13 +135,6 @@
 .profile-wiki .article strong { color: var(--text-primary); }
 .profile-wiki .article .katex-display { margin: 24px 0; overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
 .profile-wiki .article .math.amsmath { margin: 24px 0; overflow-x: auto; overflow-y: hidden; text-align: center; }
-.private-band-warning {
-  margin-bottom: 20px; padding: 12px 14px;
-  border: 1px solid rgba(212, 160, 74, 0.2);
-  background: rgba(212, 160, 74, 0.08);
-  border-radius: var(--radius-md); color: var(--text-secondary);
-  font-size: 0.8125rem; line-height: 1.5;
-}
 .hamburger {
   display: inline-flex; align-items: center; justify-content: center;
   width: 32px; height: 32px; background: none; border: none;
@@ -283,11 +276,6 @@
       {% if is_owner and personal_wiki %}
       <div style="display:flex;justify-content:flex-end;margin-bottom:12px;">
         <a href="/@{{ owner.username }}/{{ personal_wiki.slug }}/index/edit" class="action-btn secondary" style="font-size:0.75rem;padding:4px 12px;min-height:28px;">Edit profile</a>
-      </div>
-      {% endif %}
-      {% if private_band_warning %}
-      <div class="private-band-warning">
-        This page has sections visible only to editors; not a security boundary. Don’t use private bands for real secrets.
       </div>
       {% endif %}
       <article class="article">

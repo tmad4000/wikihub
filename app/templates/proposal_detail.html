@@ -220,6 +220,13 @@
   {% if stale %}
   <div class="proposal-stale">This suggestion is based on an older version of the page.</div>
   {% endif %}
+  {% if band_conflict %}
+  <div class="proposal-stale">
+    This suggestion overlaps your private sections and could not be merged automatically.
+    Copy the merged text below into the <a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ patch.page_path[:-3] if patch.page_path.endswith('.md') else patch.page_path }}/edit">editor</a> and resolve the marked conflicts.
+    <pre style="white-space:pre-wrap;margin-top:10px;font-family:var(--font-mono);font-size:0.75rem;">{{ band_conflict }}</pre>
+  </div>
+  {% endif %}
   {% if revision and revision.note %}
   <div class="proposal-note">{{ revision.note }}</div>
   {% endif %}

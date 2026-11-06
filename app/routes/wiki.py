@@ -6,7 +6,7 @@ from datetime import timezone
 from urllib.parse import quote, unquote, urlparse
 from sqlalchemy.orm import defer
 
-from flask import Response, abort, jsonify, redirect, render_template, request, url_for
+from flask import Response, abort, jsonify, redirect, render_template, render_template_string, request, url_for
 
 from app.url_utils import page_path_from_url_path, url_path_from_page_path
 from flask_login import current_user
@@ -15,6 +15,7 @@ from app import db
 from app.acl import can_read, can_write, grants_for_user, matches_serve_inline, normalize_page_visibility, resolve_grants, resolve_visibility
 from app.backlinks import get_backlinks_for_page
 from app.content_utils import (
+    content_for_viewer,
     has_private_bands,
     parse_markdown_document,
     replace_body_keep_frontmatter,
@@ -23,7 +24,8 @@ from app.content_utils import (
 )
 from app.discovery import discoverable_page_for_wiki, visible_wikis_for_owner
 from app.git_backend import _repo_path
-from app.git_sync import read_file_from_repo, read_file_bytes_from_repo, list_files_in_repo, regenerate_public_mirror, remove_page_from_repo, sync_page_to_repo, update_mirror_page
+from app.private_bands import CONFLICT_MESSAGE, PrivateBandConflict, create_conflict_proposal, merge_into_bands
+from app.git_sync import read_file_for_viewer, read_file_from_repo, read_file_bytes_from_repo, list_files_in_repo, regenerate_public_mirror, remove_page_from_repo, sync_page_to_repo, update_mirror_page
 from app.page_utils import content_page_path_filter, is_content_page_path, is_wikihub_plumbing_path
 from app.models import (
     Page,
@@ -96,14 +98,15 @@ def _stored_page_visibility(*candidates):
     return "private"
 
 
-def _get_backlinks(page):
+def _get_backlinks(page, wiki):
     """get pages that link to this page via wikilinks.
 
     Delegates to app.backlinks.get_backlinks_for_page so the API route and
     reader view stay in lockstep. See that module for resolution semantics
-    (including the unresolved-alias forward-ref fallback).
+    (including the unresolved-alias forward-ref fallback). Links that live
+    only inside an owner-only private band are hidden from non-owners.
     """
-    return get_backlinks_for_page(page)
+    return get_backlinks_for_page(page, include_private_bands=_is_owner(wiki))
 
 
 def _get_link_graph(page, wiki, viewer_filter=True):
@@ -122,7 +125,8 @@ def _get_link_graph(page, wiki, viewer_filter=True):
     page_url = _page_url(wiki.owner.username, wiki.slug, page.path)
     nodes[page.id] = {"id": page.id, "title": page.title or page.path.replace('.md', ''), "url": page_url, "current": True}
 
-    apply_filter = viewer_filter and not _is_owner(wiki)
+    viewer_is_owner = _is_owner(wiki)
+    apply_filter = viewer_filter and not viewer_is_owner
     acl_rules = None
     owner_obj = None
     if apply_filter:
@@ -137,8 +141,10 @@ def _get_link_graph(page, wiki, viewer_filter=True):
         return _viewer_can_read_page(wiki, neighbor_page, acl_rules=acl_rules, owner=owner_obj)
 
     # outgoing links
-    outgoing = Wikilink.query.filter_by(source_page_id=page.id).all()
-    for wl in outgoing:
+    outgoing_query = Wikilink.query.filter_by(source_page_id=page.id)
+    if not viewer_is_owner:
+        outgoing_query = outgoing_query.filter(Wikilink.in_private_band.is_(False))
+    for wl in outgoing_query.all():
         if not wl.target_page_id:
             continue
         if wl.target_page_id not in nodes:
@@ -150,8 +156,10 @@ def _get_link_graph(page, wiki, viewer_filter=True):
             links.append({"source": page.id, "target": wl.target_page_id})
 
     # incoming links (backlinks)
-    incoming = Wikilink.query.filter_by(target_page_id=page.id).all()
-    for wl in incoming:
+    incoming_query = Wikilink.query.filter_by(target_page_id=page.id)
+    if not viewer_is_owner:
+        incoming_query = incoming_query.filter(Wikilink.in_private_band.is_(False))
+    for wl in incoming_query.all():
         if wl.source_page_id not in nodes:
             src = db.session.get(Page, wl.source_page_id)
             if not src or not _neighbor_visible(src):
@@ -199,10 +207,13 @@ def _get_full_graph(wiki, viewer_filter=True):
             index_ids.add(p.id)
 
     page_ids = [p.id for p in pages]
-    all_links = Wikilink.query.filter(
+    link_filters = [
         Wikilink.source_page_id.in_(page_ids),
         Wikilink.target_page_id.isnot(None),
-    ).all()
+    ]
+    if not _is_owner(wiki):
+        link_filters.append(Wikilink.in_private_band.is_(False))
+    all_links = Wikilink.query.filter(*link_filters).all()
 
     # exclude index pages entirely — they link to everything and create a useless hub
     links = []
@@ -872,7 +883,7 @@ def _folder_index_content(username, slug, folder_path, public=False, *, wiki, ac
             visibility = db.session.query(Page.visibility).filter_by(wiki_id=wiki.id, path=candidate).scalar()
             if not can_read(candidate, acl_rules, user_name, visibility):
                 continue
-        content = read_file_from_repo(username, slug, candidate, public=public)
+        content = read_file_for_viewer(username, slug, candidate, public=public, viewer_is_owner=_is_owner(wiki))
         if content is not None:
             return candidate, content
     return None, None
@@ -1054,16 +1065,14 @@ def user_profile(username):
     personal_content = None
     personal_rendered_html = None
     personal_sidebar = []
-    private_band_warning = False
     is_owner = bool(personal_wiki and _is_owner(personal_wiki))
 
     if personal_wiki:
         use_public = not is_owner
         _, personal_content = _folder_index_content(owner.username, personal_wiki.slug, "", public=use_public, wiki=personal_wiki)
         if personal_content:
-            personal_rendered_html = render_page(personal_content, owner.username, personal_wiki.slug)
+            personal_rendered_html = render_page(personal_content, owner.username, personal_wiki.slug, mark_private_bands=is_owner)
             personal_sidebar = _build_sidebar_tree(owner.username, personal_wiki.slug, personal_wiki, public=use_public, current_path="index.md")
-            private_band_warning = not use_public and has_private_bands(personal_content)
         elif any(wiki.id == personal_wiki.id for wiki in wikis):
             personal_sidebar = _build_sidebar_tree(owner.username, personal_wiki.slug, personal_wiki, public=not is_owner)
 
@@ -1077,7 +1086,6 @@ def user_profile(username):
         total_stars=total_stars,
         personal_wiki=personal_wiki,
         personal_rendered_html=personal_rendered_html,
-        private_band_warning=private_band_warning,
         sidebar_items=personal_sidebar,
         personal_excerpt=(profile_page and (profile_page.frontmatter_json or {}).get("bio")) or (profile_page.excerpt if profile_page else None),
         personal_is_public=bool(profile_page),
@@ -1235,8 +1243,8 @@ def wiki_index(username, slug):
     if page is None:
         page = type("Page", (), {"path": page_path, "title": wiki.title, "visibility": "private", "updated_at": wiki.updated_at})()
 
-    rendered_html = render_page(content, owner.username, wiki.slug, current_page_path=page_path)
     is_owner = _is_owner(wiki)
+    rendered_html = render_page(content, owner.username, wiki.slug, current_page_path=page_path, mark_private_bands=is_owner)
     management_items = _folder_listing(owner.username, wiki.slug, wiki, "", public=False) if is_owner else None
     user_name = current_user.username if current_user.is_authenticated else None
     user_can_edit = is_owner or can_write(page_path, acl_rules, user_name, page.visibility if page else None)
@@ -1247,12 +1255,11 @@ def wiki_index(username, slug):
         page=page,
         rendered_html=rendered_html,
         toc=extract_toc(rendered_html),
-        backlinks=_get_backlinks(page),
+        backlinks=_get_backlinks(page, wiki),
         link_graph=_get_link_graph(page, wiki),
         full_graph_url=f"/@{owner.username}/{wiki.slug}/graph",
         recently_updated=recently_updated,
         sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, access=(use_public, acl_filter_user), current_path=page_path),
-        private_band_warning=not use_public and has_private_bands(content),
         json_ld_author=owner.display_name or owner.username,
         management_items=management_items,
         sibling_wikis=siblings,
@@ -1311,7 +1318,9 @@ def suggest_edit(username, slug, page_path):
 
     user_can_write = is_owner or can_write(file_path, acl_rules, username_for_acl, page.visibility)
     read_public = not user_can_write and _use_public_repo(wiki, acl_rules)
-    content = read_file_from_repo(owner.username, wiki.slug, file_path, public=read_public)
+    # Band-stripped for non-owners: the form never shows private bands and the
+    # stored ProposalPagePatch.base_content never contains them.
+    content = read_file_for_viewer(owner.username, wiki.slug, file_path, public=read_public, viewer_is_owner=is_owner)
     if content is None:
         abort(404)
     if request.method == "POST":
@@ -1409,6 +1418,15 @@ def proposal_detail(username, slug, proposal_id):
 
     stale = bool(current_page and patch.base_content_hash and current_page.content_hash != patch.base_content_hash)
     can_resubmit = current_user.is_authenticated and proposal.author_id == current_user.id and proposal.status == "changes_requested"
+    band_conflict = None
+    if _is_owner(wiki) and request.args.get("conflict") and current_page:
+        # Owner-only: the diff3 text includes the owner's private bands.
+        current_full = read_file_from_repo(owner.username, wiki.slug, current_page.path, public=False)
+        try:
+            merge_into_bands(current_full, patch.proposed_content, base=patch.base_content,
+                             normalize=lambda text: set_visibility_in_content(text, current_page.visibility))
+        except PrivateBandConflict as conflict:
+            band_conflict = conflict.diff3
     return render_template(
         "proposal_detail.html",
         owner=owner,
@@ -1425,6 +1443,7 @@ def proposal_detail(username, slug, proposal_id):
         current_hash=(current_page.content_hash if current_page else "") or "",
         is_owner=_is_owner(wiki),
         can_resubmit=can_resubmit,
+        band_conflict=band_conflict,
     )
 
 
@@ -1447,7 +1466,17 @@ def accept_proposal(username, slug, proposal_id):
     if _proposal_base_changed(proposal, patch) and request.form.get("confirm_base_changed") != "1":
         return redirect(url_for("wiki.proposal_detail", username=owner.username, slug=wiki.slug, proposal_id=proposal.id, stale="1"))
 
-    content = set_visibility_in_content(patch.proposed_content, page.visibility)
+    proposed = patch.proposed_content
+    current_full = read_file_from_repo(owner.username, wiki.slug, page.path, public=False)
+    if current_full is not None and patch.base_content is not None and patch.base_content != current_full:
+        # The author saw a band-stripped base (non-owner); merge their change
+        # into the owner's full content so private bands survive.
+        try:
+            proposed = merge_into_bands(current_full, proposed, base=patch.base_content,
+                                        normalize=lambda text: set_visibility_in_content(text, page.visibility))
+        except PrivateBandConflict:
+            return redirect(url_for("wiki.proposal_detail", username=owner.username, slug=wiki.slug, proposal_id=proposal.id, conflict="1"))
+    content = set_visibility_in_content(proposed, page.visibility)
     frontmatter, _ = parse_markdown_document(content)
     page.visibility = _stored_page_visibility(frontmatter.get("visibility"), page.visibility)
     page.author = proposal.author_name
@@ -1540,7 +1569,7 @@ def resubmit_proposal(username, slug, proposal_id):
 
     user_can_write = can_write(proposal.page_path, acl_rules, current_user.username, page.visibility)
     read_public = not user_can_write and _use_public_repo(wiki, acl_rules)
-    base_content = read_file_from_repo(owner.username, wiki.slug, proposal.page_path, public=read_public)
+    base_content = read_file_for_viewer(owner.username, wiki.slug, proposal.page_path, public=read_public, viewer_is_owner=_is_owner(wiki))
     if base_content is None:
         abort(404)
 
@@ -1663,7 +1692,10 @@ def wiki_history(username, slug):
         return _render_permission_error(owner, wiki)
     access = _repo_access(wiki, acl_rules)
     use_public, _ = access
-    raw_commits = _git_history(owner.username, wiki.slug, public=use_public)
+    # Authoritative history carries every past revision of private bands; only
+    # the owner may read it. Grantees get the band-stripped mirror history,
+    # further limited to the paths they can read now (wikihub-vv7q).
+    raw_commits = _git_history(owner.username, wiki.slug, public=not _is_owner(wiki))
     raw_commits = _filter_history_commits(raw_commits, _history_readable_paths(owner, wiki, access))
     # filter out internal event log commits (noise)
     commits = [c for c in raw_commits if not c["message"].startswith("Log ")]
@@ -1785,7 +1817,7 @@ def page_history(username, slug, folder_path):
         return _render_permission_error(owner, wiki)
     access = _repo_access(wiki, acl_rules)
     use_public, _ = access
-    raw_commits = _git_history(owner.username, wiki.slug, public=use_public, path=path)
+    raw_commits = _git_history(owner.username, wiki.slug, public=not _is_owner(wiki), path=path)
     raw_commits = _filter_history_commits(raw_commits, _history_readable_paths(owner, wiki, access))
     commits = [c for c in raw_commits if not c["message"].startswith("Log ")]
     return render_template("folder.html", owner=owner, wiki=wiki, items=[], sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, access=access, current_path=path), folder_path=f"{path} history", rendered_html=None, breadcrumb=[("History", None)], history_commits=commits)
@@ -1807,12 +1839,14 @@ def wiki_commit(username, slug, sha):
 
     # Owners/grantees read authoritative directly; everyone else is hard-gated
     # to the public mirror (no fallback — falling back leaks private diffs).
+    history_public = not _is_owner(wiki)  # private bands: owner-only authoritative diffs
     # Partial grantees only see the files of this commit they can read now
-    # (wikihub-vv7q); a commit touching none of them is a 404.
+    # (wikihub-vv7q); a commit touching none of them is a 404. Files, diff and
+    # history all come from the same repo so commit ids line up.
     visible_paths = None
     if readable_paths is not None:
-        visible_paths = [p for p in _git_commit_files(owner.username, wiki.slug, sha, public=use_public) if p in readable_paths]
-    diff_text = _git_diff(owner.username, wiki.slug, sha, public=use_public, paths=visible_paths)
+        visible_paths = [p for p in _git_commit_files(owner.username, wiki.slug, sha, public=history_public) if p in readable_paths]
+    diff_text = _git_diff(owner.username, wiki.slug, sha, public=history_public, paths=visible_paths)
     if diff_text is None:
         abort(404)
 
@@ -1833,7 +1867,7 @@ def wiki_commit(username, slug, sha):
             diff_lines.append(("ctx", line))
 
     # get commit metadata
-    history = _filter_history_commits(_git_history(owner.username, wiki.slug, public=use_public, limit=200), readable_paths)
+    history = _filter_history_commits(_git_history(owner.username, wiki.slug, public=history_public, limit=200), readable_paths)
     commit = next((c for c in history if c["sha"] == sha), None)
 
     return render_template(
@@ -2007,7 +2041,6 @@ def wiki_page(username, slug, page_path):
                     link_graph={"nodes": [], "edges": []},
                     recently_updated=_recently_updated_pages(wiki, public_only=use_public_viewer and not acl_filter_user_viewer),
                     sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, access=(use_public_viewer, acl_filter_user_viewer), current_path=page_path),
-                    private_band_warning=False,
                     json_ld_author=owner.display_name or owner.username,
                     sibling_wikis=siblings,
                     page_grants=[],
@@ -2055,7 +2088,6 @@ def wiki_page(username, slug, page_path):
                     link_graph={"nodes": [], "edges": []},
                     recently_updated=_recently_updated_pages(wiki, public_only=use_public_viewer and not acl_filter_user_viewer),
                     sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, access=(use_public_viewer, acl_filter_user_viewer), current_path=page_path),
-                    private_band_warning=False,
                     json_ld_author=owner.display_name or owner.username,
                     sibling_wikis=siblings,
                     page_grants=[],
@@ -2134,9 +2166,8 @@ def wiki_page(username, slug, page_path):
             items=items,
             sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, access=(use_public, acl_filter_user), current_path=page_path.strip("/")),
             folder_path=page_path.strip("/"),
-            rendered_html=render_page(content, owner.username, wiki.slug, current_page_path=content_path) if content else None,
+            rendered_html=render_page(content, owner.username, wiki.slug, current_page_path=content_path, mark_private_bands=_is_owner(wiki)) if content else None,
             breadcrumb=breadcrumb,
-            private_band_warning=bool(content and not use_public and has_private_bands(content)),
             sibling_wikis=siblings,
         )
 
@@ -2215,6 +2246,10 @@ def wiki_page(username, slug, page_path):
         unindexed_vis = resolve_visibility(file_path, acl_rules, unindexed_frontmatter.get("visibility"))
         if not can_read(file_path, acl_rules, user_name, unindexed_vis):
             content = None
+    # Private bands are owner-only on every surface (HTML, ?fragment=1,
+    # text/markdown). Grantees read the authoritative repo, so `use_public`
+    # alone is not enough — strip here for every non-owner.
+    content = content_for_viewer(content, viewer_is_owner=is_owner)
     if content is None:
         # wikihub-3rjt: agent-friendly content negotiation on miss. If the
         # client asked for markdown (or used a .md URL without HTML Accept),
@@ -2262,7 +2297,7 @@ def wiki_page(username, slug, page_path):
     if not page:
         page = type("Page", (), {"path": file_path, "title": os.path.basename(file_path).replace(".md", ""), "visibility": resolve_visibility(file_path, acl_rules), "updated_at": wiki.updated_at})()
 
-    rendered_html = render_page(content, owner.username, wiki.slug, current_page_path=file_path)
+    rendered_html = render_page(content, owner.username, wiki.slug, current_page_path=file_path, mark_private_bands=is_owner)
 
     # Side peek (wikihub-9k18): ?fragment=1 returns the rendered article body
     # only (no chrome) so a reader can open a same-wiki link in a slide-over
@@ -2298,11 +2333,10 @@ def wiki_page(username, slug, page_path):
         page=page,
         rendered_html=rendered_html,
         toc=extract_toc(rendered_html),
-        backlinks=_get_backlinks(page),
+        backlinks=_get_backlinks(page, wiki),
         link_graph=_get_link_graph(page, wiki),
         recently_updated=_recently_updated_pages(wiki, public_only=use_public and not acl_filter_user),
         sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, access=(use_public, acl_filter_user), current_path=file_path),
-        private_band_warning=not use_public and has_private_bands(content),
         json_ld_author=owner.display_name or owner.username,
         sibling_wikis=siblings,
         page_grants=page_grants,
@@ -2319,7 +2353,7 @@ def preview_page(username, slug):
     owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
     content = request.get_json(silent=True) or {}
     markdown = content.get("content", "")
-    html = render_page(markdown, owner.username, wiki.slug)
+    html = render_page(markdown, owner.username, wiki.slug, mark_private_bands=_is_owner(wiki))
     return {"html": html}
 
 
@@ -2378,6 +2412,38 @@ def edit_page(username, slug, page_path):
         else:
             content = _non_owner_visibility_content(target_path, content, acl_rules)
 
+        if not is_owner and page:
+            # Non-owners edited the band-stripped text; merge it back so the
+            # owner's private bands survive. Unmergeable -> 409 + suggestion.
+            current_full = read_file_from_repo(owner.username, wiki.slug, file_path, public=False)
+            try:
+                # Same normalization the submission received above, applied to
+                # the merge base and owner content so only real edits differ.
+                content = merge_into_bands(current_full, content, normalize=lambda text: set_visibility_in_content(text, page.visibility))
+            except PrivateBandConflict:
+                proposal = create_conflict_proposal(
+                    wiki=wiki,
+                    page=page,
+                    file_path=file_path,
+                    base_content=content_for_viewer(current_full, viewer_is_owner=False),
+                    proposed_content=content,
+                    author_id=current_user.id if current_user.is_authenticated else None,
+                    author_name=current_user.username if current_user.is_authenticated else "anonymous",
+                )
+                db.session.commit()
+                proposal_url = url_for("wiki.proposal_detail", username=owner.username, slug=wiki.slug, proposal_id=proposal.id)
+                if request.accept_mimetypes.best == "application/json" or request.is_json:
+                    return jsonify(error="conflict", reason="private_bands", message=CONFLICT_MESSAGE, proposal_id=proposal.id, proposal_url=proposal_url), 409
+                return render_template_string(
+                    '{% extends "base.html" %}{% block title %}Saved as a suggestion — wikihub{% endblock %}'
+                    '{% block body %}<div style="max-width:520px;margin:64px auto;padding:0 16px;">'
+                    '<h1 style="font-size:1.25rem;margin-bottom:12px;">Saved as a suggestion</h1>'
+                    '<p style="color:var(--text-secondary);margin-bottom:16px;">{{ message }}</p>'
+                    '<a href="{{ proposal_url }}">View your suggestion</a></div>{% endblock %}',
+                    message=CONFLICT_MESSAGE,
+                    proposal_url=proposal_url,
+                ), 409
+
         frontmatter, _ = parse_markdown_document(content)
         page_visibility = _stored_page_visibility(frontmatter.get("visibility"), resolve_visibility(target_path, acl_rules))
 
@@ -2404,7 +2470,7 @@ def edit_page(username, slug, page_path):
         db.session.commit()
         return redirect(_page_url(owner.username, wiki.slug, target_path))
 
-    content = read_file_from_repo(owner.username, wiki.slug, file_path, public=False) or ""
+    content = read_file_for_viewer(owner.username, wiki.slug, file_path, public=False, viewer_is_owner=is_owner) or ""
     visibility = page.visibility if page else resolve_visibility(file_path, acl_rules)
 
     page_grants = resolve_grants(file_path, acl_rules) if is_owner else []

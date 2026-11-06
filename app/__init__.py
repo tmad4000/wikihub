@@ -198,6 +198,9 @@ def create_app(config_class="config.Config"):
         db.session.execute(db.text(
             "ALTER TABLE wikis ADD COLUMN IF NOT EXISTS subdomain VARCHAR(63) UNIQUE"
         ))
+        db.session.execute(db.text(
+            "ALTER TABLE wikilinks ADD COLUMN IF NOT EXISTS in_private_band BOOLEAN NOT NULL DEFAULT FALSE"
+        ))
         db.session.commit()
         from app.wiki_ops import ensure_official_wiki
         ensure_official_wiki()
@@ -210,7 +213,11 @@ def create_app(config_class="config.Config"):
     @wikihub_cli.command("reindex")
     @click.argument("wiki_ref", required=False)
     @click.option("--all", "all_wikis", is_flag=True, default=False)
-    def reindex_command(wiki_ref=None, all_wikis=False):
+    @click.option(
+        "--no-reset", "no_reset", is_flag=True, default=False,
+        help="Update Page rows in place (keeps page ids, stars, proposals) instead of deleting and recreating them.",
+    )
+    def reindex_command(wiki_ref=None, all_wikis=False, no_reset=False):
         from app.models import User, Wiki
         from app.wiki_ops import index_repo_pages
 
@@ -224,7 +231,7 @@ def create_app(config_class="config.Config"):
             raise click.ClickException("pass owner/slug or use --all")
 
         for wiki in filter(None, wikis):
-            index_repo_pages(wiki.owner.username, wiki.slug, wiki, reset=True)
+            index_repo_pages(wiki.owner.username, wiki.slug, wiki, reset=not no_reset)
             click.echo(f"reindexed {wiki.owner.username}/{wiki.slug}")
         db.session.commit()
 

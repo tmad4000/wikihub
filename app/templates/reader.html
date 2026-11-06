@@ -469,13 +469,6 @@
 }
 .download-option:hover { background: var(--accent-subtle); color: var(--text-primary); text-decoration: none; }
 .actions-spacer { flex: 1; }
-.private-band-warning {
-  margin-bottom: 20px; padding: 12px 14px;
-  border: 1px solid rgba(212, 160, 74, 0.2);
-  background: rgba(212, 160, 74, 0.08);
-  border-radius: var(--radius-md); color: var(--text-secondary);
-  font-size: 0.8125rem; line-height: 1.5;
-}
 /* --- Curator panel --- */
 .curator-toggle {
   position: fixed; bottom: 24px; right: 24px; z-index: 100;
@@ -941,11 +934,6 @@
       {% endif %}
     </div>
 
-    {% if private_band_warning %}
-    <div class="private-band-warning">
-      This page has sections visible only to editors; not a security boundary. Don’t use private bands for real secrets.
-    </div>
-    {% endif %}
 
     {% if management_items is defined and management_items is not none %}
     <div id="manage-panel" style="display:none;margin-bottom:24px;">
@@ -997,8 +985,8 @@
     <nav class="toc-block inline-toc">
       <div class="toc-title">Contents</div>
       <ol class="toc-list">
-        {% for level, id, text in toc %}
-        <li class="toc-item toc-level-{{ level }}"><a href="#{{ id }}">{{ text }}</a></li>
+        {% for level, id, text, is_private in toc %}
+        <li class="toc-item toc-level-{{ level }}"><a href="#{{ id }}">{{ text }}{% if is_private %} <span class="toc-private" title="Private section, only you can see this" aria-label="private"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></span>{% endif %}</a></li>
         {% endfor %}
       </ol>
     </nav>
@@ -1038,8 +1026,8 @@
       <nav class="toc-block">
         <div class="toc-title">Contents</div>
         <ol class="toc-list">
-          {% for level, id, text in toc %}
-          <li class="toc-item toc-level-{{ level }}"><a href="#{{ id }}">{{ text }}</a></li>
+          {% for level, id, text, is_private in toc %}
+          <li class="toc-item toc-level-{{ level }}"><a href="#{{ id }}">{{ text }}{% if is_private %} <span class="toc-private" title="Private section, only you can see this" aria-label="private"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></span>{% endif %}</a></li>
           {% endfor %}
         </ol>
       </nav>

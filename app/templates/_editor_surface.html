@@ -77,7 +77,8 @@
   <noscript><style>#editor-surface .editor-textarea { display: block !important; } #milkdown-editor { display: none !important; }</style></noscript>
 
   <div class="editor-statusbar">
-    <span id="editor-mode-label">{{ 'Visual' if initial_mode == 'visual' else 'Markdown' }}</span>
+    <span id="editor-mode-label">{{ 'Visual' if initial_mode == 'visual' else 'Markdown' }}</span>{% if is_owner %}
+    <span title="Markdown tab: Cmd/Ctrl+Shift+P wraps lines in a private section (only you can see it)">⌘⇧P private</span>{% endif %}
     <span class="status-pill" id="save-status">Ready</span>
     <span id="line-count"></span>
   </div>

@@ -204,6 +204,10 @@ class Wikilink(db.Model):
     source_page_id = db.Column(db.Integer, db.ForeignKey("pages.id", ondelete="CASCADE"), nullable=False)
     target_path = db.Column(db.Text, nullable=False)  # raw link target before resolution
     target_page_id = db.Column(db.Integer, db.ForeignKey("pages.id", ondelete="SET NULL"), nullable=True)
+    # True when the link appears only inside an owner-only private band; such
+    # edges are hidden from non-owner backlinks/graphs.
+    # migrations/2026-11-03_wikilink_private_band.sql
+    in_private_band = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
 
     source_page = db.relationship("Page", foreign_keys=[source_page_id])
     target_page = db.relationship("Page", foreign_keys=[target_page_id])
