@@ -1,6 +1,12 @@
 {% extends "base.html" %}
-{% block title %}{{ page.title or page.path }} — {{ wiki.title or wiki.slug }} — wikihub{% endblock %}
-{% block og_title %}{{ page.title or page.path }} — {{ wiki.title or wiki.slug }}{% endblock %}
+{#- tab title + link preview name the open page first, then its wiki (dedupe
+    when the page IS the wiki's index), then the app. -#}
+{%- set display_title = page_display_title(page, rendered_html) -%}
+{%- set wiki_name = wiki.title or wiki.slug -%}
+{%- set doc_title = display_title if display_title|lower == wiki_name|lower else display_title ~ ' · ' ~ wiki_name -%}
+{% block title %}{{ doc_title }} — wikihub{% endblock %}
+{% block og_title %}{{ doc_title }}{% endblock %}
+{% block og_type %}article{% endblock %}
 {% block og_desc %}{{ page.excerpt or wiki.description or '' }}{% endblock %}
 {% block meta_desc %}{{ page.excerpt or wiki.description or '' }}{% endblock %}
 
@@ -1833,7 +1839,7 @@ document.addEventListener('DOMContentLoaded', function() {
 {{ {
   "@context": "https://schema.org",
   "@type": "Article",
-  "headline": page.title or page.path,
+  "headline": display_title,
   "author": {"@type": "Person", "name": json_ld_author},
   "datePublished": (page.created_at.isoformat() if page.created_at else wiki.created_at.isoformat()),
   "dateModified": (page.updated_at.isoformat() if page.updated_at else wiki.updated_at.isoformat()),

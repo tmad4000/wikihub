@@ -22,8 +22,13 @@
 <link rel="alternate" type="text/plain" href="/llms.txt" title="LLM index">
 <meta property="og:title" content="{% block og_title %}{{ self.title() }}{% endblock %}">
 <meta property="og:description" content="{% block og_desc %}GitHub for LLM wikis. Publish markdown knowledge bases in seconds.{% endblock %}">
-<meta property="og:type" content="website">
+<meta property="og:type" content="{% block og_type %}website{% endblock %}">
 <meta property="og:site_name" content="wikihub">
+{% if og_url %}<meta property="og:url" content="{{ og_url }}">
+{% endif %}{% if og_image %}<meta property="og:image" content="{{ og_image }}">
+{% endif %}<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="{{ self.og_title() }}">
+<meta name="twitter:description" content="{{ self.og_desc() }}">
 {% if request.environ.get('wikihub.noindex') %}<meta name="robots" content="noindex">
 {% endif %}<meta name="description" content="{% block meta_desc %}GitHub for LLM wikis. Publish markdown knowledge bases in seconds.{% endblock %}">
 {% include '_theme.html' %}

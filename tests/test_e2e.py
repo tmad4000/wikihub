@@ -12139,6 +12139,7 @@ def run_all():
             ("subdomain nav shows site identity (wikihub-m0pr)", lambda: test_subdomain_nav_identity(app, client)),
             ("custom domain footer mark (wikihub-m0pr)", lambda: test_custom_domain_footer_mark(client)),
             ("sidebar Home row (wikihub-e8pj)", lambda: test_sidebar_home_row(client, key)),
+            ("page titles + link previews name the open page (wikihub-46z0)", lambda: test_page_titles_and_link_previews(app, client, key)),
             ("sidebar custom order file (wikihub-hnfm)", lambda: test_sidebar_custom_order_file(client, key)),
             ("sidebar custom order rest marker (wikihub-hnfm)", lambda: test_sidebar_custom_order_rest_marker(client, key)),
             ("sidebar custom order no leak (wikihub-hnfm)", lambda: test_sidebar_custom_order_no_leak(app, client, key)),
@@ -13219,6 +13220,77 @@ def test_sidebar_md_hidden_from_history_diff_and_curator(app, client, key):
     assert not _wikihub_api_allowed(sess, "POST", "/wikis/agent1/nav-hist/pages", {"path": ".wikihub/sidebar.md", "content": "# x"})
     assert not _wikihub_api_allowed(sess, "PUT", "/wikis/agent1/nav-hist/pages/.wikihub/sidebar.md", {"content": "# x"})
     assert not _wikihub_api_allowed(sess, "GET", "/wikis/agent1/nav-hist/pages/.wikihub/sidebar.md", None)
+
+
+def _head_meta(html):
+    head = html.split("</head>", 1)[0]
+    title = re.search(r"<title>(.*?)</title>", head, re.S).group(1)
+    meta = dict(re.findall(r'<meta (?:property|name)="((?:og|twitter):[a-z_:]+)" content="([^"]*)"', head))
+    return head, title, meta
+
+
+def test_page_titles_and_link_previews(app, client, key):
+    """wikihub-46z0: tab title + crawler preview name the open page first, then
+    its wiki, then the app; every page carries og:image/og:url/twitter:card;
+    anonymous requests for private pages get a neutral preview."""
+    h = {"Authorization": f"Bearer {key}"}
+    r = client.post("/api/v1/wikis", json={"slug": "titles-wiki", "title": "Title Wiki", "description": "Wiki about titles"}, headers=h)
+    assert r.status_code == 201, r.get_data(as_text=True)[:200]
+    # No frontmatter title: the filename slug is a poor name; the H1 is the name.
+    _put_page(client, key, "agent1", "titles-wiki", "notes/hiyam-research-2026.md",
+              "# HiYam &amp; Friends research\n\nBody text for the preview excerpt.\n")
+    _put_page(client, key, "agent1", "titles-wiki", "explicit.md",
+              "---\ntitle: Explicit Title\nvisibility: public\n---\n\n# Different heading\n")
+    _put_page(client, key, "agent1", "titles-wiki", "secret-plan.md",
+              "---\ntitle: SECRETPLANTITLE\nvisibility: private\n---\n\n# SECRETPLANTITLE\n\nSECRETPLANBODY\n", visibility="private")
+    _put_page(client, key, "agent1", "titles-wiki", "banded.md",
+              "<!-- private -->\n# BANDHEADING\n<!-- /private -->\n\nPublic words only.\n")
+    anon = app.test_client()
+
+    head, title, meta = _head_meta(_get(anon, "/@agent1/titles-wiki/notes/hiyam-research-2026").get_data(as_text=True))
+    assert title == "HiYam &amp; Friends research · Title Wiki — wikihub", title
+    assert meta["og:title"] == "HiYam &amp; Friends research · Title Wiki", meta
+    assert meta["twitter:title"] == meta["og:title"]
+    assert "Body text for the preview excerpt" in meta["og:description"], meta
+    assert meta["twitter:description"] == meta["og:description"]
+    assert meta["og:type"] == "article" and meta["twitter:card"] == "summary", meta
+    assert meta["og:image"].startswith("http") and meta["og:image"].endswith("/static/icons/icon-512.png"), meta
+    assert meta["og:url"].endswith("/@agent1/titles-wiki/notes/hiyam-research-2026"), meta
+    assert "hiyam-research-2026 " not in title
+
+    _, title, _ = _head_meta(_get(anon, "/@agent1/titles-wiki/explicit").get_data(as_text=True))
+    assert title == "Explicit Title · Title Wiki — wikihub", "frontmatter title wins over the H1: " + title
+
+    # The wiki index whose heading is the wiki name is not "Title Wiki · Title Wiki".
+    _put_page(client, key, "agent1", "titles-wiki", "index.md", "---\nvisibility: public\n---\n\n# Title Wiki\n\nWelcome.\n")
+    _, title, meta = _head_meta(_get(anon, "/@agent1/titles-wiki").get_data(as_text=True))
+    assert title == "Title Wiki — wikihub", title
+
+    # Folder listings name the folder, not just the wiki.
+    resp = _get(anon, "/@agent1/titles-wiki/notes/")
+    assert resp.status_code == 200 and "folder-title" in resp.get_data(as_text=True), resp.status_code
+    _, title, meta = _head_meta(resp.get_data(as_text=True))
+    assert title == "notes · Title Wiki — wikihub", title
+    assert meta["og:description"] == "Wiki about titles", meta
+
+    # Private-band headings never name the page, even for the owner.
+    owner = _login_browser_with_key(app, key)
+    for browser in (anon, owner):
+        _, title, meta = _head_meta(_get(browser, "/@agent1/titles-wiki/banded").get_data(as_text=True))
+        assert "BANDHEADING" not in title and "BANDHEADING" not in meta["og:title"], title
+        assert title == "banded · Title Wiki — wikihub", title
+
+    # Anonymous crawler on a private page: neutral head, no title/body leak.
+    resp = _get(anon, "/@agent1/titles-wiki/secret-plan")
+    assert resp.status_code in (401, 403, 404), resp.status_code
+    head, title, meta = _head_meta(resp.get_data(as_text=True))
+    for needle in ("SECRETPLANTITLE", "SECRETPLANBODY"):
+        assert needle not in head, f"private {needle} leaked into <head>: {head[-600:]}"
+    assert "Title Wiki" not in meta.get("og:title", "") and meta.get("twitter:card") == "summary", meta
+
+    # The owner's own tab names the private page.
+    _, title, _ = _head_meta(_get(owner, "/@agent1/titles-wiki/secret-plan").get_data(as_text=True))
+    assert title == "SECRETPLANTITLE · Title Wiki — wikihub", title
 
 
 if __name__ == "__main__":
