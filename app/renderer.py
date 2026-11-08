@@ -66,6 +66,38 @@ def extract_toc(html):
     return toc
 
 
+def _first_public_h1(html):
+    """text of the first <h1> outside an owner-only private band, or None."""
+    if not html:
+        return None
+    band = html.find(_PRIVATE_BAND_OPEN_HTML)
+    match = re.search(r'<h1\b[^>]*>(.*?)</h1>', html, re.DOTALL)
+    if not match or (band >= 0 and match.start() > band):
+        return None
+    from html import unescape
+    text = " ".join(unescape(re.sub(r'<[^>]+>', '', match.group(1))).split())
+    return text[:200] or None
+
+
+def page_display_title(page, rendered_html=None):
+    """the name a reader sees for a page in tab titles and link previews.
+
+    An explicit frontmatter `title:` wins. When the indexed title is only the
+    filename default (``hiyam-notes`` for ``hiyam-notes.md``), the page's own
+    first heading names it better, so use that; otherwise fall back to the
+    title/path. Private-band headings are never used."""
+    path = getattr(page, "path", "") or ""
+    title = str(getattr(page, "title", "") or "").strip()
+    filename_default = path.rsplit("/", 1)[-1]
+    if filename_default.lower().endswith(".md"):
+        filename_default = filename_default[:-3]
+    if not title or title == filename_default:
+        heading = _first_public_h1(rendered_html)
+        if heading:
+            return heading
+    return title or path
+
+
 # Google Docs TOC anchors look like #h.v92l0g36bhyw (internal bookmark ids).
 _GDOC_TOC_ANCHOR_RE = re.compile(r'<a href="#(h\.[a-z0-9]+)">(.*?)</a>', re.IGNORECASE | re.DOTALL)
 _HEADING_ID_RE = re.compile(r'<h[1-6]\s+id="([^"]+)"', re.IGNORECASE)

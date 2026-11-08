@@ -185,6 +185,23 @@ def create_app(config_class="config.Config"):
             _version_cache.append(version or "dev")
         return _version_cache[0]
 
+    from app.renderer import page_display_title
+    app.jinja_env.globals["page_display_title"] = page_display_title
+
+    @app.context_processor
+    def inject_link_preview():
+        # Absolute og:url / og:image for link previews. On user/wiki hosts the
+        # subdomain middleware rewrote PATH_INFO; the shared URL is the
+        # pre-rewrite path on the same host.
+        from flask import has_request_context, request as _request, url_for as _url_for
+        if not has_request_context():
+            return {}
+        path = _request.environ.get("wikihub.rewritten_from") or _request.path
+        return {
+            "og_url": _request.host_url.rstrip("/") + path,
+            "og_image": _url_for("static", filename="icons/icon-512.png", _external=True),
+        }
+
     @app.context_processor
     def inject_feature_flags():
         # Expose feature flags to all templates (e.g. reader.html curator panel). wikihub-2jn.2
