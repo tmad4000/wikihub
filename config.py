@@ -2,6 +2,7 @@ import os
 
 
 class Config:
+    IDEAFLOW_CONNECTOR_SECRET = os.environ.get("IDEAFLOW_CONNECTOR_SECRET", "")
     SECRET_KEY = os.environ.get("SECRET_KEY", "change-me")
     SQLALCHEMY_DATABASE_URI = os.environ["DATABASE_URL"].replace("postgres://", "postgresql://", 1) if "DATABASE_URL" in os.environ else "postgresql://localhost/wikihub"
     SQLALCHEMY_TRACK_MODIFICATIONS = False

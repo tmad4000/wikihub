@@ -344,3 +344,25 @@ Two bare repos per wiki: `repos/<user>/<slug>.git` (authoritative, owner-only) a
 ## License
 
 MIT
+
+## Ideaflow Ecosystem delegated connector
+
+The shared OAuth setup is https://id.ideaflow.app/agents. WikiHub supports a
+separate `POST /api/connector/mcp` adapter with `wikihub:read` and optional
+`wikihub:write`. Existing API-key MCP and REST access are unchanged. The shared
+adapter includes wiki/page search, reads, creation, edits, deletion, appends,
+visibility, sharing, grants, history, forks and search/fetch aliases. It does
+not register accounts, mint credentials, or bypass wiki ACLs/private bands.
+
+Deployment requires `IDEAFLOW_CONNECTOR_SECRET` (a distinct per-app value),
+`migrations/2026-11-09_connector_assertion_nonces.sql`, and a reviewed gateway
+configuration using audience `https://wikihub.md/mcp`. Missing configuration
+fails closed. Assertions bind the exact request bytes, canonical identity
+issuer plus subject, app scopes, nonce and a maximum 45-second lifetime.
+Existing `ExternalIdentity` links are required; no account/email auto-linking.
+
+Run `python tests/test_connector.py` with the dedicated
+`wikihub_ecosystem_adapter_test` database for real HTTP/PostgreSQL/git tests
+covering private data, private bands, granted writes, read-only denial,
+concurrent replay across app instances, suspended users and existing key
+compatibility. Never point this resettable fixture at a production database.
