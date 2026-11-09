@@ -60,6 +60,7 @@ def llms_txt():
         "- Git: clone/push with https://username:wh_KEY@host/@user/wiki.git",
         "- Custom domains: GET/POST /api/v1/wikis/{owner}/{slug}/custom-domains; verify or delete by domain ID",
         "- Published Sheet tables: GET/PUT/DELETE /api/v1/wikis/{owner}/{slug}/data-sources/{table_path}; POST the /refresh suffix for CSV or TSV",
+        "- Ideaflow Ecosystem OAuth connection: https://id.ideaflow.app/agents (verify WikiHub availability after consent; standalone keys still work)",
         "- MCP: /mcp (add to your agent's mcpServers config)",
         "- Sidebar order: owners write .wikihub/sidebar.md via the page API (# Heading = group, - [[page|Label]], - folder/, - ... = rest); see /AGENTS.md",
         "- CLI: `pipx install wikihub-cli` then `wikihub signup`, `wikihub write`, `wikihub read`, `wikihub search` (see /AGENTS.md)",
@@ -441,6 +442,17 @@ git push wikihub main
 push markdown files and they go live instantly. Pushing `.wikihub/acl` refreshes
 inherited page visibility and the public mirror; other `.wikihub/*` files remain
 internal plumbing and are not exposed as pages.
+
+## Ideaflow Ecosystem shared connection
+
+Use https://id.ideaflow.app/agents for the shared OAuth connector. Choose
+WikiHub read access and optional write access, then verify the linked account
+and a read-only query. Availability depends on deployed adapter configuration.
+Existing WikiHub keys and the standalone MCP endpoint below remain valid.
+The gateway delegates short-lived, body-bound assertions to
+`POST /api/connector/mcp`; do not send another app's API key there. A missing
+account link requires normal WikiHub sign-in or explicit account linking, never
+email matching. Shared access cannot register accounts or mint API keys.
 
 ## MCP endpoint — Claude Connector
 
