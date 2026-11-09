@@ -101,6 +101,10 @@ def create_app(config_class="config.Config"):
     from app.git_backend import git_bp
     app.register_blueprint(git_bp)
 
+    from app.connector import connector_bp
+    app.register_blueprint(connector_bp)
+    csrf.exempt(connector_bp)
+
     csrf.exempt(api_bp)
     csrf.exempt(agent_chat_bp)
     csrf.exempt(api_root_bp)

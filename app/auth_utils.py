@@ -165,6 +165,11 @@ def get_current_user_from_request():
     returns User or None."""
     from flask_login import current_user
 
+    from app.connector_context import connector_user
+    delegated = connector_user.get()
+    if delegated is not None:
+        return delegated if delegated.suspended_at is None else None
+
     # try Bearer token
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):

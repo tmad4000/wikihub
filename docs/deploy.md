@@ -238,3 +238,18 @@ When a migration creates tables as the PostgreSQL superuser, it must transfer
 the new table and any owned sequences to the application role. Derive that role
 from an existing application table such as `public.wikis`; do not hard-code a
 deployment-specific username.
+
+## Ideaflow Ecosystem adapter rollout
+
+Preserve the exact live checkout and footer customization. Apply the additive
+nonce-table migration before enabling the new shared adapter. Configure the
+separate per-app `IDEAFLOW_CONNECTOR_SECRET` from the authorized secret store;
+never print it or replace OIDC/session/API-key credentials. Only then restart
+the reviewed release. Check normal public reads and standalone account keys,
+then verify shared OAuth identity and a read using an explicitly linked
+synthetic reviewer account. Existing users link through their normal account
+flow; never use an email match to seed real accounts.
+
+The adapter remains unavailable until configured. Rollback to the previous
+code and remove only the adapter setting if needed; leave existing services,
+account links and the harmless expiring nonce table intact.

@@ -506,3 +506,10 @@ class RateLimitBucket(db.Model):
     key = db.Column(db.String(200), primary_key=True)
     window_start = db.Column(db.DateTime(timezone=True), primary_key=True)
     count = db.Column(db.Integer, nullable=False, default=0)
+
+
+class ConnectorAssertionNonce(db.Model):
+    """Short-lived hashes only; durable replay prevention across workers."""
+    __tablename__ = "connector_assertion_nonces"
+    jti_hash = db.Column(db.String(64), primary_key=True)
+    expires_at = db.Column(db.DateTime(timezone=True), nullable=False, index=True)
