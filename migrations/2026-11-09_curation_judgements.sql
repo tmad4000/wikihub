@@ -5,13 +5,19 @@
 -- 14 days pass it (diagnosed 2026-11-09: @seo, @deepswapai,
 -- @elongflywikihubxb, @productshotai, @visaforma, @cellularport). Jacob's
 -- policy (Noos semantic-web plan D4): unless it is "super, super spam", do
--- not delete; curate against it. This table records editorial judgements
--- about an account, wiki or page:
+-- not delete; curate against it. Amended by plan 3c (Astra review): a
+-- judgement is a contestable, attributed, versioned decision with a
+-- lifecycle, kept separate from WikiHub's enforcement. This table records
+-- editorial judgements about a wiki (default), page or (explicitly) account:
 --   negative (promotional, affiliate_farm, automated_link_placement,
---             low_quality, off_topic): banner, noindex, nofollow ugc, out of
---             discovery, sorted last in search. Content stays readable.
+--             low_quality, off_topic): enforced as banner, noindex, nofollow
+--             ugc, out of discovery, last in search. Content stays readable.
 --   positive (featured, official, editor_pick): Explore editorial picks.
--- Revoking sets revoked_at; rows are never deleted. See docs/curation.md.
+-- Lifecycle: status active|retracted|superseded|expired, evidence (public),
+-- affected_version (wiki git sha), policy_version, review_at, expires_at,
+-- superseded_by, reply_url. Only status='active' rows whose expires_at is
+-- unset or in the future have effects. Rows are never deleted.
+-- See docs/curation.md.
 --
 -- Idempotent (IF NOT EXISTS / DO-block guards). Additive only: no existing
 -- table or row changes, so the old code keeps working against the new
@@ -43,10 +49,18 @@ CREATE TABLE IF NOT EXISTS curation_judgements (
     scope_id INTEGER NOT NULL,
     polarity VARCHAR(16) NOT NULL,
     reason VARCHAR(40) NOT NULL,
+    status VARCHAR(16) NOT NULL DEFAULT 'active',
     curator_user_id INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
     note TEXT NULL,
+    evidence JSON NOT NULL DEFAULT '[]'::json,
+    affected_version VARCHAR(64) NULL,
+    policy_version VARCHAR(32) NOT NULL,
+    review_at TIMESTAMPTZ NULL,
+    expires_at TIMESTAMPTZ NULL,
+    superseded_by INTEGER NULL REFERENCES curation_judgements(id) ON DELETE SET NULL,
+    reply_url TEXT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    revoked_at TIMESTAMPTZ NULL
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 DO $$
@@ -59,6 +73,10 @@ BEGIN
         ALTER TABLE curation_judgements ADD CONSTRAINT ck_curation_polarity
             CHECK (polarity IN ('positive', 'negative'));
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ck_curation_status') THEN
+        ALTER TABLE curation_judgements ADD CONSTRAINT ck_curation_status
+            CHECK (status IN ('active', 'retracted', 'superseded', 'expired'));
+    END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ck_curation_reason') THEN
         ALTER TABLE curation_judgements ADD CONSTRAINT ck_curation_reason
             CHECK ((polarity = 'negative' AND reason IN ('promotional', 'affiliate_farm',
@@ -70,6 +88,7 @@ END $$;
 -- at most one active judgement per (scope, polarity, reason)
 CREATE UNIQUE INDEX IF NOT EXISTS uq_curation_active
     ON curation_judgements (scope_type, scope_id, polarity, reason)
-    WHERE revoked_at IS NULL;
-CREATE INDEX IF NOT EXISTS ix_curation_created_at ON curation_judgements (created_at);
-CREATE INDEX IF NOT EXISTS ix_curation_revoked_at ON curation_judgements (revoked_at);
+    WHERE status = 'active';
+-- export pagination: ORDER BY updated_at, id
+CREATE INDEX IF NOT EXISTS ix_curation_updated_at ON curation_judgements (updated_at, id);
+CREATE INDEX IF NOT EXISTS ix_curation_scope ON curation_judgements (scope_type, scope_id);

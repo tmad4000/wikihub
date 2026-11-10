@@ -79,42 +79,57 @@ for u in user_b8aceefe vccbiz7985 vccbiz-probe-80365 project-links-agent-2026100
 done
 ```
 
-Optional: also record the reason as a judgement, so the Noos mirror carries the anti-signal for these
-domains even though the URLs answer 410. Decide this together with 4a.
+Optional: also record a judgement for the suspended accounts, so the Noos mirror carries the
+anti-signal for their link targets even though the URLs answer 410. These are whole-account
+judgements, so `--scope account` is explicit. Decide this together with 4a.
 
 ```bash
-$G --command="$FLASK flag user_b8aceefe --reason affiliate_farm --note 'vccbusiness.com 1,103 links; linkpilot-ai.ramerlabs.com 1,456'"
-$G --command="$FLASK flag vccbiz7985 --reason affiliate_farm --note 'same operator as user_b8aceefe'"
-$G --command="$FLASK flag project-links-agent-20261009 --reason automated_link_placement --note 'automated RU link placer'"
+$G --command="$FLASK flag user_b8aceefe --scope account --reason affiliate_farm --evidence https://vccbusiness.com/ --evidence https://linkpilot-ai.ramerlabs.com/ --note '1,103 + 1,456 outbound links (Nov 3 review)'"
+$G --command="$FLASK flag vccbiz7985 --scope account --reason affiliate_farm --evidence https://vccbusiness.com/ --note 'same operator as user_b8aceefe'"
+$G --command="$FLASK flag project-links-agent-20261009 --scope account --reason automated_link_placement --note 'automated RU link placer (Nov 3 review)'"
 ```
 
-### 4b. Negative-curate the ten promotional accounts (account scope, reason `promotional`)
+### 4b. Negative-curate the ten promotional accounts' wikis (wiki scope, reason `promotional`)
 
-| Account | Note (from the Nov 3 review) |
+Wiki scope is the default (plan 3c item 6). Each account published one promotional wiki, named in the
+Nov 3 review. Evidence is **public**: it is exported and visible to the owner. If an account later
+publishes another promotional wiki, judge that wiki too, or choose `--scope account` explicitly for a
+repeat offender.
+
+| Wiki | Public evidence (outbound target from the Nov 3 review) |
 |---|---|
-| elongflywikihubxb | xiabao.org Telegram-bot CTA |
-| roxicc | roxi.cc VPN |
-| nestack | nestackagents.com, nestack.com |
-| seo | faceswapai.com |
-| deepswapai | deepswapai.com (same operator as seo) |
-| franchisenegosyo | franchisenegosyo.com |
-| productshotai | productshotai.app |
-| peptidetracker | glp1.app, GLP-1 dosing |
-| visaforma | visaforma.com.ng |
-| cellularport | cellularport.com profile spam |
+| @elongflywikihubxb/telegram-admin-wiki | https://xiabao.org/ |
+| @roxicc/proxy-client-guides | https://roxi.cc/ |
+| @nestack/nestack | https://nestackagents.com/ |
+| @seo/seo | https://faceswapai.com/ |
+| @deepswapai/deepswapai | https://deepswapai.com/ |
+| @franchisenegosyo/philippine-franchise-notes | https://franchisenegosyo.com/ |
+| @productshotai/ecommerce-product-photos | https://productshotai.app/ |
+| @peptidetracker/peptide-dosing-reference | https://glp1.app/ |
+| @visaforma/visaforma | https://visaforma.com.ng/ |
+| @cellularport/cellularport | https://cellularport.com/ |
 
 ```bash
-$G --command="$FLASK flag elongflywikihubxb --polarity negative --reason promotional --note 'xiabao.org Telegram-bot CTA (Nov 3 review)'"
-$G --command="$FLASK flag roxicc            --polarity negative --reason promotional --note 'roxi.cc VPN (Nov 3 review)'"
-$G --command="$FLASK flag nestack           --polarity negative --reason promotional --note 'nestackagents.com (Nov 3 review)'"
-$G --command="$FLASK flag seo               --polarity negative --reason promotional --note 'faceswapai.com (Nov 3 review)'"
-$G --command="$FLASK flag deepswapai        --polarity negative --reason promotional --note 'deepswapai.com, same operator as seo (Nov 3 review)'"
-$G --command="$FLASK flag franchisenegosyo  --polarity negative --reason promotional --note 'franchisenegosyo.com (Nov 3 review)'"
-$G --command="$FLASK flag productshotai     --polarity negative --reason promotional --note 'productshotai.app (Nov 3 review)'"
-$G --command="$FLASK flag peptidetracker    --polarity negative --reason promotional --note 'glp1.app GLP-1 dosing (Nov 3 review)'"
-$G --command="$FLASK flag visaforma         --polarity negative --reason promotional --note 'visaforma.com.ng (Nov 3 review)'"
-$G --command="$FLASK flag cellularport      --polarity negative --reason promotional --note 'cellularport.com profile spam (Nov 3 review)'"
+while read -r wiki ev; do
+  $G --command="$FLASK flag $wiki --polarity negative --reason promotional --evidence $ev --note 'Nov 3 T&S review (plan D4)'"
+done <<'LIST'
+@elongflywikihubxb/telegram-admin-wiki https://xiabao.org/
+@roxicc/proxy-client-guides https://roxi.cc/
+@nestack/nestack https://nestackagents.com/
+@seo/seo https://faceswapai.com/
+@deepswapai/deepswapai https://deepswapai.com/
+@franchisenegosyo/philippine-franchise-notes https://franchisenegosyo.com/
+@productshotai/ecommerce-product-photos https://productshotai.app/
+@peptidetracker/peptide-dosing-reference https://glp1.app/
+@visaforma/visaforma https://visaforma.com.ng/
+@cellularport/cellularport https://cellularport.com/
+LIST
 ```
+
+Before executing, confirm each wiki slug still exists. The dry run fails loudly with "unknown wiki". An
+account's profile (`/@user`) carries the notice only if the judged wiki is its personal wiki
+(`@user/user`), as for seo, deepswapai, visaforma, cellularport and nestack. For the others, also judge
+the personal wiki if it carries promotional content.
 
 ### 4c. Leave alone (D4)
 
@@ -127,7 +142,7 @@ ahmadgaber54, shamadevi8900, davaidlisa, carrystack. Re-check with
 Re-run exactly the approved commands from step 4 with `--execute` appended. For example:
 
 ```bash
-$G --command="$FLASK flag seo --polarity negative --reason promotional --note 'faceswapai.com (Nov 3 review)' --execute"
+$G --command="$FLASK flag @seo/seo --polarity negative --reason promotional --evidence https://faceswapai.com/ --note 'Nov 3 T&S review (plan D4)' --execute"
 $G --command="$FLASK suspend user_b8aceefe --reason 'Nov 3 T&S review: link farm (plan D4)' --execute"
 $G --command="$FLASK curation-list"
 ```
@@ -149,7 +164,7 @@ done                                                       # expect 0 / 0 / 0 ev
 curl -s -A "$UA" -D - https://elongflywikihubxb.wikihub.md/telegram-admin-wiki/fake-verification-bots -o /tmp/p.html \
   | grep -i '^x-robots-tag'                                # x-robots-tag: noindex
 grep -o '<meta name="wikihub:curation"[^>]*>' /tmp/p.html  # content="negative:promotional"
-grep -c 'Curated against: promotional' /tmp/p.html         # 1
+grep -c 'Curated against: promotional' /tmp/p.html         # 1 (notice names "WikiHub editors" and the wiki scope)
 grep -o 'rel="nofollow ugc[^"]*"' /tmp/p.html | head -1
 curl -s -o /dev/null -w '%{http_code}\n' https://wikihub.md/@user_b8aceefe   # 410 once suspended
 curl -s https://wikihub.md/api/v1/curation | python3 -m json.tool | head -40   # no notes in public output
@@ -157,12 +172,19 @@ curl -s https://wikihub.md/api/v1/curation | python3 -m json.tool | head -40   #
 
 ## 7. Noos mirror (W1, separate owner)
 
-Noos polls `GET https://wikihub.md/api/v1/curation?cursor=…` and stores each row as a `curation`
-annotation on `url` and `wiki_urls` (plan D4 field names). WikiHub has nothing to run for this.
+Noos polls `GET https://wikihub.md/api/v1/curation?cursor=…` and upserts each row by `id` as a `curation`
+annotation on `url`/`wiki_urls`, propagating `status` changes (retracted, superseded, expired). WikiHub
+is the authoritative writer and has nothing to run for this.
+
+## 8. Review cadence
+
+Judgements get `review_at` 180 days out by default. List due ones with
+`$G --command="$FLASK curation-list --due"`. Then retract, supersede or leave each one.
 
 ## Rollback
 
-- One judgement: `$G --command="$FLASK unflag <target> --execute"`. The row stays, with `revoked_at` set.
+- One judgement: `$G --command="$FLASK unflag <target> --execute"`. The row stays, with `status=retracted`, and the export propagates the retraction.
+- Correct a judgement: `$G --command="$FLASK flag <target> --reason <new> --supersedes <id> --execute"`.
 - One suspension: `$G --command="$FLASK unsuspend <user> --execute"`.
 - The whole feature: redeploy the previous build. The table can stay; old code ignores it. To drop it,
   export it first (see the rollback notes in `migrations/2026-11-09_curation_judgements.sql`), then

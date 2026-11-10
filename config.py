@@ -74,6 +74,8 @@ class Config:
     # Spam defenses (wikihub-9ras / wikihub-1ug3). See app/trust.py and app/rate_limit.py.
     TRUST_GATE_ENABLED = os.environ.get("TRUST_GATE_ENABLED", "true").lower() in ("1", "true", "yes")
     TRUST_MIN_ACCOUNT_AGE_DAYS = int(os.environ.get("TRUST_MIN_ACCOUNT_AGE_DAYS", "14"))
+    # Version of the curation policy (docs/curation.md) recorded on each judgement (wikihub-f3b7).
+    CURATION_POLICY_VERSION = os.environ.get("CURATION_POLICY_VERSION", "2026-11-09")
     SIGNUP_API_MAX_PER_IP_PER_HOUR = int(os.environ.get("SIGNUP_API_MAX_PER_IP_PER_HOUR", "5"))
     SIGNUP_API_MAX_PER_IP_PER_DAY = int(os.environ.get("SIGNUP_API_MAX_PER_IP_PER_DAY", "20"))
     ANON_UPLOAD_MAX_PER_IP_PER_HOUR = int(os.environ.get("ANON_UPLOAD_MAX_PER_IP_PER_HOUR", "10"))

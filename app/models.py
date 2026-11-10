@@ -516,13 +516,16 @@ class ConnectorAssertionNonce(db.Model):
 
 
 class CurationJudgement(db.Model):
-    """An editorial judgement about an account, wiki or page (wikihub-f3b7).
+    """An attributed, versioned editorial judgement about an account, wiki or
+    page (wikihub-f3b7). See app/curation.py and docs/curation.md.
 
-    Negative judgements ("curated against") keep the content readable but
-    take it out of discovery, mark it noindex/nofollow and show a banner.
-    Positive judgements (featured, official, editor_pick) feed Explore's
-    editorial area. Judgements never delete content; revoking one sets
-    revoked_at and keeps the row as history. See app/curation.py.
+    The row is the *judgement* (an opinion with a curator, reason, evidence,
+    policy version and lifecycle) that /api/v1/curation exports. What WikiHub
+    does about it on its own surfaces (banner, discovery exclusion, noindex,
+    nofollow ugc) is *enforcement*, derived in app/curation.py. Only
+    status='active' rows whose expires_at has not passed have effects. Rows
+    are never deleted: unflag sets status='retracted', a replacement sets
+    status='superseded' + superseded_by.
     """
     __tablename__ = "curation_judgements"
 
@@ -531,14 +534,23 @@ class CurationJudgement(db.Model):
     scope_id = db.Column(db.Integer, nullable=False)  # users.id | wikis.id | pages.id
     polarity = db.Column(db.String(16), nullable=False)  # positive | negative
     reason = db.Column(db.String(40), nullable=False)
+    status = db.Column(db.String(16), nullable=False, default="active", server_default="active")
     curator_user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    note = db.Column(db.Text, nullable=True)
+    note = db.Column(db.Text, nullable=True)  # private moderator note
+    evidence = db.Column(db.JSON, nullable=False, default=list, server_default=db.text("'[]'::json"))  # public
+    affected_version = db.Column(db.String(64), nullable=True)  # wiki git sha at judgement time
+    policy_version = db.Column(db.String(32), nullable=False)
+    review_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    expires_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    superseded_by = db.Column(db.Integer, db.ForeignKey("curation_judgements.id", ondelete="SET NULL"), nullable=True)
+    reply_url = db.Column(db.Text, nullable=True)  # owner's published reply or appeal
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow, server_default=db.func.now())
-    revoked_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow, server_default=db.func.now())
 
     __table_args__ = (
         db.CheckConstraint("scope_type IN ('account', 'wiki', 'page')", name="ck_curation_scope_type"),
         db.CheckConstraint("polarity IN ('positive', 'negative')", name="ck_curation_polarity"),
+        db.CheckConstraint("status IN ('active', 'retracted', 'superseded', 'expired')", name="ck_curation_status"),
         db.CheckConstraint(
             "(polarity = 'negative' AND reason IN ('promotional', 'affiliate_farm', "
             "'automated_link_placement', 'low_quality', 'off_topic')) OR "
@@ -547,9 +559,9 @@ class CurationJudgement(db.Model):
         ),
         # at most one active judgement per (scope, polarity, reason)
         db.Index("uq_curation_active", "scope_type", "scope_id", "polarity", "reason",
-                 unique=True, postgresql_where=db.text("revoked_at IS NULL")),
-        db.Index("ix_curation_created_at", "created_at"),
-        db.Index("ix_curation_revoked_at", "revoked_at"),
+                 unique=True, postgresql_where=db.text("status = 'active'")),
+        db.Index("ix_curation_updated_at", "updated_at", "id"),
+        db.Index("ix_curation_scope", "scope_type", "scope_id"),
     )
 
     curator = db.relationship("User", foreign_keys=[curator_user_id])

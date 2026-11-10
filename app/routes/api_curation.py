@@ -1,26 +1,33 @@
-"""Curation export for the Noos backbone (wikihub-f3b7, plan D3/D4).
+"""Curation judgement export (wikihub-f3b7; plan D3/D4 and 3c item 9).
 
 GET /api/v1/curation[?since=ISO8601][&cursor=...][&limit=N]
 
-Lists curation judgements (active and revoked) ordered by when they last
-changed, so a mirror (Noos `curation` annotations) can poll incrementally:
-pass the previous response's `next_cursor`, or a `since` timestamp. WikiHub
-never calls Noos; Noos pulls this.
+WikiHub is the authoritative writer of its curation judgements. This lists
+every judgement, in force or not (status active, retracted, superseded or
+expired), ordered by (updated_at, id), so a mirror such as Noos can upsert
+idempotently by `id`, poll incrementally (pass the previous response's
+`next_cursor`, or `since` = last sync time) and propagate revocations.
+WikiHub never calls the mirror.
 
-Field names follow plan D4: polarity, reason, scope, curator, at, note.
-Public callers never see moderator notes or curator accounts, and judgements
-whose target is not publicly visible (private wiki, unlisted or private page)
-are left out so the export cannot reveal their names. The admin token
-(Authorization: Bearer ADMIN_TOKEN) sees everything.
+Each item is an attributed, versioned *judgement* (curator, reason, public
+evidence, policy_version, affected_version, lifecycle timestamps, reply
+link) plus `enforcement`: what WikiHub itself does about it on its own
+surfaces while it is in force. Consumers decide how far to trust the
+judgement; the enforcement list is WikiHub's decision only.
+
+Public callers never see moderator notes or curator accounts, and
+judgements on a target that is not publicly visible (private wiki,
+unlisted or private page) are left out so the export cannot reveal their
+names. The admin token (Authorization: Bearer ADMIN_TOKEN) sees everything.
 """
 
 from datetime import datetime, timezone
 
 from flask import current_app, jsonify, request
-from sqlalchemy import and_, func, or_
+from sqlalchemy import and_, or_
 
 from app.auth_utils import check_admin_token
-from app.curation import REASON_LABELS
+from app.curation import CURATOR_HANDLE, CURATOR_NAME, ENFORCEMENT, REASON_LABELS, effective_status
 from app.discovery import DISCOVERABLE_VISIBILITIES, discoverable_wiki_ids
 from app.models import CurationJudgement, Page, User, Wiki, utcnow
 from app.routes import api_bp
@@ -68,9 +75,8 @@ def curation_export():
         limit = _DEFAULT_LIMIT
     limit = max(1, min(limit, _MAX_LIMIT))
 
-    changed_at = func.coalesce(CurationJudgement.revoked_at, CurationJudgement.created_at)
-    query = CurationJudgement.query
-
+    CJ = CurationJudgement
+    query = CJ.query
     cursor = (request.args.get("cursor") or "").strip()
     since = _parse_ts(request.args.get("since"))
     if since is False:
@@ -80,20 +86,19 @@ def curation_export():
         ts = _parse_ts(ts_raw)
         if not ts or not id_raw.isdigit():
             return jsonify({"error": "bad_request", "message": "invalid cursor"}), 400
-        query = query.filter(or_(changed_at > ts, and_(changed_at == ts, CurationJudgement.id > int(id_raw))))
+        query = query.filter(or_(CJ.updated_at > ts, and_(CJ.updated_at == ts, CJ.id > int(id_raw))))
     elif since:
-        query = query.filter(changed_at >= since)
+        query = query.filter(CJ.updated_at >= since)
 
-    rows = query.order_by(changed_at.asc(), CurationJudgement.id.asc()).limit(limit + 1).all()
+    rows = query.order_by(CJ.updated_at.asc(), CJ.id.asc()).limit(limit + 1).all()
     has_more = len(rows) > limit
     rows = rows[:limit]
 
-    users = {u.id: u for u in User.query.filter(User.id.in_(
-        {r.scope_id for r in rows if r.scope_type == "account"} | {r.curator_user_id for r in rows if r.curator_user_id}
-    )).all()} if rows else {}
-    wiki_ids = {r.scope_id for r in rows if r.scope_type == "wiki"}
-    pages = {p.id: p for p in Page.query.filter(Page.id.in_({r.scope_id for r in rows if r.scope_type == "page"})).all()} if rows else {}
-    wiki_ids |= {p.wiki_id for p in pages.values()}
+    user_ids = {r.scope_id for r in rows if r.scope_type == "account"} | {r.curator_user_id for r in rows if r.curator_user_id}
+    users = {u.id: u for u in User.query.filter(User.id.in_(user_ids)).all()} if user_ids else {}
+    page_ids = {r.scope_id for r in rows if r.scope_type == "page"}
+    pages = {p.id: p for p in Page.query.filter(Page.id.in_(page_ids)).all()} if page_ids else {}
+    wiki_ids = {r.scope_id for r in rows if r.scope_type == "wiki"} | {p.wiki_id for p in pages.values()}
     wikis = {w.id: w for w in Wiki.query.filter(Wiki.id.in_(wiki_ids)).all()} if wiki_ids else {}
     public_wiki_ids = discoverable_wiki_ids(trusted_only=False) if rows else set()
     account_ids = [r.scope_id for r in rows if r.scope_type == "account"]
@@ -104,20 +109,32 @@ def curation_export():
                 account_wikis.setdefault(w.owner_id, []).append(w)
 
     base = _base_url()
+    now = utcnow()
     out = []
     for r in rows:
+        status = effective_status(r, now)
         item = {
             "id": r.id,
             "polarity": r.polarity,
             "reason": r.reason,
             "label": REASON_LABELS.get(r.reason, r.reason),
+            "status": status,
+            "in_force": status == "active",
             "scope": {"type": r.scope_type},
             "url": None,
             "wiki_urls": [],
-            "curator": "wikihub",
+            "curator": {"name": CURATOR_NAME, "handle": CURATOR_HANDLE},
+            "evidence": list(r.evidence or []),
+            "affected_version": r.affected_version,
+            "policy_version": r.policy_version,
+            "reply_url": r.reply_url,
+            "superseded_by": r.superseded_by,
             "at": _iso(r.created_at),
-            "revoked_at": _iso(r.revoked_at),
-            "active": r.revoked_at is None,
+            "created_at": _iso(r.created_at),
+            "updated_at": _iso(r.updated_at),
+            "review_at": _iso(r.review_at),
+            "expires_at": _iso(r.expires_at),
+            "enforcement": {"wikihub": list(ENFORCEMENT[r.polarity]) if status == "active" else []},
         }
         if r.scope_type == "account":
             user = users.get(r.scope_id)
@@ -155,14 +172,13 @@ def curation_export():
             item["curator_user"] = curator.username if curator else None
         out.append(item)
 
-    next_cursor = None
-    if has_more and rows:
-        last = rows[-1]
-        next_cursor = f"{_cursor_ts(last.revoked_at or last.created_at)}|{last.id}"
+    next_cursor = f"{_cursor_ts(rows[-1].updated_at)}|{rows[-1].id}" if has_more and rows else None
     return jsonify({
+        "publisher": base,
+        "authoritative": True,
         "judgements": out,
         "next_cursor": next_cursor,
         "has_more": has_more,
-        "generated_at": _iso(utcnow()),
+        "generated_at": _iso(now),
         "docs": f"{base}/curation",
     })

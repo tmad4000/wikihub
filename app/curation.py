@@ -1,31 +1,51 @@
-"""Editorial curation: negative ("curated against") and positive judgements
-(wikihub-f3b7). Design: Noos semantic-web plan D4, docs/curation.md.
+"""Editorial curation (wikihub-f3b7). Design: Noos semantic-web plan D4 as
+amended by section 3c (Astra review), and docs/curation.md.
 
-A judgement targets an account, a wiki or a page. Effects resolve per page
-through its wiki and owner: a page is curated against when the page, its
-wiki or its owner carries an active negative judgement.
+Two layers, kept apart:
 
-Negative judgement effects (content is never deleted):
-  * banner at the top of every page in scope + <meta name="wikihub:curation">;
-  * noindex (meta + X-Robots-Tag) and rel="nofollow ugc" on external links;
-  * excluded from /explore, /activity (+RSS), /people, /llms.txt,
+JUDGEMENT. A row in curation_judgements: an attributed ("WikiHub editors"),
+versioned (policy_version, affected_version) opinion about an account, wiki
+or page, with reason, public evidence, a lifecycle (status active, retracted,
+superseded or expired; review_at; expires_at; superseded_by) and an optional
+reply_url for the owner's reply or appeal. WikiHub is the authoritative
+writer; GET /api/v1/curation exports judgements, revocations included, so
+other systems (Noos, crawlers) can decide how far to trust them.
+
+ENFORCEMENT. What WikiHub itself does on its own surfaces while a negative
+judgement is in force. Content is never deleted and stays readable by link:
+  * a dismissible banner naming the curator, reason, scope and reply path;
+  * server-rendered noindex (meta tag and X-Robots-Tag) and link-level
+    rel="nofollow ugc" on external links;
+  * exclusion from /explore, /activity (+RSS), /people, /llms.txt,
     /llms-full.txt, the landing featured list and GET /api/v1/wikis;
-  * sorted last in site search;
-  * a `curation` field on wiki and page API objects.
-An account-scope negative judgement also withdraws trust (app/trust.py), so
-every existing trust check applies to it. Unlike the trust gate, curation
-applies whether or not TRUST_GATE_ENABLED is set: it is an explicit act.
+  * last place in site search.
+Positive judgements (featured, official, editor_pick) add a wiki to
+Explore's Editorial Picks. <meta name="wikihub:curation"> and the API
+`curation` field carry the same data as the export.
 
-Positive judgements (featured, official, editor_pick) feed Explore's
-editorial area. When a page has both, the negative judgement wins.
+Resolution. A page is judged through itself, its wiki and its owner. Only
+judgements in force count (status 'active' and expires_at unset or in the
+future). Negative and positive are resolved separately; within each, the
+most specific scope wins (page > wiki > account), then the newest. A
+positive judgement never cancels a negative one: both are shown, and
+enforcement follows the negative. An account-scope negative also withdraws
+trust (app/trust.py), so the trust gate's plumbing applies to it. Curation
+applies whether or not TRUST_GATE_ENABLED is set.
 """
 
-from sqlalchemy import and_, exists, true
+import posixpath
+
+from sqlalchemy import and_, exists, func, or_, true
 
 NEGATIVE_REASONS = ("promotional", "affiliate_farm", "automated_link_placement", "low_quality", "off_topic")
 POSITIVE_REASONS = ("featured", "official", "editor_pick")
 SCOPE_TYPES = ("account", "wiki", "page")
+STATUSES = ("active", "retracted", "superseded", "expired")
+CURATOR_NAME = "WikiHub editors"
+CURATOR_HANDLE = "wikihub"
+DEFAULT_POLICY_VERSION = "2026-11-09"
 _SPECIFICITY = {"page": 0, "wiki": 1, "account": 2}
+_INDEX_NAMES = ("index.md", "README.md")
 
 REASON_LABELS = {
     "promotional": "promotional",
@@ -36,6 +56,13 @@ REASON_LABELS = {
     "featured": "featured",
     "official": "official",
     "editor_pick": "editor's pick",
+}
+
+# What WikiHub enforces for a judgement in force, published with each
+# judgement so consumers can tell the opinion from WikiHub's own response.
+ENFORCEMENT = {
+    "negative": ["banner", "noindex", "nofollow_ugc", "excluded_from_discovery", "search_last"],
+    "positive": ["editorial_picks"],
 }
 
 
@@ -52,9 +79,29 @@ def polarity_for_reason(reason):
     return None
 
 
-def meta_content(judgement):
-    """Value for <meta name="wikihub:curation">, e.g. 'negative:promotional'."""
-    return f"{judgement['polarity']}:{judgement['reason']}" if judgement else ""
+def policy_version():
+    from flask import current_app
+    try:
+        return current_app.config.get("CURATION_POLICY_VERSION") or DEFAULT_POLICY_VERSION
+    except RuntimeError:
+        return DEFAULT_POLICY_VERSION
+
+
+def effective_status(row, now=None):
+    """Stored status, except an 'active' row past expires_at reads 'expired'."""
+    if row.status == "active" and row.expires_at is not None:
+        from app.models import utcnow
+        if row.expires_at <= (now or utcnow()):
+            return "expired"
+    return row.status
+
+
+def in_force_clause(model=None):
+    """SQL: the judgement currently has effects."""
+    if model is None:
+        from app.models import CurationJudgement as model
+    return and_(model.status == "active",
+                or_(model.expires_at.is_(None), model.expires_at > func.now()))
 
 
 def _norm_url_path(path):
@@ -64,18 +111,28 @@ def _norm_url_path(path):
     return path
 
 
+def _page_keys(path):
+    """URL keys under which a page is served: its own URL forms and, for an
+    index page, the folder (or wiki root, key '') it renders for."""
+    from app.url_utils import url_param_from_page_path
+    keys = {_norm_url_path(url_param_from_page_path(path)), _norm_url_path(path)}
+    if posixpath.basename(path) in _INDEX_NAMES:
+        folder = posixpath.dirname(path)
+        keys |= {_norm_url_path(folder), _norm_url_path(url_param_from_page_path(folder))}
+    return keys
+
+
 # ---------------------------------------------------------------------------
-# Snapshot of active judgements. The table is small (tens to hundreds of
-# rows), so one query per request is cheaper than per-object lookups.
+# Snapshot of judgements in force. The table is small (tens to hundreds of
+# rows), so one query per request beats per-object lookups.
 # ---------------------------------------------------------------------------
 
 def _load_snapshot():
     from app import db
     from app.models import CurationJudgement, Page, User, Wiki
-    from app.url_utils import url_param_from_page_path
 
-    rows = CurationJudgement.query.filter(CurationJudgement.revoked_at.is_(None)).all()
-    snap = {"rows": rows, "by_scope": {}, "page_names": {}, "wiki_names": {}, "account_names": {}}
+    rows = CurationJudgement.query.filter(in_force_clause(CurationJudgement)).all()
+    snap = {"rows": rows, "by_scope": {}, "page_names": {}, "wiki_names": {}, "account_names": {}, "names": {}}
     for row in rows:
         snap["by_scope"].setdefault((row.scope_type, row.scope_id), []).append(row)
 
@@ -85,22 +142,25 @@ def _load_snapshot():
     if account_ids:
         for uid, uname in db.session.query(User.id, User.username).filter(User.id.in_(account_ids)):
             snap["account_names"][uname] = uid
+            snap["names"][("account", uid)] = (uname, None, None)
     if wiki_ids:
         for wid, slug, uname in (db.session.query(Wiki.id, Wiki.slug, User.username)
                                  .join(User, Wiki.owner_id == User.id).filter(Wiki.id.in_(wiki_ids))):
             snap["wiki_names"][(uname, slug)] = wid
+            snap["names"][("wiki", wid)] = (uname, slug, None)
     if page_ids:
         for pid, path, slug, uname in (db.session.query(Page.id, Page.path, Wiki.slug, User.username)
                                        .join(Wiki, Page.wiki_id == Wiki.id)
                                        .join(User, Wiki.owner_id == User.id)
                                        .filter(Page.id.in_(page_ids))):
-            snap["page_names"][(uname, slug, _norm_url_path(url_param_from_page_path(path)))] = pid
-            snap["page_names"][(uname, slug, _norm_url_path(path))] = pid
+            for key in _page_keys(path):
+                snap["page_names"][(uname, slug, key)] = pid
+            snap["names"][("page", pid)] = (uname, slug, path)
     return snap
 
 
 def snapshot():
-    """Active judgements, cached for the current request (fresh outside one)."""
+    """Judgements in force, cached for the current request (fresh outside one)."""
     from flask import has_request_context, request
     if has_request_context():
         snap = request.environ.get("wikihub.curation_snapshot")
@@ -111,61 +171,92 @@ def snapshot():
     return _load_snapshot()
 
 
-def serialize(row, *, include_note=False):
-    out = {
+def scope_phrase(scope_type, names):
+    """Human description of what a judgement covers, for the banner."""
+    username, slug, _path = names or (None, None, None)
+    if scope_type == "page":
+        return "this page"
+    if scope_type == "wiki":
+        return f"this wiki (@{username}/{slug})" if username and slug else "this wiki"
+    return f"everything published by @{username}" if username else "this account"
+
+
+def serialize(row, names=None):
+    """Public view of one judgement (API field, meta, banner). Never the note."""
+    return {
         "id": row.id,
         "polarity": row.polarity,
         "reason": row.reason,
         "label": REASON_LABELS.get(row.reason, row.reason),
         "scope": row.scope_type,
+        "scope_description": scope_phrase(row.scope_type, names),
+        "status": effective_status(row),
+        "curator": CURATOR_NAME,
+        "policy_version": row.policy_version,
         "at": row.created_at.isoformat() if row.created_at else None,
+        "reply_url": row.reply_url,
+        "info_url": f"/curation#{row.reason}",
+        "enforcement": list(ENFORCEMENT[row.polarity]),
     }
-    if include_note:
-        out["note"] = row.note
-    return out
 
 
-def _pick(rows):
-    """Negative beats positive; then the most specific scope; then newest."""
+def _most_specific(rows):
     if not rows:
         return None
-    negatives = [r for r in rows if r.polarity == "negative"]
-    pool = negatives or rows
-    pool.sort(key=lambda r: (_SPECIFICITY[r.scope_type], -(r.created_at.timestamp() if r.created_at else 0)))
-    return pool[0]
+    return sorted(rows, key=lambda r: (_SPECIFICITY[r.scope_type],
+                                       -(r.created_at.timestamp() if r.created_at else 0)))[0]
 
 
-def effective_row(owner_id=None, wiki_id=None, page_id=None, snap=None):
+def resolve_rows(owner_id=None, wiki_id=None, page_id=None, snap=None):
+    """(negative_row, positive_row) in force for the object; either may be None."""
     snap = snap if snap is not None else snapshot()
     if not snap["rows"]:
-        return None
+        return None, None
     rows = []
     for scope_type, scope_id in (("account", owner_id), ("wiki", wiki_id), ("page", page_id)):
         if scope_id is not None:
             rows.extend(snap["by_scope"].get((scope_type, scope_id), ()))
-    return _pick(rows)
+    return (_most_specific([r for r in rows if r.polarity == "negative"]),
+            _most_specific([r for r in rows if r.polarity == "positive"]))
+
+
+def _bundle(neg, pos, snap):
+    if neg is None and pos is None:
+        return None
+    return {
+        "negative": serialize(neg, snap["names"].get((neg.scope_type, neg.scope_id))) if neg else None,
+        "positive": serialize(pos, snap["names"].get((pos.scope_type, pos.scope_id))) if pos else None,
+    }
 
 
 def effective(owner_id=None, wiki_id=None, page_id=None):
-    """Public curation dict for an object, or None."""
-    row = effective_row(owner_id, wiki_id, page_id)
-    return serialize(row) if row else None
+    """The `curation` API field: None, or {"negative": J|None, "positive": J|None}."""
+    snap = snapshot()
+    neg, pos = resolve_rows(owner_id, wiki_id, page_id, snap)
+    return _bundle(neg, pos, snap)
 
 
 def effective_by_names(username, slug=None, url_path=None):
-    """Resolve from URL components (/@username/slug/url_path)."""
+    """Same as effective(), resolved from URL components (/@username/slug/url_path).
+    An empty url_path is the wiki root, which renders its index page."""
     snap = snapshot()
     if not snap["rows"] or not username:
         return None
     owner_id = snap["account_names"].get(username)
     wiki_id = snap["wiki_names"].get((username, slug)) if slug else None
-    page_id = None
-    if slug and url_path:
-        page_id = snap["page_names"].get((username, slug, _norm_url_path(url_path)))
+    page_id = snap["page_names"].get((username, slug, _norm_url_path(url_path))) if slug else None
     if owner_id is None and wiki_id is None and page_id is None:
         return None
-    row = effective_row(owner_id, wiki_id, page_id, snap)
-    return serialize(row) if row else None
+    neg, pos = resolve_rows(owner_id, wiki_id, page_id, snap)
+    return _bundle(neg, pos, snap)
+
+
+def meta_content(bundle):
+    """<meta name="wikihub:curation"> value: space-separated polarity:reason
+    tokens, negative first, e.g. 'negative:promotional positive:editor_pick'."""
+    if not bundle:
+        return ""
+    return " ".join(f"{j['polarity']}:{j['reason']}" for j in (bundle["negative"], bundle["positive"]) if j)
 
 
 def negative_ids(scope_type):
@@ -178,7 +269,7 @@ def is_account_negative(user_id):
 
 
 def positive_wiki_ids():
-    """Wikis with a positive wiki-scope or page-scope judgement, newest first."""
+    """Wikis with a positive wiki- or page-scope judgement in force, newest first."""
     from app.models import Page
     snap = snapshot()
     ordered = sorted((r for r in snap["rows"] if r.polarity == "positive" and r.scope_type in ("wiki", "page")),
@@ -194,7 +285,7 @@ def positive_wiki_ids():
 
 
 # ---------------------------------------------------------------------------
-# SQL clauses for discovery queries.
+# Enforcement: SQL clauses for discovery queries.
 # ---------------------------------------------------------------------------
 
 def _negative_exists(scope_type, id_column):
@@ -203,12 +294,12 @@ def _negative_exists(scope_type, id_column):
         CJ.scope_type == scope_type,
         CJ.scope_id == id_column,
         CJ.polarity == "negative",
-        CJ.revoked_at.is_(None),
+        in_force_clause(CJ),
     ))
 
 
 def not_curated_against(user_id_col=None, wiki_id_col=None, page_id_col=None):
-    """SQL filter: none of the given scopes has an active negative judgement."""
+    """SQL filter: no negative judgement in force on any of the given scopes."""
     clauses = []
     for scope_type, col in (("account", user_id_col), ("wiki", wiki_id_col), ("page", page_id_col)):
         if col is not None:
@@ -218,32 +309,36 @@ def not_curated_against(user_id_col=None, wiki_id_col=None, page_id_col=None):
 
 def curated_against_sort_key(user_id_col=None, wiki_id_col=None, page_id_col=None):
     """ORDER BY expression: 0 for normal rows, 1 for curated-against rows."""
-    from sqlalchemy import case, or_
+    from sqlalchemy import case
     conds = [_negative_exists(st, col) for st, col in
              (("account", user_id_col), ("wiki", wiki_id_col), ("page", page_id_col)) if col is not None]
     return case((or_(*conds), 1), else_=0)
 
 
 # ---------------------------------------------------------------------------
-# Request hook: record the effective judgement for /@user/... URLs so
-# base.html can render the banner + meta and noindex applies.
+# Enforcement: request hook for /@user/... URLs. base.html renders the
+# banner and meta from request.environ["wikihub.curation"].
 # ---------------------------------------------------------------------------
 
 def mark_request(username, slug=None, url_path=None):
+    """Record the curation bundle for this URL. /@user (no slug) is the
+    profile, which renders the personal wiki @user/user's index."""
     from flask import request
-    judgement = effective_by_names(username, slug, url_path)
-    if judgement:
-        request.environ["wikihub.curation"] = judgement
-        if judgement["polarity"] == "negative":
+    bundle = effective_by_names(username, slug or username, url_path or "")
+    if bundle:
+        request.environ["wikihub.curation"] = bundle
+        request.environ["wikihub.curation_meta"] = meta_content(bundle)
+        request.environ["wikihub.curation_owner"] = username
+        if bundle["negative"]:
             request.environ["wikihub.noindex"] = True
-    return judgement
+    return bundle
 
 
 def request_negative_for(username, slug=None, page_path=None):
     """True when rendered content at (username, slug, page_path) is curated
-    against; used by the renderer to decide rel="nofollow ugc"."""
+    against; the renderer then marks external links rel="nofollow ugc"."""
     try:
-        judgement = effective_by_names(username, slug, page_path)
+        bundle = effective_by_names(username, slug, page_path or "")
     except RuntimeError:  # outside an app context
         return False
-    return bool(judgement and judgement["polarity"] == "negative")
+    return bool(bundle and bundle["negative"])
