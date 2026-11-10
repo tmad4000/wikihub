@@ -52,8 +52,12 @@ pulling the source alone does not update systemd's command.
 
 ```bash
 gcloud compute ssh wikihub-prod --project=wikihub-prod --zone=us-east1-b \
-  --command='cd /opt/wikihub-app && sudo git pull && sudo systemctl restart wikihub'
+  --command='cd /opt/wikihub-app && sudo git -c safe.directory=* pull && sudo systemctl restart wikihub'
 ```
+
+Run git on the host as `sudo git -c safe.directory=* …`. Some refs under
+`/opt/wikihub-app/.git` are root-owned, so non-sudo git fails. git's ownership check also refuses
+the repository under `sudo` unless `safe.directory` is set.
 
 ### 4. verify the deploy worked
 
@@ -241,8 +245,28 @@ PostgreSQL superuser.
 
 When a migration creates tables as the PostgreSQL superuser, it must transfer
 the new table and any owned sequences to the application role. Derive that role
-from an existing application table such as `public.wikis`; do not hard-code a
-deployment-specific username.
+from an existing application table such as `public.wikis` (see the `DO $$` block
+at the end of `migrations/2026-09-15_custom_domains.sql` or
+`2026-11-09_curation_judgements.sql`); do not hard-code a deployment-specific
+username. Every new-table migration needs a test like
+`test_curation_migration_preserves_app_owner`, which runs the file as an
+administrator against a table owned by a separate app role.
+
+**Check ownership after applying any new-table migration**, before restarting the app. Every row
+must show `wikihub`, the role the app connects as:
+
+```bash
+gcloud compute ssh wikihub-prod --project=wikihub-prod --zone=us-east1-b --tunnel-through-iap \
+  --command="sudo -u postgres psql -d wikihub -c \"SELECT relname, pg_get_userbyid(relowner) FROM pg_class WHERE relnamespace = 'public'::regnamespace AND pg_get_userbyid(relowner) <> 'wikihub' AND relkind IN ('r','S')\""
+# expect zero rows. To repair one table by hand:
+#   sudo -u postgres psql -d wikihub -c 'ALTER TABLE <table> OWNER TO wikihub'
+#   (ALTER TABLE also moves the sequences owned by its SERIAL columns)
+```
+
+Why this matters: on 2026-11-10 the first version of
+`2026-11-09_curation_judgements.sql` created its table owned by `postgres`, and every page returned
+500 ("permission denied for table curation_judgements") until the table was handed to `wikihub` by
+hand. The file now does that itself.
 
 ## Ideaflow Ecosystem adapter rollout
 

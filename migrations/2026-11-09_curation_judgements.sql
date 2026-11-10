@@ -34,6 +34,8 @@
 --     --project=wikihub-prod --zone=us-east1-b --tunnel-through-iap
 --   gcloud compute ssh wikihub-prod --project=wikihub-prod --zone=us-east1-b --tunnel-through-iap \
 --     --command='sudo -u postgres psql -v ON_ERROR_STOP=1 -d wikihub -f /tmp/2026-11-09_curation_judgements.sql'
+-- The file ends by handing the table to the application role (owner of
+-- public.users); verify with: \dt curation_judgements  (Owner = wikihub).
 -- Apply BEFORE restarting the app on the new code (create_all() would
 -- otherwise create the table on first boot, outside the backed-up step).
 --
@@ -97,3 +99,29 @@ CREATE INDEX IF NOT EXISTS ix_curation_updated_at ON curation_judgements (update
 CREATE INDEX IF NOT EXISTS ix_curation_scope ON curation_judgements (scope_type, scope_id);
 -- page scope: (wiki, path) survives a reindex that recreates page rows
 CREATE INDEX IF NOT EXISTS ix_curation_scope_path ON curation_judgements (scope_wiki_id, scope_path);
+
+-- Production applies migrations as the PostgreSQL administrator
+-- (`sudo -u postgres psql -f`), while WikiHub connects as the application role
+-- that owns the existing tables. A table created here would otherwise be owned
+-- by `postgres`, and every request fails with "permission denied for table
+-- curation_judgements" (this happened on the 2026-11-10 rollout and was fixed
+-- by hand with ALTER TABLE ... OWNER TO wikihub). Hand the table and its SERIAL
+-- sequence to the owner of public.users, as 2026-09-15_custom_domains.sql does.
+DO $$
+DECLARE
+    app_owner name;
+BEGIN
+    SELECT tableowner::name
+      INTO app_owner
+      FROM pg_tables
+     WHERE schemaname = 'public'
+       AND tablename = 'users';
+
+    IF app_owner IS NULL THEN
+        RAISE EXCEPTION 'Cannot determine WikiHub application role from public.users';
+    END IF;
+
+    EXECUTE format('ALTER TABLE public.curation_judgements OWNER TO %I', app_owner);
+    EXECUTE format('ALTER SEQUENCE public.curation_judgements_id_seq OWNER TO %I', app_owner);
+END
+$$;

@@ -1,9 +1,10 @@
 # Curation rollout runbook (2026-11)
 
-> **STATUS: NOT EXECUTED.** Nothing in this file has been run against production. The orchestrator's
-> own dry-run attempt was refused by the permission classifier, so execution waits for Jacob, either
-> in an interactive session or through an allow rule. Run every step as a dry run first; append
-> `--execute` only to the commands listed in step 5.
+> **STATUS: EXECUTED 2026-11-10 by the orchestrator on Jacob's go.** Production runs main `ea9ff0f`
+> (#53 + #54). Four suspensions are done, the migration is applied (with a manual ownership fix; see
+> step 2), and the ten wikis are flagged and verified. This file stays as the record and as the
+> template for the next rollout. Its commands include the fixes learned during this run: the
+> ownership check, git with `safe.directory`, and the Flask CLI run as `ubuntu`.
 
 - **Account list approved by Jacob,** 2026-11-09 ~19:20 MST (plan section 3d, item 4, with the
   orchestrator's narrowing about anon-92c215e9):
@@ -50,7 +51,7 @@ $G --command="cd /opt/wikihub-app && sudo -u ubuntu .venv/bin/flask --app wsgi.p
   commit on main, so `git pull` is not a no-op and may need a checkout:
 
 ```bash
-$G --command='cd /opt/wikihub-app && git rev-parse HEAD && git status --short | head && git branch --show-current && systemctl show wikihub -p User'
+$G --command='cd /opt/wikihub-app && sudo git -c safe.directory=* rev-parse HEAD && sudo git -c safe.directory=* status --short | head && sudo git -c safe.directory=* branch --show-current && systemctl show wikihub -p User'
 ```
 
 ## 1. Backup
@@ -71,8 +72,16 @@ gcloud compute scp migrations/2026-11-09_curation_judgements.sql wikihub-prod:/t
   --project=wikihub-prod --zone=us-east1-b --tunnel-through-iap \
   --account=874749606899-compute@developer.gserviceaccount.com
 $G --command='sudo -u postgres psql -v ON_ERROR_STOP=1 -d wikihub -f /tmp/2026-11-09_curation_judgements.sql'
-$G --command="sudo -u postgres psql -d wikihub -c '\\d curation_judgements'"
+$G --command="sudo -u postgres psql -d wikihub -c '\\dt curation_judgements' -c '\\ds curation_judgements_id_seq'"
+#   Owner must be wikihub (the app role) for both. If either shows postgres, the app 500s on every
+#   request; fix with: sudo -u postgres psql -d wikihub -c "ALTER TABLE curation_judgements OWNER TO wikihub"
 ```
+
+**What happened on 2026-11-10:** the file then had no ownership step. Run as `postgres`, it
+created a `postgres`-owned table, and every page returned 500 ("permission denied for table
+curation_judgements") until the orchestrator ran `ALTER TABLE curation_judgements OWNER TO wikihub`,
+which also moved the sequence. The file now ends by handing the table and sequence to the owner of
+`public.users`. Still check the owner as above.
 
 **Apply the migration before restarting on the new code.** `create_app()` would otherwise create the
 table on first boot through `db.create_all()`, outside the backed-up step and possibly in a race
@@ -90,25 +99,28 @@ to merge.
 
 ```bash
 # 1. What would the move drop? c20bd29 is production-only; review every commit it has that origin/main lacks.
-$G --command='cd /opt/wikihub-app && sudo git fetch origin && git log --oneline -1 origin/main \
-  && echo "--- on c20bd29 but not origin/main:" && git log --oneline origin/main..c20bd29 \
-  && echo "--- files that differ:" && git diff --stat c20bd29 origin/main \
-  && echo "--- footer touched by the move? (expect nothing):" && git diff --name-only c20bd29 origin/main -- app/templates/_footer.html'
+$G --command='cd /opt/wikihub-app && sudo git -c safe.directory=* fetch origin && sudo git -c safe.directory=* log --oneline -1 origin/main \
+  && echo "--- on c20bd29 but not origin/main:" && sudo git -c safe.directory=* log --oneline origin/main..c20bd29 \
+  && echo "--- files that differ:" && sudo git -c safe.directory=* diff --stat c20bd29 origin/main \
+  && echo "--- footer touched by the move? (expect nothing):" && sudo git -c safe.directory=* diff --name-only c20bd29 origin/main -- app/templates/_footer.html'
 #    STOP if the "on c20bd29 but not origin/main" list has commits nobody expects to drop
 #    Expected: only c20bd29 itself, the pre-squash Ecosystem-connector commit (#52 on main). Checked
 #    2026-11-10: `git diff c20bd29 9227e4b` touches only the files of #50 and #51 plus 4 CI-workflow
 #    lines, with no lines removed from code, so main contains all of c20bd29.
 # 2. Keep the old production state reachable for rollback, then move the branch.
-$G --command='cd /opt/wikihub-app && sudo git branch -f prod-before-curation c20bd29 && sudo git checkout -B main origin/main && git status --short'
+$G --command='cd /opt/wikihub-app && sudo git -c safe.directory=* branch -f prod-before-curation c20bd29 && sudo git -c safe.directory=* checkout -B main origin/main && sudo git -c safe.directory=* status --short'
 #    _footer.html must still show as modified
 # 3. Restart.
 $G --command='sudo systemctl restart wikihub && sleep 3 && systemctl is-active wikihub'
 ```
 
+Run git on the host as `sudo git -c safe.directory=* …`. Some refs are root-owned, so plain `git`
+fails, and git refuses the repository under `sudo` without `safe.directory`.
+
 `git checkout -B main origin/main` keeps uncommitted changes to files the move doesn't touch, and
 refuses if a touched file has local changes. If it refuses, stop and look rather than forcing.
 
-Rollback: `sudo git checkout -B main prod-before-curation && sudo systemctl restart wikihub`. The
+Rollback: `sudo git -c safe.directory=* checkout -B main prod-before-curation && sudo systemctl restart wikihub`. The
 `curation_judgements` table can stay, because the old code ignores it. Then check:
 
 ```bash

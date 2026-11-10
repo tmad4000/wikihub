@@ -69,6 +69,17 @@ gcloud compute scp migrations/FILE.sql wikihub-prod:/tmp/ --project=wikihub-prod
        --command='sudo -u postgres psql -d wikihub -f /tmp/FILE.sql'
 ```
 
+**New tables must end up owned by the app role.** Production applies files as `postgres`, but the
+app connects as `wikihub`. A new-table migration must therefore end by transferring the table and its
+sequences to the owner of an existing app table: copy the `DO $$` block at the end of
+`migrations/2026-11-09_curation_judgements.sql`. It also needs an ownership test (pattern:
+`test_curation_migration_preserves_app_owner`). Otherwise every request 500s with "permission denied
+for table …", as happened on 2026-11-10. See `docs/deploy.md` → DB migrations for the check to run
+after applying.
+
+On the production host, run git as `sudo git -c safe.directory=* …`, because some refs are
+root-owned.
+
 The header comment of each migration file should document its why + the exact
 apply command. Keep migrations in chronological order. Note: many existing
 migration headers (`migrations/2026-04-*.sql`) still reference the old Lightsail

@@ -11478,6 +11478,58 @@ def test_curation_migration_matches_model():
         admin.close()
 
 
+def test_curation_migration_preserves_app_owner():
+    """Production applies migrations as the PostgreSQL administrator but the app
+    connects as the role that owns its tables. curation_judgements (and its
+    sequence) must end up owned by that role, or every request 500s with
+    "permission denied for table curation_judgements" (2026-11-10 rollout)."""
+    import uuid
+
+    import psycopg2
+    from psycopg2 import sql
+    from sqlalchemy.engine import make_url
+
+    suffix = uuid.uuid4().hex[:12]
+    app_role = f"wikihub_app_{suffix}"
+    database_name = f"wikihub_curation_owner_{suffix}"
+    source_url = make_url(os.environ.get("TEST_DATABASE_ADMIN_URL", os.environ["DATABASE_URL"])).set(drivername="postgresql")
+    admin_dsn = source_url.set(database="postgres").render_as_string(hide_password=False)
+    migration_dsn = source_url.set(database=database_name).render_as_string(hide_password=False)
+    migration_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                  "migrations", "2026-11-09_curation_judgements.sql")
+    with open(migration_path, encoding="utf-8") as fh:
+        migration_sql = fh.read()
+
+    admin = psycopg2.connect(admin_dsn)
+    admin.autocommit = True
+    conn = None
+    try:
+        with admin.cursor() as cur:
+            cur.execute(sql.SQL("CREATE ROLE {}").format(sql.Identifier(app_role)))
+            cur.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database_name)))
+        conn = psycopg2.connect(migration_dsn)
+        with conn.cursor() as cur:
+            cur.execute("CREATE TABLE public.users (id SERIAL PRIMARY KEY)")
+            cur.execute(sql.SQL("ALTER TABLE public.users OWNER TO {}").format(sql.Identifier(app_role)))
+            cur.execute(migration_sql)
+            cur.execute(migration_sql)
+            cur.execute("""SELECT c.relname, pg_get_userbyid(c.relowner)
+                             FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                            WHERE n.nspname = 'public'
+                              AND c.relname IN ('users', 'curation_judgements', 'curation_judgements_id_seq')""")
+            owners = dict(cur.fetchall())
+        conn.commit()
+        assert owners == {"users": app_role, "curation_judgements": app_role,
+                          "curation_judgements_id_seq": app_role}, owners
+    finally:
+        if conn is not None:
+            conn.close()
+        with admin.cursor() as cur:
+            cur.execute(sql.SQL("DROP DATABASE IF EXISTS {}").format(sql.Identifier(database_name)))
+            cur.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(app_role)))
+        admin.close()
+
+
 def test_private_wiki_metadata_never_leaks(app, client, key):
     """A private wiki's title and description are content the caller cannot
     read (plan 3d). GET /api/v1/wikis/<o>/<s>, the /api/wikis/<o>/<s> compat
@@ -12455,6 +12507,7 @@ def run_all():
             ("curation wiki/page/positive scopes + export (wikihub-f3b7)", lambda: test_curation_wiki_page_and_positive_scopes(app, client, key)),
             ("curation never reaches denied responses; survives reindex (wikihub-f3b7)", lambda: test_curation_never_reaches_denied_responses_and_survives_reindex(app, client, key)),
             ("curation migration matches model (wikihub-f3b7)", test_curation_migration_matches_model),
+            ("curation migration preserves app owner (wikihub-f3b7)", test_curation_migration_preserves_app_owner),
             ("private wiki metadata never leaks (plan 3d)", lambda: test_private_wiki_metadata_never_leaks(app, client, key)),
             ("F5 user search is not an email oracle (wikihub-x77k)", lambda: test_user_search_is_not_an_email_oracle(app, client, key)),
             ("F6 unlisted pages not in public page list (wikihub-mnjc)", lambda: test_unlisted_pages_not_in_public_page_list(app, client, key)),
