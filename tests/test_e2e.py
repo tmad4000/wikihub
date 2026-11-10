@@ -9762,6 +9762,12 @@ def test_wiki_limit_effective_resolution_and_429(client, app):
 
     r = client.post("/api/v1/accounts", json={"username": "forksource"})
     assert r.status_code == 201
+    # Only a wiki the caller can read may be forked (plan 3d); the personal
+    # wiki is scaffolded private, so publish a page in it first.
+    src_h = {"Authorization": f"Bearer {r.get_json()['api_key']}"}
+    r = client.post("/api/v1/wikis/forksource/forksource/pages", json={
+        "path": "shared.md", "content": "---\nvisibility: public\n---\n# Shared\n", "visibility": "public"}, headers=src_h)
+    assert r.status_code == 201, r.get_data(as_text=True)
     r = client.post("/api/v1/wikis/forksource/forksource/fork", headers=h)
     assert r.status_code == 429, f"fork should respect cap: {r.get_data(as_text=True)}"
     body = r.get_json()
