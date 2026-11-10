@@ -12616,6 +12616,8 @@ def run_all():
             ("activity RSS well-formed + correct links (both hosts)", lambda: test_activity_rss_is_well_formed_with_correct_links(client, key)),
             ("private-only wiki RSS does not leak metadata", lambda: test_wiki_activity_rss_private_only_wiki_does_not_leak_metadata(client, key)),
             ("per-wiki feeds exclude unlisted for every viewer (wikihub-0t3y)", lambda: test_wiki_activity_excludes_unlisted_for_all_viewers(app, client, key)),
+            ("wiki proposals survive hidden candidates (wikihub-0t3y)", lambda: test_wiki_activity_proposals_survive_hidden_candidates(app, client, key)),
+            ("activity rehearsal rejects routing overrides", lambda: test_activity_rehearsal_rejects_routing_options()),
             ("per-wiki RSS finds older public pages after hidden pages", lambda: test_wiki_activity_rss_keeps_older_public_after_hidden_pages(client, key)),
             ("global activity rows avoid nested anchors", lambda: test_global_activity_rows_do_not_nest_anchors(client, key)),
             ("global activity pagination", lambda: test_activity_pagination(client, key)),
@@ -12927,6 +12929,24 @@ def test_activity_rss_is_well_formed_with_correct_links(client, key):
 
 
 
+
+def _activity_row_text(response):
+    """Parse rendered feed rows, excluding Recently updated and other navigation."""
+    from html.parser import HTMLParser
+    class Rows(HTMLParser):
+        def __init__(self):
+            super().__init__(); self.active = False; self.text = []
+        def handle_starttag(self, tag, attrs):
+            if tag == "a" and "activity-row" in dict(attrs).get("class", "").split():
+                self.active = True
+        def handle_data(self, data):
+            if self.active: self.text.append(data)
+        def handle_endtag(self, tag):
+            if tag == "a": self.active = False
+    rows = Rows(); rows.feed(response.get_data(as_text=True))
+    return " ".join(" ".join(rows.text).split())
+
+
 def test_wiki_activity_excludes_unlisted_for_all_viewers(app, client, key):
     """wikihub-0t3y: activity discovery excludes unlisted for everyone; direct reads stay allowed."""
     from flask import g
@@ -13069,9 +13089,60 @@ def test_wiki_activity_rss_keeps_older_public_after_hidden_pages(client, key):
     joined = " ".join(titles)
     assert "Older Public" in joined, f"older readable page missing from RSS: {titles!r}"
     assert "Private 304" not in joined, "anonymous RSS must not expose hidden pages"
-    html = _get(anon, "/@agent1/rss-sparse/activity").get_data(as_text=True)
-    assert "Older Public" in html, "hidden rows must not starve older HTML activity"
-    assert "Private 304" not in html
+    html_response = _get(anon, "/@agent1/rss-sparse/activity")
+    rows = _activity_row_text(html_response)
+    assert "Older Public" in rows, "hidden rows must not starve older actual HTML activity rows"
+    assert "Private 304" not in html_response.get_data(as_text=True)
+
+
+
+def test_wiki_activity_proposals_survive_hidden_candidates(app, client, key):
+    """More than one candidate batch of unlisted proposals cannot hide an older public suggestion/comment."""
+    from app.models import Proposal, ProposalRevision, ProposalPagePatch
+    h = {"Authorization": f"Bearer {key}"}
+    slug = "proposal-feed-budget"
+    assert client.post("/api/v1/wikis", json={"slug": slug}, headers=h).status_code == 201
+    for name, visibility in (("public", "public"), ("hidden", "unlisted")):
+        assert client.post(f"/api/v1/wikis/agent1/{slug}/pages", headers=h, json={
+            "path": name + ".md", "visibility": visibility,
+            "content": f"---\nvisibility: {visibility}\n---\n# {name}"}).status_code == 201
+    from flask import g
+    g.pop("_login_user", None)
+    owner_browser = _login_browser_with_key(app, key)
+    g.pop("_login_user", None)
+    response = owner_browser.post(f"/@agent1/{slug}/-/suggest/public", data={
+        "title": "Older Public Suggestion Marker", "note": "Older Public Comment Marker", "content": "Public suggestion"})
+    assert response.status_code in (302, 303), response.data
+    owner = User.query.filter_by(username="agent1").one()
+    wiki = Wiki.query.filter_by(owner_id=owner.id, slug=slug).one()
+    newer = utcnow() + timedelta(minutes=1)
+    for i in range(105):
+        proposal = Proposal(wiki_id=wiki.id, page_path="hidden.md", author_id=owner.id,
+                            title=f"Hidden Budget Suggestion {i}", updated_at=newer)
+        db.session.add(proposal); db.session.flush()
+        revision = ProposalRevision(proposal_id=proposal.id, revision_number=1)
+        db.session.add(revision); db.session.flush()
+        db.session.add(ProposalPagePatch(revision_id=revision.id, page_path="hidden.md", base_content="", proposed_content="Hidden"))
+    db.session.commit()
+    rows = _activity_row_text(_get(owner_browser, f"/@agent1/{slug}/activity"))
+    assert "Older Public Suggestion Marker" in rows and "Older Public Comment Marker" in rows
+    assert "Hidden Budget Suggestion" not in rows
+
+
+def test_activity_rehearsal_rejects_routing_options():
+    """The rehearsal CLI rejects URI routing overrides before creating or truncating any DB."""
+    import uuid
+    missing_db = "wikihub_a2_guard_" + uuid.uuid4().hex
+    urls = [
+        f"postgresql://localhost/postgres?dbname={missing_db}&connect_timeout=1",
+        f"postgresql://localhost/postgres?host=example.invalid&dbname={missing_db}&connect_timeout=1",
+        f"postgresql://localhost/postgres?hostaddr=192.0.2.1&dbname={missing_db}&connect_timeout=1",
+        "postgresql://localhost/postgres#routing-fragment",
+    ]
+    script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts/check-activity-feeds.py")
+    for url in urls:
+        result = subprocess.run([sys.executable, script], env={**os.environ, "WORKER_TEST_DATABASE_URL": url}, capture_output=True, text=True, timeout=5)
+        assert result.returncode != 0 and "Refusing:" in result.stderr, "runner must refuse connection overrides before connecting"
 
 
 def test_global_activity_rows_do_not_nest_anchors(client, key):

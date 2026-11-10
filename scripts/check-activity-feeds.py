@@ -15,10 +15,14 @@ from psycopg2 import sql
 ROOT = Path(__file__).resolve().parents[1]
 admin_url = os.environ.get('WORKER_TEST_DATABASE_URL', 'postgresql://localhost/postgres')
 parts = urlsplit(admin_url)
-if parts.hostname not in ('localhost', '127.0.0.1', '::1') or parts.path != '/postgres':
-    sys.exit('Refusing: WORKER_TEST_DATABASE_URL must point to a loopback /postgres admin database')
+if (parts.scheme != 'postgresql' or parts.hostname not in ('localhost', '127.0.0.1', '::1')
+        or parts.path != '/postgres' or parts.query or parts.fragment):
+    sys.exit('Refusing: use a postgresql loopback /postgres URL without query or fragment options')
+# libpq environment routing must not override the validated loopback destination.
+for variable in ('PGHOSTADDR', 'PGSERVICE', 'PGSERVICEFILE'):
+    os.environ.pop(variable, None)
 name = 'wikihub_a2_' + uuid.uuid4().hex[:12]
-admin = psycopg2.connect(admin_url)
+admin = psycopg2.connect(admin_url, connect_timeout=5)
 admin.autocommit = True
 with admin.cursor() as cursor:
     cursor.execute(sql.SQL('CREATE DATABASE {}').format(sql.Identifier(name)))
@@ -31,6 +35,8 @@ try:
         spec.loader.exec_module(tests)
         app = tests.setup()
         functions = [
+            ('rehearsal rejects URI routing overrides', lambda c, k: tests.test_activity_rehearsal_rejects_routing_options()),
+            ('public proposal after 105 unlisted candidates', lambda c, k: tests.test_wiki_activity_proposals_survive_hidden_candidates(app, c, k)),
             ('all-viewer unlisted exclusion + direct access', lambda c, k: tests.test_wiki_activity_excludes_unlisted_for_all_viewers(app, c, k)),
             ('HTML private ACL + social events', tests.test_activity_feed_filters_private_and_shows_social_events),
             ('global activity visibility', tests.test_global_activity_excludes_non_public),

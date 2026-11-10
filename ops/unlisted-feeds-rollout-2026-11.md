@@ -25,7 +25,8 @@ WORKER_TEST_DATABASE_URL=postgresql://localhost/postgres \
   .venv/bin/python scripts/check-activity-feeds.py
 ```
 
-The runner refuses a non-loopback host or an admin DB other than `/postgres`,
+The runner refuses a non-loopback host or an admin DB other than `/postgres`, rejects all query/fragment options,
+clears libpq service/host-address routing overrides before connecting,
 creates a unique database, sets `DATABASE_URL`/`REPOS_DIR` itself, and drops only
 that database on exit. Git repositories and the backup archive are created under
 this checkout's `evidence/` and removed. On the M4 Sol used the existing venv
@@ -34,6 +35,8 @@ this checkout's `evidence/` and removed. On the M4 Sol used the existing venv
 Observed after the fix:
 
 ```text
+PASS rehearsal rejects URI routing overrides
+PASS public proposal after 105 unlisted candidates
 PASS all-viewer unlisted exclusion + direct access
 PASS HTML private ACL + social events
 PASS global activity visibility
@@ -42,14 +45,15 @@ PASS private-only RSS metadata denial
 PASS older public entry after 305 hidden rows
 PASS unlisted reader sidebar still works
 PASS PostgreSQL custom backup archive readable
-7 targeted checks plus backup archive check passed; disposable database only
+9 targeted checks plus backup archive check passed; disposable database only
 ```
 
 The all-viewer regression was run first against the old code and failed with
 `AssertionError: ('owner', 'Hidden Feed Marker')`. The matrix covers anonymous,
 owner, member and ACL grantee; all unlisted aliases, public/public-edit and
 private controls; single- and mixed-target suggestions/comments; direct access;
-and a public-to-unlisted visibility change. Older public HTML/RSS rows survive a
+and a public-to-unlisted visibility change. An older public proposal/comment survives 105 newer unlisted proposals.
+Older public HTML/RSS rows are asserted in actual feed rows (not the sidebar) after a
 newer 305-row mix of private/unlisted pages. The full suite runs in CI. A separate disposable Git rehearsal moved from the
 old code to an exact release target, then back to a saved rollback branch; a
 dirty live-footer customization survived both checkouts. Every Bash block below

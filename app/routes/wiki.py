@@ -777,6 +777,14 @@ def _viewer_can_see_proposal(proposal, owner, wiki):
     return _proposal_participant_can_view(proposal, page, owner, wiki, patch)
 
 
+def _wiki_activity_pages_query(wiki, acl_rules):
+    query = _content_pages_query(wiki).filter(Page.visibility.notin_(_UNLISTED_ACTIVITY_VISIBILITIES))
+    has_acl_grants = current_user.is_authenticated and acl_rules and grants_for_user(acl_rules, current_user.username)
+    if not _is_owner(wiki) and not has_acl_grants:
+        query = query.filter(Page.visibility.in_(("public", "public-view", "public-edit")))
+    return query
+
+
 def _wiki_activity_items(owner, wiki, acl_rules, limit=60):
     """Build a mixed recent-activity feed from existing durable rows.
 
@@ -787,9 +795,9 @@ def _wiki_activity_items(owner, wiki, acl_rules, limit=60):
     """
     items = []
     visible_pages = []
-    for page in _content_pages(_content_pages_query(wiki).filter(
-            Page.visibility.notin_(_UNLISTED_ACTIVITY_VISIBILITIES)).order_by(Page.updated_at.desc()))[:120]:
-        if _viewer_can_read_page(wiki, page, acl_rules=acl_rules, owner=owner):
+    query = _wiki_activity_pages_query(wiki, acl_rules).order_by(Page.updated_at.desc(), Page.id.desc())
+    for page in query.yield_per(100):
+        if is_content_page_path(page.path) and _viewer_can_read_page(wiki, page, acl_rules=acl_rules, owner=owner):
             visible_pages.append(page)
             verb = "created" if abs((_activity_time(page.updated_at) - _activity_time(page.created_at)).total_seconds()) < 2 else "updated"
             items.append({
@@ -802,14 +810,16 @@ def _wiki_activity_items(owner, wiki, acl_rules, limit=60):
                 "timestamp": _activity_time(page.updated_at),
                 "visibility": page.visibility,
             })
+            if len(visible_pages) == 120:
+                break
 
     if _is_owner(wiki) or current_user.is_authenticated:
         proposals = (
             Proposal.query.filter_by(wiki_id=wiki.id)
-            .order_by(Proposal.updated_at.desc())
-            .limit(50)
-            .all()
+            .order_by(Proposal.updated_at.desc(), Proposal.id.desc())
+            .yield_per(100)
         )
+        visible_proposals = 0
         for proposal in proposals:
             if not _viewer_can_see_proposal(proposal, owner, wiki):
                 continue
@@ -835,6 +845,9 @@ def _wiki_activity_items(owner, wiki, acl_rules, limit=60):
                     "timestamp": _activity_time(comment.created_at),
                     "visibility": None,
                 })
+            visible_proposals += 1
+            if visible_proposals == 50:
+                break
 
     if visible_pages:
         user_ids = set()
@@ -1881,16 +1894,7 @@ def wiki_activity_rss(username, slug):
     acl_rules = load_acl_rules(owner.username, wiki.slug)
     if not _viewer_can_see_any_page(wiki, acl_rules=acl_rules, owner=owner):
         return _render_permission_error(owner, wiki)
-    query = _content_pages_query(wiki).filter(Page.visibility.notin_(_UNLISTED_ACTIVITY_VISIBILITIES))
-    has_acl_grants = (
-        current_user.is_authenticated
-        and acl_rules
-        and grants_for_user(acl_rules, current_user.username)
-    )
-    if not _is_owner(wiki) and not has_acl_grants:
-        query = query.filter(Page.visibility.in_((
-            "public", "public-view", "public-edit",
-        )))
+    query = _wiki_activity_pages_query(wiki, acl_rules)
     query = query.order_by(Page.updated_at.desc(), Page.id.desc())
     visible = []
     offset = 0
