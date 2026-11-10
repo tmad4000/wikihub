@@ -48,9 +48,14 @@ from app.routes import wiki_bp
 from app.wiki_ops import index_repo_pages, load_acl_rules, load_page_redirects, load_serve_inline_patterns, refresh_wikilinks_for_page, sync_wiki_counters, update_page_metadata
 
 
-def _recently_updated_pages(wiki, limit=8, public_only=False):
+_UNLISTED_ACTIVITY_VISIBILITIES = ("unlisted", "unlisted-view", "unlisted-edit")
+
+
+def _recently_updated_pages(wiki, limit=8, public_only=False, exclude_unlisted=False):
     """get the most recently updated pages for a wiki."""
     query = _content_pages_query(wiki)
+    if exclude_unlisted:
+        query = query.filter(Page.visibility.notin_(_UNLISTED_ACTIVITY_VISIBILITIES))
     if public_only:
         query = query.filter(Page.visibility.in_(('public', 'public-view', 'public-edit')))
     # A grant for one path selects the authoritative repository, but does not
@@ -762,6 +767,12 @@ def _viewer_can_see_proposal(proposal, owner, wiki):
     revision, patch = _latest_proposal_patch(proposal)
     if not patch:
         return False
+    # A suggestion/comment is activity about all its target pages. A readable
+    # unlisted target must not re-enter discovery through a proposal title.
+    paths = [proposal.page_path, *[p.page_path for p in revision.patches.all()]]
+    if db.session.query(Page.id).filter(Page.wiki_id == wiki.id, Page.path.in_(paths),
+                                     Page.visibility.in_(_UNLISTED_ACTIVITY_VISIBILITIES)).first():
+        return False
     page = Page.query.filter_by(wiki_id=wiki.id, path=patch.page_path).first()
     return _proposal_participant_can_view(proposal, page, owner, wiki, patch)
 
@@ -771,11 +782,13 @@ def _wiki_activity_items(owner, wiki, acl_rules, limit=60):
 
     This intentionally avoids a new event table. Page rows, proposals, stars,
     and forks already capture the product events users care about, and each item
-    is filtered through the same ACL checks used by reader/history routes.
+    excludes unlisted targets before applying reader/history ACL checks. Unlisted
+    is readable by link, but does not belong in activity discovery, even for owners.
     """
     items = []
     visible_pages = []
-    for page in _content_pages(_content_pages_query(wiki).order_by(Page.updated_at.desc()))[:120]:
+    for page in _content_pages(_content_pages_query(wiki).filter(
+            Page.visibility.notin_(_UNLISTED_ACTIVITY_VISIBILITIES)).order_by(Page.updated_at.desc()))[:120]:
         if _viewer_can_read_page(wiki, page, acl_rules=acl_rules, owner=owner):
             visible_pages.append(page)
             verb = "created" if abs((_activity_time(page.updated_at) - _activity_time(page.created_at)).total_seconds()) < 2 else "updated"
@@ -1849,7 +1862,7 @@ def wiki_activity(username, slug):
         wiki=wiki,
         activity_items=_wiki_activity_items(owner, wiki, acl_rules),
         sidebar_items=_sidebar_for_wiki(owner.username, wiki.slug, wiki, access=(use_public, acl_filter_user), current_path="activity"),
-        recently_updated=_recently_updated_pages(wiki, public_only=use_public and not acl_filter_user),
+        recently_updated=_recently_updated_pages(wiki, public_only=use_public and not acl_filter_user, exclude_unlisted=True),
         sibling_wikis=_sibling_wikis(owner, wiki),
     )
 
@@ -1858,10 +1871,9 @@ def wiki_activity(username, slug):
 def wiki_activity_rss(username, slug):
     """Per-wiki RSS feed.
 
-    Visibility mirrors the pages themselves: an anonymous request sees any page
-    it could reach by direct link (public AND unlisted), but never private
-    pages. Owners/grantees additionally see private pages (via can_read). We
-    reuse _viewer_can_read_page so ACL and frontmatter rules stay canonical.
+    Activity is discovery: unlisted pages never appear, even for owners.
+    Anonymous readers see public pages; owners/grantees may additionally see
+    private pages via the existing ACL checks. Direct-link read policy is unchanged.
     """
     from app.feeds import activity_entry, render_rss
 
@@ -1869,7 +1881,7 @@ def wiki_activity_rss(username, slug):
     acl_rules = load_acl_rules(owner.username, wiki.slug)
     if not _viewer_can_see_any_page(wiki, acl_rules=acl_rules, owner=owner):
         return _render_permission_error(owner, wiki)
-    query = Page.query.filter_by(wiki_id=wiki.id)
+    query = _content_pages_query(wiki).filter(Page.visibility.notin_(_UNLISTED_ACTIVITY_VISIBILITIES))
     has_acl_grants = (
         current_user.is_authenticated
         and acl_rules
@@ -1878,7 +1890,6 @@ def wiki_activity_rss(username, slug):
     if not _is_owner(wiki) and not has_acl_grants:
         query = query.filter(Page.visibility.in_((
             "public", "public-view", "public-edit",
-            "unlisted", "unlisted-view", "unlisted-edit",
         )))
     query = query.order_by(Page.updated_at.desc(), Page.id.desc())
     visible = []

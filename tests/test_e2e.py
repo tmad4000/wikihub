@@ -12615,7 +12615,8 @@ def run_all():
             ("global activity paginates after normalized plumbing filter", lambda: test_global_activity_paginates_after_normalized_plumbing_filter(client, key)),
             ("activity RSS well-formed + correct links (both hosts)", lambda: test_activity_rss_is_well_formed_with_correct_links(client, key)),
             ("private-only wiki RSS does not leak metadata", lambda: test_wiki_activity_rss_private_only_wiki_does_not_leak_metadata(client, key)),
-            ("per-wiki RSS finds older unlisted pages after private pages", lambda: test_wiki_activity_rss_keeps_older_unlisted_after_private_pages(client, key)),
+            ("per-wiki feeds exclude unlisted for every viewer (wikihub-0t3y)", lambda: test_wiki_activity_excludes_unlisted_for_all_viewers(app, client, key)),
+            ("per-wiki RSS finds older public pages after hidden pages", lambda: test_wiki_activity_rss_keeps_older_public_after_hidden_pages(client, key)),
             ("global activity rows avoid nested anchors", lambda: test_global_activity_rows_do_not_nest_anchors(client, key)),
             ("global activity pagination", lambda: test_activity_pagination(client, key)),
             ("anonymous search total filters normalized plumbing", lambda: test_anonymous_search_total_filters_normalized_plumbing(client, key)),
@@ -12917,12 +12918,92 @@ def test_activity_rss_is_well_formed_with_correct_links(client, key):
         root = ElementTree.fromstring(r.get_data())
         titles = [it.find("title").text for it in root.find("channel").findall("item")]
         joined = " ".join(titles)
-        # unlisted pages are reachable-by-link, so they belong in the wiki feed…
-        assert "Unlisted Note" in joined, "unlisted page should appear in per-wiki RSS"
-        # …but private pages must never appear for an anonymous request
+        # Unlisted pages remain reachable by link, but activity is a discovery surface.
+        assert "Unlisted Note" not in joined, "unlisted page must not appear in per-wiki RSS"
+        # Private pages must never appear for an anonymous request either.
         assert "Private Note" not in joined, f"private page must NOT appear in anon per-wiki RSS; got titles={titles!r}"
         for it in root.find("channel").findall("item"):
             assert it.find("link").text.startswith(f"http://{host}/@agent1/secretwiki/")
+
+
+
+def test_wiki_activity_excludes_unlisted_for_all_viewers(app, client, key):
+    """wikihub-0t3y: activity discovery excludes unlisted for everyone; direct reads stay allowed."""
+    from flask import g
+    from xml.etree import ElementTree
+    h = {"Authorization": f"Bearer {key}"}
+    slug = "feed-unlisted-policy"
+    assert client.post("/api/v1/wikis", json={"slug": slug, "title": "Feed Policy"}, headers=h).status_code == 201
+    for name, visibility in [("Open", "public"), ("Open Edit", "public-edit"),
+                             ("Hidden", "unlisted"), ("Hidden Edit", "unlisted-edit"), ("Private", "private")]:
+        path = name.lower().replace(" ", "-") + ".md"
+        response = client.post(f"/api/v1/wikis/agent1/{slug}/pages", headers=h, json={
+            "path": path, "visibility": visibility,
+            "content": f"---\ntitle: {name} Feed Marker\nvisibility: {visibility}\n---\n# {name} Feed Marker"})
+        assert response.status_code == 201, response.data
+    owner = User.query.filter_by(username="agent1").one()
+    wiki = Wiki.query.filter_by(owner_id=owner.id, slug=slug).one()
+    # A historical storage alias must be excluded too.
+    db.session.add(Page(wiki_id=wiki.id, path="legacy.md", title="Legacy Hidden Feed Marker", visibility="unlisted-view"))
+    db.session.commit()
+    actors = {"owner": owner.id, "anonymous": None}
+    for name in ("feed-grantee", "feed-member"):
+        assert client.post("/api/v1/accounts", json={"username": name}).status_code == 201
+        actors[name] = User.query.filter_by(username=name).one().id
+    assert client.post(f"/api/v1/wikis/agent1/{slug}/pages", headers=h,
+                       json={"path": ".wikihub/acl", "content": "private.md @feed-grantee:read\n"}).status_code == 201
+    browser = app.test_client()
+    with browser.session_transaction() as session:
+        session["_user_id"] = str(actors["feed-member"]); session["_fresh"] = True
+    # Suggestions/comments on an unlisted target cannot reintroduce its activity.
+    g.pop("_login_user", None)
+    response = browser.post(f"/@agent1/{slug}/-/suggest/hidden", data={
+        "title": "Unlisted Suggestion Marker", "content": "Updated body", "note": "Unlisted Comment Marker"})
+    assert response.status_code in (302, 303), response.data
+    proposal_url = urlparse(response.headers["Location"]).path
+    g.pop("_login_user", None)
+    response = browser.post(f"/@agent1/{slug}/-/suggest/open-edit", data={
+        "title": "Public Suggestion Marker", "content": "Updated public body", "note": "Public Comment Marker"})
+    assert response.status_code in (302, 303), response.data
+    # A multi-page suggestion must also disappear when any secondary target is unlisted.
+    g.pop("_login_user", None)
+    response = browser.post(f"/@agent1/{slug}/-/suggest/open", data={
+        "title": "Mixed Target Suggestion Marker", "content": "Mixed body", "note": "Mixed Target Comment Marker"})
+    assert response.status_code in (302, 303), response.data
+    from app.models import Proposal, ProposalPagePatch
+    mixed = db.session.get(Proposal, int(urlparse(response.headers["Location"]).path.rsplit("/", 1)[-1]))
+    revision = mixed.revisions.first()
+    db.session.add(ProposalPagePatch(revision_id=revision.id, page_path="hidden-edit.md", base_content="", proposed_content="Mixed change"))
+    db.session.commit()
+    for actor, user_id in actors.items():
+        viewer = app.test_client()
+        if user_id:
+            with viewer.session_transaction() as session:
+                session["_user_id"] = str(user_id); session["_fresh"] = True
+        html_response = _get(viewer, f"/@agent1/{slug}/activity")
+        assert html_response.status_code == 200, actor
+        html = html_response.get_data(as_text=True)
+        assert "<title>Activity - Feed Policy - wikihub</title>" in html, "tab title must name this wiki activity"
+        rss_response = _get(viewer, f"/@agent1/{slug}/activity.rss")
+        assert rss_response.status_code == 200, actor
+        rss = rss_response.get_data(as_text=True)
+        ElementTree.fromstring(rss)
+        for title in ("Open Feed Marker", "Open Edit Feed Marker"):
+            assert title in html and title in rss, actor
+        for hidden in ("Hidden Feed Marker", "Hidden Edit Feed Marker", "Legacy Hidden Feed Marker", "Unlisted Suggestion Marker", "Unlisted Comment Marker", "Mixed Target Suggestion Marker", "Mixed Target Comment Marker"):
+            assert hidden not in html and hidden not in rss, (actor, hidden)
+        assert ("Private Feed Marker" in html) == (actor in ("owner", "feed-grantee")), actor
+        assert ("Private Feed Marker" in rss) == (actor in ("owner", "feed-grantee")), actor
+        if actor != "anonymous":
+            assert "Public Suggestion Marker" in html and "Public Comment Marker" in html, actor
+        for path in ("hidden", "hidden-edit"):
+            assert _get(viewer, f"/@agent1/{slug}/{path}").status_code == 200, "unlisted direct-link reads stay allowed"
+    assert _get(browser, proposal_url).status_code == 200, "proposal participants retain direct access"
+    # Current visibility controls old activity too: changing an existing public page hides its entry.
+    response = client.put(f"/api/v1/wikis/agent1/{slug}/pages/open.md", headers=h, json={"visibility": "unlisted", "content": "# Open Feed Marker"})
+    assert response.status_code == 200, response.data
+    anon = app.test_client()
+    assert "Open Feed Marker" not in _get(anon, f"/@agent1/{slug}/activity.rss").get_data(as_text=True)
 
 
 def test_wiki_activity_rss_private_only_wiki_does_not_leak_metadata(client, key):
@@ -12946,9 +13027,8 @@ def test_wiki_activity_rss_private_only_wiki_does_not_leak_metadata(client, key)
     assert r.mimetype != "application/rss+xml"
 
 
-def test_wiki_activity_rss_keeps_older_unlisted_after_private_pages(client, key):
-    """Anonymous per-wiki RSS keeps reachable unlisted pages even when newer
-    private pages would otherwise fill the candidate window."""
+def test_wiki_activity_rss_keeps_older_public_after_hidden_pages(client, key):
+    """Unlisted/private rows must not starve older public HTML or RSS entries."""
     from datetime import timedelta
     from flask import g as _flask_g
     from xml.etree import ElementTree
@@ -12956,15 +13036,15 @@ def test_wiki_activity_rss_keeps_older_unlisted_after_private_pages(client, key)
     h = {"Authorization": f"Bearer {key}"}
     client.post("/api/v1/wikis", json={"slug": "rss-sparse", "title": "RSS Sparse"}, headers=h)
     client.post("/api/v1/wikis/agent1/rss-sparse/pages", json={
-        "path": "wiki/older-unlisted.md",
-        "content": "---\ntitle: Older Unlisted\nvisibility: unlisted\n---\n\n# Older Unlisted\n",
-        "visibility": "unlisted",
+        "path": "wiki/older-public.md",
+        "content": "---\ntitle: Older Public\nvisibility: public\n---\n\n# Older Public\n",
+        "visibility": "public",
     }, headers=h)
 
     owner = User.query.filter_by(username="agent1").first()
     wiki = Wiki.query.filter_by(owner_id=owner.id, slug="rss-sparse").first()
     base = utcnow()
-    visible_page = Page.query.filter_by(wiki_id=wiki.id, path="wiki/older-unlisted.md").first()
+    visible_page = Page.query.filter_by(wiki_id=wiki.id, path="wiki/older-public.md").first()
     visible_page.updated_at = base
     visible_page.created_at = base
     for i in range(305):
@@ -12972,7 +13052,7 @@ def test_wiki_activity_rss_keeps_older_unlisted_after_private_pages(client, key)
             wiki_id=wiki.id,
             path=f"secrets/private-{i:03d}.md",
             title=f"Private {i:03d}",
-            visibility="private",
+            visibility="private" if i % 2 else "unlisted",
             created_at=base + timedelta(seconds=i + 1),
             updated_at=base + timedelta(seconds=i + 1),
         ))
@@ -12987,8 +13067,11 @@ def test_wiki_activity_rss_keeps_older_unlisted_after_private_pages(client, key)
         for it in ElementTree.fromstring(r.get_data()).find("channel").findall("item")
     ]
     joined = " ".join(titles)
-    assert "Older Unlisted" in joined, f"older readable page missing from RSS: {titles!r}"
-    assert "Private 304" not in joined, "anonymous RSS must not expose private pages"
+    assert "Older Public" in joined, f"older readable page missing from RSS: {titles!r}"
+    assert "Private 304" not in joined, "anonymous RSS must not expose hidden pages"
+    html = _get(anon, "/@agent1/rss-sparse/activity").get_data(as_text=True)
+    assert "Older Public" in html, "hidden rows must not starve older HTML activity"
+    assert "Private 304" not in html
 
 
 def test_global_activity_rows_do_not_nest_anchors(client, key):
