@@ -422,8 +422,21 @@ def get_wiki(owner, slug):
         "page_count": _content_page_count(wiki),
         "created_at": wiki.created_at.isoformat(),
         "updated_at": wiki.updated_at.isoformat(),
-        "curation": curation_effective(owner_id=owner_user.id, wiki_id=wiki.id),
+        **_wiki_curation_field(owner_user, wiki),
     })
+
+
+def _wiki_curation_field(owner_user, wiki):
+    """`curation` for a wiki object, only when the caller can read something in
+    it (owner, or the wiki has a publicly visible page). This endpoint does no
+    read check of its own, and a judgement is substance of the wiki: a caller
+    who cannot read the wiki must not learn it (wikihub-f3b7, plan 3d)."""
+    from app.discovery import DISCOVERABLE_VISIBILITIES
+    user = getattr(request, "current_user", None)
+    readable = bool(user and user.id == owner_user.id) or db.session.query(
+        Page.query.filter(Page.wiki_id == wiki.id, Page.visibility.in_(DISCOVERABLE_VISIBILITIES)).exists()
+    ).scalar()
+    return {"curation": curation_effective(owner_id=owner_user.id, wiki_id=wiki.id)} if readable else {}
 
 
 @api_bp.route("/wikis/<owner>/<slug>", methods=["PATCH"])

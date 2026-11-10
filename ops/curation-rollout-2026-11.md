@@ -69,13 +69,14 @@ $G --command='sudo -u postgres psql -v ON_ERROR_STOP=1 -d wikihub -f /tmp/2026-1
 $G --command="sudo -u postgres psql -d wikihub -c '\\d curation_judgements'"
 ```
 
-`create_app()` would also create the table on first boot through `db.create_all()`. Running the file
-first makes the DDL an explicit, backed-up step.
+**Apply the migration before restarting on the new code.** `create_app()` would otherwise create the
+table on first boot through `db.create_all()`, outside the backed-up step and possibly in a race
+between booting workers. Step 3 comes only after the `\d curation_judgements` check above succeeds.
 
 ## 3. Deploy
 
-Follow the AGENTS.md deploy checklist (`git pull` and `systemctl restart wikihub`), adjusted for the
-branch noted in step 0. Then check:
+Only after step 2 has succeeded: follow the AGENTS.md deploy checklist (`git pull` and
+`systemctl restart wikihub`), adjusted for the branch noted in step 0. Then check:
 
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' https://wikihub.md/            # 200

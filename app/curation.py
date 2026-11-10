@@ -284,6 +284,38 @@ def positive_wiki_ids():
     return out
 
 
+def rekey_page_judgements(wiki_id):
+    """Point page-scope judgements of this wiki at the current Page row for
+    their stored path. Called after index_repo_pages(), which recreates page
+    rows with new ids on a reset reindex. Caller commits. Returns the count
+    re-keyed. A judgement whose page no longer exists keeps its old id (it has
+    no effect) and is re-keyed if the page comes back."""
+    from app.models import CurationJudgement, Page
+    rows = (CurationJudgement.query
+            .filter(CurationJudgement.scope_type == "page",
+                    CurationJudgement.scope_wiki_id == wiki_id,
+                    CurationJudgement.scope_path.isnot(None))
+            .all())
+    if not rows:
+        return 0
+    ids = dict(Page.query.with_entities(Page.path, Page.id)
+               .filter(Page.wiki_id == wiki_id, Page.path.in_({r.scope_path for r in rows})).all())
+    taken = {(r.scope_id, r.polarity, r.reason) for r in rows if r.status == "active" and ids.get(r.scope_path) == r.scope_id}
+    moved = 0
+    for r in rows:
+        new_id = ids.get(r.scope_path)
+        if new_id is None or new_id == r.scope_id:
+            continue
+        key = (new_id, r.polarity, r.reason)
+        if r.status == "active" and key in taken:
+            continue  # a newer judgement already covers the recreated page
+        r.scope_id = new_id
+        if r.status == "active":
+            taken.add(key)
+        moved += 1
+    return moved
+
+
 # ---------------------------------------------------------------------------
 # Enforcement: SQL clauses for discovery queries.
 # ---------------------------------------------------------------------------
@@ -320,9 +352,20 @@ def curated_against_sort_key(user_id_col=None, wiki_id_col=None, page_id_col=Non
 # banner and meta from request.environ["wikihub.curation"].
 # ---------------------------------------------------------------------------
 
+CURATION_MARK_START = "<!--wikihub-curation-->"
+CURATION_MARK_END = "<!--/wikihub-curation-->"
+
+
 def mark_request(username, slug=None, url_path=None):
     """Record the curation bundle for this URL. /@user (no slug) is the
-    profile, which renders the personal wiki @user/user's index."""
+    profile, which renders the personal wiki @user/user's index.
+
+    This runs before any access check, so nothing here may reach a denied
+    response: base.html wraps everything it renders from the bundle in
+    CURATION_MARK_START/END, and after_response() strips that region and
+    skips the curation noindex header on any status >= 400. A judgement is
+    substance of the thing judged; a viewer who cannot read the page must not
+    learn it (plan 3d)."""
     from flask import request
     bundle = effective_by_names(username, slug or username, url_path or "")
     if bundle:
@@ -330,8 +373,29 @@ def mark_request(username, slug=None, url_path=None):
         request.environ["wikihub.curation_meta"] = meta_content(bundle)
         request.environ["wikihub.curation_owner"] = username
         if bundle["negative"]:
-            request.environ["wikihub.noindex"] = True
+            request.environ["wikihub.curation_noindex"] = True
     return bundle
+
+
+def after_response(response):
+    """Enforce only on granted responses: add the curation noindex header on
+    status < 400; strip every trace of the bundle from denied/error pages."""
+    import re
+    from flask import request
+    if not request.environ.get("wikihub.curation"):
+        return response
+    if response.status_code < 400:
+        if request.environ.get("wikihub.curation_noindex") and "X-Robots-Tag" not in response.headers:
+            response.headers["X-Robots-Tag"] = "noindex"
+        return response
+    if response.direct_passthrough or response.is_streamed:
+        return response
+    if (response.mimetype or "").startswith("text/html"):
+        body = response.get_data(as_text=True)
+        if CURATION_MARK_START in body:
+            response.set_data(re.sub(re.escape(CURATION_MARK_START) + r".*?" + re.escape(CURATION_MARK_END),
+                                     "", body, flags=re.S))
+    return response
 
 
 def request_negative_for(username, slug=None, page_path=None):

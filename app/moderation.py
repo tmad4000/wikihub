@@ -11,8 +11,9 @@ before_request:
     noindex.
   * For /@user/... URLs, record the effective curation judgement
     (app.curation) for the account, wiki and page in the URL: base.html
-    renders the "Curated against" banner and <meta name="wikihub:curation">
-    from it, and a negative judgement marks the response noindex.
+    renders the notice and <meta name="wikihub:curation"> from it. Only
+    granted responses (status < 400) keep any of it; see
+    app.curation.after_response.
 
 after_request:
   * X-Robots-Tag: noindex for untrusted owners' content and for every /auth/*
@@ -80,7 +81,8 @@ def after_request(response):
     if request.path.startswith("/auth/") or request.environ.get("wikihub.noindex"):
         if "X-Robots-Tag" not in response.headers:
             response.headers["X-Robots-Tag"] = "noindex"
-    return response
+    from app.curation import after_response
+    return after_response(response)
 
 
 def owner_untrusted(username):

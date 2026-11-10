@@ -36,6 +36,7 @@ consumer can tell the opinion apart from WikiHub's response to it.
 | Column | Meaning |
 |---|---|
 | `scope_type`, `scope_id` | `wiki` (the default), `page`, or `account` (only when chosen explicitly) |
+| `scope_wiki_id`, `scope_path` | Page scope only: the page's wiki and path, used to re-key the judgement after a reindex |
 | `polarity`, `reason` | negative: `promotional`, `affiliate_farm`, `automated_link_placement`, `low_quality`, `off_topic`. Positive: `featured`, `official`, `editor_pick`. A database constraint ties each reason to its polarity. |
 | `status` | `active`, `retracted` (unflag), `superseded` (replaced by `superseded_by`), or `expired` |
 | `evidence` | **Public** list of URLs or short texts supporting the judgement; exported |
@@ -185,6 +186,29 @@ Curation never makes a page look missing:
   exist".
 - The export counts the judgements it may not show (`omitted_non_public`). Only the substance of private
   content (titles, bodies, wiki names) stays hidden.
+
+### Denied responses never carry a judgement
+
+A judgement is substance of the thing judged. Curation state is resolved early in the request, before
+any access check, so `base.html` wraps every curation output (notice, `wikihub:curation` meta, the
+curation `noindex` meta) in `<!--wikihub-curation-->` markers. `app.curation.after_response` strips
+that region, and skips the curation `X-Robots-Tag`, on every response with status 400 or above.
+
+- An anonymous request for a judged private wiki, or for a judged private page of a public wiki, gets
+  the same "no access" or "not found" screen as any other private target.
+- `GET /api/v1/wikis/{owner}/{slug}` includes `curation` only when the caller owns the wiki or the wiki
+  has a publicly visible page.
+- The owner still sees the notice on their own private pages.
+
+### Page judgements across reindexing
+
+A page-scope judgement also stores the page's wiki and path (`scope_wiki_id`, `scope_path`).
+`index_repo_pages()` re-keys those judgements to the recreated rows, so a `wikihub reindex` with the
+default reset (which recreates page rows with new ids) does not drop them. If a page disappears, its
+judgement has no effect; it applies again if the page comes back at the same path.
+
+Re-flagging something whose earlier judgement has expired records the lapsed row as `expired` first
+and then adds the new one.
 
 ## Removal is a different action
 

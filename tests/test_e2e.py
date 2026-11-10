@@ -11327,6 +11327,151 @@ def test_curation_wiki_page_and_positive_scopes(app, client, key):
     assert len(seen) == len(set(seen)), seen
 
 
+def test_curation_never_reaches_denied_responses_and_survives_reindex(app, client, key):
+    """wikihub-f3b7 pre-deploy fixes: (1) a judgement on a private wiki or a
+    private page never appears in a denied response (no notice, no meta, no
+    curation noindex, no API field) while the owner still sees it; (2)
+    re-flagging after expiry records the lapsed row as expired instead of
+    crashing on the unique index; (3) a page-scope judgement survives a reset
+    reindex that recreates page rows; (4) --reply-url is validated."""
+    from datetime import timedelta as _td
+    from flask import g as _flask_g
+    from app.models import CurationJudgement
+    h = _spam_new_account(app, "nc-leak")
+    _spam_public_page(app, h, "nc-leak", "openwiki", "visible.md", "# Visible\n\nPublic words.")
+    c = app.test_client()
+    c.post("/api/v1/wikis", json={"slug": "privwiki", "title": "NcPrivWikiTitle"}, headers=h)
+    for slug, path in (("privwiki", "inner.md"), ("openwiki", "privnote.md")):
+        r = c.post(f"/api/v1/wikis/nc-leak/{slug}/pages", json={
+            "path": path, "content": "---\nvisibility: private\n---\n# NcPrivBody\n", "visibility": "private"}, headers=h)
+        assert r.status_code == 201, (slug, r.status_code, r.data[:200])
+    assert _curation_cli(app, "flag", "@nc-leak/privwiki", "--reason", "promotional", "--execute").exit_code == 0
+    assert _curation_cli(app, "flag", "@nc-leak/openwiki/privnote", "--reason", "off_topic", "--execute").exit_code == 0
+
+    anon = app.test_client()
+    missing = anon.get("/@nc-leak/no-such-wiki")
+    for path in ("/@nc-leak/privwiki", "/@nc-leak/privwiki/inner", "/@nc-leak/openwiki/privnote"):
+        r = anon.get(path)
+        body = r.get_data(as_text=True)
+        assert r.status_code >= 400, (path, r.status_code)
+        for needle in ("curation-notice", "wikihub:curation", "Curated against", "wikihub-curation", "NcPrivBody"):
+            assert needle not in body, f"{needle} leaked into denied {path} ({r.status_code})"
+        assert r.headers.get("X-Robots-Tag") == missing.headers.get("X-Robots-Tag"), \
+            f"curation noindex distinguishes denied {path} from a missing path"
+    assert "curation" not in anon.get("/api/v1/wikis/nc-leak/privwiki").get_json(), "judgement on a private wiki leaked via API"
+    assert "privwiki" not in json.dumps(anon.get("/api/v1/curation").get_json()), "private wiki named in public export"
+
+    _flask_g.pop("_login_user", None)
+    owner = _login_browser_with_key(app, h["Authorization"][7:])
+    _flask_g.pop("_login_user", None)
+    r = owner.get("/@nc-leak/privwiki/inner")
+    _flask_g.pop("_login_user", None)
+    assert r.status_code == 200, r.status_code
+    assert "Curated against: promotional" in r.get_data(as_text=True), "owner must see the judgement on their private wiki"
+    assert "noindex" in r.headers.get("X-Robots-Tag", ""), "granted response keeps the curation noindex"
+
+    # (2) re-flag after expiry
+    j = CurationJudgement.query.filter_by(scope_type="page", reason="off_topic", scope_path="privnote.md").one()
+    j.expires_at = utcnow() - _td(minutes=1)
+    db.session.commit()
+    res = _curation_cli(app, "flag", "@nc-leak/openwiki/privnote", "--reason", "off_topic", "--execute")
+    assert res.exit_code == 0, f"re-flag after expiry failed: {res.output} {res.exception!r}"
+    assert CurationJudgement.query.get(j.id).status == "expired", "lapsed row must be recorded as expired"
+    assert CurationJudgement.query.filter_by(scope_path="privnote.md", status="active").count() == 1
+
+    # (3) page scope survives a reset reindex
+    _spam_public_page(app, h, "nc-leak", "openwiki", "flagme.md", "# FlagMe\n\n[x](https://nc-flagme.example.com/)")
+    assert _curation_cli(app, "flag", "@nc-leak/openwiki/flagme", "--reason", "low_quality", "--execute").exit_code == 0
+    before = CurationJudgement.query.filter_by(scope_path="flagme.md").one()
+    old_page_id = before.scope_id
+    res = _curation_cli(app, "reindex", "nc-leak/openwiki")
+    assert res.exit_code == 0, res.output
+    new_page = Page.query.join(Wiki).filter(Wiki.slug == "openwiki", Page.path == "flagme.md").one()
+    assert new_page.id != old_page_id, "precondition: reset reindex recreates page rows"
+    assert CurationJudgement.query.filter_by(scope_path="flagme.md").one().scope_id == new_page.id, "judgement not re-keyed"
+    r = anon.get("/@nc-leak/openwiki/flagme")
+    assert "Curated against: low quality" in r.get_data(as_text=True), "page judgement lost after reindex"
+    assert "/@nc-leak/openwiki/flagme" not in anon.get("/llms-full.txt").get_data(as_text=True), "page back in discovery after reindex"
+
+    # (4) --reply-url lands in an href: only http(s) or a site path
+    res = _curation_cli(app, "flag", "@nc-leak/openwiki", "--reason", "promotional", "--reply-url", "javascript:alert(1)", "--execute")
+    assert res.exit_code != 0, "javascript: reply URL accepted"
+    assert CurationJudgement.query.filter_by(reply_url="javascript:alert(1)").count() == 0
+
+
+def test_curation_migration_matches_model():
+    """wikihub-f3b7: migrations/2026-11-09_curation_judgements.sql runs twice
+    (idempotent) and produces the same columns, constraints and indexes as the
+    model's db.create_all(), so the two cannot drift."""
+    import uuid
+
+    import psycopg2
+    from sqlalchemy import create_engine
+    from sqlalchemy.engine import make_url
+    from app.models import CurationJudgement
+
+    suffix = uuid.uuid4().hex[:12]
+    database_name = f"wikihub_curation_mig_{suffix}"
+    source_url = make_url(os.environ.get("TEST_DATABASE_ADMIN_URL", os.environ["DATABASE_URL"])).set(drivername="postgresql")
+    admin_dsn = source_url.set(database="postgres").render_as_string(hide_password=False)
+    scratch_url = source_url.set(database=database_name)
+    migration_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                  "migrations", "2026-11-09_curation_judgements.sql")
+    with open(migration_path, encoding="utf-8") as fh:
+        migration_sql = fh.read()
+
+    admin = psycopg2.connect(admin_dsn)
+    admin.autocommit = True
+    conn = None
+    engine = None
+    try:
+        with admin.cursor() as cur:
+            cur.execute(f'CREATE DATABASE "{database_name}"')
+        conn = psycopg2.connect(scratch_url.render_as_string(hide_password=False))
+        with conn.cursor() as cur:
+            for schema in ("public", "model"):
+                cur.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+                cur.execute(f"CREATE TABLE {schema}.users (id SERIAL PRIMARY KEY)")
+            cur.execute("SET search_path TO public")
+            cur.execute(migration_sql)
+            cur.execute(migration_sql)
+        conn.commit()
+
+        engine = create_engine(scratch_url.render_as_string(hide_password=False))
+        with engine.begin() as sa_conn:
+            CurationJudgement.__table__.create(sa_conn.execution_options(schema_translate_map={None: "model"}))
+
+        def shape(schema):
+            with conn.cursor() as cur:
+                cur.execute("""SELECT column_name, data_type, is_nullable, coalesce(column_default, '')
+                                 FROM information_schema.columns
+                                WHERE table_schema = %s AND table_name = 'curation_judgements'
+                                ORDER BY column_name""", (schema,))
+                columns = [tuple(r) for r in cur.fetchall()]
+                cur.execute("""SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint
+                                WHERE conrelid = %s::regclass ORDER BY conname""", (f"{schema}.curation_judgements",))
+                constraints = [tuple(r) for r in cur.fetchall()]
+                cur.execute("""SELECT indexname, indexdef FROM pg_indexes
+                                WHERE schemaname = %s AND tablename = 'curation_judgements' ORDER BY indexname""", (schema,))
+                indexes = [tuple(r) for r in cur.fetchall()]
+            norm = lambda v: str(v).replace(f"{schema}.", "")
+            return ([tuple(norm(x) for x in r) for r in columns],
+                    [tuple(norm(x) for x in r) for r in constraints],
+                    [tuple(norm(x) for x in r) for r in indexes])
+
+        migrated, modelled = shape("public"), shape("model")
+        for label, a, b in zip(("columns", "constraints", "indexes"), migrated, modelled):
+            assert a == b, f"curation_judgements {label} drift between migration and model:\nSQL:   {a}\nmodel: {b}"
+    finally:
+        if engine is not None:
+            engine.dispose()
+        if conn is not None:
+            conn.close()
+        with admin.cursor() as cur:
+            cur.execute(f'DROP DATABASE IF EXISTS "{database_name}"')
+        admin.close()
+
+
 def test_user_search_is_not_an_email_oracle(app, client, key):
     """F5: users/search requires auth, never prefix-matches email, allows an
     exact full-email match for signed-in callers, and escapes LIKE wildcards."""
@@ -12212,6 +12357,8 @@ def run_all():
             ("F4 abuse-report flags link farm (wikihub-i8lo)", lambda: test_abuse_report_flags_link_farm(app, key)),
             ("negative curation flags without deleting (wikihub-f3b7)", lambda: test_negative_curation_flags_without_deleting(app, client, key)),
             ("curation wiki/page/positive scopes + export (wikihub-f3b7)", lambda: test_curation_wiki_page_and_positive_scopes(app, client, key)),
+            ("curation never reaches denied responses; survives reindex (wikihub-f3b7)", lambda: test_curation_never_reaches_denied_responses_and_survives_reindex(app, client, key)),
+            ("curation migration matches model (wikihub-f3b7)", test_curation_migration_matches_model),
             ("F5 user search is not an email oracle (wikihub-x77k)", lambda: test_user_search_is_not_an_email_oracle(app, client, key)),
             ("F6 unlisted pages not in public page list (wikihub-mnjc)", lambda: test_unlisted_pages_not_in_public_page_list(app, client, key)),
             ("auth crawler hygiene: nofollow, robots, noindex, fast 400 callback", lambda: test_auth_crawler_hygiene(app, client)),

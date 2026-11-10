@@ -341,6 +341,10 @@ def index_repo_pages(username, slug, wiki, reset=False):
             db.session.delete(page)
 
     db.session.flush()
+    # page rows may have new ids (reset): keep page-scope curation judgements
+    # attached to their (wiki, path) — wikihub-f3b7
+    from app.curation import rekey_page_judgements
+    rekey_page_judgements(wiki.id)
 
     pages = Page.query.filter_by(wiki_id=wiki.id).all()
     content_by_path = {

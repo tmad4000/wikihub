@@ -30,7 +30,8 @@
 <meta name="twitter:title" content="{{ self.og_title() }}">
 <meta name="twitter:description" content="{{ self.og_desc() }}">
 {% if request.environ.get('wikihub.noindex') %}<meta name="robots" content="noindex">
-{% endif %}{% set _curation = request.environ.get('wikihub.curation') %}{% if _curation %}<meta name="wikihub:curation" content="{{ request.environ.get('wikihub.curation_meta') }}">
+{% endif %}{% set _curation = request.environ.get('wikihub.curation') %}{% if _curation %}<!--wikihub-curation-->{% if request.environ.get('wikihub.curation_noindex') and not request.environ.get('wikihub.noindex') %}<meta name="robots" content="noindex">
+{% endif %}<meta name="wikihub:curation" content="{{ request.environ.get('wikihub.curation_meta') }}"><!--/wikihub-curation-->
 {% endif %}<meta name="description" content="{% block meta_desc %}GitHub for LLM wikis. Publish markdown knowledge bases in seconds.{% endblock %}">
 {% include '_theme.html' %}
 {% include '_analytics.html' %}
@@ -472,9 +473,12 @@ a:hover { text-decoration: underline; }
 </style>
 {% endif %}
 
-{% if _curation %}
+{% if _curation %}<!--wikihub-curation-->
 {# wikihub-f3b7: enforcement of a curation judgement. Server-rendered (so noindex and the
-   notice exist without JS); readers may dismiss it, per judgement id, in localStorage. #}
+   notice exist without JS); readers may dismiss it, per judgement id, in localStorage.
+   The wikihub-curation markers let app.curation.after_response strip all of it from
+   denied/error responses (status >= 400): a judgement must not leak to a viewer who
+   cannot read the page. #}
 {% set _neg = _curation.negative %}{% set _pos = _curation.positive %}
 {% set _base = (config.get('BASE_URL') or '').rstrip('/') %}
 {% set _is_subject_owner = current_user and current_user.is_authenticated and current_user.username == request.environ.get('wikihub.curation_owner') %}
@@ -532,7 +536,7 @@ a:hover { text-decoration: underline; }
   });
 })();
 </script>
-{% endif %}
+<!--/wikihub-curation-->{% endif %}
 
 {% include '_search_modal.html' %}
 

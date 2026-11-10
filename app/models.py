@@ -532,6 +532,11 @@ class CurationJudgement(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     scope_type = db.Column(db.String(16), nullable=False)  # account | wiki | page
     scope_id = db.Column(db.Integer, nullable=False)  # users.id | wikis.id | pages.id
+    # Page scope only: the page's wiki and repo path. Page ids change when a
+    # wiki is reindexed with reset; app.curation.rekey_page_judgements() uses
+    # these to point scope_id at the recreated row.
+    scope_wiki_id = db.Column(db.Integer, nullable=True)
+    scope_path = db.Column(db.Text, nullable=True)
     polarity = db.Column(db.String(16), nullable=False)  # positive | negative
     reason = db.Column(db.String(40), nullable=False)
     status = db.Column(db.String(16), nullable=False, default="active", server_default="active")
@@ -562,6 +567,7 @@ class CurationJudgement(db.Model):
                  unique=True, postgresql_where=db.text("status = 'active'")),
         db.Index("ix_curation_updated_at", "updated_at", "id"),
         db.Index("ix_curation_scope", "scope_type", "scope_id"),
+        db.Index("ix_curation_scope_path", "scope_wiki_id", "scope_path"),
     )
 
     curator = db.relationship("User", foreign_keys=[curator_user_id])

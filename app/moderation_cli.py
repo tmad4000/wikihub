@@ -336,7 +336,14 @@ def register_curation_commands(group):
             raise click.ClickException(f"unknown reason {reason!r}; use one of: {all_reasons}")
         if polarity and polarity != expected:
             raise click.ClickException(f"reason {reason!r} is {expected}, not {polarity}")
+        if reply_url and not reply_url.startswith(("https://", "http://", "/")):
+            raise click.ClickException("--reply-url must be http(s) or a site path")
         scope_type, scope_id, label, owner_name, slug = resolve_curation_target(target, scope)
+        scope_wiki_id = scope_path = None
+        if scope_type == "page":
+            from app.models import Page
+            page = Page.query.get(scope_id)
+            scope_wiki_id, scope_path = page.wiki_id, page.path
         old = None
         if supersedes is not None:
             old = CurationJudgement.query.get(supersedes)
@@ -363,9 +370,22 @@ def register_curation_commands(group):
         if existing:
             return
         now = utcnow()
+        # An 'active' row past expires_at has no effect but still holds the
+        # unique (scope, polarity, reason) slot: record it as expired first.
+        lapsed = (CurationJudgement.query
+                  .filter_by(scope_type=scope_type, scope_id=scope_id, polarity=expected, reason=reason, status="active")
+                  .filter(CurationJudgement.expires_at.isnot(None), CurationJudgement.expires_at <= now)
+                  .all())
+        for j in lapsed:
+            j.status = "expired"
+            j.updated_at = now
+        if lapsed:
+            db.session.flush()
+            click.echo("  marked expired: " + ", ".join(f"#{j.id}" for j in lapsed))
         curator_user = User.query.filter_by(username=(curator or "").lstrip("@").lower()).first() if curator else None
         row = CurationJudgement(
-            scope_type=scope_type, scope_id=scope_id, polarity=expected, reason=reason, status="active",
+            scope_type=scope_type, scope_id=scope_id, scope_wiki_id=scope_wiki_id, scope_path=scope_path,
+            polarity=expected, reason=reason, status="active",
             curator_user_id=curator_user.id if curator_user else None, note=note or None,
             evidence=list(evidence), affected_version=version, policy_version=policy_version(),
             review_at=now + _td(days=review_days) if review_days > 0 else None,

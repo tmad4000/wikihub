@@ -34,7 +34,8 @@
 --     --project=wikihub-prod --zone=us-east1-b --tunnel-through-iap
 --   gcloud compute ssh wikihub-prod --project=wikihub-prod --zone=us-east1-b --tunnel-through-iap \
 --     --command='sudo -u postgres psql -v ON_ERROR_STOP=1 -d wikihub -f /tmp/2026-11-09_curation_judgements.sql'
--- Apply BEFORE restarting the app on the new code.
+-- Apply BEFORE restarting the app on the new code (create_all() would
+-- otherwise create the table on first boot, outside the backed-up step).
 --
 -- Rollback (only after reverting the app to a build without app/curation.py;
 -- this discards every judgement, so export them first):
@@ -47,6 +48,8 @@ CREATE TABLE IF NOT EXISTS curation_judgements (
     id SERIAL PRIMARY KEY,
     scope_type VARCHAR(16) NOT NULL,
     scope_id INTEGER NOT NULL,
+    scope_wiki_id INTEGER NULL,
+    scope_path TEXT NULL,
     polarity VARCHAR(16) NOT NULL,
     reason VARCHAR(40) NOT NULL,
     status VARCHAR(16) NOT NULL DEFAULT 'active',
@@ -92,3 +95,5 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_curation_active
 -- export pagination: ORDER BY updated_at, id
 CREATE INDEX IF NOT EXISTS ix_curation_updated_at ON curation_judgements (updated_at, id);
 CREATE INDEX IF NOT EXISTS ix_curation_scope ON curation_judgements (scope_type, scope_id);
+-- page scope: (wiki, path) survives a reindex that recreates page rows
+CREATE INDEX IF NOT EXISTS ix_curation_scope_path ON curation_judgements (scope_wiki_id, scope_path);
