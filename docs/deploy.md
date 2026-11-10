@@ -185,9 +185,10 @@ gcloud compute ssh wikihub-prod --project=wikihub-prod --zone=us-east1-b \
 gcloud compute ssh wikihub-prod --project=wikihub-prod --zone=us-east1-b \
   --command='sudo -u postgres psql -d wikihub'
 
-# run a flask CLI command on server
+# run a flask CLI command on server (as ubuntu: Flask loads .env itself via python-dotenv;
+# do not `source .env` — it is not readable without sudo and has an unquoted `<` on EMAIL_FROM)
 gcloud compute ssh wikihub-prod --project=wikihub-prod --zone=us-east1-b \
-  --command='cd /opt/wikihub-app && source .venv/bin/activate && source .env && flask --app wsgi.py wikihub reindex --all'
+  --command='cd /opt/wikihub-app && sudo -u ubuntu .venv/bin/flask --app wsgi.py wikihub reindex --all'
 ```
 
 ## custom-domain cutover
@@ -204,7 +205,7 @@ provision DNS or TLS. After the domain reaches `verified`:
 
    ```bash
    gcloud compute ssh wikihub-prod --project=wikihub-prod --zone=us-east1-b \
-     --command='cd /opt/wikihub-app && source .venv/bin/activate && source .env && flask --app wsgi.py wikihub activate-custom-domain docs.example.org'
+     --command='cd /opt/wikihub-app && sudo -u ubuntu .venv/bin/flask --app wsgi.py wikihub activate-custom-domain docs.example.org'
    ```
 
 5. Confirm that an anonymous apex URL redirects to the custom hostname, a

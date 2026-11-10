@@ -28,21 +28,23 @@ G="gcloud compute ssh wikihub-prod --project=wikihub-prod --zone=us-east1-b --tu
    --account=874749606899-compute@developer.gserviceaccount.com"
 ```
 
-**Reading `/opt/wikihub-app/.env` on the host needs sudo.** The documented non-sudo form in
-`docs/deploy.md` (`cd /opt/wikihub-app && source .venv/bin/activate && source .env && flask …`) fails
-with `Permission denied`. The app also reads plain environment variables (there is no dotenv), so the
-file must be exported while it is sourced. Every Flask command below therefore has this shape:
+**How to run the Flask CLI on the host** (corrected 2026-11-10 from the orchestrator's run):
 
 ```bash
-$G --command="sudo -n bash -c 'cd /opt/wikihub-app && set -a && . ./.env && set +a && .venv/bin/flask --app wsgi.py wikihub <ARGS>'"
+$G --command="cd /opt/wikihub-app && sudo -u ubuntu .venv/bin/flask --app wsgi.py wikihub <ARGS>"
 ```
 
-The `flag` command reads each wiki's git sha with `git -c safe.directory=*`, so running it as root
-does not trip git's ownership check.
+- Do not source `.env` in the shell. The documented `source .env` form in `docs/deploy.md` fails with
+  `Permission denied` for a non-sudo user. Exporting it with `set -a && . ./.env` fails because the
+  `EMAIL_FROM` line holds an unquoted `<`.
+- Flask loads `.env` itself: python-dotenv is installed in that venv. Running as `ubuntu` reads it,
+  and the CLI then acts with the app's own file ownership.
+- The suspensions in 4a ran in this form.
+- `flag` reads each wiki's git sha with `git -c safe.directory=*`, so ownership checks never block it.
 
 ## 0. Preconditions
 
-- PR #53 (`feat/negative-curation`) is reviewed and merged, with CI green.
+- PR #53 (`feat/negative-curation`) is reviewed and merged (squash `a2fd76a`), with CI green.
 - Jacob's go to execute.
 - Record what production runs now. On 2026-11-09 it reported `c20bd29`, a branch commit rather than a
   commit on main, so `git pull` is not a no-op and may need a checkout:
@@ -52,6 +54,9 @@ $G --command='cd /opt/wikihub-app && git rev-parse HEAD && git status --short | 
 ```
 
 ## 1. Backup
+
+**Done by the orchestrator, 2026-11-10:** `/var/backups/wikihub-pre-curation-20261110T043025Z.dump`,
+verified readable. PR #53 was squash-merged as `a2fd76a`. If time has passed, take a fresh dump.
 
 ```bash
 $G --command='sudo -u postgres pg_dump --format=custom wikihub | sudo tee /var/backups/wikihub-pre-curation-$(date +%Y%m%d%H%M).dump >/dev/null && ls -l /var/backups/wikihub-pre-curation-*.dump'
@@ -66,7 +71,7 @@ gcloud compute scp migrations/2026-11-09_curation_judgements.sql wikihub-prod:/t
   --project=wikihub-prod --zone=us-east1-b --tunnel-through-iap \
   --account=874749606899-compute@developer.gserviceaccount.com
 $G --command='sudo -u postgres psql -v ON_ERROR_STOP=1 -d wikihub -f /tmp/2026-11-09_curation_judgements.sql'
-$G --command="sudo -u postgres psql -d wikihub -c '\\d curation_judgements'"
+$G --command="sudo -u postgres psql -d wikihub -c '\\d curation_judgements"
 ```
 
 **Apply the migration before restarting on the new code.** `create_app()` would otherwise create the
@@ -75,8 +80,26 @@ between booting workers. Step 3 comes only after the `\d curation_judgements` ch
 
 ## 3. Deploy
 
-Only after step 2 has succeeded: follow the AGENTS.md deploy checklist (`git pull` and
-`systemctl restart wikihub`), adjusted for the branch noted in step 0. Then check:
+Only after step 2 has succeeded. Production's local `main` is at `c20bd29`, a commit that is not on
+`origin/main`, so this is a **fetch plus a branch move, not a fast-forward pull**. `git pull` would try
+to merge.
+
+- `app/templates/_footer.html` is modified locally on the host. The range `c20bd29..a2fd76a` does not
+  touch it, so the local change carries over. Keep it, and do not stash or reset it away.
+- Confirm both points in step 0's output before moving the branch.
+
+```bash
+$G --command='cd /opt/wikihub-app && sudo git fetch origin && git log --oneline -1 origin/main \
+  && git diff --name-only c20bd29 origin/main -- app/templates/_footer.html'      # expect no output
+$G --command='cd /opt/wikihub-app && sudo git checkout -B main origin/main && git status --short'
+                                                                                  # _footer.html stays modified
+$G --command='sudo systemctl restart wikihub && sleep 3 && systemctl is-active wikihub'
+```
+
+`git checkout -B main origin/main` keeps uncommitted changes to files the move doesn't touch, and
+refuses if a touched file has local changes. If it refuses, stop and look rather than forcing. Keep
+`c20bd29` reachable for rollback, for example with `sudo git branch prod-before-curation c20bd29`
+before the move. Then check:
 
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' https://wikihub.md/            # 200
@@ -91,11 +114,15 @@ steps 1–3 if Jacob wants them first.
 
 ### 4a. Suspend (no `--purge`; content and git history stay on disk)
 
+**Done by the orchestrator, 2026-11-10.** Public check at 2026-11-10T04:34Z: `/@user_b8aceefe`,
+`/@vccbiz7985`, `/@vccbiz-probe-80365` and `/@project-links-agent-20261009` all answer 410. These
+commands are kept for the record.
+
 ```bash
-$G --command="sudo -n bash -c 'cd /opt/wikihub-app && set -a && . ./.env && set +a && .venv/bin/flask --app wsgi.py wikihub suspend user_b8aceefe --reason \"Nov 3 T&S review: link farm (vccbusiness.com, ramerlabs.com); plan D4/3d\"'"
-$G --command="sudo -n bash -c 'cd /opt/wikihub-app && set -a && . ./.env && set +a && .venv/bin/flask --app wsgi.py wikihub suspend vccbiz7985 --reason \"Nov 3 T&S review: same operator as user_b8aceefe; plan D4/3d\"'"
-$G --command="sudo -n bash -c 'cd /opt/wikihub-app && set -a && . ./.env && set +a && .venv/bin/flask --app wsgi.py wikihub suspend vccbiz-probe-80365 --reason \"Nov 3 T&S review: same operator as user_b8aceefe; plan D4/3d\"'"
-$G --command="sudo -n bash -c 'cd /opt/wikihub-app && set -a && . ./.env && set +a && .venv/bin/flask --app wsgi.py wikihub suspend project-links-agent-20261009 --reason \"Nov 3 T&S review: automated link placement; plan D4/3d\"'"
+$G --command="cd /opt/wikihub-app && sudo -u ubuntu .venv/bin/flask --app wsgi.py wikihub suspend user_b8aceefe --reason \"Nov 3 T&S review: link farm (vccbusiness.com, ramerlabs.com); plan D4/3d\""
+$G --command="cd /opt/wikihub-app && sudo -u ubuntu .venv/bin/flask --app wsgi.py wikihub suspend vccbiz7985 --reason \"Nov 3 T&S review: same operator as user_b8aceefe; plan D4/3d\""
+$G --command="cd /opt/wikihub-app && sudo -u ubuntu .venv/bin/flask --app wsgi.py wikihub suspend vccbiz-probe-80365 --reason \"Nov 3 T&S review: same operator as user_b8aceefe; plan D4/3d\""
+$G --command="cd /opt/wikihub-app && sudo -u ubuntu .venv/bin/flask --app wsgi.py wikihub suspend project-links-agent-20261009 --reason \"Nov 3 T&S review: automated link placement; plan D4/3d\""
 ```
 
 Each prints `[DRY RUN] suspend @… wikis=N pages=N api_keys=N` and `(no changes made; …)`.
@@ -106,16 +133,16 @@ The wiki is each account's promotional wiki, as named in the Nov 3 review. Evide
 is exported and visible to the owner.
 
 ```bash
-$G --command="sudo -n bash -c 'cd /opt/wikihub-app && set -a && . ./.env && set +a && .venv/bin/flask --app wsgi.py wikihub flag @elongflywikihubxb/telegram-admin-wiki --polarity negative --reason promotional --evidence https://xiabao.org/ --note \"Nov 3 T&S review; plan D4/3d\"'"
-$G --command="sudo -n bash -c 'cd /opt/wikihub-app && set -a && . ./.env && set +a && .venv/bin/flask --app wsgi.py wikihub flag @roxicc/proxy-client-guides --polarity negative --reason promotional --evidence https://roxi.cc/ --note \"Nov 3 T&S review; plan D4/3d\"'"
-$G --command="sudo -n bash -c 'cd /opt/wikihub-app && set -a && . ./.env && set +a && .venv/bin/flask --app wsgi.py wikihub flag @nestack/nestack --polarity negative --reason promotional --evidence https://nestackagents.com/ --note \"Nov 3 T&S review; plan D4/3d\"'"
-$G --command="sudo -n bash -c 'cd /opt/wikihub-app && set -a && . ./.env && set +a && .venv/bin/flask --app wsgi.py wikihub flag @seo/seo --polarity negative --reason promotional --evidence https://faceswapai.com/ --note \"Nov 3 T&S review; plan D4/3d\"'"
-$G --command="sudo -n bash -c 'cd /opt/wikihub-app && set -a && . ./.env && set +a && .venv/bin/flask --app wsgi.py wikihub flag @deepswapai/deepswapai --polarity negative --reason promotional --evidence https://deepswapai.com/ --note \"Nov 3 T&S review; plan D4/3d\"'"
-$G --command="sudo -n bash -c 'cd /opt/wikihub-app && set -a && . ./.env && set +a && .venv/bin/flask --app wsgi.py wikihub flag @franchisenegosyo/philippine-franchise-notes --polarity negative --reason promotional --evidence https://franchisenegosyo.com/ --note \"Nov 3 T&S review; plan D4/3d\"'"
-$G --command="sudo -n bash -c 'cd /opt/wikihub-app && set -a && . ./.env && set +a && .venv/bin/flask --app wsgi.py wikihub flag @productshotai/ecommerce-product-photos --polarity negative --reason promotional --evidence https://productshotai.app/ --note \"Nov 3 T&S review; plan D4/3d\"'"
-$G --command="sudo -n bash -c 'cd /opt/wikihub-app && set -a && . ./.env && set +a && .venv/bin/flask --app wsgi.py wikihub flag @peptidetracker/peptide-dosing-reference --polarity negative --reason promotional --evidence https://glp1.app/ --note \"Nov 3 T&S review; plan D4/3d\"'"
-$G --command="sudo -n bash -c 'cd /opt/wikihub-app && set -a && . ./.env && set +a && .venv/bin/flask --app wsgi.py wikihub flag @visaforma/visaforma --polarity negative --reason promotional --evidence https://visaforma.com.ng/ --note \"Nov 3 T&S review; plan D4/3d\"'"
-$G --command="sudo -n bash -c 'cd /opt/wikihub-app && set -a && . ./.env && set +a && .venv/bin/flask --app wsgi.py wikihub flag @cellularport/cellularport --polarity negative --reason promotional --evidence https://cellularport.com/ --note \"Nov 3 T&S review; plan D4/3d\"'"
+$G --command="cd /opt/wikihub-app && sudo -u ubuntu .venv/bin/flask --app wsgi.py wikihub flag @elongflywikihubxb/telegram-admin-wiki --polarity negative --reason promotional --evidence https://xiabao.org/ --note \"Nov 3 T&S review; plan D4/3d\""
+$G --command="cd /opt/wikihub-app && sudo -u ubuntu .venv/bin/flask --app wsgi.py wikihub flag @roxicc/proxy-client-guides --polarity negative --reason promotional --evidence https://roxi.cc/ --note \"Nov 3 T&S review; plan D4/3d\""
+$G --command="cd /opt/wikihub-app && sudo -u ubuntu .venv/bin/flask --app wsgi.py wikihub flag @nestack/nestack --polarity negative --reason promotional --evidence https://nestackagents.com/ --note \"Nov 3 T&S review; plan D4/3d\""
+$G --command="cd /opt/wikihub-app && sudo -u ubuntu .venv/bin/flask --app wsgi.py wikihub flag @seo/seo --polarity negative --reason promotional --evidence https://faceswapai.com/ --note \"Nov 3 T&S review; plan D4/3d\""
+$G --command="cd /opt/wikihub-app && sudo -u ubuntu .venv/bin/flask --app wsgi.py wikihub flag @deepswapai/deepswapai --polarity negative --reason promotional --evidence https://deepswapai.com/ --note \"Nov 3 T&S review; plan D4/3d\""
+$G --command="cd /opt/wikihub-app && sudo -u ubuntu .venv/bin/flask --app wsgi.py wikihub flag @franchisenegosyo/philippine-franchise-notes --polarity negative --reason promotional --evidence https://franchisenegosyo.com/ --note \"Nov 3 T&S review; plan D4/3d\""
+$G --command="cd /opt/wikihub-app && sudo -u ubuntu .venv/bin/flask --app wsgi.py wikihub flag @productshotai/ecommerce-product-photos --polarity negative --reason promotional --evidence https://productshotai.app/ --note \"Nov 3 T&S review; plan D4/3d\""
+$G --command="cd /opt/wikihub-app && sudo -u ubuntu .venv/bin/flask --app wsgi.py wikihub flag @peptidetracker/peptide-dosing-reference --polarity negative --reason promotional --evidence https://glp1.app/ --note \"Nov 3 T&S review; plan D4/3d\""
+$G --command="cd /opt/wikihub-app && sudo -u ubuntu .venv/bin/flask --app wsgi.py wikihub flag @visaforma/visaforma --polarity negative --reason promotional --evidence https://visaforma.com.ng/ --note \"Nov 3 T&S review; plan D4/3d\""
+$G --command="cd /opt/wikihub-app && sudo -u ubuntu .venv/bin/flask --app wsgi.py wikihub flag @cellularport/cellularport --polarity negative --reason promotional --evidence https://cellularport.com/ --note \"Nov 3 T&S review; plan D4/3d\""
 ```
 
 Each prints `[DRY RUN] flag @user/wiki (wiki id=N) negative:promotional`, plus `policy_version` and
@@ -129,29 +156,29 @@ anon-92c215e9, wranker0, cabbazar23, cabbazar43, divebookingsau, adammueller777,
 shamadevi8900, davaidlisa, carrystack. Re-check later with:
 
 ```bash
-$G --command="sudo -n bash -c 'cd /opt/wikihub-app && set -a && . ./.env && set +a && .venv/bin/flask --app wsgi.py wikihub abuse-report --days 30'"
+$G --command="cd /opt/wikihub-app && sudo -u ubuntu .venv/bin/flask --app wsgi.py wikihub abuse-report --days 30"
 ```
 
 ## 5. Execute: the same commands with `--execute`
 
 ```bash
-$G --command="sudo -n bash -c 'cd /opt/wikihub-app && set -a && . ./.env && set +a && .venv/bin/flask --app wsgi.py wikihub suspend user_b8aceefe --reason \"Nov 3 T&S review: link farm (vccbusiness.com, ramerlabs.com); plan D4/3d\" --execute'"
-$G --command="sudo -n bash -c 'cd /opt/wikihub-app && set -a && . ./.env && set +a && .venv/bin/flask --app wsgi.py wikihub suspend vccbiz7985 --reason \"Nov 3 T&S review: same operator as user_b8aceefe; plan D4/3d\" --execute'"
-$G --command="sudo -n bash -c 'cd /opt/wikihub-app && set -a && . ./.env && set +a && .venv/bin/flask --app wsgi.py wikihub suspend vccbiz-probe-80365 --reason \"Nov 3 T&S review: same operator as user_b8aceefe; plan D4/3d\" --execute'"
-$G --command="sudo -n bash -c 'cd /opt/wikihub-app && set -a && . ./.env && set +a && .venv/bin/flask --app wsgi.py wikihub suspend project-links-agent-20261009 --reason \"Nov 3 T&S review: automated link placement; plan D4/3d\" --execute'"
+$G --command="cd /opt/wikihub-app && sudo -u ubuntu .venv/bin/flask --app wsgi.py wikihub suspend user_b8aceefe --reason \"Nov 3 T&S review: link farm (vccbusiness.com, ramerlabs.com); plan D4/3d\" --execute"
+$G --command="cd /opt/wikihub-app && sudo -u ubuntu .venv/bin/flask --app wsgi.py wikihub suspend vccbiz7985 --reason \"Nov 3 T&S review: same operator as user_b8aceefe; plan D4/3d\" --execute"
+$G --command="cd /opt/wikihub-app && sudo -u ubuntu .venv/bin/flask --app wsgi.py wikihub suspend vccbiz-probe-80365 --reason \"Nov 3 T&S review: same operator as user_b8aceefe; plan D4/3d\" --execute"
+$G --command="cd /opt/wikihub-app && sudo -u ubuntu .venv/bin/flask --app wsgi.py wikihub suspend project-links-agent-20261009 --reason \"Nov 3 T&S review: automated link placement; plan D4/3d\" --execute"
 
-$G --command="sudo -n bash -c 'cd /opt/wikihub-app && set -a && . ./.env && set +a && .venv/bin/flask --app wsgi.py wikihub flag @elongflywikihubxb/telegram-admin-wiki --polarity negative --reason promotional --evidence https://xiabao.org/ --note \"Nov 3 T&S review; plan D4/3d\" --execute'"
-$G --command="sudo -n bash -c 'cd /opt/wikihub-app && set -a && . ./.env && set +a && .venv/bin/flask --app wsgi.py wikihub flag @roxicc/proxy-client-guides --polarity negative --reason promotional --evidence https://roxi.cc/ --note \"Nov 3 T&S review; plan D4/3d\" --execute'"
-$G --command="sudo -n bash -c 'cd /opt/wikihub-app && set -a && . ./.env && set +a && .venv/bin/flask --app wsgi.py wikihub flag @nestack/nestack --polarity negative --reason promotional --evidence https://nestackagents.com/ --note \"Nov 3 T&S review; plan D4/3d\" --execute'"
-$G --command="sudo -n bash -c 'cd /opt/wikihub-app && set -a && . ./.env && set +a && .venv/bin/flask --app wsgi.py wikihub flag @seo/seo --polarity negative --reason promotional --evidence https://faceswapai.com/ --note \"Nov 3 T&S review; plan D4/3d\" --execute'"
-$G --command="sudo -n bash -c 'cd /opt/wikihub-app && set -a && . ./.env && set +a && .venv/bin/flask --app wsgi.py wikihub flag @deepswapai/deepswapai --polarity negative --reason promotional --evidence https://deepswapai.com/ --note \"Nov 3 T&S review; plan D4/3d\" --execute'"
-$G --command="sudo -n bash -c 'cd /opt/wikihub-app && set -a && . ./.env && set +a && .venv/bin/flask --app wsgi.py wikihub flag @franchisenegosyo/philippine-franchise-notes --polarity negative --reason promotional --evidence https://franchisenegosyo.com/ --note \"Nov 3 T&S review; plan D4/3d\" --execute'"
-$G --command="sudo -n bash -c 'cd /opt/wikihub-app && set -a && . ./.env && set +a && .venv/bin/flask --app wsgi.py wikihub flag @productshotai/ecommerce-product-photos --polarity negative --reason promotional --evidence https://productshotai.app/ --note \"Nov 3 T&S review; plan D4/3d\" --execute'"
-$G --command="sudo -n bash -c 'cd /opt/wikihub-app && set -a && . ./.env && set +a && .venv/bin/flask --app wsgi.py wikihub flag @peptidetracker/peptide-dosing-reference --polarity negative --reason promotional --evidence https://glp1.app/ --note \"Nov 3 T&S review; plan D4/3d\" --execute'"
-$G --command="sudo -n bash -c 'cd /opt/wikihub-app && set -a && . ./.env && set +a && .venv/bin/flask --app wsgi.py wikihub flag @visaforma/visaforma --polarity negative --reason promotional --evidence https://visaforma.com.ng/ --note \"Nov 3 T&S review; plan D4/3d\" --execute'"
-$G --command="sudo -n bash -c 'cd /opt/wikihub-app && set -a && . ./.env && set +a && .venv/bin/flask --app wsgi.py wikihub flag @cellularport/cellularport --polarity negative --reason promotional --evidence https://cellularport.com/ --note \"Nov 3 T&S review; plan D4/3d\" --execute'"
+$G --command="cd /opt/wikihub-app && sudo -u ubuntu .venv/bin/flask --app wsgi.py wikihub flag @elongflywikihubxb/telegram-admin-wiki --polarity negative --reason promotional --evidence https://xiabao.org/ --note \"Nov 3 T&S review; plan D4/3d\" --execute"
+$G --command="cd /opt/wikihub-app && sudo -u ubuntu .venv/bin/flask --app wsgi.py wikihub flag @roxicc/proxy-client-guides --polarity negative --reason promotional --evidence https://roxi.cc/ --note \"Nov 3 T&S review; plan D4/3d\" --execute"
+$G --command="cd /opt/wikihub-app && sudo -u ubuntu .venv/bin/flask --app wsgi.py wikihub flag @nestack/nestack --polarity negative --reason promotional --evidence https://nestackagents.com/ --note \"Nov 3 T&S review; plan D4/3d\" --execute"
+$G --command="cd /opt/wikihub-app && sudo -u ubuntu .venv/bin/flask --app wsgi.py wikihub flag @seo/seo --polarity negative --reason promotional --evidence https://faceswapai.com/ --note \"Nov 3 T&S review; plan D4/3d\" --execute"
+$G --command="cd /opt/wikihub-app && sudo -u ubuntu .venv/bin/flask --app wsgi.py wikihub flag @deepswapai/deepswapai --polarity negative --reason promotional --evidence https://deepswapai.com/ --note \"Nov 3 T&S review; plan D4/3d\" --execute"
+$G --command="cd /opt/wikihub-app && sudo -u ubuntu .venv/bin/flask --app wsgi.py wikihub flag @franchisenegosyo/philippine-franchise-notes --polarity negative --reason promotional --evidence https://franchisenegosyo.com/ --note \"Nov 3 T&S review; plan D4/3d\" --execute"
+$G --command="cd /opt/wikihub-app && sudo -u ubuntu .venv/bin/flask --app wsgi.py wikihub flag @productshotai/ecommerce-product-photos --polarity negative --reason promotional --evidence https://productshotai.app/ --note \"Nov 3 T&S review; plan D4/3d\" --execute"
+$G --command="cd /opt/wikihub-app && sudo -u ubuntu .venv/bin/flask --app wsgi.py wikihub flag @peptidetracker/peptide-dosing-reference --polarity negative --reason promotional --evidence https://glp1.app/ --note \"Nov 3 T&S review; plan D4/3d\" --execute"
+$G --command="cd /opt/wikihub-app && sudo -u ubuntu .venv/bin/flask --app wsgi.py wikihub flag @visaforma/visaforma --polarity negative --reason promotional --evidence https://visaforma.com.ng/ --note \"Nov 3 T&S review; plan D4/3d\" --execute"
+$G --command="cd /opt/wikihub-app && sudo -u ubuntu .venv/bin/flask --app wsgi.py wikihub flag @cellularport/cellularport --polarity negative --reason promotional --evidence https://cellularport.com/ --note \"Nov 3 T&S review; plan D4/3d\" --execute"
 
-$G --command="sudo -n bash -c 'cd /opt/wikihub-app && set -a && . ./.env && set +a && .venv/bin/flask --app wsgi.py wikihub curation-list'"
+$G --command="cd /opt/wikihub-app && sudo -u ubuntu .venv/bin/flask --app wsgi.py wikihub curation-list"
 ```
 
 ## 6. Verify from the public site
