@@ -15,3 +15,6 @@ archive/
 electron/node_modules/
 electron/dist/
 .playwright-mcp/
+
+# A2 disposable feed-rehearsal output; fixtures are generated and removed per run
+evidence/a2-*
