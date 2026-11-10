@@ -13538,6 +13538,12 @@ def test_subdomain_nav_identity(app, client):
     assert r.status_code == 201
     r = client.patch("/api/v1/wikis/navsite/garden", json={"subdomain": "gardennotes"}, headers=h)
     assert r.status_code == 200, r.get_data(as_text=True)
+    # The top bar names the wiki only for viewers who can read it (plan 3d); a
+    # scaffolded wiki is all-private, so publish a page to test site identity.
+    # The private case is pinned by test_private_wiki_metadata_never_leaks.
+    r = client.post("/api/v1/wikis/navsite/garden/pages", json={
+        "path": "hello.md", "content": "---\nvisibility: public\n---\n# Hello\n", "visibility": "public"}, headers=h)
+    assert r.status_code == 201, r.get_data(as_text=True)
 
     for host, title in [("navsite.wikihub.md", "navsite"), ("gardennotes.wikihub.md", "Garden Notes")]:
         html = _get(client, "/", headers={"Host": host}).get_data(as_text=True)

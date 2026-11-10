@@ -856,9 +856,6 @@ def fork_wiki(owner, slug):
         return err
 
     user = request.current_user
-    # forking copies title/description/content: only for callers who can read it (plan 3d)
-    if not viewer_can_read_wiki(source_wiki, user, owner=owner_user):
-        return _restricted_wiki_response(user)
     if Wiki.query.filter_by(owner_id=user.id, slug=slug).first():
         return {"error": "conflict", "message": f"You already have a wiki called '{slug}'"}, 409
 
@@ -866,6 +863,11 @@ def fork_wiki(owner, slug):
     limit = user.effective_wiki_limit()
     if wiki_count >= limit:
         return {"error": "too_many", "message": f"You've reached the limit of {limit} wikis"}, 429
+
+    # Forking copies title/description/content: only for callers who can read
+    # the source (plan 3d). The checks above reveal nothing about it.
+    if not viewer_can_read_wiki(source_wiki, user, owner=owner_user):
+        return _restricted_wiki_response(user)
 
     # clone the public mirror (or authoritative if owner)
     is_owner = user.id == source_wiki.owner_id
