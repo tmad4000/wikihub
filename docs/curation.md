@@ -174,6 +174,18 @@ notice. An editor then does one of three things:
 - replaces it with a corrected one (`flag … --supersedes ID`);
 - links the owner's published reply (`curation-reply`), so readers see both sides.
 
+## Saying what a page is (plan 3d: "no access" is not "not found")
+
+Curation never makes a page look missing:
+
+- A curated-against page answers **200** with the notice. Discovery surfaces leave it out, but a
+  direct link always works and the notice says why the page is not recommended.
+- A suspended account's URLs answer **410 Gone** with a plain "Account suspended" explanation, not 404.
+- WikiHub's existing screens (PR #50) still distinguish "not signed in", "no access" and "does not
+  exist".
+- The export counts the judgements it may not show (`omitted_non_public`). Only the substance of private
+  content (titles, bodies, wiki names) stays hidden.
+
 ## Removal is a different action
 
 Curation never removes anything. Removal stays available, as a separate and audited action, for:
@@ -222,7 +234,8 @@ implies that removed content still exists.
   Field names follow plan D4 (`polarity`, `reason`, `scope`, `curator`, `at`, `note`). Reasons use
   underscores, where D4 writes hyphens; a consumer that wants hyphens should map `_` to `-`.
 - **Public callers** never get `note` or `curator_user`, and get no row whose target is a private wiki
-  or a non-public page.
+  or a non-public page. Each response still reports how many it left out (`omitted_non_public`):
+  their existence is counted, never named.
 - **Admin callers** (`Authorization: Bearer $ADMIN_TOKEN`) get everything.
 
 ## Not built here

@@ -18,7 +18,9 @@ judgement; the enforcement list is WikiHub's decision only.
 Public callers never see moderator notes or curator accounts, and
 judgements on a target that is not publicly visible (private wiki,
 unlisted or private page) are left out so the export cannot reveal their
-names. The admin token (Authorization: Bearer ADMIN_TOKEN) sees everything.
+names; per plan 3d ("no access" is not "not found") the response still
+says how many it omitted (`omitted_non_public`). The admin token
+(Authorization: Bearer ADMIN_TOKEN) sees everything.
 """
 
 from datetime import datetime, timezone
@@ -111,6 +113,7 @@ def curation_export():
     base = _base_url()
     now = utcnow()
     out = []
+    omitted = 0
     for r in rows:
         status = effective_status(r, now)
         item = {
@@ -150,6 +153,7 @@ def curation_export():
                 item["scope"]["missing"] = True
             else:
                 if not is_admin and wiki.id not in public_wiki_ids:
+                    omitted += 1
                     continue
                 item["scope"].update(account=wiki.owner.username, wiki=wiki.slug)
                 item["url"] = f"{base}/@{wiki.owner.username}/{wiki.slug}"
@@ -161,6 +165,7 @@ def curation_export():
                 item["scope"]["missing"] = True
             else:
                 if not is_admin and page.visibility not in DISCOVERABLE_VISIBILITIES:
+                    omitted += 1
                     continue
                 item["scope"].update(account=wiki.owner.username, wiki=wiki.slug, path=page.path)
                 wiki_url = f"{base}/@{wiki.owner.username}/{wiki.slug}"
@@ -177,6 +182,8 @@ def curation_export():
         "publisher": base,
         "authoritative": True,
         "judgements": out,
+        # judgements in this page whose target the caller may not see: counted, never named
+        "omitted_non_public": omitted,
         "next_cursor": next_cursor,
         "has_more": has_more,
         "generated_at": _iso(now),

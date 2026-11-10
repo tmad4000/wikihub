@@ -283,7 +283,9 @@ def _wiki_head(username, slug):
     repo = _repo_path(username, slug, public=False)
     if not os.path.isdir(repo):
         return None
-    result = subprocess.run(["git", "-C", repo, "rev-parse", "--verify", "-q", "HEAD"],
+    # safe.directory: operators run this CLI with sudo (the host's .env is root-only),
+    # and git refuses repos owned by another user without it. Read-only command.
+    result = subprocess.run(["git", "-c", "safe.directory=*", "-C", repo, "rev-parse", "--verify", "-q", "HEAD"],
                             capture_output=True, text=True, check=False)
     sha = result.stdout.strip()
     return sha if result.returncode == 0 and sha else None

@@ -11292,8 +11292,9 @@ def test_curation_wiki_page_and_positive_scopes(app, client, key):
     res = _curation_cli(app, "flag", "@nc-scopes/gems/gem", "--reason", "promotional", "--supersedes", str(old.id), "--execute")
     assert res.exit_code == 0, res.output
     old = CurationJudgement.query.get(old.id)
-    new = CurationJudgement.query.filter_by(reason="promotional", scope_type="page").one()
-    assert old.status == "superseded" and old.superseded_by == new.id, (old.status, old.superseded_by)
+    assert old.status == "superseded" and old.superseded_by, (old.status, old.superseded_by)
+    new = CurationJudgement.query.get(old.superseded_by)
+    assert (new.scope_type, new.scope_id, new.reason, new.status) == ("page", old.scope_id, "promotional", "active"), new
     assert 'content="negative:promotional positive:editor_pick"' in anon.get("/@nc-scopes/gems/gem").get_data(as_text=True)
 
     # expiry ends effects without anyone touching the row
@@ -11306,8 +11307,10 @@ def test_curation_wiki_page_and_positive_scopes(app, client, key):
     assert exported and exported[0]["status"] == "expired" and exported[0]["in_force"] is False, exported
 
     # the export never names a private wiki publicly; the admin sees it
-    public = json.dumps(anon.get("/api/v1/curation").get_json())
+    public_body = anon.get("/api/v1/curation").get_json()
+    public = json.dumps(public_body)
     assert "secretwiki" not in public and "/@nc-scopes/mixed/drop" in public, "export privacy"
+    assert public_body["omitted_non_public"] >= 1, "omitted private judgements must be counted, not silently hidden"
     admin = json.dumps(anon.get("/api/v1/curation", headers={"Authorization": "Bearer test-admin-token"}).get_json())
     assert "secretwiki" in admin, "admin export must include private targets"
 
