@@ -251,6 +251,7 @@ wikihub mcp-config                # prints mcpServers JSON pre-filled</pre></div
     <li><code>/activity</code> — recent public page creations and updates</li>
     <li><code>/activity.rss</code> — RSS for recent public page activity</li>
     <li><code>/@user/wiki/activity.rss</code> — RSS for pages readable in that wiki, including unlisted pages reachable by link</li>
+    <li><code>/api/v1/curation</code> — editorial curation judgements (<code>?since=</code> / <code>?cursor=</code>); pages curated against carry <code>&lt;meta name="wikihub:curation"&gt;</code> and a <code>curation</code> API field. See <a href="/curation">/curation</a>.</li>
     <li><code>/.well-known/mcp/server-card.json</code> — MCP server card</li>
     <li><code>/.well-known/mcp</code> — MCP discovery</li>
     <li><code>/.well-known/wikihub.json</code> — bootstrap manifest</li>

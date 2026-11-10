@@ -4,6 +4,12 @@
     flask --app wsgi.py wikihub unsuspend USERNAME [--execute]
     flask --app wsgi.py wikihub trust USERNAME [--revoke] [--execute]
     flask --app wsgi.py wikihub abuse-report [--days N] [--json]
+    flask --app wsgi.py wikihub flag TARGET --reason REASON [--polarity P] [--note TEXT] [--curator USER] [--execute]
+    flask --app wsgi.py wikihub unflag TARGET [--reason REASON] [--execute]
+    flask --app wsgi.py wikihub curation-list [--all] [--json]
+
+TARGET is `username` / `@username` (account), `@username/wiki` (wiki) or
+`@username/wiki/path/to/page` (page; `.md` optional).
 
 Every mutating command is a DRY RUN unless --execute is passed: it prints
 exactly what it would change and touches nothing.
@@ -11,6 +17,13 @@ exactly what it would change and touches nothing.
 suspend: sets users.suspended_at/suspended_reason. The account can no longer
 authenticate (session, API key, git basic auth) and every URL it owns answers
 410; it drops out of search and discovery.
+
+flag / unflag: record or revoke an editorial curation judgement
+(app/curation.py, docs/curation.md). A negative judgement keeps content
+readable but shows a "Curated against" banner, noindexes it, marks its links
+nofollow ugc, removes it from discovery and sorts it last in search. A
+positive one (featured, official, editor_pick) adds a wiki to Explore's
+editorial picks. Nothing is ever deleted; unflag sets revoked_at.
 --purge additionally deletes every wiki the user owns (DB rows, stars/forks
 on them, bare repo + public mirror on disk), revokes all API keys and magic
 login tokens. The user row is kept (suspended) so the username stays taken.
@@ -216,3 +229,160 @@ def register_moderation_commands(group):
         for r in rows:
             click.echo(f"@{r['username']}  pages={r['pages_recent']}  created={r['created_at']}  "
                        + "  ".join(r["reasons"]))
+
+
+def resolve_curation_target(target):
+    """TARGET -> (scope_type, scope_id, label). Raises ClickException."""
+    from app.models import Page, User, Wiki
+
+    raw = (target or "").strip()
+    if not raw:
+        raise click.ClickException("empty target")
+    parts = raw.lstrip("@").strip("/").split("/", 2)
+    username = parts[0].lower()
+    user = User.query.filter_by(username=username).first()
+    if not user:
+        raise click.ClickException(f"unknown user: {username}")
+    if len(parts) == 1:
+        return "account", user.id, f"@{user.username}"
+    wiki = Wiki.query.filter_by(owner_id=user.id, slug=parts[1]).first()
+    if not wiki:
+        raise click.ClickException(f"unknown wiki: @{user.username}/{parts[1]}")
+    if len(parts) == 2 or not parts[2]:
+        return "wiki", wiki.id, f"@{user.username}/{wiki.slug}"
+    path = parts[2].strip("/")
+    candidates = [path] if path.endswith(".md") else [path + ".md", path, path + "/index.md"]
+    candidates += [c.replace("_", " ") for c in candidates]
+    for candidate in candidates:
+        page = Page.query.filter_by(wiki_id=wiki.id, path=candidate).first()
+        if page:
+            return "page", page.id, f"@{user.username}/{wiki.slug}/{page.path}"
+    raise click.ClickException(f"unknown page: @{user.username}/{wiki.slug}/{path}")
+
+
+def _active_judgements(scope_type, scope_id):
+    from app.models import CurationJudgement
+    return (CurationJudgement.query
+            .filter_by(scope_type=scope_type, scope_id=scope_id)
+            .filter(CurationJudgement.revoked_at.is_(None))
+            .order_by(CurationJudgement.created_at.asc()).all())
+
+
+def register_curation_commands(group):
+    from app.curation import NEGATIVE_REASONS, POSITIVE_REASONS, normalize_reason, polarity_for_reason
+
+    all_reasons = ", ".join(NEGATIVE_REASONS + POSITIVE_REASONS)
+
+    @group.command("flag")
+    @click.argument("target")
+    @click.option("--reason", required=True, help=f"One of: {all_reasons} (hyphens accepted).")
+    @click.option("--polarity", type=click.Choice(["negative", "positive"]), default=None,
+                  help="Optional; must match the reason.")
+    @click.option("--note", default="", help="Moderator note (never shown publicly).")
+    @click.option("--curator", default="wikihub", show_default=True,
+                  help="Username recorded as curator (null if no such user).")
+    @click.option("--execute", is_flag=True, default=False, help="Apply changes (default is a dry run).")
+    def flag_command(target, reason, polarity, note, curator, execute):
+        """Record a curation judgement (dry run unless --execute). Never deletes content."""
+        from app import db
+        from app.auth_utils import security_event
+        from app.models import CurationJudgement, User
+
+        reason = normalize_reason(reason)
+        expected = polarity_for_reason(reason)
+        if expected is None:
+            raise click.ClickException(f"unknown reason {reason!r}; use one of: {all_reasons}")
+        if polarity and polarity != expected:
+            raise click.ClickException(f"reason {reason!r} is {expected}, not {polarity}")
+        scope_type, scope_id, label = resolve_curation_target(target)
+        mode = "EXECUTE" if execute else "DRY RUN"
+        existing = [j for j in _active_judgements(scope_type, scope_id)
+                    if j.polarity == expected and j.reason == reason]
+        click.echo(f"[{mode}] flag {label} ({scope_type} id={scope_id}) {expected}:{reason}"
+                   + (" (already active; no change)" if existing else ""))
+        if note:
+            click.echo(f"  note: {note}")
+        others = [j for j in _active_judgements(scope_type, scope_id) if j not in existing]
+        for j in others:
+            click.echo(f"  also active: #{j.id} {j.polarity}:{j.reason}")
+        if not execute:
+            click.echo("  (no changes made; pass --execute to apply)")
+            return
+        if existing:
+            return
+        curator_user = User.query.filter_by(username=(curator or "").lstrip("@").lower()).first() if curator else None
+        row = CurationJudgement(scope_type=scope_type, scope_id=scope_id, polarity=expected, reason=reason,
+                                curator_user_id=curator_user.id if curator_user else None, note=note or None)
+        db.session.add(row)
+        db.session.commit()
+        security_event("admin.curation.flag", "success", judgement_id=row.id, scope_type=scope_type,
+                       scope_id=scope_id, polarity=expected, reason=reason)
+        click.echo(f"  recorded judgement #{row.id}")
+
+    @group.command("unflag")
+    @click.argument("target")
+    @click.option("--reason", default=None, help="Revoke only this reason (default: every active judgement).")
+    @click.option("--polarity", type=click.Choice(["negative", "positive"]), default=None)
+    @click.option("--execute", is_flag=True, default=False, help="Apply changes (default is a dry run).")
+    def unflag_command(target, reason, polarity, execute):
+        """Revoke curation judgements (dry run unless --execute). Rows are kept as history."""
+        from app import db
+        from app.auth_utils import security_event
+        from app.models import utcnow
+
+        scope_type, scope_id, label = resolve_curation_target(target)
+        reason = normalize_reason(reason) if reason else None
+        matches = [j for j in _active_judgements(scope_type, scope_id)
+                   if (reason is None or j.reason == reason) and (polarity is None or j.polarity == polarity)]
+        mode = "EXECUTE" if execute else "DRY RUN"
+        click.echo(f"[{mode}] unflag {label} ({scope_type} id={scope_id})")
+        if not matches:
+            click.echo("  no matching active judgement")
+            return
+        for j in matches:
+            click.echo(f"  revoke #{j.id} {j.polarity}:{j.reason}")
+        if not execute:
+            click.echo("  (no changes made; pass --execute to apply)")
+            return
+        now = utcnow()
+        for j in matches:
+            j.revoked_at = now
+        db.session.commit()
+        for j in matches:
+            security_event("admin.curation.unflag", "success", judgement_id=j.id, scope_type=scope_type,
+                           scope_id=scope_id, polarity=j.polarity, reason=j.reason)
+
+    @group.command("curation-list")
+    @click.option("--all", "include_revoked", is_flag=True, default=False, help="Include revoked judgements.")
+    @click.option("--json", "as_json", is_flag=True, default=False)
+    def curation_list_command(include_revoked, as_json):
+        """List curation judgements (read-only)."""
+        from app.models import CurationJudgement, Page, User, Wiki
+
+        query = CurationJudgement.query
+        if not include_revoked:
+            query = query.filter(CurationJudgement.revoked_at.is_(None))
+        rows = []
+        for j in query.order_by(CurationJudgement.created_at.asc()).all():
+            if j.scope_type == "account":
+                u = User.query.get(j.scope_id)
+                target = f"@{u.username}" if u else f"account#{j.scope_id}"
+            elif j.scope_type == "wiki":
+                w = Wiki.query.get(j.scope_id)
+                target = f"@{w.owner.username}/{w.slug}" if w else f"wiki#{j.scope_id}"
+            else:
+                p = Page.query.get(j.scope_id)
+                target = f"@{p.wiki.owner.username}/{p.wiki.slug}/{p.path}" if p else f"page#{j.scope_id}"
+            rows.append({"id": j.id, "target": target, "scope": j.scope_type, "polarity": j.polarity,
+                         "reason": j.reason, "note": j.note,
+                         "created_at": j.created_at.isoformat() if j.created_at else None,
+                         "revoked_at": j.revoked_at.isoformat() if j.revoked_at else None})
+        if as_json:
+            click.echo(json.dumps(rows, indent=2))
+            return
+        if not rows:
+            click.echo("no curation judgements")
+            return
+        for r in rows:
+            click.echo(f"#{r['id']}  {r['target']}  {r['polarity']}:{r['reason']}"
+                       + (f"  revoked {r['revoked_at']}" if r["revoked_at"] else ""))

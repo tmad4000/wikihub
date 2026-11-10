@@ -76,6 +76,7 @@ def reset_database():
         "sessions",
         "external_identities",
         "rate_limit_buckets",
+        "curation_judgements",
         "users",
     ]:
         try:
@@ -11061,6 +11062,187 @@ def test_abuse_report_flags_link_farm(app, key):
     assert "f4-report-normal" not in rows, "an account without spam signals must not be flagged"
 
 
+def _curation_cli(app, *args):
+    res = app.test_cli_runner().invoke(args=["wikihub", *args])
+    return res
+
+
+def _editorial_section(html):
+    if "Editorial Picks" not in html:
+        return ""
+    return html.split("Editorial Picks", 1)[1].split("/@wikihub/wikihub/Featured", 1)[0]
+
+
+def test_negative_curation_flags_without_deleting(app, client, key):
+    """wikihub-f3b7: a negative curation judgement keeps content readable but
+    shows a banner + wikihub:curation meta, noindexes it, makes its links
+    nofollow ugc, removes it from every discovery surface, sorts it last in
+    search, exposes it in the API and the /api/v1/curation export; unflag
+    restores everything; nothing is deleted. Applies even with the trust
+    gate off (the harness default)."""
+    from app.models import CurationJudgement
+    h = _spam_new_account(app, "nc-promo")
+    _spam_public_page(app, h, "nc-promo", "promowiki", "deals.md",
+                      "# NcSortMarker deals\n\nBuy at [shop](https://nc-promo-shop.example.com/buy). NcSortMarker")
+    good = _spam_new_account(app, "nc-good")
+    _spam_public_page(app, good, "nc-good", "goodnotes", "essay.md",
+                      "# Essay\n\nAn essay that mentions NcSortMarker once.")
+    anon = app.test_client()
+
+    surfaces = ("/explore", "/activity", "/activity.rss", "/people", "/llms-full.txt", "/api/v1/wikis?limit=200")
+    for path in surfaces:
+        assert "nc-promo" in anon.get(path).get_data(as_text=True), f"precondition: nc-promo listed on {path}"
+    html = anon.get("/@nc-promo/promowiki/deals").get_data(as_text=True)
+    assert "curation-banner" not in html and "wikihub:curation" not in html
+    results = anon.get("/api/v1/search?q=NcSortMarker").get_json()["results"]
+    assert results[0]["wiki"] == "nc-promo/promowiki", "precondition: the promotional page ranks first"
+    assert results[0]["curation"] is None
+
+    # dry run is the default and records nothing; bad reasons are refused
+    res = _curation_cli(app, "flag", "nc-promo", "--polarity", "negative", "--reason", "promotional")
+    assert res.exit_code == 0 and "DRY RUN" in res.output, res.output
+    assert CurationJudgement.query.count() == 0
+    assert _curation_cli(app, "flag", "nc-promo", "--reason", "spammy").exit_code != 0
+    assert _curation_cli(app, "flag", "nc-promo", "--reason", "featured", "--polarity", "negative").exit_code != 0
+
+    res = _curation_cli(app, "flag", "@nc-promo", "--polarity", "negative", "--reason", "promotional",
+                        "--note", "NcPrivateModNote xiabao-style CTA", "--execute")
+    assert res.exit_code == 0, res.output
+    assert CurationJudgement.query.filter_by(polarity="negative", reason="promotional").count() == 1
+    # flagging twice is a no-op
+    assert _curation_cli(app, "flag", "nc-promo", "--reason", "promotional", "--execute").exit_code == 0
+    assert CurationJudgement.query.count() == 1
+
+    # still readable, but banner + meta + noindex + nofollow ugc
+    for base in (None, "https://nc-promo.wikihub.md"):
+        r = anon.get("/@nc-promo/promowiki/deals") if base is None else anon.get("/promowiki/deals", base_url=base)
+        assert r.status_code == 200, (base, r.status_code)
+        html = r.get_data(as_text=True)
+        assert "NcSortMarker deals" in html
+        assert "Curated against: promotional." in html and "Still readable; not recommended by WikiHub." in html, base
+        assert '<meta name="wikihub:curation" content="negative:promotional">' in html, base
+        assert '<meta name="robots" content="noindex">' in html, base
+        assert "noindex" in r.headers.get("X-Robots-Tag", ""), base
+        assert 'rel="nofollow ugc noopener noreferrer"' in html, base
+        assert "NcPrivateModNote" not in html
+    assert anon.get("/curation").status_code == 200
+
+    for path in surfaces + ("/llms.txt", "/"):
+        assert "nc-promo" not in anon.get(path).get_data(as_text=True), f"curated-against account leaked into {path}"
+
+    # API objects carry the judgement; search sorts it last
+    wiki_json = anon.get("/api/v1/wikis/nc-promo/promowiki").get_json()
+    assert wiki_json["curation"]["polarity"] == "negative" and wiki_json["curation"]["reason"] == "promotional", wiki_json
+    assert wiki_json["curation"]["scope"] == "account"
+    page_json = anon.get("/api/v1/wikis/nc-promo/promowiki/pages/deals.md").get_json()
+    assert page_json["curation"]["reason"] == "promotional", page_json
+    listed = anon.get("/api/v1/wikis/nc-promo/promowiki/pages").get_json()["pages"]
+    assert listed and all(p["curation"]["polarity"] == "negative" for p in listed), listed
+    assert anon.get("/api/v1/wikis/nc-good/goodnotes").get_json()["curation"] is None
+    results = anon.get("/api/v1/search?q=NcSortMarker").get_json()["results"]
+    assert [r["wiki"] for r in results][-1] == "nc-promo/promowiki", results
+    assert results[-1]["curation"]["reason"] == "promotional"
+
+    # export: public sees URLs but no note; admin sees the note
+    export = anon.get("/api/v1/curation").get_json()
+    rows = [j for j in export["judgements"] if j["scope"].get("account") == "nc-promo"]
+    assert len(rows) == 1, export
+    row = rows[0]
+    assert row["polarity"] == "negative" and row["reason"] == "promotional" and row["active"] is True, row
+    assert row["url"].endswith("/@nc-promo") and any(u.endswith("/@nc-promo/promowiki") for u in row["wiki_urls"]), row
+    assert "note" not in row and "NcPrivateModNote" not in json.dumps(export)
+    admin = anon.get("/api/v1/curation", headers={"Authorization": "Bearer test-admin-token"}).get_json()
+    assert any("NcPrivateModNote" in (j.get("note") or "") for j in admin["judgements"]), admin
+    assert anon.get("/api/v1/curation?since=not-a-date").status_code == 400
+
+    # unflag: everything comes back, the row stays as history, export shows the revocation
+    res = _curation_cli(app, "unflag", "nc-promo")
+    assert res.exit_code == 0 and "DRY RUN" in res.output, res.output
+    assert "Curated against" in anon.get("/@nc-promo/promowiki/deals").get_data(as_text=True)
+    assert _curation_cli(app, "unflag", "nc-promo", "--execute").exit_code == 0
+    r = anon.get("/@nc-promo/promowiki/deals")
+    html = r.get_data(as_text=True)
+    assert "curation-banner" not in html and "wikihub:curation" not in html and 'name="robots"' not in html
+    assert "X-Robots-Tag" not in r.headers
+    for path in surfaces:
+        assert "nc-promo" in anon.get(path).get_data(as_text=True), f"unflagged account missing from {path}"
+    assert CurationJudgement.query.count() == 1
+    since = row["at"].replace("+00:00", "Z")
+    revoked = [j for j in anon.get(f"/api/v1/curation?since={since}").get_json()["judgements"] if j["id"] == row["id"]]
+    assert revoked and revoked[0]["active"] is False and revoked[0]["revoked_at"], revoked
+    assert Wiki.query.join(User, Wiki.owner_id == User.id).filter(User.username == "nc-promo").count() == 1
+
+
+def test_curation_wiki_page_and_positive_scopes(app, client, key):
+    """wikihub-f3b7: wiki- and page-scope judgements resolve per page; private
+    targets stay out of the public export; positive judgements put a wiki in
+    Explore's editorial picks unless it is also curated against; cursor
+    pagination walks the export."""
+    h = _spam_new_account(app, "nc-scopes")
+    _spam_public_page(app, h, "nc-scopes", "lowwiki", "one.md", "# Low one\n\n[x](https://nc-low.example.com/)")
+    _spam_public_page(app, h, "nc-scopes", "mixed", "keep.md", "# Keep NcKeepMarker\n\n[x](https://nc-keep.example.com/)")
+    _spam_public_page(app, h, "nc-scopes", "mixed", "drop.md", "# Drop NcDropMarker\n\n[x](https://nc-drop.example.com/)")
+    _spam_public_page(app, h, "nc-scopes", "gems", "gem.md", "# Gem\n\nGood stuff.")
+    c = app.test_client()
+    c.post("/api/v1/wikis", json={"slug": "secretwiki", "title": "Secret"}, headers=h)
+    c.post("/api/v1/wikis/nc-scopes/secretwiki/pages", json={
+        "path": "hidden.md", "content": "---\nvisibility: private\n---\n# Hidden\n", "visibility": "private"}, headers=h)
+    anon = app.test_client()
+
+    assert _curation_cli(app, "flag", "@nc-scopes/lowwiki", "--reason", "low-quality", "--execute").exit_code == 0
+    assert _curation_cli(app, "flag", "@nc-scopes/mixed/drop", "--reason", "off_topic", "--execute").exit_code == 0
+    assert _curation_cli(app, "flag", "@nc-scopes/gems", "--reason", "editor_pick", "--execute").exit_code == 0
+    assert _curation_cli(app, "flag", "@nc-scopes/secretwiki", "--reason", "promotional", "--execute").exit_code == 0
+    assert _curation_cli(app, "flag", "@nc-scopes/nosuchwiki", "--reason", "promotional", "--execute").exit_code != 0
+
+    html = anon.get("/@nc-scopes/lowwiki/one").get_data(as_text=True)
+    assert "Curated against: low quality." in html and 'content="negative:low_quality"' in html
+    drop = anon.get("/@nc-scopes/mixed/drop")
+    assert drop.status_code == 200 and "Curated against: off topic." in drop.get_data(as_text=True)
+    assert 'rel="nofollow ugc noopener noreferrer"' in drop.get_data(as_text=True)
+    keep = anon.get("/@nc-scopes/mixed/keep")
+    keep_html = keep.get_data(as_text=True)
+    assert "curation-banner" not in keep_html and "X-Robots-Tag" not in keep.headers, "page scope must not spread to siblings"
+    assert "nofollow" not in keep_html.split("nc-keep.example.com", 1)[1][:80]
+
+    full = anon.get("/llms-full.txt").get_data(as_text=True)
+    assert "/@nc-scopes/mixed/keep" in full and "/@nc-scopes/mixed/drop" not in full and "@nc-scopes/lowwiki" not in full
+    wikis = {w["slug"] for w in anon.get("/api/v1/wikis?limit=200").get_json()["wikis"]}
+    assert "@nc-scopes/lowwiki" not in wikis and "@nc-scopes/mixed" in wikis, wikis
+    explore = anon.get("/explore").get_data(as_text=True)
+    assert "/@nc-scopes/gems" in _editorial_section(explore), "positive judgement must reach Editorial Picks"
+    assert "/@nc-scopes/lowwiki" not in explore
+    gem = anon.get("/@nc-scopes/gems/gem")
+    assert 'content="positive:editor_pick"' in gem.get_data(as_text=True) and "curation-banner" not in gem.get_data(as_text=True)
+    assert anon.get("/api/v1/wikis/nc-scopes/gems").get_json()["curation"]["reason"] == "editor_pick"
+
+    # negative beats positive
+    assert _curation_cli(app, "flag", "@nc-scopes/gems", "--reason", "affiliate-farm", "--execute").exit_code == 0
+    assert "/@nc-scopes/gems" not in _editorial_section(anon.get("/explore").get_data(as_text=True))
+    assert anon.get("/api/v1/wikis/nc-scopes/gems").get_json()["curation"]["reason"] == "affiliate_farm"
+    assert _curation_cli(app, "unflag", "@nc-scopes/gems", "--reason", "affiliate_farm", "--execute").exit_code == 0
+    assert "/@nc-scopes/gems" in _editorial_section(anon.get("/explore").get_data(as_text=True))
+
+    # the export never names a private wiki publicly; the admin sees it
+    public = json.dumps(anon.get("/api/v1/curation").get_json())
+    assert "secretwiki" not in public and "/@nc-scopes/mixed/drop" in public
+    admin = json.dumps(anon.get("/api/v1/curation", headers={"Authorization": "Bearer test-admin-token"}).get_json())
+    assert "secretwiki" in admin
+
+    # cursor pagination visits every judgement exactly once
+    seen, cursor = [], None
+    for _ in range(20):
+        url = "/api/v1/curation?limit=2" + (f"&cursor={quote(cursor)}" if cursor else "")
+        body = anon.get(url, headers={"Authorization": "Bearer test-admin-token"}).get_json()
+        seen += [j["id"] for j in body["judgements"]]
+        cursor = body["next_cursor"]
+        if not body["has_more"]:
+            break
+    from app.models import CurationJudgement
+    assert sorted(seen) == sorted(j.id for j in CurationJudgement.query.all()), seen
+    assert len(seen) == len(set(seen))
+
+
 def test_user_search_is_not_an_email_oracle(app, client, key):
     """F5: users/search requires auth, never prefix-matches email, allows an
     exact full-email match for signed-in callers, and escapes LIKE wildcards."""
@@ -11944,6 +12126,8 @@ def run_all():
             ("F3 shared per-IP signup rate limit (wikihub-1ug3)", lambda: test_signup_rate_limit_is_shared_per_ip(app)),
             ("F4 suspend blocks auth, 410s content, purges (wikihub-i8lo)", lambda: test_suspend_blocks_auth_hides_content_and_purges(app, client, key)),
             ("F4 abuse-report flags link farm (wikihub-i8lo)", lambda: test_abuse_report_flags_link_farm(app, key)),
+            ("negative curation flags without deleting (wikihub-f3b7)", lambda: test_negative_curation_flags_without_deleting(app, client, key)),
+            ("curation wiki/page/positive scopes + export (wikihub-f3b7)", lambda: test_curation_wiki_page_and_positive_scopes(app, client, key)),
             ("F5 user search is not an email oracle (wikihub-x77k)", lambda: test_user_search_is_not_an_email_oracle(app, client, key)),
             ("F6 unlisted pages not in public page list (wikihub-mnjc)", lambda: test_unlisted_pages_not_in_public_page_list(app, client, key)),
             ("auth crawler hygiene: nofollow, robots, noindex, fast 400 callback", lambda: test_auth_crawler_hygiene(app, client)),

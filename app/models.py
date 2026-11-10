@@ -513,3 +513,43 @@ class ConnectorAssertionNonce(db.Model):
     __tablename__ = "connector_assertion_nonces"
     jti_hash = db.Column(db.String(64), primary_key=True)
     expires_at = db.Column(db.DateTime(timezone=True), nullable=False, index=True)
+
+
+class CurationJudgement(db.Model):
+    """An editorial judgement about an account, wiki or page (wikihub-f3b7).
+
+    Negative judgements ("curated against") keep the content readable but
+    take it out of discovery, mark it noindex/nofollow and show a banner.
+    Positive judgements (featured, official, editor_pick) feed Explore's
+    editorial area. Judgements never delete content; revoking one sets
+    revoked_at and keeps the row as history. See app/curation.py.
+    """
+    __tablename__ = "curation_judgements"
+
+    id = db.Column(db.Integer, primary_key=True)
+    scope_type = db.Column(db.String(16), nullable=False)  # account | wiki | page
+    scope_id = db.Column(db.Integer, nullable=False)  # users.id | wikis.id | pages.id
+    polarity = db.Column(db.String(16), nullable=False)  # positive | negative
+    reason = db.Column(db.String(40), nullable=False)
+    curator_user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    note = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow, server_default=db.func.now())
+    revoked_at = db.Column(db.DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        db.CheckConstraint("scope_type IN ('account', 'wiki', 'page')", name="ck_curation_scope_type"),
+        db.CheckConstraint("polarity IN ('positive', 'negative')", name="ck_curation_polarity"),
+        db.CheckConstraint(
+            "(polarity = 'negative' AND reason IN ('promotional', 'affiliate_farm', "
+            "'automated_link_placement', 'low_quality', 'off_topic')) OR "
+            "(polarity = 'positive' AND reason IN ('featured', 'official', 'editor_pick'))",
+            name="ck_curation_reason",
+        ),
+        # at most one active judgement per (scope, polarity, reason)
+        db.Index("uq_curation_active", "scope_type", "scope_id", "polarity", "reason",
+                 unique=True, postgresql_where=db.text("revoked_at IS NULL")),
+        db.Index("ix_curation_created_at", "created_at"),
+        db.Index("ix_curation_revoked_at", "revoked_at"),
+    )
+
+    curator = db.relationship("User", foreign_keys=[curator_user_id])

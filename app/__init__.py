@@ -418,8 +418,9 @@ def create_app(config_class="config.Config"):
             regenerate_public_mirror(wiki.owner.username, wiki.slug, acl_rules)
             click.echo(f"rebuilt mirror {wiki.owner.username}/{wiki.slug}")
 
-    from app.moderation_cli import register_moderation_commands
+    from app.moderation_cli import register_curation_commands, register_moderation_commands
     register_moderation_commands(wikihub_cli)
+    register_curation_commands(wikihub_cli)
 
     from flask import jsonify, request as req, render_template
 

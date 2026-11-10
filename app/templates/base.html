@@ -30,6 +30,7 @@
 <meta name="twitter:title" content="{{ self.og_title() }}">
 <meta name="twitter:description" content="{{ self.og_desc() }}">
 {% if request.environ.get('wikihub.noindex') %}<meta name="robots" content="noindex">
+{% endif %}{% set _curation = request.environ.get('wikihub.curation') %}{% if _curation %}<meta name="wikihub:curation" content="{{ _curation.polarity }}:{{ _curation.reason }}">
 {% endif %}<meta name="description" content="{% block meta_desc %}GitHub for LLM wikis. Publish markdown knowledge bases in seconds.{% endblock %}">
 {% include '_theme.html' %}
 {% include '_analytics.html' %}
@@ -468,6 +469,24 @@ a:hover { text-decoration: underline; }
   padding: 0.15rem 0.5rem; font: inherit; cursor: pointer; border-radius: 3px;
 }
 .email-verify-resend:hover { background: rgba(0,0,0,0.05); }
+</style>
+{% endif %}
+
+{% if _curation and _curation.polarity == 'negative' %}
+<div class="curation-banner" role="note" aria-label="Curation notice" data-curation="negative:{{ _curation.reason }}">
+  <span><strong>Curated against: {{ _curation.label }}.</strong> Still readable; not recommended by WikiHub.</span>
+  {# absolute: on user/wiki subdomains a bare /curation would resolve to a wiki named "curation" #}
+  <a href="{{ (config.get('BASE_URL') or '').rstrip('/') }}/curation" class="curation-banner-why">Why?</a>
+</div>
+<style>
+.curation-banner {
+  display: flex; gap: 0.75rem; align-items: center; justify-content: center; flex-wrap: wrap;
+  padding: 0.5rem 1rem; font-size: 0.8125rem; line-height: 1.4;
+  background: var(--bg-elevated); color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-default, var(--bg-overlay));
+}
+.curation-banner strong { font-weight: 600; color: var(--text-primary); }
+.curation-banner-why { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 </style>
 {% endif %}
 

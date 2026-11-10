@@ -15,6 +15,7 @@ from app.models import Wiki, Page, ApiKey, User, Star, Fork, MagicLoginToken, Us
 from app.page_utils import content_page_path_filter, is_content_page_path
 from app.routes import main_bp
 from app.trust import trusted_user_clause
+from app.curation import not_curated_against, positive_wiki_ids
 import os
 import shutil
 from app.wiki_ops import delete_wiki_repos
@@ -64,6 +65,12 @@ def robots_txt():
     return current_app.response_class(_ROBOTS_TXT, mimetype="text/plain")
 
 
+@main_bp.route("/curation")
+def curation_policy():
+    """What a "Curated against" notice means (wikihub-f3b7)."""
+    return render_template("curation.html")
+
+
 @main_bp.route("/roadmap")
 def roadmap():
     return render_template("roadmap.html")
@@ -77,10 +84,14 @@ def offline_page():
 
 @main_bp.route("/explore")
 def explore():
-    # Editorial picks: curated wikis that represent the best of wikihub
+    # Editorial picks: the official wiki, then wikis with a positive curation
+    # judgement (featured / official / editor_pick; wikihub-f3b7, wikihub-b8i).
+    # Picks must still be discoverable, so a negative judgement or an
+    # untrusted owner removes a pick.
     _EDITORIAL_PICKS = [
         ("wikihub", "wikihub"),
     ]
+    public_wiki_ids = discoverable_wiki_ids(("public", "public-edit"))
     editorial = []
     for owner_name, slug in _EDITORIAL_PICKS:
         wiki = (
@@ -90,9 +101,13 @@ def explore():
         )
         if wiki:
             editorial.append(wiki)
+    picked = [wid for wid in positive_wiki_ids() if wid in public_wiki_ids]
+    if picked:
+        by_id = {w.id: w for w in Wiki.query.filter(Wiki.id.in_(picked)).all()}
+        seen = {w.id for w in editorial}
+        editorial.extend(by_id[wid] for wid in picked if wid in by_id and wid not in seen)
     # All wikis with at least one public page, excluding editorial
     editorial_ids = {wiki.id for wiki in editorial}
-    public_wiki_ids = discoverable_wiki_ids(("public", "public-edit"))
     all_wikis = (
         Wiki.query.filter(Wiki.id.in_(public_wiki_ids))
         .order_by(Wiki.updated_at.desc())
@@ -127,6 +142,7 @@ def _global_activity_query():
         .filter(Page.visibility.in_(DISCOVERABLE_VISIBILITIES))
         .filter(content_page_path_filter(Page.path))
         .filter(trusted_user_clause())
+        .filter(not_curated_against(wiki_id_col=Wiki.id, page_id_col=Page.id))
         .order_by(Page.updated_at.desc(), Page.id.desc())
     )
 

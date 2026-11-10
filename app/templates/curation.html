@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}How WikiHub curates — wikihub{% endblock %}
+{% block og_title %}How WikiHub curates{% endblock %}
+{% block og_desc %}Why some WikiHub pages carry a "Curated against" notice, and what it changes.{% endblock %}
+{% block meta_desc %}Why some WikiHub pages carry a "Curated against" notice, and what it changes.{% endblock %}
+
+{% block extra_css %}
+.curation-doc { max-width: 680px; margin: 0 auto; padding: 32px 16px 64px; line-height: 1.6; }
+@media (min-width: 640px) { .curation-doc { padding: 48px 24px 64px; } }
+.curation-doc h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 12px; }
+.curation-doc h2 { font-size: 1rem; font-weight: 600; margin: 28px 0 8px; }
+.curation-doc p, .curation-doc li { color: var(--text-secondary); font-size: 0.9375rem; }
+.curation-doc ul { padding-left: 1.25rem; }
+.curation-doc dt { font-weight: 600; color: var(--text-primary); font-size: 0.875rem; margin-top: 10px; }
+.curation-doc dd { margin: 2px 0 0; color: var(--text-secondary); font-size: 0.875rem; }
+.curation-doc code { font-family: var(--font-mono); font-size: 0.8125rem; }
+.curation-doc a { color: var(--accent); }
+{% endblock %}
+
+{% block body %}
+<main class="curation-doc">
+  <h1>How WikiHub curates</h1>
+  <p>Anyone can publish on WikiHub, and nothing here is removed for being unhelpful. Instead, WikiHub's editors
+  can record a judgement about an account, a wiki or a page. Judgements are visible, reversible and never delete content.</p>
+
+  <h2>"Curated against"</h2>
+  <p>A page with this notice is still readable by link. WikiHub does not recommend it, and:</p>
+  <ul>
+    <li>it is left out of Explore, People, recent activity and its RSS feed, and <code>llms.txt</code>;</li>
+    <li>search engines are asked not to index it, and its outbound links are marked <code>nofollow ugc</code>;</li>
+    <li>it sorts last in WikiHub search;</li>
+    <li>agents see it in <code>&lt;meta name="wikihub:curation"&gt;</code> and in the <code>curation</code> field of the API.</li>
+  </ul>
+  <dl>
+    <dt>promotional</dt><dd>Written mainly to promote a product or service, or to place links to it.</dd>
+    <dt>affiliate farm</dt><dd>Many near-identical pages built to send traffic to affiliate or partner links.</dd>
+    <dt>automated link placement</dt><dd>Links inserted by a bot or script rather than written for readers.</dd>
+    <dt>low quality</dt><dd>Little or no substance for a reader.</dd>
+    <dt>off topic</dt><dd>Content unrelated to what WikiHub is for.</dd>
+  </dl>
+
+  <h2>Recommended</h2>
+  <p>The same mechanism works in the other direction: <strong>featured</strong>, <strong>official</strong> and
+  <strong>editor's pick</strong> judgements put a wiki in Explore's editorial picks.</p>
+
+  <h2>Disagree?</h2>
+  <p>Judgements can be revoked. If you think a notice on your content is wrong, use <em>Send feedback</em>
+  in the menu and say which page; an editor will look at it.</p>
+
+  <p>Machine-readable list: <a href="/api/v1/curation">/api/v1/curation</a>.</p>
+</main>
+{% endblock %}
