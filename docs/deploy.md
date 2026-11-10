@@ -42,7 +42,11 @@ git push origin main
 ### 3. deploy
 
 Preserve the live footer customization and untracked operational files when
-fast-forwarding the release checkout. For worker-runtime changes, apply the
+fast-forwarding the release checkout. If the host's `main` is not an ancestor of
+`origin/main` (as on 2026-11-10, when it sat at the pre-squash `c20bd29`), do not
+`git pull`, which would merge: fetch, review `git log origin/main..HEAD`, then move the
+branch with `git checkout -B main origin/main`. See `ops/curation-rollout-2026-11.md`
+step 3. For worker-runtime changes, apply the
 [production worker configuration](#production-workers) before restarting;
 pulling the source alone does not update systemd's command.
 

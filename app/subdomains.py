@@ -188,5 +188,5 @@ def site_for_host(kind: str, name: str) -> Optional[dict]:
         return None
     return {
         "kind": kind, "name": name, "prefix": f"/@{owner.username}/{wiki.slug}",
-        "title": wiki.title or wiki.slug,
+        "title": wiki.title or wiki.slug, "wiki_id": wiki.id,
     }

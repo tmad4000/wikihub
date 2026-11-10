@@ -1172,9 +1172,9 @@ def wiki_llms_txt(username, slug):
     """per-wiki LLM-readable index."""
     owner = User.query.filter_by(username=username).first_or_404()
     wiki = Wiki.query.filter_by(owner_id=owner.id, slug=slug).first_or_404()
-    from flask_login import current_user as _cu
+    from app.auth_utils import get_current_user_from_request
     from app.discovery import viewer_can_read_wiki
-    viewer = _cu if getattr(_cu, "is_authenticated", False) else None
+    viewer = get_current_user_from_request()  # session or Bearer key: owners via API keep access
     if not viewer_can_read_wiki(wiki, viewer, owner=owner):
         # private wiki: say it is restricted (not 404), never print its title
         status = 403 if viewer else 401
@@ -1759,6 +1759,8 @@ def page_graph_json(username, slug, page_path):
 def wiki_graph_json(username, slug):
     """return full wikilink graph for a wiki as JSON. wikihub-8888.2: filter to visible pages."""
     owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
+    if not _viewer_can_see_any_page(wiki, owner=owner):
+        return _restricted_json()
     from flask import jsonify
     return jsonify(_get_full_graph(wiki))
 
@@ -1767,6 +1769,9 @@ def wiki_graph_json(username, slug):
 def wiki_graph(username, slug):
     """full-screen interactive graph view. wikihub-8888.2: filter to visible pages."""
     owner, wiki, _ = _get_owner_and_wiki_or_404(username, slug)
+    # graph.html names the wiki: no title for a viewer who cannot read it (plan 3d)
+    if not _viewer_can_see_any_page(wiki, owner=owner):
+        return _render_permission_error(owner, wiki)
     return render_template(
         "graph.html",
         owner=owner,

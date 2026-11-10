@@ -71,7 +71,7 @@ gcloud compute scp migrations/2026-11-09_curation_judgements.sql wikihub-prod:/t
   --project=wikihub-prod --zone=us-east1-b --tunnel-through-iap \
   --account=874749606899-compute@developer.gserviceaccount.com
 $G --command='sudo -u postgres psql -v ON_ERROR_STOP=1 -d wikihub -f /tmp/2026-11-09_curation_judgements.sql'
-$G --command="sudo -u postgres psql -d wikihub -c '\\d curation_judgements"
+$G --command="sudo -u postgres psql -d wikihub -c '\\d curation_judgements'"
 ```
 
 **Apply the migration before restarting on the new code.** `create_app()` would otherwise create the
@@ -89,17 +89,27 @@ to merge.
 - Confirm both points in step 0's output before moving the branch.
 
 ```bash
+# 1. What would the move drop? c20bd29 is production-only; review every commit it has that origin/main lacks.
 $G --command='cd /opt/wikihub-app && sudo git fetch origin && git log --oneline -1 origin/main \
-  && git diff --name-only c20bd29 origin/main -- app/templates/_footer.html'      # expect no output
-$G --command='cd /opt/wikihub-app && sudo git checkout -B main origin/main && git status --short'
-                                                                                  # _footer.html stays modified
+  && echo "--- on c20bd29 but not origin/main:" && git log --oneline origin/main..c20bd29 \
+  && echo "--- files that differ:" && git diff --stat c20bd29 origin/main \
+  && echo "--- footer touched by the move? (expect nothing):" && git diff --name-only c20bd29 origin/main -- app/templates/_footer.html'
+#    STOP if the "on c20bd29 but not origin/main" list has commits nobody expects to drop
+#    Expected: only c20bd29 itself, the pre-squash Ecosystem-connector commit (#52 on main). Checked
+#    2026-11-10: `git diff c20bd29 9227e4b` touches only the files of #50 and #51 plus 4 CI-workflow
+#    lines, with no lines removed from code, so main contains all of c20bd29.
+# 2. Keep the old production state reachable for rollback, then move the branch.
+$G --command='cd /opt/wikihub-app && sudo git branch -f prod-before-curation c20bd29 && sudo git checkout -B main origin/main && git status --short'
+#    _footer.html must still show as modified
+# 3. Restart.
 $G --command='sudo systemctl restart wikihub && sleep 3 && systemctl is-active wikihub'
 ```
 
 `git checkout -B main origin/main` keeps uncommitted changes to files the move doesn't touch, and
-refuses if a touched file has local changes. If it refuses, stop and look rather than forcing. Keep
-`c20bd29` reachable for rollback, for example with `sudo git branch prod-before-curation c20bd29`
-before the move. Then check:
+refuses if a touched file has local changes. If it refuses, stop and look rather than forcing.
+
+Rollback: `sudo git checkout -B main prod-before-curation && sudo systemctl restart wikihub`. The
+`curation_judgements` table can stay, because the old code ignores it. Then check:
 
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' https://wikihub.md/            # 200

@@ -856,6 +856,9 @@ def fork_wiki(owner, slug):
         return err
 
     user = request.current_user
+    # forking copies title/description/content: only for callers who can read it (plan 3d)
+    if not viewer_can_read_wiki(source_wiki, user, owner=owner_user):
+        return _restricted_wiki_response(user)
     if Wiki.query.filter_by(owner_id=user.id, slug=slug).first():
         return {"error": "conflict", "message": f"You already have a wiki called '{slug}'"}, 409
 

@@ -11509,10 +11509,35 @@ def test_private_wiki_metadata_never_leaks(app, client, key):
         no_secret(r, f"anonymous {path}")
         assert "pwsecret" not in r.get_data(as_text=True), f"private wiki listed for anonymous on {path}"
 
+    for path, code in (("/@pw-owner/pwsecret/graph", 401), ("/@pw-owner/pwsecret/graph.json", 401)):
+        r = anon.get(path)
+        assert r.status_code == code, (path, r.status_code)
+        no_secret(r, f"anonymous {path}")
+
+    # the wiki's own subdomain: the top bar must not show its title to a viewer who cannot read it
+    wiki_row = Wiki.query.join(User, Wiki.owner_id == User.id).filter(
+        User.username == "pw-owner", Wiki.slug == "pwsecret").one()
+    wiki_row.subdomain = "pwsecret-sub"
+    db.session.commit()
+    try:
+        for path in ("/", "/notes"):
+            r = anon.get(path, base_url="https://pwsecret-sub.wikihub.md")
+            assert r.status_code >= 400, (path, r.status_code)
+            no_secret(r, f"anonymous subdomain {path}")
+    finally:
+        wiki_row.subdomain = None
+        db.session.commit()
+
     for path in ("/api/v1/wikis/pw-owner/pwsecret", "/api/wikis/pw-owner/pwsecret"):
         r = c.get(path, headers=other_h)
         assert r.status_code == 403, (path, r.status_code)
         no_secret(r, f"other user {path}")
+    # forking copies title/description: refused for a caller who cannot read the source
+    r = c.post("/api/v1/wikis/pw-owner/pwsecret/fork", headers=other_h)
+    assert r.status_code == 403, (r.status_code, r.data[:200])
+    no_secret(r, "other user fork")
+    assert Wiki.query.join(User, Wiki.owner_id == User.id).filter(
+        User.username == "pw-other", Wiki.slug == "pwsecret").count() == 0, "fork of an unreadable wiki was created"
     for path in ("/api/v1/wikis?limit=200", "/api/v1/wikis?owner=pw-owner"):
         r = c.get(path, headers=other_h)
         no_secret(r, f"other user {path}")
@@ -11523,6 +11548,9 @@ def test_private_wiki_metadata_never_leaks(app, client, key):
     mine = {w["slug"]: w for w in c.get("/api/v1/wikis?owner=pw-owner&limit=200", headers=owner_h).get_json()["wikis"]}
     assert mine.get("@pw-owner/pwsecret", {}).get("visibility") == "private", mine
     assert c.get("/api/wikis/pw-owner/pwsecret", headers=owner_h).status_code == 200
+    r = c.get("/@pw-owner/pwsecret/llms.txt", headers=owner_h)  # owner by API key, no session
+    assert r.status_code == 200 and "PwSecretTitle" in r.get_data(as_text=True), (r.status_code, r.data[:200])
+    _flask_g.pop("_login_user", None)
 
     # an ACL grantee can read the wiki, so it may see its metadata
     r = c.post("/api/v1/wikis/pw-owner/pwsecret/share", json={"pattern": "*", "username": "pw-other", "role": "read"},
