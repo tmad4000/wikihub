@@ -9,6 +9,11 @@ before_request:
     that user is suspended.
   * Otherwise, if the owner is untrusted (app.trust), mark the response
     noindex.
+  * For /@user/... URLs, record the effective curation judgement
+    (app.curation) for the account, wiki and page in the URL: base.html
+    renders the notice and <meta name="wikihub:curation"> from it. Only
+    granted responses (status < 400) keep any of it; see
+    app.curation.after_response.
 
 after_request:
   * X-Robots-Tag: noindex for untrusted owners' content and for every /auth/*
@@ -20,6 +25,7 @@ import re
 from flask import jsonify, render_template, request
 
 _OWNER_PATH_RE = re.compile(r"^/(?:@|api/v1/wikis/@?)([a-z0-9_-]+)(?=[/.]|$)")
+_READER_PATH_RE = re.compile(r"^/@([a-z0-9_-]+)(?:/([^/]+)(?:/(.*))?)?$")
 _OAUTH_CALLBACK_PATHS = ("/auth/ideaflow/callback", "/auth/google/callback")
 
 
@@ -64,6 +70,10 @@ def before_request():
         return _gone(path)
     if not is_trusted(owner):
         request.environ["wikihub.noindex"] = True
+    reader = _READER_PATH_RE.match(path)
+    if reader:
+        from app.curation import mark_request
+        mark_request(owner.username, reader.group(2), reader.group(3))
     return None
 
 
@@ -71,7 +81,8 @@ def after_request(response):
     if request.path.startswith("/auth/") or request.environ.get("wikihub.noindex"):
         if "X-Robots-Tag" not in response.headers:
             response.headers["X-Robots-Tag"] = "noindex"
-    return response
+    from app.curation import after_response
+    return after_response(response)
 
 
 def owner_untrusted(username):
@@ -87,3 +98,12 @@ def owner_untrusted(username):
         user = User.query.filter_by(username=username).first()
         cache[username] = not is_trusted(user) if user else True
     return cache[username]
+
+
+def content_needs_ugc(username, slug=None, page_path=None):
+    """rel="nofollow ugc" for rendered content: the owner is untrusted, or
+    the account, wiki or page is curated against (wikihub-f3b7)."""
+    if owner_untrusted(username):
+        return True
+    from app.curation import request_negative_for
+    return request_negative_for(username, slug, page_path)

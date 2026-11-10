@@ -13,11 +13,17 @@ but:
   * external links render with rel="nofollow ugc noopener noreferrer";
   * pages send <meta name="robots" content="noindex"> and X-Robots-Tag: noindex;
   * it is left out of /explore, /activity (+RSS), /people, /llms.txt,
-    /llms-full.txt, the landing page's featured wikis, and the sitemap.
+    /llms-full.txt, the landing page's featured wikis and GET /api/v1/wikis.
+    (WikiHub serves no sitemap.xml yet; one must use trusted_user_clause()
+    and app.curation.not_curated_against() when added.)
+
+An active negative curation judgement on the account (app/curation.py,
+wikihub-f3b7) withdraws trust, so every trust check above also applies to
+accounts curated against.
 
 TRUST_GATE_ENABLED=false turns the discovery/noindex gate off (the test
 harness does this so ordinary tests can use brand-new accounts). Suspension
-always applies regardless of the flag.
+and negative curation always apply regardless of the flag.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -45,6 +51,9 @@ def _min_age():
 def is_trusted(user):
     if user is None or getattr(user, "suspended_at", None) is not None:
         return False
+    from app.curation import is_account_negative
+    if is_account_negative(user.id):
+        return False
     if not gate_enabled():
         return True
     if user.trusted or user.wiki_limit is not None or user.username in SYSTEM_TRUSTED_USERNAMES:
@@ -63,7 +72,8 @@ def is_trusted(user):
 
 def trusted_user_clause():
     """SQL filter on User matching exactly is_trusted()."""
-    not_suspended = User.suspended_at.is_(None)
+    from app.curation import not_curated_against
+    not_suspended = and_(User.suspended_at.is_(None), not_curated_against(user_id_col=User.id))
     if not gate_enabled():
         return not_suspended
     cutoff = datetime.now(timezone.utc) - _min_age()

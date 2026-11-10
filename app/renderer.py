@@ -715,8 +715,8 @@ def render_page(content, wiki_owner=None, wiki_slug=None, current_page_path=None
         html = _wrap_private_band_html(html)
     if ugc_links is None:
         try:
-            from app.moderation import owner_untrusted
-            ugc_links = owner_untrusted(wiki_owner)
+            from app.moderation import content_needs_ugc
+            ugc_links = content_needs_ugc(wiki_owner, wiki_slug, current_page_path)
         except RuntimeError:  # outside a request/app context
             ugc_links = False
     if ugc_links:

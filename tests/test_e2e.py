@@ -76,6 +76,7 @@ def reset_database():
         "sessions",
         "external_identities",
         "rate_limit_buckets",
+        "curation_judgements",
         "users",
     ]:
         try:
@@ -11061,6 +11062,416 @@ def test_abuse_report_flags_link_farm(app, key):
     assert "f4-report-normal" not in rows, "an account without spam signals must not be flagged"
 
 
+def _curation_cli(app, *args):
+    res = app.test_cli_runner().invoke(args=["wikihub", *args])
+    db.session.expire_all()  # the CLI commits through the shared session; drop stale instances
+    return res
+
+
+def _editorial_section(html):
+    if "Editorial Picks" not in html:
+        return ""
+    return html.split("Editorial Picks", 1)[1].split("/@wikihub/wikihub/Featured", 1)[0]
+
+
+def test_negative_curation_flags_without_deleting(app, client, key):
+    """wikihub-f3b7: an explicit account-scope negative judgement keeps content
+    readable but enforces a banner (curator, scope, reply path) + wikihub:curation
+    meta, server-rendered noindex, nofollow ugc, exclusion from every discovery
+    surface and last place in search; the API field and the export carry the
+    attributed, versioned judgement; unflag retracts (status=retracted) and
+    restores everything; nothing is deleted. Applies with the trust gate off."""
+    from flask import g as _flask_g
+    from app.models import CurationJudgement
+    h = _spam_new_account(app, "nc-promo")
+    _spam_public_page(app, h, "nc-promo", "promowiki", "deals.md",
+                      "# NcSortMarker deals\n\nBuy at [shop](https://nc-promo-shop.example.com/buy). NcSortMarker")
+    good = _spam_new_account(app, "nc-good")
+    _spam_public_page(app, good, "nc-good", "goodnotes", "essay.md",
+                      "# Essay\n\nAn essay that mentions NcSortMarker once.")
+    anon = app.test_client()
+
+    surfaces = ("/explore", "/activity", "/activity.rss", "/people", "/llms-full.txt", "/api/v1/wikis?limit=200")
+    for path in surfaces:
+        assert "nc-promo" in anon.get(path).get_data(as_text=True), f"precondition: nc-promo listed on {path}"
+    html = anon.get("/@nc-promo/promowiki/deals").get_data(as_text=True)
+    assert "curation-notice" not in html and "wikihub:curation" not in html, "precondition: no notice"
+    results = anon.get("/api/v1/search?q=NcSortMarker").get_json()["results"]
+    assert results and results[0]["wiki"] == "nc-promo/promowiki", f"precondition: promo ranks first: {results}"
+    assert results[0]["curation"] is None, results[0]
+
+    # dry run is the default; account scope must be explicit; bad reasons are refused
+    assert CurationJudgement.query.count() == 0, "precondition: empty table"
+    res = _curation_cli(app, "flag", "nc-promo", "--polarity", "negative", "--reason", "promotional")
+    assert res.exit_code != 0, f"bare username must need --scope account: {res.output}"
+    res = _curation_cli(app, "flag", "nc-promo", "--scope", "account", "--reason", "promotional")
+    assert res.exit_code == 0 and "DRY RUN" in res.output, res.output
+    assert CurationJudgement.query.count() == 0, "dry run must not write"
+    assert _curation_cli(app, "flag", "@nc-promo/promowiki", "--reason", "spammy").exit_code != 0, "unknown reason accepted"
+    assert _curation_cli(app, "flag", "@nc-promo/promowiki", "--reason", "featured", "--polarity", "negative").exit_code != 0, \
+        "polarity/reason mismatch accepted"
+
+    res = _curation_cli(app, "flag", "nc-promo", "--scope", "account", "--polarity", "negative", "--reason", "promotional",
+                        "--evidence", "https://nc-promo-shop.example.com/buy", "--note", "NcPrivateModNote", "--execute")
+    assert res.exit_code == 0, res.output
+    row = CurationJudgement.query.one()
+    assert (row.scope_type, row.polarity, row.reason, row.status) == ("account", "negative", "promotional", "active"), row
+    assert row.policy_version == "2026-11-09" and row.evidence == ["https://nc-promo-shop.example.com/buy"], row.evidence
+    assert row.review_at is not None and row.expires_at is None, (row.review_at, row.expires_at)
+    assert _curation_cli(app, "flag", "nc-promo", "--scope", "account", "--reason", "promotional", "--execute").exit_code == 0
+    assert CurationJudgement.query.count() == 1, "flagging twice must be a no-op"
+
+    # still readable; notice + meta + server-rendered noindex + nofollow ugc
+    for base in (None, "https://nc-promo.wikihub.md"):
+        r = anon.get("/@nc-promo/promowiki/deals") if base is None else anon.get("/promowiki/deals", base_url=base)
+        assert r.status_code == 200, (base, r.status_code)
+        html = r.get_data(as_text=True)
+        assert "NcSortMarker deals" in html, base
+        assert "Curated against: promotional</strong> by WikiHub editors, for everything published by @nc-promo." in html, base
+        assert "Still readable; not recommended by WikiHub." in html and "curation-dismiss" in html, base
+        assert "/curation#promotional" in html and f"/curation?judgement={row.id}#reply" in html, base
+        assert '<meta name="wikihub:curation" content="negative:promotional">' in html, base
+        assert '<meta name="robots" content="noindex">' in html, base
+        assert "noindex" in r.headers.get("X-Robots-Tag", ""), base
+        assert 'rel="nofollow ugc noopener noreferrer"' in html, base
+        assert "NcPrivateModNote" not in html, base
+        assert "about your content" not in html, "owner-only line shown to an anonymous reader"
+    assert anon.get("/curation").status_code == 200
+
+    # the owner sees the judgement and the reply/appeal path on their own page
+    _flask_g.pop("_login_user", None)  # harness keeps one app context
+    owner = _login_browser_with_key(app, h["Authorization"][7:])
+    _flask_g.pop("_login_user", None)
+    html = owner.get("/@nc-promo/promowiki/deals").get_data(as_text=True)
+    _flask_g.pop("_login_user", None)
+    assert "This judgement is about your content" in html and "Reply or appeal" in html, "owner reply path missing"
+
+    for path in surfaces + ("/llms.txt", "/"):
+        assert "nc-promo" not in anon.get(path).get_data(as_text=True), f"curated-against account leaked into {path}"
+
+    # API objects carry the judgement; search sorts it last
+    cur = anon.get("/api/v1/wikis/nc-promo/promowiki").get_json()["curation"]
+    assert cur and cur["positive"] is None, cur
+    neg = cur["negative"]
+    assert (neg["reason"], neg["scope"], neg["status"], neg["curator"]) == ("promotional", "account", "active", "WikiHub editors"), neg
+    assert neg["policy_version"] == "2026-11-09" and "noindex" in neg["enforcement"], neg
+    page_cur = anon.get("/api/v1/wikis/nc-promo/promowiki/pages/deals.md").get_json()["curation"]
+    assert page_cur and page_cur["negative"]["reason"] == "promotional", page_cur
+    listed = anon.get("/api/v1/wikis/nc-promo/promowiki/pages").get_json()["pages"]
+    assert listed and all(p["curation"]["negative"]["polarity"] == "negative" for p in listed), listed
+    assert anon.get("/api/v1/wikis/nc-good/goodnotes").get_json()["curation"] is None
+    results = anon.get("/api/v1/search?q=NcSortMarker").get_json()["results"]
+    assert [r["wiki"] for r in results][-1] == "nc-promo/promowiki", f"curated-against page must sort last: {results}"
+
+    # export: attributed, versioned judgement; public sees evidence but no note
+    export = anon.get("/api/v1/curation").get_json()
+    assert export["authoritative"] is True, export
+    rows = [j for j in export["judgements"] if j["scope"].get("account") == "nc-promo"]
+    assert len(rows) == 1, export
+    item = rows[0]
+    assert (item["id"], item["status"], item["in_force"]) == (row.id, "active", True), item
+    assert item["url"].endswith("/@nc-promo") and any(u.endswith("/@nc-promo/promowiki") for u in item["wiki_urls"]), item
+    assert item["evidence"] == ["https://nc-promo-shop.example.com/buy"] and item["curator"]["name"] == "WikiHub editors", item
+    assert item["updated_at"] and item["review_at"] and item["policy_version"] == "2026-11-09", item
+    assert "noindex" in item["enforcement"]["wikihub"], item
+    assert "note" not in item and "NcPrivateModNote" not in json.dumps(export), "private note leaked"
+    admin = anon.get("/api/v1/curation", headers={"Authorization": "Bearer test-admin-token"}).get_json()
+    assert any(j.get("note") == "NcPrivateModNote" for j in admin["judgements"]), admin
+    assert anon.get("/api/v1/curation?since=not-a-date").status_code == 400
+
+    # unflag: dry run first, then retract; everything comes back; the row stays as history
+    res = _curation_cli(app, "unflag", "nc-promo", "--scope", "account")
+    assert res.exit_code == 0 and "DRY RUN" in res.output, res.output
+    assert "Curated against" in anon.get("/@nc-promo/promowiki/deals").get_data(as_text=True), "dry-run unflag changed state"
+    assert _curation_cli(app, "unflag", "nc-promo", "--scope", "account", "--execute").exit_code == 0
+    r = anon.get("/@nc-promo/promowiki/deals")
+    html = r.get_data(as_text=True)
+    assert "curation-notice" not in html and "wikihub:curation" not in html and 'name="robots"' not in html, "notice survived unflag"
+    assert "X-Robots-Tag" not in r.headers, r.headers
+    for path in surfaces:
+        assert "nc-promo" in anon.get(path).get_data(as_text=True), f"unflagged account missing from {path}"
+    row = CurationJudgement.query.one()
+    assert row.status == "retracted", row.status
+    since = item["updated_at"].replace("+00:00", "Z")
+    after = [j for j in anon.get(f"/api/v1/curation?since={since}").get_json()["judgements"] if j["id"] == row.id]
+    assert after and after[0]["status"] == "retracted" and after[0]["in_force"] is False, after
+    assert after[0]["enforcement"]["wikihub"] == [], after
+    assert Wiki.query.join(User, Wiki.owner_id == User.id).filter(
+        User.username == "nc-promo", Wiki.slug == "promowiki").count() == 1, "content must never be deleted"
+
+
+def test_curation_wiki_page_and_positive_scopes(app, client, key):
+    """wikihub-f3b7: wiki scope is the default; page scope stays on its page
+    and covers index pages served at the wiki root and on the profile;
+    positive and negative are both shown and a positive never cancels a
+    negative; supersede and expiry end a judgement's effects; private
+    targets stay out of the public export; cursor pagination walks it."""
+    from datetime import timedelta as _td
+    from app.models import CurationJudgement
+    h = _spam_new_account(app, "nc-scopes")
+    _spam_public_page(app, h, "nc-scopes", "lowwiki", "one.md", "# Low one\n\n[x](https://nc-low.example.com/)")
+    _spam_public_page(app, h, "nc-scopes", "mixed", "keep.md", "# Keep NcKeepMarker\n\n[x](https://nc-keep.example.com/)")
+    _spam_public_page(app, h, "nc-scopes", "mixed", "drop.md", "# Drop NcDropMarker\n\n[x](https://nc-drop.example.com/)")
+    _spam_public_page(app, h, "nc-scopes", "gems", "gem.md", "# Gem\n\nGood stuff.")
+    _spam_public_page(app, h, "nc-scopes", "idxwiki", "other.md", "# Other\n\nSibling.")
+    c = app.test_client()
+    for slug, body in (("idxwiki", "# Idx NcIdxMarker\n\n[x](https://nc-idx.example.com/)"),
+                       ("nc-scopes", "# Profile NcProfileMarker\n\n[x](https://nc-profile.example.com/)")):
+        content = f"---\nvisibility: public\n---\n{body}\n"
+        r = c.post(f"/api/v1/wikis/nc-scopes/{slug}/pages",
+                   json={"path": "index.md", "content": content, "visibility": "public"}, headers=h)
+        if r.status_code == 409:  # scaffolded wikis already have an index.md
+            r = c.put(f"/api/v1/wikis/nc-scopes/{slug}/pages/index.md",
+                      json={"content": content, "visibility": "public"}, headers=h)
+        assert r.status_code in (200, 201), (slug, r.status_code, r.data[:200])
+    c.post("/api/v1/wikis", json={"slug": "secretwiki", "title": "Secret"}, headers=h)
+    c.post("/api/v1/wikis/nc-scopes/secretwiki/pages", json={
+        "path": "hidden.md", "content": "---\nvisibility: private\n---\n# Hidden\n", "visibility": "private"}, headers=h)
+    anon = app.test_client()
+
+    assert _curation_cli(app, "flag", "@nc-scopes/lowwiki", "--reason", "low-quality", "--execute").exit_code == 0
+    assert _curation_cli(app, "flag", "@nc-scopes/mixed/drop", "--reason", "off_topic", "--execute").exit_code == 0
+    assert _curation_cli(app, "flag", "@nc-scopes/gems", "--reason", "editor_pick", "--execute").exit_code == 0
+    assert _curation_cli(app, "flag", "@nc-scopes/secretwiki", "--reason", "promotional", "--execute").exit_code == 0
+    assert _curation_cli(app, "flag", "@nc-scopes/idxwiki/index", "--reason", "promotional", "--execute").exit_code == 0
+    assert _curation_cli(app, "flag", "@nc-scopes/nc-scopes/index.md", "--reason", "low_quality", "--execute").exit_code == 0
+    assert _curation_cli(app, "flag", "@nc-scopes/nosuchwiki", "--reason", "promotional", "--execute").exit_code != 0
+    low = CurationJudgement.query.filter_by(reason="low_quality", scope_type="wiki").one()
+    assert low.affected_version and len(low.affected_version) >= 40, f"wiki git sha not recorded: {low.affected_version}"
+
+    html = anon.get("/@nc-scopes/lowwiki/one").get_data(as_text=True)
+    assert "Curated against: low quality</strong> by WikiHub editors, for this wiki (@nc-scopes/lowwiki)." in html, "wiki-scope banner"
+    assert 'content="negative:low_quality"' in html, "wiki-scope meta"
+    drop = anon.get("/@nc-scopes/mixed/drop")
+    drop_html = drop.get_data(as_text=True)
+    assert drop.status_code == 200 and "Curated against: off topic</strong> by WikiHub editors, for this page." in drop_html, "page banner"
+    assert 'rel="nofollow ugc noopener noreferrer"' in drop_html, "page-scope nofollow"
+    keep = anon.get("/@nc-scopes/mixed/keep")
+    keep_html = keep.get_data(as_text=True)
+    assert "curation-notice" not in keep_html and "X-Robots-Tag" not in keep.headers, "page scope must not spread to siblings"
+    assert "nofollow" not in keep_html.split("nc-keep.example.com", 1)[1][:80], "sibling links must stay followed"
+
+    # index pages served without their path: wiki root and the profile
+    root = anon.get("/@nc-scopes/idxwiki")
+    root_html = root.get_data(as_text=True)
+    assert "NcIdxMarker" in root_html and "Curated against: promotional" in root_html, "wiki root must show its index judgement"
+    assert "noindex" in root.headers.get("X-Robots-Tag", ""), "wiki root index must be noindex"
+    assert 'rel="nofollow ugc noopener noreferrer"' in root_html, "wiki root index links must be nofollow ugc"
+    assert "curation-notice" not in anon.get("/@nc-scopes/idxwiki/other").get_data(as_text=True), "index scope spread to sibling"
+    prof = anon.get("/@nc-scopes")
+    prof_html = prof.get_data(as_text=True)
+    assert "NcProfileMarker" in prof_html and "Curated against: low quality" in prof_html, "profile must show its index judgement"
+    assert "noindex" in prof.headers.get("X-Robots-Tag", ""), "profile index must be noindex"
+    assert 'rel="nofollow ugc noopener noreferrer"' in prof_html, "profile index links must be nofollow ugc"
+
+    full = anon.get("/llms-full.txt").get_data(as_text=True)
+    assert "/@nc-scopes/mixed/keep" in full and "/@nc-scopes/mixed/drop" not in full and "@nc-scopes/lowwiki" not in full, \
+        "llms-full must drop curated wiki and page only"
+    wikis = {w["slug"] for w in anon.get("/api/v1/wikis?limit=200").get_json()["wikis"]}
+    assert "@nc-scopes/lowwiki" not in wikis and "@nc-scopes/mixed" in wikis, wikis
+    explore = anon.get("/explore").get_data(as_text=True)
+    assert "/@nc-scopes/gems" in _editorial_section(explore), "positive judgement must reach Editorial Picks"
+    assert "/@nc-scopes/lowwiki" not in explore, "curated-against wiki on Explore"
+    gem = anon.get("/@nc-scopes/gems/gem")
+    gem_html = gem.get_data(as_text=True)
+    assert 'content="positive:editor_pick"' in gem_html and "curation-line--positive" in gem_html, "positive note"
+    assert "curation-line--negative" not in gem_html and "X-Robots-Tag" not in gem.headers, "positive must not enforce"
+
+    # a positive never cancels a negative: both shown, negative enforced
+    assert _curation_cli(app, "flag", "@nc-scopes/gems/gem", "--reason", "affiliate-farm", "--execute").exit_code == 0
+    gem = anon.get("/@nc-scopes/gems/gem")
+    gem_html = gem.get_data(as_text=True)
+    assert 'content="negative:affiliate_farm positive:editor_pick"' in gem_html, "both judgements in meta"
+    assert "curation-line--negative" in gem_html and "curation-line--positive" in gem_html, "both lines shown"
+    assert "noindex" in gem.headers.get("X-Robots-Tag", ""), "negative must be enforced despite a wider positive"
+    both = anon.get("/api/v1/wikis/nc-scopes/gems/pages/gem.md").get_json()["curation"]
+    assert both["negative"]["reason"] == "affiliate_farm" and both["positive"]["reason"] == "editor_pick", both
+
+    # supersede: the replacement takes over, the old row is kept as superseded
+    old = CurationJudgement.query.filter_by(reason="affiliate_farm").one()
+    res = _curation_cli(app, "flag", "@nc-scopes/gems/gem", "--reason", "promotional", "--supersedes", str(old.id), "--execute")
+    assert res.exit_code == 0, res.output
+    old = CurationJudgement.query.get(old.id)
+    assert old.status == "superseded" and old.superseded_by, (old.status, old.superseded_by)
+    new = CurationJudgement.query.get(old.superseded_by)
+    assert (new.scope_type, new.scope_id, new.reason, new.status) == ("page", old.scope_id, "promotional", "active"), new
+    assert 'content="negative:promotional positive:editor_pick"' in anon.get("/@nc-scopes/gems/gem").get_data(as_text=True)
+
+    # expiry ends effects without anyone touching the row
+    new.expires_at = utcnow() - _td(minutes=1)
+    db.session.commit()
+    gem = anon.get("/@nc-scopes/gems/gem")
+    assert "curation-line--negative" not in gem.get_data(as_text=True) and "X-Robots-Tag" not in gem.headers, "expired judgement still enforced"
+    exported = [j for j in anon.get("/api/v1/curation", headers={"Authorization": "Bearer test-admin-token"}).get_json()["judgements"]
+                if j["id"] == new.id]
+    assert exported and exported[0]["status"] == "expired" and exported[0]["in_force"] is False, exported
+
+    # the export never names a private wiki publicly; the admin sees it
+    public_body = anon.get("/api/v1/curation").get_json()
+    public = json.dumps(public_body)
+    assert "secretwiki" not in public and "/@nc-scopes/mixed/drop" in public, "export privacy"
+    assert public_body["omitted_non_public"] >= 1, "omitted private judgements must be counted, not silently hidden"
+    admin = json.dumps(anon.get("/api/v1/curation", headers={"Authorization": "Bearer test-admin-token"}).get_json())
+    assert "secretwiki" in admin, "admin export must include private targets"
+
+    # cursor pagination visits every judgement exactly once
+    seen, cursor = [], None
+    for _ in range(30):
+        url = "/api/v1/curation?limit=2" + (f"&cursor={quote(cursor)}" if cursor else "")
+        body = anon.get(url, headers={"Authorization": "Bearer test-admin-token"}).get_json()
+        seen += [j["id"] for j in body["judgements"]]
+        cursor = body["next_cursor"]
+        if not body["has_more"]:
+            break
+    assert sorted(seen) == sorted(j.id for j in CurationJudgement.query.all()), seen
+    assert len(seen) == len(set(seen)), seen
+
+
+def test_curation_never_reaches_denied_responses_and_survives_reindex(app, client, key):
+    """wikihub-f3b7 pre-deploy fixes: (1) a judgement on a private wiki or a
+    private page never appears in a denied response (no notice, no meta, no
+    curation noindex, no API field) while the owner still sees it; (2)
+    re-flagging after expiry records the lapsed row as expired instead of
+    crashing on the unique index; (3) a page-scope judgement survives a reset
+    reindex that recreates page rows; (4) --reply-url is validated."""
+    from datetime import timedelta as _td
+    from flask import g as _flask_g
+    from app.models import CurationJudgement
+    h = _spam_new_account(app, "nc-leak")
+    _spam_public_page(app, h, "nc-leak", "openwiki", "visible.md", "# Visible\n\nPublic words.")
+    c = app.test_client()
+    c.post("/api/v1/wikis", json={"slug": "privwiki", "title": "NcPrivWikiTitle"}, headers=h)
+    for slug, path in (("privwiki", "inner.md"), ("openwiki", "privnote.md")):
+        r = c.post(f"/api/v1/wikis/nc-leak/{slug}/pages", json={
+            "path": path, "content": "---\nvisibility: private\n---\n# NcPrivBody\n", "visibility": "private"}, headers=h)
+        assert r.status_code == 201, (slug, r.status_code, r.data[:200])
+    assert _curation_cli(app, "flag", "@nc-leak/privwiki", "--reason", "promotional", "--execute").exit_code == 0
+    assert _curation_cli(app, "flag", "@nc-leak/openwiki/privnote", "--reason", "off_topic", "--execute").exit_code == 0
+
+    anon = app.test_client()
+    missing = anon.get("/@nc-leak/no-such-wiki")
+    for path in ("/@nc-leak/privwiki", "/@nc-leak/privwiki/inner", "/@nc-leak/openwiki/privnote"):
+        r = anon.get(path)
+        body = r.get_data(as_text=True)
+        assert r.status_code >= 400, (path, r.status_code)
+        for needle in ("curation-notice", "wikihub:curation", "Curated against", "wikihub-curation", "NcPrivBody"):
+            assert needle not in body, f"{needle} leaked into denied {path} ({r.status_code})"
+        assert r.headers.get("X-Robots-Tag") == missing.headers.get("X-Robots-Tag"), \
+            f"curation noindex distinguishes denied {path} from a missing path"
+    assert "curation" not in anon.get("/api/v1/wikis/nc-leak/privwiki").get_json(), "judgement on a private wiki leaked via API"
+    assert "privwiki" not in json.dumps(anon.get("/api/v1/curation").get_json()), "private wiki named in public export"
+
+    _flask_g.pop("_login_user", None)
+    owner = _login_browser_with_key(app, h["Authorization"][7:])
+    _flask_g.pop("_login_user", None)
+    r = owner.get("/@nc-leak/privwiki/inner")
+    _flask_g.pop("_login_user", None)
+    assert r.status_code == 200, r.status_code
+    assert "Curated against: promotional" in r.get_data(as_text=True), "owner must see the judgement on their private wiki"
+    assert "noindex" in r.headers.get("X-Robots-Tag", ""), "granted response keeps the curation noindex"
+
+    # (2) re-flag after expiry
+    j = CurationJudgement.query.filter_by(scope_type="page", reason="off_topic", scope_path="privnote.md").one()
+    j.expires_at = utcnow() - _td(minutes=1)
+    db.session.commit()
+    res = _curation_cli(app, "flag", "@nc-leak/openwiki/privnote", "--reason", "off_topic", "--execute")
+    assert res.exit_code == 0, f"re-flag after expiry failed: {res.output} {res.exception!r}"
+    assert CurationJudgement.query.get(j.id).status == "expired", "lapsed row must be recorded as expired"
+    assert CurationJudgement.query.filter_by(scope_path="privnote.md", status="active").count() == 1
+
+    # (3) page scope survives a reset reindex
+    _spam_public_page(app, h, "nc-leak", "openwiki", "flagme.md", "# FlagMe\n\n[x](https://nc-flagme.example.com/)")
+    assert _curation_cli(app, "flag", "@nc-leak/openwiki/flagme", "--reason", "low_quality", "--execute").exit_code == 0
+    before = CurationJudgement.query.filter_by(scope_path="flagme.md").one()
+    old_page_id = before.scope_id
+    res = _curation_cli(app, "reindex", "nc-leak/openwiki")
+    assert res.exit_code == 0, res.output
+    new_page = Page.query.join(Wiki).filter(Wiki.slug == "openwiki", Page.path == "flagme.md").one()
+    assert new_page.id != old_page_id, "precondition: reset reindex recreates page rows"
+    assert CurationJudgement.query.filter_by(scope_path="flagme.md").one().scope_id == new_page.id, "judgement not re-keyed"
+    r = anon.get("/@nc-leak/openwiki/flagme")
+    assert "Curated against: low quality" in r.get_data(as_text=True), "page judgement lost after reindex"
+    assert "/@nc-leak/openwiki/flagme" not in anon.get("/llms-full.txt").get_data(as_text=True), "page back in discovery after reindex"
+
+    # (4) --reply-url lands in an href: only http(s) or a site path
+    res = _curation_cli(app, "flag", "@nc-leak/openwiki", "--reason", "promotional", "--reply-url", "javascript:alert(1)", "--execute")
+    assert res.exit_code != 0, "javascript: reply URL accepted"
+    assert CurationJudgement.query.filter_by(reply_url="javascript:alert(1)").count() == 0
+
+
+def test_curation_migration_matches_model():
+    """wikihub-f3b7: migrations/2026-11-09_curation_judgements.sql runs twice
+    (idempotent) and produces the same columns, constraints and indexes as the
+    model's db.create_all(), so the two cannot drift."""
+    import uuid
+
+    import psycopg2
+    from sqlalchemy import create_engine
+    from sqlalchemy.engine import make_url
+    from app.models import CurationJudgement
+
+    suffix = uuid.uuid4().hex[:12]
+    database_name = f"wikihub_curation_mig_{suffix}"
+    source_url = make_url(os.environ.get("TEST_DATABASE_ADMIN_URL", os.environ["DATABASE_URL"])).set(drivername="postgresql")
+    admin_dsn = source_url.set(database="postgres").render_as_string(hide_password=False)
+    scratch_url = source_url.set(database=database_name)
+    migration_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                  "migrations", "2026-11-09_curation_judgements.sql")
+    with open(migration_path, encoding="utf-8") as fh:
+        migration_sql = fh.read()
+
+    admin = psycopg2.connect(admin_dsn)
+    admin.autocommit = True
+    conn = None
+    engine = None
+    try:
+        with admin.cursor() as cur:
+            cur.execute(f'CREATE DATABASE "{database_name}"')
+        conn = psycopg2.connect(scratch_url.render_as_string(hide_password=False))
+        with conn.cursor() as cur:
+            for schema in ("public", "model"):
+                cur.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+                cur.execute(f"CREATE TABLE {schema}.users (id SERIAL PRIMARY KEY)")
+            cur.execute("SET search_path TO public")
+            cur.execute(migration_sql)
+            cur.execute(migration_sql)
+        conn.commit()
+
+        engine = create_engine(scratch_url.render_as_string(hide_password=False))
+        with engine.begin() as sa_conn:
+            CurationJudgement.__table__.create(sa_conn.execution_options(schema_translate_map={None: "model"}))
+
+        def shape(schema):
+            with conn.cursor() as cur:
+                cur.execute("""SELECT column_name, data_type, is_nullable, coalesce(column_default, '')
+                                 FROM information_schema.columns
+                                WHERE table_schema = %s AND table_name = 'curation_judgements'
+                                ORDER BY column_name""", (schema,))
+                columns = [tuple(r) for r in cur.fetchall()]
+                cur.execute("""SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint
+                                WHERE conrelid = %s::regclass ORDER BY conname""", (f"{schema}.curation_judgements",))
+                constraints = [tuple(r) for r in cur.fetchall()]
+                cur.execute("""SELECT indexname, indexdef FROM pg_indexes
+                                WHERE schemaname = %s AND tablename = 'curation_judgements' ORDER BY indexname""", (schema,))
+                indexes = [tuple(r) for r in cur.fetchall()]
+            norm = lambda v: str(v).replace(f"{schema}.", "")
+            return ([tuple(norm(x) for x in r) for r in columns],
+                    [tuple(norm(x) for x in r) for r in constraints],
+                    [tuple(norm(x) for x in r) for r in indexes])
+
+        migrated, modelled = shape("public"), shape("model")
+        for label, a, b in zip(("columns", "constraints", "indexes"), migrated, modelled):
+            assert a == b, f"curation_judgements {label} drift between migration and model:\nSQL:   {a}\nmodel: {b}"
+    finally:
+        if engine is not None:
+            engine.dispose()
+        if conn is not None:
+            conn.close()
+        with admin.cursor() as cur:
+            cur.execute(f'DROP DATABASE IF EXISTS "{database_name}"')
+        admin.close()
+
+
 def test_user_search_is_not_an_email_oracle(app, client, key):
     """F5: users/search requires auth, never prefix-matches email, allows an
     exact full-email match for signed-in callers, and escapes LIKE wildcards."""
@@ -11944,6 +12355,10 @@ def run_all():
             ("F3 shared per-IP signup rate limit (wikihub-1ug3)", lambda: test_signup_rate_limit_is_shared_per_ip(app)),
             ("F4 suspend blocks auth, 410s content, purges (wikihub-i8lo)", lambda: test_suspend_blocks_auth_hides_content_and_purges(app, client, key)),
             ("F4 abuse-report flags link farm (wikihub-i8lo)", lambda: test_abuse_report_flags_link_farm(app, key)),
+            ("negative curation flags without deleting (wikihub-f3b7)", lambda: test_negative_curation_flags_without_deleting(app, client, key)),
+            ("curation wiki/page/positive scopes + export (wikihub-f3b7)", lambda: test_curation_wiki_page_and_positive_scopes(app, client, key)),
+            ("curation never reaches denied responses; survives reindex (wikihub-f3b7)", lambda: test_curation_never_reaches_denied_responses_and_survives_reindex(app, client, key)),
+            ("curation migration matches model (wikihub-f3b7)", test_curation_migration_matches_model),
             ("F5 user search is not an email oracle (wikihub-x77k)", lambda: test_user_search_is_not_an_email_oracle(app, client, key)),
             ("F6 unlisted pages not in public page list (wikihub-mnjc)", lambda: test_unlisted_pages_not_in_public_page_list(app, client, key)),
             ("auth crawler hygiene: nofollow, robots, noindex, fast 400 callback", lambda: test_auth_crawler_hygiene(app, client)),

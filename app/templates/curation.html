@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}How WikiHub curates — wikihub{% endblock %}
+{% block og_title %}How WikiHub curates{% endblock %}
+{% block og_desc %}Why some WikiHub pages carry a "Curated against" notice, and what it changes.{% endblock %}
+{% block meta_desc %}Why some WikiHub pages carry a "Curated against" notice, and what it changes.{% endblock %}
+
+{% block extra_css %}
+.curation-doc { max-width: 680px; margin: 0 auto; padding: 32px 16px 64px; line-height: 1.6; }
+@media (min-width: 640px) { .curation-doc { padding: 48px 24px 64px; } }
+.curation-doc h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 12px; }
+.curation-doc h2 { font-size: 1rem; font-weight: 600; margin: 28px 0 8px; }
+.curation-doc p, .curation-doc li { color: var(--text-secondary); font-size: 0.9375rem; }
+.curation-doc ul { padding-left: 1.25rem; }
+.curation-doc dt { font-weight: 600; color: var(--text-primary); font-size: 0.875rem; margin-top: 10px; }
+.curation-doc dd { margin: 2px 0 0; color: var(--text-secondary); font-size: 0.875rem; }
+.curation-doc code { font-family: var(--font-mono); font-size: 0.8125rem; }
+.curation-doc a { color: var(--accent); }
+{% endblock %}
+
+{% block body %}
+<main class="curation-doc">
+  <h1>How WikiHub curates</h1>
+  <p>Anyone can publish on WikiHub, and nothing here is removed for being unhelpful. Instead, WikiHub's editors
+  can record a <strong>judgement</strong> about a wiki, a single page or, rarely, a whole account. A judgement is an
+  attributed, dated opinion with a reason, public evidence and the policy version it was made under. It can be
+  replied to, corrected, retracted or left to expire, and it never deletes content.</p>
+
+  <h2>What WikiHub does about it</h2>
+  <p>While a "curated against" judgement is in force, WikiHub's own response (its <em>enforcement</em>) is:</p>
+  <ul>
+    <li>a notice at the top of each page it covers, saying who made it, why and what it covers (readers can dismiss it);</li>
+    <li>the content stays readable by link but is left out of Explore, People, recent activity and its RSS feed, and <code>llms.txt</code>;</li>
+    <li>search engines are asked not to index it (<code>noindex</code>), and its outbound links are marked <code>nofollow ugc</code>;</li>
+    <li>it sorts last in WikiHub search.</li>
+  </ul>
+  <p>Other services can read the judgements themselves at <a href="/api/v1/curation">/api/v1/curation</a> and decide
+  how far to trust them. Pages also carry <code>&lt;meta name="wikihub:curation"&gt;</code> and API objects a <code>curation</code> field.</p>
+
+  <h2>Reasons</h2>
+  <dl>
+    <dt id="promotional">promotional</dt><dd>Written mainly to promote a product or service, or to place links to it.</dd>
+    <dt id="affiliate_farm">affiliate farm</dt><dd>Many near-identical pages built to send traffic to affiliate or partner links.</dd>
+    <dt id="automated_link_placement">automated link placement</dt><dd>Links inserted by a bot or script rather than written for readers.</dd>
+    <dt id="low_quality">low quality</dt><dd>Little or no substance for a reader.</dd>
+    <dt id="off_topic">off topic</dt><dd>Content unrelated to what WikiHub is for.</dd>
+    <dt id="featured">featured</dt><dd>Recommended by WikiHub's editors; shown in Explore's Editorial Picks.</dd>
+    <dt id="official">official</dt><dd>The official source for what it covers.</dd>
+    <dt id="editor_pick">editor's pick</dt><dd>A wiki or page the editors want more people to find.</dd>
+  </dl>
+  <p>A recommendation never cancels a warning: if both apply, both are shown and the warning's effects stay.</p>
+
+  <h2 id="reply">Reply or appeal</h2>
+  <p>If a notice is on your content and you think it is wrong, or the content has changed, use <em>Send feedback</em>
+  in the menu and include the judgement number from the notice. An editor will review it and either retract the
+  judgement, correct it, or link your published reply from the notice so readers see both sides. Every judgement
+  also has a review date by which an editor looks at it again.</p>
+
+  <h2>What curation is not</h2>
+  <p>Curation is not removal and not access control. Content that exposes someone's personal data or carries a
+  malicious payload is removed instead, by a separate action that leaves an audit record. Accounts that run link
+  farms can be suspended.</p>
+</main>
+{% endblock %}

@@ -30,6 +30,8 @@
 <meta name="twitter:title" content="{{ self.og_title() }}">
 <meta name="twitter:description" content="{{ self.og_desc() }}">
 {% if request.environ.get('wikihub.noindex') %}<meta name="robots" content="noindex">
+{% endif %}{% set _curation = request.environ.get('wikihub.curation') %}{% if _curation %}<!--wikihub-curation-->{% if request.environ.get('wikihub.curation_noindex') and not request.environ.get('wikihub.noindex') %}<meta name="robots" content="noindex">
+{% endif %}<meta name="wikihub:curation" content="{{ request.environ.get('wikihub.curation_meta') }}"><!--/wikihub-curation-->
 {% endif %}<meta name="description" content="{% block meta_desc %}GitHub for LLM wikis. Publish markdown knowledge bases in seconds.{% endblock %}">
 {% include '_theme.html' %}
 {% include '_analytics.html' %}
@@ -470,6 +472,71 @@ a:hover { text-decoration: underline; }
 .email-verify-resend:hover { background: rgba(0,0,0,0.05); }
 </style>
 {% endif %}
+
+{% if _curation %}<!--wikihub-curation-->
+{# wikihub-f3b7: enforcement of a curation judgement. Server-rendered (so noindex and the
+   notice exist without JS); readers may dismiss it, per judgement id, in localStorage.
+   The wikihub-curation markers let app.curation.after_response strip all of it from
+   denied/error responses (status >= 400): a judgement must not leak to a viewer who
+   cannot read the page. #}
+{% set _neg = _curation.negative %}{% set _pos = _curation.positive %}
+{% set _base = (config.get('BASE_URL') or '').rstrip('/') %}
+{% set _is_subject_owner = current_user and current_user.is_authenticated and current_user.username == request.environ.get('wikihub.curation_owner') %}
+<div class="curation-notice" role="note" aria-label="Curation notice"
+     data-curation="{{ request.environ.get('wikihub.curation_meta') }}"
+     data-curation-ids="{{ [_neg.id if _neg else None, _pos.id if _pos else None] | select | join(',') }}">
+  {% if _neg %}
+  <div class="curation-line curation-line--negative">
+    <span><strong>Curated against: {{ _neg.label }}</strong> by {{ _neg.curator }}, for {{ _neg.scope_description }}.
+      Still readable; not recommended by WikiHub.</span>
+    {# absolute: on user/wiki subdomains a bare /curation would resolve to a wiki named "curation" #}
+    <a href="{{ _base }}/curation#{{ _neg.reason }}">Why?</a>
+    {% if _neg.reply_url %}<a href="{{ _neg.reply_url }}" rel="nofollow ugc">Owner's reply</a>{% endif %}
+    <a href="{{ _base }}/curation?judgement={{ _neg.id }}#reply">{% if _is_subject_owner %}Reply or appeal{% else %}How owners reply{% endif %}</a>
+  </div>
+  {% endif %}
+  {% if _pos %}
+  <div class="curation-line curation-line--positive">
+    <span><strong>{{ _pos.label | capitalize }}</strong> by {{ _pos.curator }}, for {{ _pos.scope_description }}.</span>
+    <a href="{{ _base }}/curation#{{ _pos.reason }}">About</a>
+  </div>
+  {% endif %}
+  {% if _is_subject_owner and _neg %}
+  <div class="curation-line curation-line--owner">This judgement is about your content. Nothing was removed. Reply or appeal and an editor will review it; judgement #{{ _neg.id }}.</div>
+  {% endif %}
+  <button type="button" class="curation-dismiss" aria-label="Dismiss curation notice" title="Dismiss">&times;</button>
+</div>
+<style>
+.curation-notice {
+  position: relative; padding: 0.4rem 2.5rem 0.4rem 1rem; font-size: 0.8125rem; line-height: 1.45;
+  background: var(--bg-elevated); color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-default, var(--bg-overlay));
+}
+.curation-line { display: flex; gap: 0.75rem; align-items: baseline; justify-content: center; flex-wrap: wrap; padding: 0.1rem 0; }
+.curation-line strong { font-weight: 600; color: var(--text-primary); }
+.curation-line a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.curation-line--positive strong { color: var(--accent); }
+.curation-line--owner { color: var(--text-tertiary); }
+.curation-dismiss {
+  position: absolute; right: 0.5rem; top: 0.3rem; background: transparent; border: 0; color: inherit;
+  font: inherit; font-size: 1rem; line-height: 1; padding: 0.2rem 0.4rem; cursor: pointer; border-radius: 3px;
+}
+.curation-dismiss:hover, .curation-dismiss:focus-visible { background: var(--bg-overlay); }
+</style>
+<script>
+(function () {
+  var el = document.querySelector('.curation-notice');
+  if (!el) return;
+  var key = 'wikihub-curation-dismissed:' + el.getAttribute('data-curation-ids');
+  try { if (localStorage.getItem(key)) { el.hidden = true; return; } } catch (e) {}
+  var btn = el.querySelector('.curation-dismiss');
+  if (btn) btn.addEventListener('click', function () {
+    el.hidden = true;
+    try { localStorage.setItem(key, '1'); } catch (e) {}
+  });
+})();
+</script>
+<!--/wikihub-curation-->{% endif %}
 
 {% include '_search_modal.html' %}
 

@@ -12,24 +12,24 @@ def _is_self_viewer(viewer, owner):
 
 def discoverable_wiki_ids(visibilities=DISCOVERABLE_VISIBILITIES, trusted_only=True):
     """Wiki ids with at least one discoverable page. With trusted_only (the
-    default) wikis owned by untrusted or suspended accounts are dropped —
-    see app/trust.py (wikihub-9ras)."""
-    safe_ids = {
-        wiki_id for (wiki_id,) in db.session.query(Page.wiki_id)
-        .filter(Page.visibility.in_(visibilities))
-        .filter(content_page_path_filter(Page.path))
-        .filter(~Page.path.contains(".."))
-        .distinct()
-        .all()
-    }
-    risky_ids = {
-        wiki_id for wiki_id, path in db.session.query(Page.wiki_id, Page.path)
-        .filter(Page.visibility.in_(visibilities))
-        .filter(content_page_path_filter(Page.path))
-        .filter(Page.path.contains(".."))
-        .all()
-        if is_content_page_path(path)
-    }
+    default) wikis owned by untrusted, suspended or curated-against accounts
+    are dropped, as are wikis curated against and pages curated against —
+    see app/trust.py (wikihub-9ras) and app/curation.py (wikihub-f3b7)."""
+    from app.curation import not_curated_against
+    listed = not_curated_against(wiki_id_col=Page.wiki_id, page_id_col=Page.id) if trusted_only else None
+    safe_q = (db.session.query(Page.wiki_id)
+              .filter(Page.visibility.in_(visibilities))
+              .filter(content_page_path_filter(Page.path))
+              .filter(~Page.path.contains("..")))
+    risky_q = (db.session.query(Page.wiki_id, Page.path)
+               .filter(Page.visibility.in_(visibilities))
+               .filter(content_page_path_filter(Page.path))
+               .filter(Page.path.contains("..")))
+    if listed is not None:
+        safe_q = safe_q.filter(listed)
+        risky_q = risky_q.filter(listed)
+    safe_ids = {wiki_id for (wiki_id,) in safe_q.distinct().all()}
+    risky_ids = {wiki_id for wiki_id, path in risky_q.all() if is_content_page_path(path)}
     ids = safe_ids | risky_ids
     if trusted_only and ids:
         from app.models import User

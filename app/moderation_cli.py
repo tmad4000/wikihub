@@ -4,6 +4,16 @@
     flask --app wsgi.py wikihub unsuspend USERNAME [--execute]
     flask --app wsgi.py wikihub trust USERNAME [--revoke] [--execute]
     flask --app wsgi.py wikihub abuse-report [--days N] [--json]
+    flask --app wsgi.py wikihub flag TARGET --reason REASON [--evidence URL_OR_TEXT ...] [--note TEXT]
+                                     [--scope account] [--review-days N] [--expires-days N]
+                                     [--supersedes ID] [--reply-url URL] [--execute]
+    flask --app wsgi.py wikihub unflag TARGET [--reason REASON] [--execute]
+    flask --app wsgi.py wikihub curation-reply ID URL [--execute]
+    flask --app wsgi.py wikihub curation-list [--all] [--due] [--json]
+
+TARGET is `@username/wiki` (wiki: the default scope) or
+`@username/wiki/path/to/page` (page; `.md` optional). A whole account is
+judged only with an explicit `--scope account` and a bare `username`.
 
 Every mutating command is a DRY RUN unless --execute is passed: it prints
 exactly what it would change and touches nothing.
@@ -11,6 +21,15 @@ exactly what it would change and touches nothing.
 suspend: sets users.suspended_at/suspended_reason. The account can no longer
 authenticate (session, API key, git basic auth) and every URL it owns answers
 410; it drops out of search and discovery.
+
+flag / unflag: record or retract an editorial curation judgement
+(app/curation.py, docs/curation.md). A negative judgement keeps content
+readable but shows a "Curated against" banner, noindexes it, marks its links
+nofollow ugc, removes it from discovery and sorts it last in search. A
+positive one (featured, official, editor_pick) adds a wiki to Explore's
+editorial picks. Nothing is ever deleted: unflag sets status=retracted,
+--supersedes marks the old judgement superseded. Evidence is PUBLIC (it is
+exported); the note is private.
 --purge additionally deletes every wiki the user owns (DB rows, stars/forks
 on them, bare repo + public mirror on disk), revokes all API keys and magic
 login tokens. The user row is kept (suspended) so the username stays taken.
@@ -216,3 +235,272 @@ def register_moderation_commands(group):
         for r in rows:
             click.echo(f"@{r['username']}  pages={r['pages_recent']}  created={r['created_at']}  "
                        + "  ".join(r["reasons"]))
+
+
+
+def resolve_curation_target(target, scope=None):
+    """TARGET -> (scope_type, scope_id, label, owner_username, wiki_slug).
+
+    Wiki scope is the default (plan 3c item 6). A bare username is accepted
+    only with scope='account'. Raises ClickException."""
+    from app.models import Page, User, Wiki
+
+    raw = (target or "").strip()
+    if not raw:
+        raise click.ClickException("empty target")
+    parts = raw.lstrip("@").strip("/").split("/", 2)
+    username = parts[0].lower()
+    user = User.query.filter_by(username=username).first()
+    if not user:
+        raise click.ClickException(f"unknown user: {username}")
+    if len(parts) == 1:
+        if scope != "account":
+            raise click.ClickException(
+                f"@{user.username} is a whole account. Judge a wiki (@{user.username}/WIKI) or page, "
+                "or pass --scope account explicitly.")
+        return "account", user.id, f"@{user.username}", user.username, None
+    if scope == "account":
+        raise click.ClickException("--scope account takes a bare username, not a wiki or page path")
+    wiki = Wiki.query.filter_by(owner_id=user.id, slug=parts[1]).first()
+    if not wiki:
+        raise click.ClickException(f"unknown wiki: @{user.username}/{parts[1]}")
+    if len(parts) == 2 or not parts[2]:
+        return "wiki", wiki.id, f"@{user.username}/{wiki.slug}", user.username, wiki.slug
+    path = parts[2].strip("/")
+    candidates = [path] if path.endswith(".md") else [path + ".md", path, path + "/index.md"]
+    candidates += [c.replace("_", " ") for c in candidates]
+    for candidate in candidates:
+        page = Page.query.filter_by(wiki_id=wiki.id, path=candidate).first()
+        if page:
+            return "page", page.id, f"@{user.username}/{wiki.slug}/{page.path}", user.username, wiki.slug
+    raise click.ClickException(f"unknown page: @{user.username}/{wiki.slug}/{path}")
+
+
+def _wiki_head(username, slug):
+    """Git sha of the wiki's authoritative repo, or None."""
+    import subprocess
+    from app.git_backend import _repo_path
+    repo = _repo_path(username, slug, public=False)
+    if not os.path.isdir(repo):
+        return None
+    # safe.directory: operators run this CLI with sudo (the host's .env is root-only),
+    # and git refuses repos owned by another user without it. Read-only command.
+    result = subprocess.run(["git", "-c", "safe.directory=*", "-C", repo, "rev-parse", "--verify", "-q", "HEAD"],
+                            capture_output=True, text=True, check=False)
+    sha = result.stdout.strip()
+    return sha if result.returncode == 0 and sha else None
+
+
+def _in_force(scope_type, scope_id):
+    from app.curation import in_force_clause
+    from app.models import CurationJudgement
+    return (CurationJudgement.query
+            .filter_by(scope_type=scope_type, scope_id=scope_id)
+            .filter(in_force_clause(CurationJudgement))
+            .order_by(CurationJudgement.created_at.asc()).all())
+
+
+def register_curation_commands(group):
+    from app.curation import NEGATIVE_REASONS, POSITIVE_REASONS, normalize_reason, policy_version, polarity_for_reason
+
+    all_reasons = ", ".join(NEGATIVE_REASONS + POSITIVE_REASONS)
+
+    @group.command("flag")
+    @click.argument("target")
+    @click.option("--reason", required=True, help=f"One of: {all_reasons} (hyphens accepted).")
+    @click.option("--polarity", type=click.Choice(["negative", "positive"]), default=None,
+                  help="Optional; must match the reason.")
+    @click.option("--scope", type=click.Choice(["account"]), default=None,
+                  help="Judge a whole account (TARGET is a bare username). Default: wiki or page from TARGET.")
+    @click.option("--evidence", multiple=True, help="PUBLIC evidence: a URL or short text (repeatable).")
+    @click.option("--note", default="", help="Private moderator note (never exported publicly).")
+    @click.option("--curator", default="wikihub", show_default=True,
+                  help="Username recorded as curator (null if no such user). Public attribution is 'WikiHub editors'.")
+    @click.option("--review-days", default=180, show_default=True, type=int,
+                  help="Set review_at this many days ahead (0 = no review date).")
+    @click.option("--expires-days", default=0, type=int, help="Expire after this many days (0 = no expiry).")
+    @click.option("--supersedes", type=int, default=None, help="Id of a judgement this one replaces.")
+    @click.option("--reply-url", default=None, help="Link to the owner's published reply or appeal.")
+    @click.option("--execute", is_flag=True, default=False, help="Apply changes (default is a dry run).")
+    def flag_command(target, reason, polarity, scope, evidence, note, curator, review_days, expires_days,
+                     supersedes, reply_url, execute):
+        """Record a curation judgement (dry run unless --execute). Never deletes content."""
+        from datetime import timedelta as _td
+        from app import db
+        from app.auth_utils import security_event
+        from app.models import CurationJudgement, User, utcnow
+
+        reason = normalize_reason(reason)
+        expected = polarity_for_reason(reason)
+        if expected is None:
+            raise click.ClickException(f"unknown reason {reason!r}; use one of: {all_reasons}")
+        if polarity and polarity != expected:
+            raise click.ClickException(f"reason {reason!r} is {expected}, not {polarity}")
+        if reply_url and not reply_url.startswith(("https://", "http://", "/")):
+            raise click.ClickException("--reply-url must be http(s) or a site path")
+        scope_type, scope_id, label, owner_name, slug = resolve_curation_target(target, scope)
+        scope_wiki_id = scope_path = None
+        if scope_type == "page":
+            from app.models import Page
+            page = Page.query.get(scope_id)
+            scope_wiki_id, scope_path = page.wiki_id, page.path
+        old = None
+        if supersedes is not None:
+            old = CurationJudgement.query.get(supersedes)
+            if old is None or old.status != "active":
+                raise click.ClickException(f"--supersedes {supersedes}: no active judgement with that id")
+        active = _in_force(scope_type, scope_id)
+        existing = [j for j in active if j.polarity == expected and j.reason == reason and j is not old]
+        version = _wiki_head(owner_name, slug) if slug else None
+        mode = "EXECUTE" if execute else "DRY RUN"
+        click.echo(f"[{mode}] flag {label} ({scope_type} id={scope_id}) {expected}:{reason}"
+                   + (" (already in force; no change)" if existing else ""))
+        click.echo(f"  policy_version={policy_version()} affected_version={version or '-'}"
+                   + (f" supersedes=#{old.id}" if old else ""))
+        for item in evidence:
+            click.echo(f"  evidence (public): {item}")
+        if note:
+            click.echo(f"  note (private): {note}")
+        for j in active:
+            if j not in existing and j is not old:
+                click.echo(f"  also in force: #{j.id} {j.polarity}:{j.reason}")
+        if not execute:
+            click.echo("  (no changes made; pass --execute to apply)")
+            return
+        if existing:
+            return
+        now = utcnow()
+        # An 'active' row past expires_at has no effect but still holds the
+        # unique (scope, polarity, reason) slot: record it as expired first.
+        lapsed = (CurationJudgement.query
+                  .filter_by(scope_type=scope_type, scope_id=scope_id, polarity=expected, reason=reason, status="active")
+                  .filter(CurationJudgement.expires_at.isnot(None), CurationJudgement.expires_at <= now)
+                  .all())
+        for j in lapsed:
+            j.status = "expired"
+            j.updated_at = now
+        if lapsed:
+            db.session.flush()
+            click.echo("  marked expired: " + ", ".join(f"#{j.id}" for j in lapsed))
+        curator_user = User.query.filter_by(username=(curator or "").lstrip("@").lower()).first() if curator else None
+        row = CurationJudgement(
+            scope_type=scope_type, scope_id=scope_id, scope_wiki_id=scope_wiki_id, scope_path=scope_path,
+            polarity=expected, reason=reason, status="active",
+            curator_user_id=curator_user.id if curator_user else None, note=note or None,
+            evidence=list(evidence), affected_version=version, policy_version=policy_version(),
+            review_at=now + _td(days=review_days) if review_days > 0 else None,
+            expires_at=now + _td(days=expires_days) if expires_days > 0 else None,
+            reply_url=reply_url or None, created_at=now, updated_at=now,
+        )
+        if old is not None:
+            old.status = "superseded"
+            old.updated_at = now
+            db.session.flush()  # free the unique (scope, polarity, reason) slot first
+        db.session.add(row)
+        db.session.flush()
+        if old is not None:
+            old.superseded_by = row.id
+        db.session.commit()
+        security_event("admin.curation.flag", "success", judgement_id=row.id, scope_type=scope_type,
+                       scope_id=scope_id, polarity=expected, reason=reason,
+                       superseded=old.id if old else None)
+        click.echo(f"  recorded judgement #{row.id}" + (f"; #{old.id} superseded" if old else ""))
+
+    @group.command("unflag")
+    @click.argument("target")
+    @click.option("--reason", default=None, help="Retract only this reason (default: every judgement in force).")
+    @click.option("--polarity", type=click.Choice(["negative", "positive"]), default=None)
+    @click.option("--scope", type=click.Choice(["account"]), default=None,
+                  help="Required when TARGET is a bare username.")
+    @click.option("--execute", is_flag=True, default=False, help="Apply changes (default is a dry run).")
+    def unflag_command(target, reason, polarity, scope, execute):
+        """Retract curation judgements (dry run unless --execute). Rows are kept as history."""
+        from app import db
+        from app.auth_utils import security_event
+        from app.models import utcnow
+
+        scope_type, scope_id, label, _o, _s = resolve_curation_target(target, scope)
+        reason = normalize_reason(reason) if reason else None
+        matches = [j for j in _in_force(scope_type, scope_id)
+                   if (reason is None or j.reason == reason) and (polarity is None or j.polarity == polarity)]
+        mode = "EXECUTE" if execute else "DRY RUN"
+        click.echo(f"[{mode}] unflag {label} ({scope_type} id={scope_id})")
+        if not matches:
+            click.echo("  no matching judgement in force")
+            return
+        for j in matches:
+            click.echo(f"  retract #{j.id} {j.polarity}:{j.reason}")
+        if not execute:
+            click.echo("  (no changes made; pass --execute to apply)")
+            return
+        now = utcnow()
+        for j in matches:
+            j.status = "retracted"
+            j.updated_at = now
+        db.session.commit()
+        for j in matches:
+            security_event("admin.curation.unflag", "success", judgement_id=j.id, scope_type=scope_type,
+                           scope_id=scope_id, polarity=j.polarity, reason=j.reason)
+
+    @group.command("curation-reply")
+    @click.argument("judgement_id", type=int)
+    @click.argument("url")
+    @click.option("--execute", is_flag=True, default=False, help="Apply changes (default is a dry run).")
+    def curation_reply_command(judgement_id, url, execute):
+        """Link the owner's published reply or appeal to a judgement (shown in the banner and export)."""
+        from app import db
+        from app.models import CurationJudgement, utcnow
+        j = CurationJudgement.query.get(judgement_id)
+        if j is None:
+            raise click.ClickException(f"no judgement #{judgement_id}")
+        if not url.startswith(("https://", "http://", "/")):
+            raise click.ClickException("reply URL must be http(s) or a site path")
+        click.echo(f"[{'EXECUTE' if execute else 'DRY RUN'}] judgement #{j.id} reply_url={url}")
+        if execute:
+            j.reply_url = url
+            j.updated_at = utcnow()
+            db.session.commit()
+
+    @group.command("curation-list")
+    @click.option("--all", "include_all", is_flag=True, default=False, help="Include retracted/superseded/expired.")
+    @click.option("--due", is_flag=True, default=False, help="Only judgements whose review date has passed.")
+    @click.option("--json", "as_json", is_flag=True, default=False)
+    def curation_list_command(include_all, due, as_json):
+        """List curation judgements (read-only)."""
+        from app.curation import effective_status, in_force_clause
+        from app.models import CurationJudgement, Page, User, Wiki, utcnow
+
+        query = CurationJudgement.query
+        if not include_all:
+            query = query.filter(in_force_clause(CurationJudgement))
+        if due:
+            query = query.filter(CurationJudgement.review_at <= utcnow())
+        rows = []
+        for j in query.order_by(CurationJudgement.created_at.asc()).all():
+            if j.scope_type == "account":
+                u = User.query.get(j.scope_id)
+                target = f"@{u.username}" if u else f"account#{j.scope_id}"
+            elif j.scope_type == "wiki":
+                w = Wiki.query.get(j.scope_id)
+                target = f"@{w.owner.username}/{w.slug}" if w else f"wiki#{j.scope_id}"
+            else:
+                p = Page.query.get(j.scope_id)
+                target = f"@{p.wiki.owner.username}/{p.wiki.slug}/{p.path}" if p else f"page#{j.scope_id}"
+            rows.append({"id": j.id, "target": target, "scope": j.scope_type, "polarity": j.polarity,
+                         "reason": j.reason, "status": effective_status(j), "note": j.note,
+                         "evidence": j.evidence or [], "policy_version": j.policy_version,
+                         "affected_version": j.affected_version, "superseded_by": j.superseded_by,
+                         "reply_url": j.reply_url,
+                         "created_at": j.created_at.isoformat() if j.created_at else None,
+                         "updated_at": j.updated_at.isoformat() if j.updated_at else None,
+                         "review_at": j.review_at.isoformat() if j.review_at else None,
+                         "expires_at": j.expires_at.isoformat() if j.expires_at else None})
+        if as_json:
+            click.echo(json.dumps(rows, indent=2))
+            return
+        if not rows:
+            click.echo("no curation judgements")
+            return
+        for r in rows:
+            click.echo(f"#{r['id']}  {r['target']}  {r['polarity']}:{r['reason']}  {r['status']}"
+                       + (f"  review {r['review_at'][:10]}" if r["review_at"] else ""))

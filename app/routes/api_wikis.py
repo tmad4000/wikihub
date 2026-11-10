@@ -32,6 +32,7 @@ from app.acl import can_read, can_write, is_discoverable, list_all_grants, norma
 from app.email_service import send_share_invite_existing_user, send_share_invite_pending
 from app.credentials_hint import resolve_server_url
 from app.discovery import discoverable_wiki_ids
+from app.curation import curated_against_sort_key, effective as curation_effective
 from app.page_utils import content_page_path_filter, is_content_page_path, is_wikihub_plumbing_path
 from app.private_bands import CONFLICT_MESSAGE, PrivateBandConflict, create_conflict_proposal, merge_into_bands
 from app.content_utils import (
@@ -343,6 +344,7 @@ def list_wikis():
             "description": w.description,
             "visibility": _visibility(w),
             "updated_at": w.updated_at.isoformat() if w.updated_at else None,
+            "curation": curation_effective(owner_id=w.owner_id, wiki_id=w.id),
         })
 
     return jsonify({
@@ -420,7 +422,21 @@ def get_wiki(owner, slug):
         "page_count": _content_page_count(wiki),
         "created_at": wiki.created_at.isoformat(),
         "updated_at": wiki.updated_at.isoformat(),
+        **_wiki_curation_field(owner_user, wiki),
     })
+
+
+def _wiki_curation_field(owner_user, wiki):
+    """`curation` for a wiki object, only when the caller can read something in
+    it (owner, or the wiki has a publicly visible page). This endpoint does no
+    read check of its own, and a judgement is substance of the wiki: a caller
+    who cannot read the wiki must not learn it (wikihub-f3b7, plan 3d)."""
+    from app.discovery import DISCOVERABLE_VISIBILITIES
+    user = getattr(request, "current_user", None)
+    readable = bool(user and user.id == owner_user.id) or db.session.query(
+        Page.query.filter(Page.wiki_id == wiki.id, Page.visibility.in_(DISCOVERABLE_VISIBILITIES)).exists()
+    ).scalar()
+    return {"curation": curation_effective(owner_id=owner_user.id, wiki_id=wiki.id)} if readable else {}
 
 
 @api_bp.route("/wikis/<owner>/<slug>", methods=["PATCH"])
@@ -1056,6 +1072,7 @@ def list_pages(owner, slug):
                 "title": page.title,
                 "visibility": page.visibility,
                 "updated_at": page.updated_at.isoformat(),
+                "curation": curation_effective(owner_id=owner_user.id, wiki_id=wiki.id, page_id=page.id),
             })
     return jsonify({"pages": pages, "total": len(pages)})
 
@@ -1157,6 +1174,7 @@ def read_page(owner, slug, page_path):
         "claimable": page.claimable,
         "author": None if page.anonymous else page.author,
         "updated_at": page.updated_at.isoformat(),
+        "curation": curation_effective(owner_id=owner_user.id, wiki_id=wiki.id, page_id=page.id),
     }
 
     # Optional include=backlinks (comma-separated for forward compatibility:
@@ -2167,7 +2185,11 @@ def search_pages():
     # rank: full-text rank + trigram similarity on title for ordering
     ts_rank = db.func.ts_rank(Page.search_vector, ts_query)
     trgm_sim = db.func.similarity(db.func.coalesce(Page.title, Page.path), q)
-    ordered_query = query.order_by((ts_rank + trgm_sim).desc())
+    # wikihub-f3b7: content curated against (account, wiki or page) sorts last.
+    ordered_query = query.order_by(
+        curated_against_sort_key(user_id_col=User.id, wiki_id_col=Wiki.id, page_id_col=Page.id),
+        (ts_rank + trgm_sim).desc(),
+    )
 
     if user:
         acl_rules_by_wiki = {}
@@ -2201,6 +2223,7 @@ def search_pages():
             "excerpt": r.excerpt,
             "visibility": r.visibility,
             "tags": (r.frontmatter_json or {}).get("tags", []),
+            "curation": curation_effective(owner_id=r.wiki.owner_id, wiki_id=r.wiki_id, page_id=r.id),
         } for r in results],
         "total": total,
     })

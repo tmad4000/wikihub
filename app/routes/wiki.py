@@ -1134,13 +1134,17 @@ def user_profile(username):
 
     if personal_wiki:
         use_public = not is_owner
-        _, personal_content = _folder_index_content(owner.username, personal_wiki.slug, "", public=use_public, wiki=personal_wiki)
+        personal_index_path, personal_content = _folder_index_content(owner.username, personal_wiki.slug, "", public=use_public, wiki=personal_wiki)
         if personal_content is None and is_owner:
             # wikihub-325p: authoritative repo unreadable → the mirror's copy
             # of a public index is still better than an empty profile.
-            _, personal_content = _folder_index_content(owner.username, personal_wiki.slug, "", public=True, wiki=personal_wiki)
+            personal_index_path, personal_content = _folder_index_content(owner.username, personal_wiki.slug, "", public=True, wiki=personal_wiki)
         if personal_content:
-            personal_rendered_html = render_page(personal_content, owner.username, personal_wiki.slug, mark_private_bands=is_owner)
+            # nofollow ugc must also honour a curation judgement on the index page itself (wikihub-f3b7)
+            from app.moderation import content_needs_ugc
+            personal_rendered_html = render_page(
+                personal_content, owner.username, personal_wiki.slug, mark_private_bands=is_owner,
+                ugc_links=content_needs_ugc(owner.username, personal_wiki.slug, personal_index_path))
             personal_sidebar = _build_sidebar_tree(owner.username, personal_wiki.slug, personal_wiki, public=use_public, current_path="index.md")
         elif any(wiki.id == personal_wiki.id for wiki in wikis):
             personal_sidebar = _build_sidebar_tree(owner.username, personal_wiki.slug, personal_wiki, public=not is_owner)
