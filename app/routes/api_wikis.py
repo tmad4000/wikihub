@@ -31,7 +31,7 @@ from app.git_sync import (
 from app.acl import can_read, can_write, is_discoverable, list_all_grants, normalize_page_visibility, remove_grant, resolve_grants, resolve_visibility
 from app.email_service import send_share_invite_existing_user, send_share_invite_pending
 from app.credentials_hint import resolve_server_url
-from app.discovery import discoverable_wiki_ids
+from app.discovery import discoverable_wiki_ids, viewer_can_read_wiki
 from app.curation import curated_against_sort_key, effective as curation_effective
 from app.page_utils import content_page_path_filter, is_content_page_path, is_wikihub_plumbing_path
 from app.private_bands import CONFLICT_MESSAGE, PrivateBandConflict, create_conflict_proposal, merge_into_bands
@@ -408,6 +408,12 @@ def get_wiki(owner, slug):
     owner_user, wiki, err = _get_wiki_or_404(owner, slug)
     if err:
         return err
+    # A private wiki's title/description/counts are content of something the
+    # caller cannot read: 401 (anonymous) / 403 (signed in), never a 404 that
+    # pretends the wiki does not exist (plan 3d; wikihub-dkp8 semantics).
+    user = getattr(request, "current_user", None)
+    if not viewer_can_read_wiki(wiki, user, owner=owner_user):
+        return _restricted_wiki_response(user)
     sync_wiki_counters(wiki)
 
     return jsonify({
@@ -422,21 +428,28 @@ def get_wiki(owner, slug):
         "page_count": _content_page_count(wiki),
         "created_at": wiki.created_at.isoformat(),
         "updated_at": wiki.updated_at.isoformat(),
-        **_wiki_curation_field(owner_user, wiki),
+        "curation": curation_effective(owner_id=owner_user.id, wiki_id=wiki.id),
     })
 
 
-def _wiki_curation_field(owner_user, wiki):
-    """`curation` for a wiki object, only when the caller can read something in
-    it (owner, or the wiki has a publicly visible page). This endpoint does no
-    read check of its own, and a judgement is substance of the wiki: a caller
-    who cannot read the wiki must not learn it (wikihub-f3b7, plan 3d)."""
-    from app.discovery import DISCOVERABLE_VISIBILITIES
-    user = getattr(request, "current_user", None)
-    readable = bool(user and user.id == owner_user.id) or db.session.query(
-        Page.query.filter(Page.wiki_id == wiki.id, Page.visibility.in_(DISCOVERABLE_VISIBILITIES)).exists()
-    ).scalar()
-    return {"curation": curation_effective(owner_id=owner_user.id, wiki_id=wiki.id)} if readable else {}
+def _restricted_wiki_response(user):
+    """401/403 for a wiki that exists but the caller cannot read. Carries no
+    title, description or other wiki fields."""
+    if user:
+        return {
+            "error": "forbidden",
+            "message": "This wiki is restricted — it exists but you don't have access.",
+            "sign_in_url": "https://wikihub.md/auth/login",
+        }, 403
+    resp = jsonify({
+        "error": "authentication_required",
+        "message": "This wiki is restricted — sign in to check your access.",
+        "sign_in_url": "https://wikihub.md/auth/login",
+    })
+    resp.status_code = 401
+    resp.headers["WWW-Authenticate"] = 'Bearer realm="wikihub"'
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @api_bp.route("/wikis/<owner>/<slug>", methods=["PATCH"])
@@ -850,6 +863,11 @@ def fork_wiki(owner, slug):
     limit = user.effective_wiki_limit()
     if wiki_count >= limit:
         return {"error": "too_many", "message": f"You've reached the limit of {limit} wikis"}, 429
+
+    # Forking copies title/description/content: only for callers who can read
+    # the source (plan 3d). The checks above reveal nothing about it.
+    if not viewer_can_read_wiki(source_wiki, user, owner=owner_user):
+        return _restricted_wiki_response(user)
 
     # clone the public mirror (or authoritative if owner)
     is_owner = user.id == source_wiki.owner_id

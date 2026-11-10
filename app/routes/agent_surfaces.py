@@ -778,6 +778,14 @@ def wikihub_bootstrap():
 def wiki_llms_txt(username, slug):
     owner = User.query.filter_by(username=username).first_or_404()
     wiki = Wiki.query.filter_by(owner_id=owner.id, slug=slug).first_or_404()
+    from app.auth_utils import get_current_user_from_request
+    from app.discovery import viewer_can_read_wiki
+    viewer = get_current_user_from_request()  # session or Bearer key: owners via API keep access
+    if not viewer_can_read_wiki(wiki, viewer, owner=owner):
+        # private wiki: say it is restricted (not 404), never print its title
+        status = 403 if viewer else 401
+        return Response("This wiki is restricted — it exists but you don't have access.\n", status=status,
+                        content_type="text/plain; charset=utf-8", headers={"Cache-Control": "no-store"})
     pages = (
         Page.query.filter_by(wiki_id=wiki.id)
         .filter(Page.visibility.in_(["public", "public-edit"]))

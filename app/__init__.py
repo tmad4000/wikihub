@@ -245,6 +245,16 @@ def create_app(config_class="config.Config"):
                 else:
                     platform_url = "https://" + CANONICAL_SUFFIX.lstrip(".") + "/"
                 cache = dict(cache, host=host, platform_url=platform_url)
+                if cache.get("wiki_id"):
+                    # The top bar shows the wiki's title on every page of its
+                    # host, error pages included. A viewer who cannot read the
+                    # wiki sees the hostname they typed instead (plan 3d).
+                    from app.auth_utils import get_current_user_from_request
+                    from app.discovery import viewer_can_read_wiki
+                    from app.models import Wiki as _Wiki
+                    wiki_row = db.session.get(_Wiki, cache["wiki_id"])
+                    if wiki_row is None or not viewer_can_read_wiki(wiki_row, get_current_user_from_request()):
+                        cache = dict(cache, title=host)
             _request.environ["wikihub.site_host"] = cache
         return {"site_host": cache or None}
 

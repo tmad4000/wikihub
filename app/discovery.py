@@ -62,3 +62,35 @@ def discoverable_page_for_wiki(wiki_id, viewer_is_owner=False):
         if page and is_content_page_path(page.path):
             return page
     return None
+
+
+READABLE_BY_LINK_VISIBILITIES = ("public", "public-view", "public-edit", "unlisted", "unlisted-view", "unlisted-edit")
+
+
+def viewer_can_read_wiki(wiki, viewer=None, owner=None, acl_rules=None):
+    """Can `viewer` (a User or None) read anything in this wiki?
+
+    Same rule as the web reader's _viewer_can_see_any_page: the owner; anyone
+    when at least one content page is public or unlisted (readable by link);
+    an ACL grantee. Wiki-level metadata (title, description, counts) must only
+    be served when this is true: a private wiki's title is content of
+    something the viewer cannot read (plan 3d). Existence is not secret:
+    callers answer 401/403, not 404."""
+    from app.acl import grants_for_user
+    from app.models import User
+    from app.wiki_ops import load_acl_rules
+
+    if viewer is not None and getattr(viewer, "id", None) == wiki.owner_id:
+        return True
+    paths = (db.session.query(Page.path)
+             .filter(Page.wiki_id == wiki.id, Page.visibility.in_(READABLE_BY_LINK_VISIBILITIES))
+             .filter(content_page_path_filter(Page.path)))
+    if any(is_content_page_path(path) for (path,) in paths.yield_per(100)):
+        return True
+    if viewer is None or not getattr(viewer, "username", None):
+        return False
+    if acl_rules is None:
+        if owner is None:
+            owner = db.session.get(User, wiki.owner_id)
+        acl_rules = load_acl_rules(owner.username, wiki.slug)
+    return bool(acl_rules and grants_for_user(acl_rules, viewer.username))

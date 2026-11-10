@@ -83,7 +83,6 @@ def api_wikis_compat(owner, slug):
     from app.models import User, Wiki, Page
     from app.page_utils import is_content_page_path
     from app.auth_utils import get_current_user_from_request
-    from app.acl import resolve_visibility
     from app.wiki_ops import load_acl_rules, sync_wiki_counters
 
     owner_user = User.query.filter_by(username=owner).first()
@@ -100,24 +99,17 @@ def api_wikis_compat(owner, slug):
             return _unauthorized_json(request.path)
         return _not_found_json(request.path, "Wiki not found")
 
-    # ACL — does this wiki have any public-readable content?
-    try:
-        rules = load_acl_rules(owner_user.username, wiki.slug)
-    except Exception:
-        rules = []
-    root_vis = resolve_visibility("", rules)
-    is_owner = bool(user and user.id == owner_user.id)
-    is_anon_readable = root_vis in (
-        "public",
-        "public-view",
-        "public-edit",
-        "unlisted",
-        "unlisted-view",
-        "unlisted-edit",
-    )
-
-    if not is_owner and not is_anon_readable and not user:
-        return _unauthorized_json(request.path)
+    # Same read rule as GET /api/v1/wikis/<owner>/<slug>: no wiki fields for a
+    # caller who cannot read anything in it; 401 anonymous, 403 signed in.
+    from app.discovery import viewer_can_read_wiki
+    if not viewer_can_read_wiki(wiki, user, owner=owner_user):
+        if not user:
+            return _unauthorized_json(request.path)
+        return jsonify({
+            "error": "forbidden",
+            "message": "This wiki is restricted — it exists but you don't have access.",
+            "sign_in_url": "https://wikihub.md/auth/login",
+        }), 403
 
     sync_wiki_counters(wiki)
     return jsonify({

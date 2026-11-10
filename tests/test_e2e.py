@@ -9762,6 +9762,12 @@ def test_wiki_limit_effective_resolution_and_429(client, app):
 
     r = client.post("/api/v1/accounts", json={"username": "forksource"})
     assert r.status_code == 201
+    # Only a wiki the caller can read may be forked (plan 3d); the personal
+    # wiki is scaffolded private, so publish a page in it first.
+    src_h = {"Authorization": f"Bearer {r.get_json()['api_key']}"}
+    r = client.post("/api/v1/wikis/forksource/forksource/pages", json={
+        "path": "shared.md", "content": "---\nvisibility: public\n---\n# Shared\n", "visibility": "public"}, headers=src_h)
+    assert r.status_code == 201, r.get_data(as_text=True)
     r = client.post("/api/v1/wikis/forksource/forksource/fork", headers=h)
     assert r.status_code == 429, f"fork should respect cap: {r.get_data(as_text=True)}"
     body = r.get_json()
@@ -11472,6 +11478,96 @@ def test_curation_migration_matches_model():
         admin.close()
 
 
+def test_private_wiki_metadata_never_leaks(app, client, key):
+    """A private wiki's title and description are content the caller cannot
+    read (plan 3d). GET /api/v1/wikis/<o>/<s>, the /api/wikis/<o>/<s> compat
+    route and /@o/s/llms.txt answer 401 (anonymous) / 403 (signed in, no
+    access) without wiki fields, distinct from the 404 for a missing wiki;
+    list endpoints never include the wiki for those callers; the owner and an
+    ACL grantee still get it."""
+    owner_h = _spam_new_account(app, "pw-owner")
+    other_h = _spam_new_account(app, "pw-other")
+    c = app.test_client()
+    r = c.post("/api/v1/wikis", json={"slug": "pwsecret", "title": "PwSecretTitle", "description": "PwSecretDesc"},
+               headers=owner_h)
+    assert r.status_code == 201, r.data[:200]
+    r = c.post("/api/v1/wikis/pw-owner/pwsecret/pages", json={
+        "path": "notes.md", "content": "---\nvisibility: private\n---\n# Notes\n", "visibility": "private"}, headers=owner_h)
+    assert r.status_code == 201, r.data[:200]
+    secrets = ("PwSecretTitle", "PwSecretDesc")
+    from flask import g as _flask_g
+    _flask_g.pop("_login_user", None)  # harness keeps one app context; start anonymous
+
+    def no_secret(resp, label):
+        body = resp.get_data(as_text=True)
+        for s in secrets:
+            assert s not in body, f"{s} leaked via {label} ({resp.status_code})"
+
+    anon = app.test_client()
+    for path in ("/api/v1/wikis/pw-owner/pwsecret", "/api/wikis/pw-owner/pwsecret", "/@pw-owner/pwsecret/llms.txt"):
+        r = anon.get(path)
+        assert r.status_code == 401, (path, r.status_code)
+        no_secret(r, f"anonymous {path}")
+    assert "Bearer" in anon.get("/api/v1/wikis/pw-owner/pwsecret").headers.get("WWW-Authenticate", "")
+    assert anon.get("/api/v1/wikis/pw-owner/no-such-wiki").status_code == 404, "a missing wiki stays 404"
+    for path in ("/api/v1/wikis?limit=200", "/api/v1/wikis?owner=pw-owner", "/llms.txt", "/llms-full.txt", "/explore"):
+        r = anon.get(path)
+        no_secret(r, f"anonymous {path}")
+        assert "pwsecret" not in r.get_data(as_text=True), f"private wiki listed for anonymous on {path}"
+
+    for path, code in (("/@pw-owner/pwsecret/graph", 401), ("/@pw-owner/pwsecret/graph.json", 401)):
+        r = anon.get(path)
+        assert r.status_code == code, (path, r.status_code)
+        no_secret(r, f"anonymous {path}")
+
+    # the wiki's own subdomain: the top bar must not show its title to a viewer who cannot read it
+    wiki_row = Wiki.query.join(User, Wiki.owner_id == User.id).filter(
+        User.username == "pw-owner", Wiki.slug == "pwsecret").one()
+    wiki_row.subdomain = "pwsecret-sub"
+    db.session.commit()
+    try:
+        for path in ("/", "/notes"):
+            r = anon.get(path, base_url="https://pwsecret-sub.wikihub.md")
+            assert r.status_code >= 400, (path, r.status_code)
+            no_secret(r, f"anonymous subdomain {path}")
+    finally:
+        wiki_row.subdomain = None
+        db.session.commit()
+
+    for path in ("/api/v1/wikis/pw-owner/pwsecret", "/api/wikis/pw-owner/pwsecret"):
+        r = c.get(path, headers=other_h)
+        assert r.status_code == 403, (path, r.status_code)
+        no_secret(r, f"other user {path}")
+    # forking copies title/description: refused for a caller who cannot read the source
+    r = c.post("/api/v1/wikis/pw-owner/pwsecret/fork", headers=other_h)
+    assert r.status_code == 403, (r.status_code, r.data[:200])
+    no_secret(r, "other user fork")
+    assert Wiki.query.join(User, Wiki.owner_id == User.id).filter(
+        User.username == "pw-other", Wiki.slug == "pwsecret").count() == 0, "fork of an unreadable wiki was created"
+    for path in ("/api/v1/wikis?limit=200", "/api/v1/wikis?owner=pw-owner"):
+        r = c.get(path, headers=other_h)
+        no_secret(r, f"other user {path}")
+        assert not any(w["slug"] == "@pw-owner/pwsecret" for w in r.get_json()["wikis"]), f"private wiki listed for other user: {path}"
+
+    r = c.get("/api/v1/wikis/pw-owner/pwsecret", headers=owner_h)
+    assert r.status_code == 200 and r.get_json()["title"] == "PwSecretTitle", (r.status_code, r.data[:200])
+    mine = {w["slug"]: w for w in c.get("/api/v1/wikis?owner=pw-owner&limit=200", headers=owner_h).get_json()["wikis"]}
+    assert mine.get("@pw-owner/pwsecret", {}).get("visibility") == "private", mine
+    assert c.get("/api/wikis/pw-owner/pwsecret", headers=owner_h).status_code == 200
+    r = c.get("/@pw-owner/pwsecret/llms.txt", headers=owner_h)  # owner by API key, no session
+    assert r.status_code == 200 and "PwSecretTitle" in r.get_data(as_text=True), (r.status_code, r.data[:200])
+    _flask_g.pop("_login_user", None)
+
+    # an ACL grantee can read the wiki, so it may see its metadata
+    r = c.post("/api/v1/wikis/pw-owner/pwsecret/share", json={"pattern": "*", "username": "pw-other", "role": "read"},
+               headers=owner_h)
+    assert r.status_code in (200, 201), (r.status_code, r.data[:200])
+    r = c.get("/api/v1/wikis/pw-owner/pwsecret", headers=other_h)
+    assert r.status_code == 200 and r.get_json()["title"] == "PwSecretTitle", (r.status_code, r.data[:200])
+    _flask_g.pop("_login_user", None)
+    no_secret(anon.get("/api/v1/wikis/pw-owner/pwsecret"), "anonymous after share")
+
+
 def test_user_search_is_not_an_email_oracle(app, client, key):
     """F5: users/search requires auth, never prefix-matches email, allows an
     exact full-email match for signed-in callers, and escapes LIKE wildcards."""
@@ -12359,6 +12455,7 @@ def run_all():
             ("curation wiki/page/positive scopes + export (wikihub-f3b7)", lambda: test_curation_wiki_page_and_positive_scopes(app, client, key)),
             ("curation never reaches denied responses; survives reindex (wikihub-f3b7)", lambda: test_curation_never_reaches_denied_responses_and_survives_reindex(app, client, key)),
             ("curation migration matches model (wikihub-f3b7)", test_curation_migration_matches_model),
+            ("private wiki metadata never leaks (plan 3d)", lambda: test_private_wiki_metadata_never_leaks(app, client, key)),
             ("F5 user search is not an email oracle (wikihub-x77k)", lambda: test_user_search_is_not_an_email_oracle(app, client, key)),
             ("F6 unlisted pages not in public page list (wikihub-mnjc)", lambda: test_unlisted_pages_not_in_public_page_list(app, client, key)),
             ("auth crawler hygiene: nofollow, robots, noindex, fast 400 callback", lambda: test_auth_crawler_hygiene(app, client)),
@@ -13447,6 +13544,12 @@ def test_subdomain_nav_identity(app, client):
     assert r.status_code == 201
     r = client.patch("/api/v1/wikis/navsite/garden", json={"subdomain": "gardennotes"}, headers=h)
     assert r.status_code == 200, r.get_data(as_text=True)
+    # The top bar names the wiki only for viewers who can read it (plan 3d); a
+    # scaffolded wiki is all-private, so publish a page to test site identity.
+    # The private case is pinned by test_private_wiki_metadata_never_leaks.
+    r = client.post("/api/v1/wikis/navsite/garden/pages", json={
+        "path": "hello.md", "content": "---\nvisibility: public\n---\n# Hello\n", "visibility": "public"}, headers=h)
+    assert r.status_code == 201, r.get_data(as_text=True)
 
     for host, title in [("navsite.wikihub.md", "navsite"), ("gardennotes.wikihub.md", "Garden Notes")]:
         html = _get(client, "/", headers={"Host": host}).get_data(as_text=True)
