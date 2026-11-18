@@ -37,6 +37,7 @@ from app.routes import auth_bp
 from app.subdomains import validate_username
 from app.wiki_ops import ensure_personal_wiki, materialize_pending_invites_for
 from app.credentials_hint import resolve_server_url
+from app import oauth_pending
 from app import auto_signin
 from app import email_service
 from app import wit_feedback
@@ -163,24 +164,11 @@ def _google_oauth_context_from_request():
 
 
 def _stash_google_oauth_context(state, context):
-    if not state:
-        return
-    pending = dict(session.get(_GOOGLE_OAUTH_CONTEXTS_SESSION_KEY, {}))
-    pending[state] = context
-    session[_GOOGLE_OAUTH_CONTEXTS_SESSION_KEY] = pending
+    return oauth_pending.stash("google", state, context)
 
 
 def _pop_google_oauth_context():
-    state = request.args.get("state", "").strip()
-    if not state:
-        return {}
-    pending = dict(session.get(_GOOGLE_OAUTH_CONTEXTS_SESSION_KEY, {}))
-    context = pending.pop(state, {})
-    if pending:
-        session[_GOOGLE_OAUTH_CONTEXTS_SESSION_KEY] = pending
-    else:
-        session.pop(_GOOGLE_OAUTH_CONTEXTS_SESSION_KEY, None)
-    return context
+    return oauth_pending.pop_context("google", request.args.get("state", "").strip())
 
 
 def _check_login_rate_limit():
@@ -816,14 +804,18 @@ def google_login():
         flash("Google OAuth not configured")
         return redirect(url_for("auth.login"))
     redirect_uri = url_for("auth.google_callback", _external=True)
+    oauth_pending.prune()
     response = client.authorize_redirect(redirect_uri)
     location = response.headers.get("Location", "")
     state = parse_qs(urlparse(location).query).get("state", [""])[0]
-    _stash_google_oauth_context(state, _google_oauth_context_from_request())
+    if not _stash_google_oauth_context(state, _google_oauth_context_from_request()):
+        # Budget refusal must not add a session flash after pruning.
+        return redirect(url_for("auth.login"))
     return response
 
 
 @auth_bp.route("/google/callback")
+@oauth_pending.callback_cleanup("google")
 def google_callback():
     try:
         client = oauth.google
@@ -831,6 +823,11 @@ def google_callback():
         flash("Google OAuth not configured")
         return redirect(url_for("auth.login"))
 
+    oauth_context = _pop_google_oauth_context()
+    if not oauth_context:
+        security_event("auth.oauth_callback", "failure", provider="google",
+                       reason="token_exchange_failed", error_type="MismatchingStateError")
+        return redirect(url_for("auth.login"))
     try:
         token = client.authorize_access_token()
     except Exception as exc:
@@ -840,10 +837,8 @@ def google_callback():
             "auth.oauth_callback", "failure", provider="google",
             reason="token_exchange_failed", error_type=type(exc).__name__,
         )
-        _pop_google_oauth_context()
         flash("Google sign-in failed or was cancelled.")
         return redirect(url_for("auth.login"))
-    oauth_context = _pop_google_oauth_context()
     userinfo = token.get("userinfo", {})
     google_id = userinfo.get("sub")
     email = userinfo.get("email")
@@ -1039,24 +1034,11 @@ def _ideaflow_client():
 
 
 def _stash_ideaflow_oauth_context(state, context):
-    if not state:
-        return
-    pending = dict(session.get(_IDEAFLOW_OAUTH_CONTEXTS_SESSION_KEY, {}))
-    pending[state] = context
-    session[_IDEAFLOW_OAUTH_CONTEXTS_SESSION_KEY] = pending
+    return oauth_pending.stash("ideaflow", state, context)
 
 
 def _pop_ideaflow_oauth_context():
-    state = request.args.get("state", "").strip()
-    if not state:
-        return {}
-    pending = dict(session.get(_IDEAFLOW_OAUTH_CONTEXTS_SESSION_KEY, {}))
-    context = pending.pop(state, {})
-    if pending:
-        session[_IDEAFLOW_OAUTH_CONTEXTS_SESSION_KEY] = pending
-    else:
-        session.pop(_IDEAFLOW_OAUTH_CONTEXTS_SESSION_KEY, None)
-    return context
+    return oauth_pending.pop_context("ideaflow", request.args.get("state", "").strip())
 
 
 @auth_bp.route("/ideaflow")
@@ -1074,6 +1056,7 @@ def ideaflow_login():
     if not client:
         abort(404)
     redirect_uri = _ideaflow_callback_url()
+    oauth_pending.prune()
     switch = request.args.get("switch") == "1"
     choose = switch or request.cookies.get(_CHOOSE_ACCOUNT_COOKIE) == "1"
     if choose:
@@ -1091,7 +1074,9 @@ def ideaflow_login():
         context["email"] = invite_email
     if invite_token:
         context["it"] = invite_token
-    _stash_ideaflow_oauth_context(state, context)
+    if not _stash_ideaflow_oauth_context(state, context):
+        # Budget refusal must not add a session flash after pruning.
+        return redirect(url_for("auth.login"))
     return response
 
 
@@ -1114,6 +1099,7 @@ def ideaflow_link():
     # browser's current provider account. Linking binds that identity to this
     # WikiHub account permanently, so ask the provider to show which Ideaflow
     # account is being linked (with "Use another account") first.
+    oauth_pending.prune()
     response = client.authorize_redirect(redirect_uri, prompt="select_account")
     location = response.headers.get("Location", "")
     state = parse_qs(urlparse(location).query).get("state", [""])[0]
@@ -1122,7 +1108,9 @@ def ideaflow_link():
         "mode": "link",
         "user_id": current_user.id,
     }
-    _stash_ideaflow_oauth_context(state, context)
+    if not _stash_ideaflow_oauth_context(state, context):
+        # Budget refusal must not add a session flash after pruning.
+        return redirect(url_for("auth.login"))
     return response
 
 
@@ -1218,6 +1206,7 @@ def _start_silent_ideaflow_signin():
     return_url = auto_signin.safe_return_url(_auto_signin_original_url(), current_app.config)
     if client is None or not return_url:
         return None
+    oauth_pending.prune()
     response = client.authorize_redirect(_ideaflow_callback_url(), prompt="none")
     location = response.headers.get("Location", "")
     state = parse_qs(urlparse(location).query).get("state", [""])[0]
@@ -1230,7 +1219,8 @@ def _start_silent_ideaflow_signin():
         # Relative fallback for the normal return-path rule.
         "next": return_url if return_url.startswith("/") else request.path,
     }
-    _stash_ideaflow_oauth_context(state, context)
+    if not _stash_ideaflow_oauth_context(state, context):
+        return None
     response.headers["Cache-Control"] = "no-store"
     return _set_auto_signin_marker(response)
 
@@ -1277,6 +1267,7 @@ def _clear_ideaflow_state_data(client):
 
 
 @auth_bp.route("/ideaflow/callback")
+@oauth_pending.callback_cleanup("ideaflow")
 def ideaflow_callback():
     client = _ideaflow_client()
     if not client:
@@ -1305,6 +1296,10 @@ def ideaflow_callback():
             # page never triggers automatic sign-in, so this cannot loop.
             _clear_ideaflow_state_data(client)
             return redirect(url_for("auth.login"))
+    if not oauth_context:
+        security_event("auth.oauth_callback", "failure", provider="ideaflow",
+                       reason="token_exchange_failed", error_type="MismatchingStateError", silent=False)
+        return redirect(url_for("auth.login"))
     try:
         token = client.authorize_access_token()
     except Exception as exc:

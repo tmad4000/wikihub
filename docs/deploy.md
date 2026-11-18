@@ -258,3 +258,45 @@ flow; never use an email match to seed real accounts.
 The adapter remains unavailable until configured. Rollback to the previous
 code and remove only the adapter setting if needed; leave existing services,
 account links and the harmless expiring nonce table intact.
+
+
+## OAuth pending-state hotfix (wikihub-vwaa)
+
+Pending Google and Ideaflow flows now share a maximum of three records, expire
+at ten minutes and consume the submitted record on every callback outcome.
+Completed login identity/CSRF state survives. A callback for a legacy undated,
+expired or evicted attempt fails closed; start sign-in again. Retained flows
+still use Authlib's nonce, PKCE, signature, issuer and audience validation.
+The signed-cookie value budget is 3072 bytes; oversized pending contexts are
+pruned, and an attempt that cannot fit returns to login instead of redirecting
+with missing state. The regression uses real browser-cookie serialization and
+Authlib, with only provider transport replaced:
+
+```bash
+DATABASE_URL=<disposable-test-db> REPOS_DIR=<task-owned-repos> \
+  .venv/bin/python tests/test_oauth_pending.py
+```
+
+This hotfix branch deliberately starts at the verified live commit
+`ea9ff0f56bb1998632366b1cbce7a61c8dc8eccc`, not the unrelated undeployed commits
+on current main. Request exact-head independent review and root deployment GO.
+After source merge, fetch and deploy the exact approved hotfix head through the
+existing M4/IAP route; do not automatically pull all of origin/main. Before any
+switch, recheck live HEAD, tracked drift and nginx hashes. Preserve the live
+`app/templates/_footer.html` customization and all untracked operational files.
+Back up the checkout identity/footer and record a local rollback ref. The fix
+requires no migration, dependency, credential, environment or systemd change.
+Restart only `wikihub.service` under root's explicit app deployment GO.
+
+Keep the root-approved `/auth/` nginx buffer mitigation as defense in depth;
+app deployment must not copy the repository nginx file over the active site.
+Its backup is outside nginx's include directories under
+`/var/backups/wikihub-nginx/`. Rollback the app to its recorded prior live ref,
+restore only the saved footer if needed, and restart `wikihub.service`. Leave
+the nginx mitigation, database and `.env` intact. New pending attempts may need
+a fresh sign-in after rollback; never disable nonce/PKCE/replay checks.
+
+Verify public homepage/login 200 and fresh auth starts 302 without following a
+real user's identity flow. Use only a separately authorized synthetic account
+for authenticated smoke tests. Inspect new nginx header errors and a clean
+10–15 minute Cloudflare window; do not claim full recovery from one curl.
