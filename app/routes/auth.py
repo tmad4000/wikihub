@@ -809,7 +809,7 @@ def google_login():
     location = response.headers.get("Location", "")
     state = parse_qs(urlparse(location).query).get("state", [""])[0]
     if not _stash_google_oauth_context(state, _google_oauth_context_from_request()):
-        flash("Could not start sign-in. Please try again.")
+        # Budget refusal must not add a session flash after pruning.
         return redirect(url_for("auth.login"))
     return response
 
@@ -1075,7 +1075,7 @@ def ideaflow_login():
     if invite_token:
         context["it"] = invite_token
     if not _stash_ideaflow_oauth_context(state, context):
-        flash("Could not start sign-in. Please try again.")
+        # Budget refusal must not add a session flash after pruning.
         return redirect(url_for("auth.login"))
     return response
 
@@ -1109,7 +1109,7 @@ def ideaflow_link():
         "user_id": current_user.id,
     }
     if not _stash_ideaflow_oauth_context(state, context):
-        flash("Could not start sign-in. Please try again.")
+        # Budget refusal must not add a session flash after pruning.
         return redirect(url_for("auth.login"))
     return response
 

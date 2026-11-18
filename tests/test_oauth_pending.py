@@ -194,6 +194,35 @@ class PendingOAuth(unittest.TestCase):
         self.assertNotIn("_state_ideaflow_old", records)
         with self.browser.session_transaction() as sess: self.assertEqual(sess["unrelated"], "preserved")
 
+    def test_budget_refusal_does_not_grow_existing_identity_csrf_or_unrelated_cookie(self):
+        user = User(username="budget-user", email="budget@example.test")
+        db.session.add(user)
+        db.session.commit()
+        auth.oauth.register(name="google", client_id="google-budget-test",
+                            client_secret="synthetic-google", client_kwargs={"scope": "openid email profile"})
+        auth.oauth.google.server_metadata.update({"_loaded_at": time.time(),
+            "authorization_endpoint": "https://google.test/authorize"})
+        serializer = self.app.session_interface.get_signing_serializer(self.app)
+        for route in ("/auth/ideaflow", "/auth/google", "/auth/ideaflow/link"):
+            with self.subTest(route=route):
+                browser = self.app.test_client()
+                original = {"_user_id": str(user.id), "_fresh": False,
+                            "csrf_token": "preserve", "unrelated": secrets.token_urlsafe(2100)}
+                while len(serializer.dumps(original).encode()) < 3050:
+                    original["unrelated"] += secrets.token_urlsafe(3)
+                baseline = len(serializer.dumps(original).encode())
+                self.assertLessEqual(baseline, 3072)
+                with browser.session_transaction() as sess:
+                    sess.update(original)
+                response = browser.get(route)
+                self.assertEqual(response.status_code, 302)
+                self.assertIn("/auth/login", response.headers["Location"])
+                with browser.session_transaction() as sess:
+                    final = dict(sess)
+                self.assertLessEqual(len(serializer.dumps(final).encode()), 3072)
+                self.assertEqual(final, original, "Refusal must preserve existing session without adding a flash")
+                self.assertTrue(all(len(h.encode()) <= 3200 for h in response.headers.getlist("Set-Cookie")))
+
     def test_oversized_new_context_does_not_redirect_to_provider_without_matching_state(self):
         state, response = self.start(target="/" + secrets.token_urlsafe(5000))
         self.assertIsNone(state)
