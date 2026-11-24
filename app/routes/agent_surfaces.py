@@ -63,6 +63,7 @@ def llms_txt():
         "- Published Sheet tables: GET/PUT/DELETE /api/v1/wikis/{owner}/{slug}/data-sources/{table_path}; POST the /refresh suffix for CSV or TSV",
         "- Ideaflow Ecosystem OAuth connection: https://id.ideaflow.app/agents (verify WikiHub availability after consent; standalone keys still work)",
         "- MCP: /mcp (add to your agent's mcpServers config)",
+        "- Reader assistant (humans in the reader UI): POST /api/v1/wikis/{owner}/{slug}/ask {question, page_path?} answers from pages the caller can read, with cited page links; read-only, server-run, rate-limited. Agents should read pages directly instead.",
         "- Sidebar order: owners write .wikihub/sidebar.md via the page API (# Heading = group, - [[page|Label]], - folder/, - ... = rest); see /AGENTS.md",
         "- CLI: `pipx install wikihub-cli` then `wikihub signup`, `wikihub write`, `wikihub read`, `wikihub search` (see /AGENTS.md)",
         "- Private sections: Wrap lines in `<!-- private -->` … `<!-- /private -->` to keep them visible only to the wiki owner; they are removed for everyone else, including ACL grantees, search, excerpts, history, clones, and exports.",
@@ -374,6 +375,16 @@ inherited visibility and refresh the public mirror. Owners may also write,
 replace, read, or delete `.wikihub/sidebar.md` (sidebar order). Other `.wikihub/*` paths are
 rejected by generic page writes and hidden from page lists, search/discovery,
 backlinks, history, zip exports, agent context, and public git mirrors.
+
+## reader assistant
+
+Reader pages have an **Ask** panel for people without their own agent:
+`POST /api/v1/wikis/{owner}/{slug}/ask` with JSON `{"question": "...", "page_path": "guide.md"}`
+returns `{"answer", "citations": [{"n", "path", "title", "url", "quote"}]}`.
+It reads only pages the caller (anonymous, grantee or owner) can read, private
+sections stay owner-only, every `[n]` links to a page the caller can open, and
+it cannot write. It runs on the server's model key and is rate-limited; agents
+with a key should use the page and search APIs or MCP directly.
 
 ## custom domains
 

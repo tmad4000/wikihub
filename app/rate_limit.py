@@ -9,6 +9,9 @@ Limits used today (also published by GET /api/v1/me/capabilities):
                                      SIGNUP_API_MAX_PER_IP_PER_DAY (20) per client IP
   anonymous upload (/new-anonymous): ANON_UPLOAD_MAX_PER_IP_PER_HOUR (10) per client IP
   user search (/api/v1/users/search): USER_SEARCH_MAX_PER_MINUTE (30) per account
+  reader assistant (POST /api/v1/wikis/<o>/<w>/ask): READER_ASSISTANT_MAX_PER_IP_PER_HOUR (20)
+                                     anonymous (per IPv6 /64), _PER_USER_PER_HOUR (60) signed in,
+                                     _PER_WIKI_PER_DAY (300), _PER_DAY (2000) site-wide
 """
 
 import random
@@ -24,6 +27,10 @@ LIMIT_DEFAULTS = {
     "SIGNUP_API_MAX_PER_IP_PER_DAY": 20,
     "ANON_UPLOAD_MAX_PER_IP_PER_HOUR": 10,
     "USER_SEARCH_MAX_PER_MINUTE": 30,
+    "READER_ASSISTANT_MAX_PER_IP_PER_HOUR": 20,
+    "READER_ASSISTANT_MAX_PER_USER_PER_HOUR": 60,
+    "READER_ASSISTANT_MAX_PER_DAY": 2000,
+    "READER_ASSISTANT_MAX_PER_WIKI_PER_DAY": 300,
 }
 
 

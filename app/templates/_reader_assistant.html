@@ -1,0 +1,68 @@
+{# Reader assistant panel (wikihub-1bfx). Answers only from pages the current
+   visitor can read; every claim links to its source. Read-only. #}
+<style>
+.ra-panel {
+  position: fixed; top: 0; right: 0; bottom: 0; width: 420px; max-width: 100%;
+  background: var(--bg-surface); border-left: 1px solid var(--border-default, var(--border));
+  display: flex; flex-direction: column; z-index: 1001;
+  transform: translateX(100%); transition: transform 0.2s ease; visibility: hidden;
+}
+.ra-panel.open { transform: translateX(0); visibility: visible; }
+@media (max-width: 520px) { .ra-panel { width: 100%; } }
+@media (prefers-reduced-motion: reduce) { .ra-panel { transition: none; } }
+.ra-header { padding: 14px 16px 12px; border-bottom: 1px solid var(--border-default, var(--border)); }
+.ra-header-row { display: flex; align-items: center; gap: 8px; }
+.ra-title { font-weight: 600; font-size: 0.9375rem; color: var(--text-primary); flex: 1; }
+.ra-icon-btn { background: none; border: 0; color: var(--text-tertiary); cursor: pointer; padding: 4px 6px; border-radius: 4px; font-size: 0.8125rem; }
+.ra-icon-btn:hover, .ra-icon-btn:focus-visible { color: var(--text-primary); background: var(--accent-subtle); }
+.ra-scope { margin-top: 4px; font-size: 0.75rem; color: var(--text-tertiary); line-height: 1.4; }
+.ra-messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.ra-empty { color: var(--text-tertiary); font-size: 0.8125rem; line-height: 1.5; }
+.ra-q { align-self: flex-end; max-width: 85%; background: var(--accent-subtle); color: var(--text-primary); padding: 8px 12px; border-radius: 10px; font-size: 0.875rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ra-a { font-size: 0.875rem; line-height: 1.55; color: var(--text-secondary); overflow-wrap: anywhere; }
+.ra-a p { margin: 0 0 8px; }
+.ra-a ul, .ra-a ol { margin: 0 0 8px 18px; padding: 0; }
+.ra-a code { font-size: 0.8125rem; background: var(--bg-elevated); padding: 1px 4px; border-radius: 3px; }
+.ra-a strong { color: var(--text-primary); }
+.ra-ref { font-size: 0.6875rem; vertical-align: super; line-height: 0; margin: 0 1px; color: var(--accent); text-decoration: none; font-weight: 600; }
+.ra-ref:hover { text-decoration: underline; }
+.ra-sources { margin-top: 6px; display: flex; flex-direction: column; gap: 6px; }
+.ra-sources-label { font-size: 0.6875rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-tertiary); }
+.ra-source { display: grid; grid-template-columns: 20px 1fr; gap: 2px 8px; padding: 8px 10px; border: 1px solid var(--border-default, var(--border)); border-radius: 6px; text-decoration: none; color: inherit; }
+.ra-source:hover, .ra-source:focus-visible { border-color: var(--border-accent, var(--accent)); }
+.ra-source-n { color: var(--accent); font-weight: 600; font-size: 0.75rem; }
+.ra-source-title { color: var(--text-primary); font-size: 0.8125rem; font-weight: 500; }
+.ra-source-quote { grid-column: 2; font-size: 0.75rem; color: var(--text-secondary); border-left: 2px solid var(--accent); padding-left: 6px; }
+.ra-source-path { grid-column: 2; font-size: 0.6875rem; color: var(--text-tertiary); font-family: var(--font-mono, monospace); }
+.ra-error { font-size: 0.8125rem; color: var(--text-secondary); border: 1px solid var(--border-default, var(--border)); border-radius: 6px; padding: 8px 10px; }
+.ra-thinking { font-size: 0.8125rem; color: var(--text-tertiary); }
+.ra-form { display: flex; gap: 8px; padding: 12px 16px 16px; border-top: 1px solid var(--border-default, var(--border)); }
+.ra-form textarea { flex: 1; resize: none; min-height: 38px; max-height: 140px; padding: 8px 10px; background: var(--bg-base); color: var(--text-primary); border: 1px solid var(--border-default, var(--border)); border-radius: 6px; font: inherit; font-size: 0.875rem; }
+.ra-form textarea:focus { outline: none; border-color: var(--border-accent, var(--accent)); }
+.ra-form button { background: var(--accent); color: var(--bg-base); border: 0; border-radius: 6px; padding: 0 14px; font-weight: 600; cursor: pointer; }
+.ra-form button:disabled { opacity: 0.5; cursor: not-allowed; }
+</style>
+<aside class="ra-panel" id="reader-assistant" aria-label="Ask this wiki" aria-hidden="true"
+  data-ask-url="/api/v1/wikis/{{ owner.username | urlencode }}/{{ wiki.slug | urlencode }}/ask"
+  data-page-path="{{ page.path }}"
+  data-store-prefix="wikihub-ask:{{ current_user.id if current_user.is_authenticated else 'anon' }}:"
+  data-store-key="wikihub-ask:{{ current_user.id if current_user.is_authenticated else 'anon' }}:{{ owner.username }}/{{ wiki.slug }}">
+  <div class="ra-header">
+    <div class="ra-header-row">
+      <span class="ra-title">Ask this wiki</span>
+      <button type="button" class="ra-icon-btn" data-ra-clear title="Clear conversation">Clear</button>
+      <button type="button" class="ra-icon-btn" data-ra-close aria-label="Close" title="Close (Esc)">&times;</button>
+    </div>
+    <div class="ra-scope">
+      Answers use only pages {% if current_user.is_authenticated %}you (@{{ current_user.username }}){% else %}signed-out visitors{% endif %} can read in {{ wiki.title or wiki.slug }}, with links to each source. It can't edit the wiki.
+    </div>
+  </div>
+  <div class="ra-messages" id="ra-messages" aria-live="polite">
+    <div class="ra-empty" data-ra-empty>Ask about this page or anything else in this wiki — for example, “What is this page about?”</div>
+  </div>
+  <form class="ra-form" data-ra-form>
+    <textarea id="ra-input" rows="1" maxlength="2000" placeholder="Ask a question…" aria-label="Your question"></textarea>
+    <button type="submit" data-ra-send>Ask</button>
+  </form>
+</aside>
+<script src="{{ url_for('static', filename='js/reader-assistant.js') }}"></script>
