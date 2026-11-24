@@ -772,7 +772,7 @@
     }
     .anon-success-modal .anon-actions .btn-primary:hover { background: var(--accent-hover); }
   </style>
-<script defer src="https://analytics.ideaflow.app/ideaflow.js" data-product="wikihub" data-respect-dnt="true" data-privacy="strict"></script>
+<script async src="https://analytics.ideaflow.app/ideaflow.js" data-product="wikihub" data-respect-dnt="true" data-privacy="strict"></script>
 </head>
 <body>
 
@@ -1248,7 +1248,7 @@ document.querySelectorAll('[data-account-menu]').forEach(menu => {
 // PWA service worker (also registered from base.html — landing.html doesn't extend base)
 (function(){
   if ('serviceWorker' in navigator) {
-    window.addEventListener('load', function(){
+    document.addEventListener('DOMContentLoaded', function(){
       navigator.serviceWorker.register('/static/sw.js', { scope: '/' }).catch(function(){});
     });
   }
