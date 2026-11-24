@@ -95,6 +95,9 @@ def create_app(config_class="config.Config"):
     from app.routes.agent_chat import agent_chat_bp
     app.register_blueprint(agent_chat_bp, url_prefix="/api/v1")
 
+    from app.routes.reader_assistant import reader_assistant_bp
+    app.register_blueprint(reader_assistant_bp, url_prefix="/api/v1")
+
     from app.routes.api_root import api_root_bp
     app.register_blueprint(api_root_bp)
 
@@ -107,6 +110,8 @@ def create_app(config_class="config.Config"):
 
     csrf.exempt(api_bp)
     csrf.exempt(agent_chat_bp)
+    # JSON-only endpoint (415 otherwise), read-only, per-visitor rate limited.
+    csrf.exempt(reader_assistant_bp)
     csrf.exempt(api_root_bp)
     csrf.exempt(git_bp)
 
@@ -206,12 +211,15 @@ def create_app(config_class="config.Config"):
             "og_image": _url_for("static", filename="icons/icon-512.png", _external=True),
         }
 
+    from app.reader_assistant import is_available as _reader_assistant_available
+
     @app.context_processor
     def inject_feature_flags():
         # Expose feature flags to all templates (e.g. reader.html curator panel). wikihub-2jn.2
         from app.routes.auth import ideaflow_oidc_enabled
         return {
             "curator_enabled": bool(app.config.get("CURATOR_ENABLED", False)),
+            "reader_assistant_enabled": _reader_assistant_available(app),
             "ideaflow_login_enabled": ideaflow_oidc_enabled(app.config),
             "app_version": _app_version(),
         }

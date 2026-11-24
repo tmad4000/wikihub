@@ -808,6 +808,13 @@ a:focus-visible + .peek-trigger, .peek-trigger:focus-visible { width: 16px; opac
       </button>
       {% endif %}
 
+      {% if reader_assistant_enabled %}
+      <button type="button" class="action-btn" data-ra-open aria-controls="reader-assistant" aria-expanded="false" title="Ask this wiki — answers cite pages you can read">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V13"/><path d="M12 16h.01"/></svg>
+        Ask
+      </button>
+      {% endif %}
+
       <a href="/@{{ owner.username }}/{{ wiki.slug }}/{{ page.path | page_url }}/history" class="action-btn-mini" title="Page history">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
       </a>
@@ -1091,6 +1098,8 @@ a:focus-visible + .peek-trigger, .peek-trigger:focus-visible { width: 16px; opac
 </div>
 <div class="curator-overlay" id="curator-overlay" onclick="toggleCurator()"></div>
 {% endif %}
+
+{% if reader_assistant_enabled %}{% include "_reader_assistant.html" %}{% endif %}
 
 {% endblock %}
 

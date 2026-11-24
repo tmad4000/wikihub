@@ -318,6 +318,11 @@ probe, suggest-edit) run against a live server:
 (needs Playwright). The Milkdown bundle has its own acceptance test:
 `cd milkdown-src && node test-roundtrip.mjs`.
 
+Reader assistant browser check (Ask panel, cited source links, private-page
+boundary, phone width) uses a scripted model, so it needs no API key: start
+`python3 tests/browser/reader_assistant_server.py --port PORT`, then run
+`BASE_URL=http://127.0.0.1:PORT node tests/browser/reader_assistant.mjs`.
+
 Separate PostgreSQL-backed runtime, scaling, and reader ACL regressions are
 documented in the [deployment guide](docs/deploy.md#production-workers).
 

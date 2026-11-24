@@ -51,6 +51,23 @@ class Config:
     # Default ON so the feature is live as soon as the endpoint is deployed.
     # Set CURATOR_ENABLED=false to hide the panel and return 503 from /api/v1/agent/chat.
     CURATOR_ENABLED = os.environ.get("CURATOR_ENABLED", "true").lower() in ("1", "true", "yes")
+    # Reader assistant (wikihub-1bfx): public "Ask" panel on reader pages that
+    # answers from pages the visitor can read, with cited sources. Runs on the
+    # server's own model key -- never a visitor's personal credentials. It is
+    # available only when enabled AND READER_ASSISTANT_API_KEY is set (the
+    # shared ANTHROPIC_API_KEY only with READER_ASSISTANT_ALLOW_SHARED_KEY=true),
+    # so deploying never starts public spend on an existing key.
+    READER_ASSISTANT_ENABLED = os.environ.get("READER_ASSISTANT_ENABLED", "true").lower() in ("1", "true", "yes")
+    READER_ASSISTANT_API_KEY = os.environ.get("READER_ASSISTANT_API_KEY", "")
+    ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+    READER_ASSISTANT_MODEL = os.environ.get("READER_ASSISTANT_MODEL", "claude-opus-5-5")
+    READER_ASSISTANT_EFFORT = os.environ.get("READER_ASSISTANT_EFFORT", "low")
+    READER_ASSISTANT_MAX_PER_IP_PER_HOUR = int(os.environ.get("READER_ASSISTANT_MAX_PER_IP_PER_HOUR", "20"))
+    READER_ASSISTANT_MAX_PER_USER_PER_HOUR = int(os.environ.get("READER_ASSISTANT_MAX_PER_USER_PER_HOUR", "60"))
+    READER_ASSISTANT_MAX_PER_DAY = int(os.environ.get("READER_ASSISTANT_MAX_PER_DAY", "2000"))
+    READER_ASSISTANT_MAX_PER_WIKI_PER_DAY = int(os.environ.get("READER_ASSISTANT_MAX_PER_WIKI_PER_DAY", "300"))
+    READER_ASSISTANT_MAX_CONCURRENT = int(os.environ.get("READER_ASSISTANT_MAX_CONCURRENT", "2"))
+    READER_ASSISTANT_ALLOW_SHARED_KEY = os.environ.get("READER_ASSISTANT_ALLOW_SHARED_KEY", "false").lower() in ("1", "true", "yes")
     # wikihub-u9rc: PostHog analytics. Empty key = snippet skipped (dev default).
     POSTHOG_KEY = os.environ.get("POSTHOG_KEY", "")
     POSTHOG_HOST = os.environ.get("POSTHOG_HOST", "https://us.i.posthog.com")
