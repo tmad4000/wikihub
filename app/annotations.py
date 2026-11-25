@@ -180,17 +180,52 @@ def parse_request_id(value):
         return None
 
 
+def rekey_after_reset(wiki_id, prior_ids):
+    """After a reset reindex recreated page rows, point annotations that were
+    on the OLD row of a path at the NEW row of the same path. Only exact
+    old-id matches move, so comments from an earlier, deleted incarnation of
+    the page stay marked as such. Caller commits."""
+    from app import db
+    from app.models import Page, PageAnnotation
+
+    if not prior_ids:
+        return 0
+    new_ids = dict(Page.query.with_entities(Page.path, Page.id)
+                   .filter(Page.wiki_id == wiki_id, Page.path.in_(list(prior_ids))).all())
+    moved = 0
+    for path, old_id in prior_ids.items():
+        new_id = new_ids.get(path)
+        if new_id is None or new_id == old_id:
+            continue
+        moved += (PageAnnotation.query
+                  .filter_by(wiki_id=wiki_id, page_path=path, page_id=old_id)
+                  .update({"page_id": new_id}, synchronize_session=False))
+    db.session.flush()
+    return moved
+
+
 def serialize(annotation, view, author_names):
-    """Viewer-scoped JSON for one comment."""
+    """Viewer-scoped JSON for one comment, or None if this viewer must not
+    see it at all.
+
+    Hidden from non-owners (shown to the owner as detached):
+    - comments made on an earlier incarnation of the page (deleted and
+      recreated at the same path; page id differs);
+    - anchored comments whose originally public passage now exists only
+      inside an owner-only private band -- the quote and the comment
+      would reveal or discuss band text."""
     quote = annotation.quote or ""
     detached = False
-    if quote:
+    other_incarnation = annotation.page_id is not None and annotation.page_id != view.page.id
+    if other_incarnation:
+        if not view.is_owner:
+            return None
+        detached = True
+    if quote and not detached:
         q = match_key(quote)
         detached = count_occurrences(view.text_key("viewer"), q) != 1
         if detached and not view.is_owner and count_occurrences(view.text_key("full"), q) >= 1:
-            # The passage still exists, but only inside an owner-only private
-            # band now: withhold the quote from non-owners.
-            quote = None
+            return None
     return {
         "id": annotation.id,
         "author": author_names.get(annotation.author_id),
