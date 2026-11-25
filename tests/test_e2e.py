@@ -12663,11 +12663,11 @@ def _annot_get(browser, owner, slug, page_id, headers=None):
 _NO_VIEWER = object()
 
 
-def _annot_post(browser, owner, slug, page_id, body, quote, revision, request_id=None, headers=None, viewer_id=_NO_VIEWER):
+def _annot_post(browser, owner, slug, page_id, body, quote, revision, request_id=None, headers=None, viewer_id=_NO_VIEWER, audience="public"):
     import uuid as _uuid
     from flask import g as _g
     _g.pop("_login_user", None)
-    payload = {"body": body, "quote": quote, "revision": revision,
+    payload = {"body": body, "quote": quote, "revision": revision, "previewed_audience": audience,
                "request_id": request_id or str(_uuid.uuid4()),
                "viewer_id": getattr(browser, "wh_user_id", None) if viewer_id is _NO_VIEWER else viewer_id}
     return browser.post(_annot_url(owner, slug, page_id), json=payload, headers=headers or {})
@@ -12763,7 +12763,7 @@ def test_page_annotations_scope_anchoring_and_dedup(app, client, key):
     assert _annot_post(reader, *W, page.id, "Whole page note", "", rev).status_code == 201
 
     # The owner can anchor to a private band: stored owner-only.
-    r = _annot_post(owner, *W, page.id, "Owner band note", "Secret band sentence ZETA.", rev)
+    r = _annot_post(owner, *W, page.id, "Owner band note", "Secret band sentence ZETA.", rev, audience="owner_only")
     assert r.status_code == 201 and r.get_json()["comment"]["owner_only"] is True
     r = _annot_post(owner, *W, page.id, "Owner public note", "Alpha passage about tomatoes", rev)
     assert r.status_code == 201 and r.get_json()["comment"]["owner_only"] is False
@@ -12791,7 +12791,7 @@ def test_page_annotations_scope_anchoring_and_dedup(app, client, key):
     assert _annot_get(anon, *W, secret.id).status_code == 401
     assert _annot_get(reader, *W, secret.id).status_code == 403
     assert _annot_post(reader, *W, secret.id, "x", "", secret.content_hash).status_code == 403
-    r = _annot_post(grantee, *W, secret.id, "Grantee note", "Private page text OMEGA.", secret.content_hash)
+    r = _annot_post(grantee, *W, secret.id, "Grantee note", "Private page text OMEGA.", secret.content_hash, audience="private")
     assert r.status_code == 201 and r.get_json()["comment"]["owner_only"] is False
     assert _annot_get(grantee, *W, secret.id).get_json()["comments"][0]["body"] == "Grantee note"
     assert _annot_get(reader, *W, 999999).status_code == 404

@@ -93,12 +93,13 @@ async function ask(page, question) {
 try {
   // 1. signed-out visitor ------------------------------------------------
   const anon = await newPage();
-  await anon.goto(`${W}/guide`);
+  await anon.goto(`${W}/guide`, { waitUntil: 'domcontentloaded' });
   const launcher = await anon.$('[data-ra-open]');
   check('signed-out visitor sees the Ask launcher', !!launcher);
   await launcher.click();
   await anon.waitForSelector('#reader-assistant.open');
-  const scope = await anon.textContent('.ra-scope');
+  check('standard reader omits comparison controls', await anon.locator('[data-switches]').count() === 0);
+  const scope = await anon.locator('#reader-assistant .ra-header').innerText();
   check('panel states it answers from pages signed-out visitors can read', /signed-out visitors can read/.test(scope), scope);
   await ask(anon, 'How should I water tomatoes, and what is the greenhouse budget?');
   const panelText = await anon.textContent('#reader-assistant');
@@ -126,7 +127,7 @@ try {
   await shot(anon, '2-anon-followed-source');
 
   // 3. the boundary itself --------------------------------------------------
-  const resp = await anon.goto(`${W}/private-notes`);
+  const resp = await anon.goto(`${W}/private-notes`, { waitUntil: 'domcontentloaded' });
   const restrictedText = await anon.textContent('body');
   check('private page is restricted for the signed-out visitor', [401, 403].includes(resp.status()) && !restrictedText.includes('PRIVSECRET'), String(resp.status()));
   await shot(anon, '3-anon-private-restricted');
@@ -134,11 +135,11 @@ try {
   // 4. owner -----------------------------------------------------------------
   const ml = await api('POST', '/api/v1/auth/magic-link', { next: `/@${user}/garden/private-notes` }, KEY);
   const owner = await newPage();
-  await owner.goto(ml.data.login_url);
+  await owner.goto(ml.data.login_url, { waitUntil: 'domcontentloaded' });
   await owner.waitForURL((u) => u.pathname === `/@${user}/garden/private-notes`, { timeout: 10000 });
   await owner.click('[data-ra-open]');
   await owner.waitForSelector('#reader-assistant.open');
-  check('owner panel names the signed-in identity', (await owner.textContent('.ra-scope')).includes(`@${user}`));
+  check('owner panel names the signed-in identity', (await owner.locator('#reader-assistant .ra-header').innerText()).includes(`@${user}`));
   await ask(owner, 'What is the greenhouse budget?');
   const ownerSources = await owner.$$eval('.ra-source', (els) => els.map((a) => a.getAttribute('data-ra-source')));
   check('owner gets the private page as a cited source', ownerSources.includes('private-notes.md'), JSON.stringify(ownerSources));
@@ -149,12 +150,69 @@ try {
   await owner.waitForLoadState('domcontentloaded');
   check('owner source link opens the private page', /PRIVSECRET greenhouse budget/.test(await owner.textContent('body')));
 
+  // Post through the signed-in form and read back the exact approved text.
+  const comment = '  Inspect the greenhouse after rain.\n';
+  await owner.keyboard.press('Escape');
+  await owner.click('[data-compose]');
+  await owner.fill('[data-body]', comment);
+  await owner.click('[data-comment-form] [type=submit]');
+  const saved = owner.locator('[data-comments] li').first();
+  await saved.waitFor({ timeout: 10000 });
+  await owner.reload({ waitUntil: 'domcontentloaded' });
+  await saved.waitFor({ timeout: 10000 });
+  check('comment retains approved text and author after reload',
+    await saved.locator('p').textContent() === comment && await saved.locator('strong').textContent() === '@' + user);
+
+  await owner.goto(W + '/guide');
+  await owner.locator('article p').filter({hasText: 'BANDSECRET'}).evaluate(p => {
+    const range = document.createRange();
+    range.selectNodeContents(p);
+    getSelection().removeAllRanges();
+    getSelection().addRange(range);
+  });
+  await owner.click('[data-selection]');
+  const approveComment = owner.locator('[data-comment-form] [type=submit]');
+  await owner.fill('[data-body]', 'Private reminder');
+  await approveComment.waitFor();
+  await owner.waitForFunction(() => !document.querySelector('[data-comment-form] [type=submit]').disabled);
+  const destination = await owner.textContent('[data-destination]');
+  if (!destination.includes('Owner only')) throw new Error('Private passage review showed ' + destination);
+  await approveComment.click();
+  await owner.locator('[data-comments] li').filter({hasText:'Private reminder'}).waitFor();
+  check('private passage audience agrees before and after approval',
+    (await owner.textContent('[data-comments]')).includes('Owner only'));
+
+  // An ACL edit can change the audience without changing the page's text.
+  const pages = '/api/v1/wikis/' + user + '/garden/pages';
+  const setAcl = async rule => {
+    const result = await api('PUT', pages + '/.wikihub/acl', {content: '* ' + rule + '\n'}, KEY);
+    if (result.status >= 300) throw new Error('Could not change fixture ACL');
+  };
+  await setAcl('private');
+  const inherited = await api('POST', pages, {path:'inherited.md', content:'# Field notes'}, KEY);
+  if (inherited.status !== 201) throw new Error('Could not create inherited page');
+  await owner.goto(W + '/inherited');
+  await owner.click('[data-compose]');
+  await owner.fill('[data-body]', 'Reviewed note');
+  await owner.locator('[data-destination]').filter({hasText:'private page'}).waitFor();
+  await setAcl('public-view');
+  await approveComment.click();
+  await owner.locator('[data-destination]').filter({hasText:'Public'}).waitFor();
+  const thread = await owner.evaluate(async () => {
+    const root = document.querySelector('#page-comments');
+    const res = await fetch(root.dataset.url, {headers:{'X-CSRFToken':root.querySelector('[data-token]').value}});
+    return res.json();
+  });
+  if (thread.comments.length) throw new Error('Audience change posted without renewed approval');
+  await approveComment.click();
+  await owner.locator('[data-comments] li').filter({hasText:'Reviewed note'}).waitFor();
+
   // 5. phone width --------------------------------------------------------------
   const phone = await newPage({ width: 390, height: 844 });
   await phone.addInitScript(() => Object.defineProperty(window, 'sessionStorage', {
     get() { throw new DOMException('Storage denied', 'SecurityError'); },
   }));
-  await phone.goto(`${W}/guide`);
+  await phone.goto(`${W}/guide`, { waitUntil: 'domcontentloaded' });
   await phone.click('[data-ra-open]');
   await phone.waitForSelector('#reader-assistant.open');
   const box = await phone.$eval('#reader-assistant', (el) => el.getBoundingClientRect().width);

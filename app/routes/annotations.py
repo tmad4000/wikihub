@@ -19,6 +19,7 @@ from sqlalchemy import tuple_
 from sqlalchemy.exc import IntegrityError
 
 from app import db, rate_limit
+from app.acl import resolve_visibility
 from app.annotations import (
     MAX_BODY_CHARS,
     MAX_QUOTE_CHARS,
@@ -185,14 +186,6 @@ def create_annotation(username, slug, page_id):
     if viewer_id != viewer.id:
         return _err(409, "viewer_mismatch", "You're signed in as a different account now. Reload the page.")
 
-    body = data.get("body")
-    if not isinstance(body, str) or not body.strip():
-        return _err(400, "invalid_body", "Write a comment.")
-    if _UNSTORABLE_TEXT.search(body):
-        return _err(400, "invalid_body", "The comment contains an unsupported character.")
-    body = body.strip()
-    if len(body) > MAX_BODY_CHARS:
-        return _err(400, "invalid_body", f"Comments are limited to {MAX_BODY_CHARS} characters.")
     quote = data.get("quote", "")
     if quote is None:
         quote = ""
@@ -203,9 +196,6 @@ def create_annotation(username, slug, page_id):
     quote = match_key(quote)
     if len(quote) > MAX_QUOTE_CHARS:
         return _err(400, "invalid_quote", f"Select at most {MAX_QUOTE_CHARS} characters.")
-    request_id = parse_request_id(data.get("request_id"))
-    if request_id is None:
-        return _err(400, "invalid_request_id", "request_id must be a UUID.")
     revision = data.get("revision")
     if not isinstance(revision, str) or not revision:
         return _err(400, "invalid_revision", "revision is required.")
@@ -214,22 +204,31 @@ def create_annotation(username, slug, page_id):
     if err:
         return err
 
-    # Retry dedup first: a retried request returns the original comment even
-    # if the page changed since or the visitor is now rate limited.
-    existing = PageAnnotation.query.filter_by(author_id=viewer.id, request_id=request_id).first()
-    if existing is not None:
-        if _same_submission(existing, view, body, quote):
-            names = {viewer.id: viewer.username}
-            return _json({"comment": serialize(existing, view, names), "duplicate": True}, 200)
-        return _err(409, "request_id_reused", "This request_id was already used for a different comment.")
+    preview = request.args.get("preview") == "1"
+    if not preview:
+        body = data.get("body")
+        if not isinstance(body, str) or not body.strip():
+            return _err(400, "invalid_body", "Write a comment.")
+        if _UNSTORABLE_TEXT.search(body):
+            return _err(400, "invalid_body", "The comment contains an unsupported character.")
+        if len(body) > MAX_BODY_CHARS:
+            return _err(400, "invalid_body", f"Comments are limited to {MAX_BODY_CHARS} characters.")
+        request_id = parse_request_id(data.get("request_id"))
+        if request_id is None:
+            return _err(400, "invalid_request_id", "request_id must be a UUID.")
+
+        # Retry dedup first: a retried request returns the original comment even
+        # if the page changed since or the visitor is now rate limited.
+        existing = PageAnnotation.query.filter_by(author_id=viewer.id, request_id=request_id).first()
+        if existing is not None:
+            if _same_submission(existing, view, body, quote):
+                names = {viewer.id: viewer.username}
+                return _json({"comment": serialize(existing, view, names), "duplicate": True}, 200)
+            return _err(409, "request_id_reused", "This request_id was already used for a different comment.")
 
     if revision != view.page.content_hash:
         return _err(409, "stale_revision", "The page changed since you loaded it. Reload and try again.",
                     revision=view.page.content_hash)
-
-    limited = _limited(viewer, view)
-    if limited is not None:
-        return limited
 
     owner_only = False
     if quote:
@@ -243,6 +242,17 @@ def create_annotation(username, slug, page_id):
             # Unique in the owner's view; owner-only unless the same passage is
             # also uniquely public. Conservative: any doubt -> owner-only.
             owner_only = count_occurrences(view.text_key("public"), key) != 1
+
+    visibility = resolve_visibility(view.page.path, view.acl_rules, view.page.visibility)
+    audience = "owner_only" if owner_only else visibility.split("-")[0]
+    if preview:
+        return _json({"audience": audience})
+    if data.get("previewed_audience") != audience:
+        return _err(409, "audience_changed", "Review the audience before posting.", audience=audience)
+
+    limited = _limited(viewer, view)
+    if limited is not None:
+        return limited
 
     row = PageAnnotation(
         wiki_id=view.wiki.id,

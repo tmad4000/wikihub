@@ -44,15 +44,21 @@ token returns `400 {"error":"csrf_failed"}` (GET) or Flask-WTF's 400 (POST).
   `403 forbidden` (signed in, no read access), `404 not_found` (no such page in this
   wiki).
 
+**Audience preview**: POST to the same endpoint with `?preview=1`, sending
+`viewer_id`, `revision`, and `quote`. This checks the passage without writing a
+comment and returns `audience` (`owner_only`, `private`, `unlisted`, or `public`).
+Show this audience before approval and send it with the approved comment.
+
 **POST** (signed-in reader with read access), JSON:
 
 ```json
 {"body": "text", "quote": "selected text or empty", "request_id": "<uuid4>",
- "revision": "<content_hash>", "viewer_id": 42}
+ "revision": "<content_hash>", "viewer_id": 42, "previewed_audience": "public"}
 ```
 
 | Result | Status | Body |
 |---|---|---|
+| missing or changed audience | 409 | `audience_changed` with current `audience`; show it and require approval again |
 | created | 201 | `{"comment": {…}}` |
 | retry of the same `request_id` with the same body/quote/page | 200 | `{"comment": {…original…}, "duplicate": true}`. `comment` is `null` if that comment is now hidden from this viewer |
 | `viewer_id` missing or not an integer | 400 | `invalid_viewer_id` |

@@ -115,14 +115,41 @@
     if (selected) get('selection').title = selected.slice(0,120);
   }
   document.addEventListener('selectionchange',capture);
-  function close() { form.hidden = true; if(page) page.hidden = true; }
-  function compose(anchor,body) {
+  const submit = form.querySelector('[type=submit]');
+  let audience, composition = 0;
+  const labels = {
+    owner_only: 'Owner only', private: 'Readers with access to this private page',
+    unlisted: 'Anyone with the link', public: 'Public',
+  };
+  function showAudience(value) {
+    if (!Object.hasOwn(labels, value)) throw new Error('Could not verify the audience.');
+    audience = value;
+    get('destination').textContent = target + ' · ' + labels[value];
+  }
+  function close() { composition++; audience = null; form.hidden = true; if(page) page.hidden = true; }
+  function post(url, data) {
+    return fetch(url, {method:'POST', headers:{'Content-Type':'application/json','X-CSRFToken':get('token').value},
+      body:JSON.stringify({...data, quote, revision:root.dataset.revision, viewer_id:Number(root.dataset.viewer)})});
+  }
+  async function compose(anchor,body) {
     close(); quote=anchor; issuedPayload=''; requestId=crypto.randomUUID();
+    const current = composition;
+    submit.disabled = true;
     get('heading').textContent=body ? 'Review suggested comment' : 'New comment';
-    get('destination').textContent=target+' · Visible to readers with access to this content';
+    get('destination').textContent = target + ' · Checking audience…';
     get('quote').textContent=quote;get('quote').hidden=!quote;
     get('body').value=body;form.hidden=false;
     form.scrollIntoView({block:'center'});get('body').focus();
+    try {
+      const res = await post(root.dataset.url + '?preview=1', {});
+      const result = await res.json();
+      if (current !== composition) return;
+      if (!res.ok) throw new Error(result.message || 'Could not verify the audience.');
+      showAudience(result.audience);
+      submit.disabled = false;
+    } catch (err) {
+      if (current === composition) get('destination').textContent = target + ' · ' + err.message;
+    }
   }
   get('compose').onclick=()=>compose('','');
   get('selection').onclick=()=>compose(selected,'');
@@ -180,17 +207,24 @@
   }
   form.onsubmit=async e=>{
     e.preventDefault();
-    const submit=form.querySelector('[type=submit]');
-    if(submit.disabled)return;
-    const body=get('body').value.trim();if(!body)return;
+    if(submit.disabled || !audience)return;
+    const current = composition;
+    const body = get('body').value;
+    if (!body.trim()) return;
     if(body.length>4000){status.textContent='Shorten this comment to 4,000 characters before approving.';return;}
     if(issuedPayload && issuedPayload!==body) requestId=crypto.randomUUID();
     issuedPayload=body;submit.disabled=true;
     try {
-      const res=await fetch(root.dataset.url,{method:'POST',headers:{'Content-Type':'application/json','X-CSRFToken':get('token').value},body:JSON.stringify({body,quote,request_id:requestId,revision:root.dataset.revision,viewer_id:root.dataset.viewer})});
-      if(!res.ok){const d=await res.json().catch(()=>({}));throw new Error(d.message||'Posting failed ('+res.status+').');}
-      close();await refresh();
-    } catch(err){status.textContent=err.message;}
-    finally{submit.disabled=false;}
+      const res = await post(root.dataset.url, {body, request_id:requestId, previewed_audience:audience});
+      if (!res.ok) {
+        const d = await res.json().catch(()=>({}));
+        if (current !== composition) return;
+        if (d.error === 'audience_changed') showAudience(d.audience);
+        throw new Error(d.message || 'Posting failed ('+res.status+').');
+      }
+      if (current === composition) close();
+      await refresh();
+    } catch(err){if (current === composition) status.textContent=err.message;}
+    finally{if (current === composition) submit.disabled=false;}
   };
 })();
