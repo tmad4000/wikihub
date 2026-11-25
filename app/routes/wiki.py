@@ -2720,10 +2720,10 @@ def _create_assistant_draft(owner, wiki, is_owner, acl_rules):
     if not current_user.is_authenticated:
         return fail(401, "authentication_required", "Sign in to save a draft.")
     # The tab must still belong to the identity that previewed the draft.
-    viewer_id = (request.form.get("viewer_id") or "").strip()
-    if not viewer_id.isdigit():
+    viewer_id = request.form.get("viewer_id", "")
+    if not re.fullmatch(r"[1-9][0-9]{0,9}", viewer_id):
         return fail(400, "invalid_viewer_id", "viewer_id (the signed-in user's id) is required.")
-    if int(viewer_id) != current_user.id:
+    if viewer_id != str(current_user.id):
         return fail(409, "viewer_mismatch", "You're signed in as a different account now. Reload and review the draft again.")
     if request.form.get("approved") != "1":
         return fail(400, "approval_required", "Review the draft and approve it before saving.")

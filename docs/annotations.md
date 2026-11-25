@@ -25,7 +25,7 @@ token returns `400 {"error":"csrf_failed"}` (GET) or Flask-WTF's 400 (POST).
  "revision": "<pages.content_hash>", "viewer_id": 42}
 ```
 
-- The newest 50 visible comments appear in chronological order. Pass the returned `before` cursor on GET for the preceding page. A null cursor indicates the start of the thread.
+- Each request checks up to 50 candidate comments and returns the visible ones in chronological order. A batch can be empty and still have a continuation cursor. Pass the returned `before` cursor on GET for the preceding page. A null cursor indicates the start of the thread.
 - `quote` is `""` for a whole-page comment.
 - `viewer_id` is the signed-in user's id, or `null` when signed out. Send it back
   on POST.

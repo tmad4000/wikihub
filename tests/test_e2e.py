@@ -12817,10 +12817,35 @@ def test_page_annotations_scope_anchoring_and_dedup(app, client, key):
     assert mine["Nice tip"]["detached"] is False and mine["Nice tip"]["quote"].startswith("Alpha passage")
     assert mine["Owner band note"]["owner_only"] is True and mine["Owner band note"]["detached"] is False
 
+    with patch("app.routes.annotations.THREAD_PAGE_SIZE", 1):
+        batch = _annot_get(reader, *W, page.id).get_json()
+        bodies = []
+        empty_continuation = False
+        for _ in range(12):
+            bodies.extend(c["body"] for c in batch["comments"])
+            if not batch["before"]:
+                break
+            empty_continuation |= not batch["comments"]
+            batch = reader.get(_annot_url(*W, page.id), query_string={"before": batch["before"]}).get_json()
+        assert empty_continuation and batch["before"] is None
+        assert bodies == list(reversed(seen))
+    assert reader.get(_annot_url(*W, page.id), query_string={"before": "invalid"}).status_code == 400
+
     # A reset reindex gives pages new ids; comments keep their page identity.
     old_id = page.id
     _g.pop("_login_user", None)
-    assert owner.post("/@agent1/annot-wiki/reindex").status_code == 200
+    _put_page(client, key, *W, "unannotated.md", "# No comments")
+    update_counts = []
+    def track_annotations(context):
+        if context.mapper.class_ is PageAnnotation:
+            update_counts.append(context.result.rowcount)
+    event.listen(db.session(), "after_bulk_update", track_annotations)
+    try:
+        _g.pop("_login_user", None)
+        assert owner.post("/@agent1/annot-wiki/reindex").status_code == 200
+    finally:
+        event.remove(db.session(), "after_bulk_update", track_annotations)
+    assert update_counts and all(n > 0 for n in update_counts)
     page = _page_row(*W, "guide.md")
     assert page.id != old_id, "reset reindex recreated the row"
     seen = {c["body"]: c for c in _annot_get(reader, *W, page.id).get_json()["comments"]}
@@ -12834,6 +12859,9 @@ def test_page_annotations_scope_anchoring_and_dedup(app, client, key):
               "---\nvisibility: public\n---\n\n# Guide v2\n\nGamma line to delete later.\n")
     page = _page_row(*W, "guide.md")
     assert _annot_get(reader, *W, page.id).get_json()["comments"] == [], "old incarnation hidden from readers"
+    retry = _annot_post(reader, *W, page.id, "Nice tip", "Alpha passage about tomatoes and sun.",
+                        page.content_hash, request_id=rid)
+    assert retry.status_code == 409 and retry.get_json()["error"] == "request_id_reused"
     mine = _annot_get(owner, *W, page.id).get_json()["comments"]
     assert mine and all(c["detached"] for c in mine), mine
     r = _annot_post(reader, *W, page.id, "New page note", "Gamma line to delete later.", page.content_hash)
@@ -12971,8 +12999,9 @@ def test_assistant_draft_new_page_rules(app, client, key):
             "content": "---\ntitle: Idea\nvisibility: public\n---\n\n# Idea\n\nDrafted text.\n"}
 
     assert _draft_post(anon, "agent1", "draft-wiki", base).status_code == 401
-    r = _draft_post(owner, "agent1", "draft-wiki", {**base, "viewer_id": ""})
-    assert r.status_code == 400 and r.get_json()["error"] == "invalid_viewer_id"
+    for malformed_id in ("", "²", "9" * 5000, "01"):
+        r = _draft_post(owner, "agent1", "draft-wiki", {**base, "viewer_id": malformed_id})
+        assert r.status_code == 400 and r.get_json()["error"] == "invalid_viewer_id"
     r = _draft_post(owner, "agent1", "draft-wiki", {**base, "viewer_id": str(other.wh_user_id)})
     assert r.status_code == 409 and r.get_json()["error"] == "viewer_mismatch", "stale tab after account switch"
     r = _draft_post(owner, "agent1", "draft-wiki", {**base, "approved": "0"})

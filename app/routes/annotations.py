@@ -6,7 +6,11 @@ explicitly here. Responses are JSON and never cached. See app/annotations.py
 for the anchoring and privacy rules.
 """
 
+import base64
+import hashlib
 from datetime import datetime
+
+from cryptography.fernet import Fernet, InvalidToken
 
 from flask import Blueprint, current_app, jsonify, request
 from flask_wtf.csrf import CSRFError, validate_csrf
@@ -75,6 +79,16 @@ def _load(username, slug, page_id, viewer):
 THREAD_PAGE_SIZE = 50
 
 
+def _cursor_cipher(view):
+    secret = current_app.secret_key
+    if isinstance(secret, str):
+        secret = secret.encode()
+    viewer_id = view.viewer.id if view.viewer else 0
+    context = f"annotation-cursor:{view.page.id}:{viewer_id}:".encode()
+    key = hashlib.sha256(context + secret).digest()
+    return Fernet(base64.urlsafe_b64encode(key))
+
+
 def _comment_page(view, before):
     query = (db.session.query(PageAnnotation, User.username)
              .join(User, PageAnnotation.author_id == User.id)
@@ -89,15 +103,15 @@ def _comment_page(view, before):
     query = query.order_by(PageAnnotation.created_at.desc(), PageAnnotation.id.desc())
     comments = []
     cursor = None
-    for row, username in query.yield_per(THREAD_PAGE_SIZE):
+    rows = query.limit(THREAD_PAGE_SIZE + 1).all()
+    for row, username in rows[:THREAD_PAGE_SIZE]:
         comment = serialize(row, view, {row.author_id: username})
-        if comment is None:
-            continue
-        if len(comments) == THREAD_PAGE_SIZE:
-            oldest = comments[-1]
-            cursor = f"{oldest['created_at']},{oldest['id']}"
-            break
-        comments.append(comment)
+        if comment is not None:
+            comments.append(comment)
+    if len(rows) > THREAD_PAGE_SIZE:
+        last = rows[THREAD_PAGE_SIZE - 1][0]
+        position = f"{last.created_at.isoformat()},{last.id}".encode()
+        cursor = _cursor_cipher(view).encrypt(position).decode()
     comments.reverse()
     return comments, cursor
 
@@ -120,7 +134,8 @@ def _limited(user, view):
 
 
 def _same_submission(row, view, body, quote):
-    return row.wiki_id == view.wiki.id and row.page_path == view.page.path and row.body == body and (row.quote or "") == quote
+    return (row.wiki_id == view.wiki.id and row.page_path == view.page.path and row.page_id == view.page.id
+            and row.body == body and (row.quote or "") == quote)
 
 
 @annotations_bp.route("/@<username>/<slug>/-/pages/<int:page_id>/annotations", methods=["GET"])
@@ -134,11 +149,15 @@ def list_annotations(username, slug, page_id):
     before = None
     if "before" in request.args:
         try:
-            timestamp, row_id = request.args["before"].split(",")
+            token = request.args["before"]
+            if len(token) > 512:
+                raise ValueError
+            position = _cursor_cipher(view).decrypt(token.encode("ascii")).decode()
+            timestamp, row_id = position.split(",")
             before = (datetime.fromisoformat(timestamp), int(row_id))
             if before[0].tzinfo is None or not 0 < before[1] <= 2147483647:
                 raise ValueError
-        except ValueError:
+        except (InvalidToken, ValueError):
             return _err(400, "invalid_cursor", "Invalid comment cursor.")
     comments, cursor = _comment_page(view, before)
     return _json({"comments": comments, "before": cursor, "revision": view.page.content_hash,

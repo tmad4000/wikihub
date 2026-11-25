@@ -96,7 +96,7 @@
       else list.replaceChildren(...items);
       before = data.before;
       older.hidden = !before;
-      status.textContent = list.childElementCount ? '' : 'No comments yet.';
+      status.textContent = list.childElementCount || before ? '' : 'No comments yet.';
     } catch {
       if (sequence === loadSequence) status.textContent = 'Comments could not be loaded.';
     } finally {

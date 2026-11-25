@@ -178,12 +178,14 @@ def rekey_after_reset(wiki_id, prior_ids):
 
     if not prior_ids:
         return 0
-    new_ids = dict(Page.query.with_entities(Page.path, Page.id)
-                   .filter(Page.wiki_id == wiki_id, Page.path.in_(list(prior_ids))).all())
+    annotated_pages = (db.session.query(Page.path, Page.id, PageAnnotation.page_id)
+                       .join(PageAnnotation, db.and_(PageAnnotation.wiki_id == Page.wiki_id,
+                                                    PageAnnotation.page_path == Page.path))
+                       .filter(Page.wiki_id == wiki_id)
+                       .distinct().all())
     moved = 0
-    for path, old_id in prior_ids.items():
-        new_id = new_ids.get(path)
-        if new_id is None or new_id == old_id:
+    for path, new_id, old_id in annotated_pages:
+        if old_id is None or prior_ids.get(path) != old_id or new_id == old_id:
             continue
         moved += (PageAnnotation.query
                   .filter_by(wiki_id=wiki_id, page_path=path, page_id=old_id)
