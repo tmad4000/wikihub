@@ -86,16 +86,59 @@
     if(e.detail.type==='comment') compose(e.detail.quote || '',e.detail.body);
     else if(page) {
       close();page.elements.content.value=e.detail.body;page.elements.path.value='';
+      page.elements.path.dispatchEvent(new Event('input'));
       page.elements.request_id.value=crypto.randomUUID();page.hidden=false;
       page.scrollIntoView({block:'center'});page.elements.path.focus();
     }
   });
+  if (page) {
+    const pathInput = page.elements.path;
+    const approve = page.querySelector('[type=submit]');
+    const check = get('check-target');
+    if (check) {
+      pathInput.oninput = () => {
+        approve.disabled = true;
+        page.elements.previewed_visibility.value = '';
+        get('audience').textContent = 'Choose a filename to check visibility';
+      };
+      check.onclick = async () => {
+        const path = pathInput.value.trim();
+        const url = new URL(page.action);
+        url.searchParams.set('assistant_target', path);
+        try {
+          const res = await fetch(url.toString(), {cache:'no-store'});
+          const result = await res.json();
+          if (path !== pathInput.value.trim()) return;
+          if (!res.ok) throw new Error(result.message || 'Cannot use this destination.');
+          pathInput.value = result.path;
+          page.elements.previewed_visibility.value = result.visibility;
+          get('audience').textContent = result.visibility;
+          approve.disabled = false;
+        } catch (err) { status.textContent = err.message; }
+      };
+    }
+    page.onsubmit = async e => {
+      e.preventDefault();
+      if (approve.disabled) return;
+      approve.disabled = true;
+      try {
+        const res = await fetch(page.action, {method:'POST', headers:{Accept:'application/json'},
+          body:new FormData(page)});
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.message || 'Could not create the page.');
+        location.assign(result.url);
+      } catch (err) {
+        status.textContent = err.message;
+        approve.disabled = false;
+      }
+    };
+  }
   form.onsubmit=async e=>{
     e.preventDefault();
     const submit=form.querySelector('[type=submit]');
     if(submit.disabled)return;
     const body=get('body').value.trim();if(!body)return;
-    if(body.length>2000){status.textContent='Shorten this comment to 2,000 characters before approving.';return;}
+    if(body.length>4000){status.textContent='Shorten this comment to 4,000 characters before approving.';return;}
     if(issuedPayload && issuedPayload!==body) requestId=crypto.randomUUID();
     issuedPayload=body;submit.disabled=true;
     try {

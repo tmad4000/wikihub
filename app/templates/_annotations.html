@@ -12,22 +12,21 @@
   {% if current_user.is_authenticated %}
   <form data-comment-form hidden>
     <strong data-heading></strong><p data-destination></p><blockquote data-quote hidden></blockquote>
-    <label>Comment<textarea data-body required maxlength="2000" rows="4"></textarea></label>
+    <label>Comment<textarea data-body required maxlength="4000" rows="4"></textarea></label>
     <button class="action-btn" type="submit">Approve and post comment</button>
     <button class="action-btn" type="button" data-cancel>Cancel</button>
   </form>
-  {% if current_user.id == wiki.owner_id %}
-  <form data-page-form hidden method="post" action="{{ url_for('wiki.new_page',username=owner.username,slug=wiki.slug) }}">
-    <strong>Review new page</strong><p>In @{{ owner.username }}/{{ wiki.slug }} · Private</p>
-    <label>New page filename<input name="path" required maxlength="100" pattern="[A-Za-z0-9][A-Za-z0-9 _-]*\.md" placeholder="Reading notes.md"></label>
+  <form data-page-form data-owner="{{ 1 if current_user.id == wiki.owner_id else 0 }}" hidden method="post" action="{{ url_for('wiki.new_page',username=owner.username,slug=wiki.slug) }}">
+    <strong>Review new page</strong><p>In @{{ owner.username }}/{{ wiki.slug }} · <span data-audience>{{ "Private" if current_user.id == wiki.owner_id else "Choose a filename to check visibility" }}</span></p>
+    <label>New page filename<input name="path" required maxlength="200" placeholder="Reading notes.md"></label>
     <label>Page Markdown<textarea name="content" required rows="8"></textarea></label>
-    <input type="hidden" name="visibility" value="private"><input type="hidden" name="assistant_draft" value="1">
+    <input type="hidden" name="previewed_visibility" value="{{ 'private' if current_user.id == wiki.owner_id else '' }}"><input type="hidden" name="assistant_draft" value="1">
     <input type="hidden" name="viewer_id" value="{{ current_user.id }}"><input type="hidden" name="approved" value="1">
     <input type="hidden" name="request_id"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <button class="action-btn" type="submit">Approve and create private page</button>
+    {% if current_user.id != wiki.owner_id %}<button class="action-btn" type="button" data-check-target>Check destination</button>{% endif %}
+    <button class="action-btn" type="submit" {% if current_user.id != wiki.owner_id %}disabled{% endif %}>{{ "Approve and create private page" if current_user.id == wiki.owner_id else "Approve and create page" }}</button>
     <button class="action-btn" type="button" data-cancel>Cancel</button>
   </form>
-  {% endif %}
   {% endif %}
   <input type="hidden" data-token value="{{ csrf_token() }}">
 </section>

@@ -35,6 +35,18 @@
     searchScope = channel === "page" ? "page" : "wiki";
     storeKey = baseKey + ":" + design + ":" + channel + (channel === "page" ? ":" + pagePath : "");
   }
+  var scopeKey = storePrefix + "comparison-scope:" + design;
+  if (comparison) {
+    var savedScope = sessionStorage.getItem(scopeKey);
+    if (design === "B" && savedScope === "library") {
+      channel = searchScope = "library";
+      storeKey = storePrefix + "B:library";
+    }
+    if (design === "A") {
+      searchScope = savedScope === "library" ? "library" : "wiki";
+      storeKey = storePrefix + "A:unified";
+    }
+  }
   var turns = load();
   var lastFocus = null;
 
@@ -141,6 +153,7 @@
       function offer(label, type) {
         var button = el("button", "action-btn", label);
         button.type = "button";
+        button.setAttribute("data-review-" + type, "");
         button.onclick = function () {
           close();
           comments.dispatchEvent(new CustomEvent("review-reader-draft", { detail: { type: type, body: body, quote: anchor || "" } }));
@@ -148,7 +161,7 @@
         wrap.appendChild(button);
       }
       offer("Draft a comment", "comment");
-      if (comments.querySelector("[data-page-form]")) offer("Draft a private page", "page");
+      if (comments.querySelector("[data-page-form]")) offer(comments.querySelector("[data-page-form]").dataset.owner === "1" ? "Draft a private page" : "Draft a page", "page");
     }
     return wrap;
   }
@@ -158,7 +171,7 @@
     if (empty) empty.remove();
     if (t.role === "user") list.appendChild(el("div", "ra-q", t.content));
     else if (t.error) list.appendChild(el("div", "ra-error", t.content));
-    else list.appendChild(renderAnswer(t.content, t.citations, t.pagePath === pagePath ? t.quote : ""));
+    else list.appendChild(renderAnswer(t.content, t.citations, t.pagePath === baseKey + ":" + pagePath ? t.quote : ""));
     list.scrollTop = list.scrollHeight;
   }
 
@@ -169,7 +182,7 @@
     });
   }
 
-  function ask(question) {
+  function ask(question, draftType) {
     var prior = history();
     var anchor = passage;
     var fullQuestion = (anchor ? "Selected passage: “" + anchor + "”\n" : "") + question;
@@ -187,15 +200,19 @@
       .then(function (r) { return r.json().catch(function () { return {}; }).then(function (b) { return { ok: r.ok, body: b }; }); })
       .then(function (res) {
         var t = res.ok
-          ? { role: "assistant", content: res.body.answer || "", citations: res.body.citations || [], quote: anchor, pagePath: pagePath }
+          ? { role: "assistant", content: res.body.answer || "", citations: res.body.citations || [], quote: anchor, pagePath: baseKey + ":" + pagePath }
           : { role: "assistant", error: true, content: res.body.message || "The assistant couldn't answer just now." };
         turns.push(t); save(); thinking.remove(); renderTurn(t);
+        if (draftType && res.ok) {
+          var draftButton = list.lastElementChild.querySelector(draftType === "comment" ? "[data-review-comment]" : "[data-review-page]");
+          if (draftButton) draftButton.click();
+        }
       })
       .catch(function () {
         var t = { role: "assistant", error: true, content: "Network error — please try again." };
         turns.push(t); save(); thinking.remove(); renderTurn(t);
       })
-      .then(function () { sendBtn.disabled = false; input.disabled = false; input.focus(); });
+      .then(function () { sendBtn.disabled = false; input.disabled = false; if (panel.classList.contains("open")) input.focus(); });
   }
 
   var switches = panel.querySelector("[data-switches]");
@@ -212,7 +229,7 @@
 
   function setPassage(value) {
     passage = value;
-    sessionStorage.setItem(storeKey + ":passage:" + pagePath, value);
+    sessionStorage.setItem(storeKey + ":passage:" + baseKey + ":" + pagePath, value);
     showContext();
   }
 
@@ -220,13 +237,14 @@
     if (sendBtn.disabled) return;
     if (design === "B") {
       channel = scope;
-      storeKey = baseKey + ":B:" + channel + (channel === "page" ? ":" + pagePath : "");
+      storeKey = channel === "page" ? baseKey + ":B:page:" + pagePath : storePrefix + "B:library";
       turns = load();
       list.replaceChildren();
       turns.forEach(renderTurn);
-      passage = sessionStorage.getItem(storeKey + ":passage:" + pagePath) || "";
+      passage = sessionStorage.getItem(storeKey + ":passage:" + baseKey + ":" + pagePath) || "";
     }
     searchScope = scope;
+    sessionStorage.setItem(scopeKey, scope);
     showContext();
   }
 
@@ -269,12 +287,25 @@
       }
     });
   }
-  passage = sessionStorage.getItem(storeKey + ":passage:" + pagePath) || "";
+  passage = sessionStorage.getItem(storeKey + ":passage:" + baseKey + ":" + pagePath) || "";
   showContext();
+  panel.querySelectorAll("[data-request-draft]").forEach(function (button) {
+    button.onclick = function () {
+      if (sendBtn.disabled) return;
+      var kind = button.dataset.requestDraft;
+      ask(kind === "comment"
+        ? "Suggest a concise comment about the attached passage or current page. Give just the proposed text with citations."
+        : "Draft a short companion wiki page about the attached passage or current page. Give the proposed Markdown with citations.", kind);
+    };
+  });
   form.addEventListener("submit", function (e) {
     e.preventDefault();
     var question = input.value.trim();
     if (!question || sendBtn.disabled) return;
+    if ((passage ? passage.length + 21 : 0) + question.length > 2000) {
+      input.setCustomValidity("Shorten your question or remove the attached passage.");
+      input.reportValidity(); input.setCustomValidity(""); return;
+    }
     input.value = "";
     input.style.height = "";
     ask(question);

@@ -2797,6 +2797,19 @@ def new_page(username, slug):
     acl_rules = load_acl_rules(owner.username, wiki.slug)
     username_for_acl = current_user.username if current_user.is_authenticated else None
 
+    if request.method == "GET" and "assistant_target" in request.args:
+        if not current_user.is_authenticated:
+            abort(401)
+        path = _assistant_draft_path(request.args["assistant_target"])
+        if not path:
+            return jsonify(message="Choose a simple Markdown page path."), 400
+        if not is_owner and not can_write(path, acl_rules, current_user.username):
+            return jsonify(message="You do not have permission to create a page here."), 403
+        audience = "private" if is_owner else _stored_page_visibility(resolve_visibility(path, acl_rules))
+        response = jsonify(path=path, visibility=audience)
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
     if request.method == "POST" and request.form.get("assistant_draft") == "1":
         return _create_assistant_draft(owner, wiki, is_owner, acl_rules)
 
