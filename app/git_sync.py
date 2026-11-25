@@ -90,6 +90,10 @@ def _head_tree(repo_path):
 _REF_UPDATE_ATTEMPTS = 5
 
 
+class RepoPathExists(FileExistsError):
+    pass
+
+
 class RefUpdateConflict(RuntimeError):
     """refs/heads/main moved under us on every retry (wikihub-xkmk)."""
 
@@ -158,11 +162,21 @@ def _apply_repo_changes_once(repo, changes, message, author_name, author_email):
 
     try:
         if head:
-            _git(repo, "read-tree", "HEAD", env=env)
+            _git(repo, "read-tree", head, env=env)
 
         for change in changes:
             action = change["action"]
             path = change["path"]
+            if action == "create" and head:
+                entry = _git(repo, "ls-tree", head, "--", path)
+                if entry:
+                    raise RepoPathExists(path)
+                parent = os.path.dirname(path)
+                while parent:
+                    entry = _git(repo, "ls-tree", head, "--", parent)
+                    if entry and not entry.startswith("040000 tree "):
+                        raise RepoPathExists(parent)
+                    parent = os.path.dirname(parent)
             if action == "delete":
                 _git(
                     repo,
@@ -186,7 +200,7 @@ def _apply_repo_changes_once(repo, changes, message, author_name, author_email):
             _git(repo, "update-index", "--add", "--cacheinfo", "100644", blob, path, env=env)
 
         new_tree = _git(repo, "write-tree", env=env)
-        old_tree = _head_tree(repo) if head else None
+        old_tree = _git(repo, "rev-parse", head + "^{tree}") if head else None
         if new_tree == old_tree:
             return False
 
@@ -203,12 +217,12 @@ def _apply_repo_changes_once(repo, changes, message, author_name, author_email):
             os.unlink(idx)
 
 
-def sync_page_to_repo(username, slug, file_path, content, message=None, author_name="wikihub", author_email="sync@wikihub"):
+def sync_page_to_repo(username, slug, file_path, content, message=None, author_name="wikihub", author_email="sync@wikihub", *, create_only=False):
     """write a single file to the authoritative repo."""
     return apply_repo_changes(
         username,
         slug,
-        [{"action": "write", "path": file_path, "content": content}],
+        [{"action": "create" if create_only else "write", "path": file_path, "content": content}],
         message or f"Update {file_path}",
         author_name=author_name,
         author_email=author_email,

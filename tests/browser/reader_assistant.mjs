@@ -151,6 +151,9 @@ try {
 
   // 5. phone width --------------------------------------------------------------
   const phone = await newPage({ width: 390, height: 844 });
+  await phone.addInitScript(() => Object.defineProperty(window, 'sessionStorage', {
+    get() { throw new DOMException('Storage denied', 'SecurityError'); },
+  }));
   await phone.goto(`${W}/guide`);
   await phone.click('[data-ra-open]');
   await phone.waitForSelector('#reader-assistant.open');

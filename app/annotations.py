@@ -6,7 +6,7 @@ Every read is scoped to the requesting viewer with the reader's own rules:
 page is private, and private bands stripped for everyone but the owner.
 
 Anchoring is by quote text only (the contract carries no offsets), matched
-against the page's *rendered* text with all whitespace removed so DOM
+against the page's *rendered* text with whitespace collapsed so DOM
 selection whitespace never matters. That match is deliberately
 conservative: a selection must occur exactly once in the viewer's rendered
 text when it is posted, and a stored comment counts as attached only while
@@ -21,7 +21,6 @@ private band (the owner moved it there later) is withheld.
 
 from __future__ import annotations
 
-import re
 import uuid
 from html.parser import HTMLParser
 
@@ -52,22 +51,20 @@ class _TextExtractor(HTMLParser):
         self._skip_stack = []  # tag names of open skipped elements
 
     def handle_starttag(self, tag, attrs):
-        if tag in _BLOCK_TAGS:
-            self.parts.append(" ")
-        if tag in _VOID_TAGS:
-            return
         classes = set((dict(attrs).get("class") or "").split())
         if self._skip_stack or tag in _SKIP_TAGS or classes & _SKIP_CLASSES:
-            self._skip_stack.append(tag)
+            if tag not in _VOID_TAGS:
+                self._skip_stack.append(tag)
+        elif tag in _BLOCK_TAGS:
+            self.parts.append(" ")
 
     def handle_endtag(self, tag):
         if self._skip_stack:
-            # Pop to the matching open tag (tolerates sloppy nesting).
             for i in range(len(self._skip_stack) - 1, -1, -1):
                 if self._skip_stack[i] == tag:
                     del self._skip_stack[i:]
                     break
-        if tag in _BLOCK_TAGS:
+        elif tag in _BLOCK_TAGS:
             self.parts.append(" ")
 
     def handle_data(self, data):
@@ -82,17 +79,8 @@ def html_text(html):
     return " ".join("".join(parser.parts).split())
 
 
-_WS = re.compile(r"\s+")
-
-
 def match_key(text):
-    """Comparison form: whitespace removed entirely (DOM selections and our
-    extraction disagree on whitespace at block boundaries)."""
-    return _WS.sub("", text or "")
-
-
-def clean_quote(quote):
-    return " ".join((quote or "").split())
+    return " ".join((text or "").split())
 
 
 def count_occurrences(haystack_key, needle_key):
@@ -223,8 +211,9 @@ def serialize(annotation, view, author_names):
         detached = True
     if quote and not detached:
         q = match_key(quote)
-        detached = count_occurrences(view.text_key("viewer"), q) != 1
-        if detached and not view.is_owner and count_occurrences(view.text_key("full"), q) >= 1:
+        visible_matches = count_occurrences(view.text_key("viewer"), q)
+        detached = visible_matches != 1
+        if visible_matches == 0 and not view.is_owner and count_occurrences(view.text_key("full"), q) >= 1:
             return None
     return {
         "id": annotation.id,

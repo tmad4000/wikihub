@@ -1,9 +1,11 @@
 """Serve the real reader on loopback with an isolated, synthetic comparison corpus."""
 
+import argparse
 import os
 import secrets
 import sys
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 
 from flask import redirect, request
@@ -11,10 +13,10 @@ from flask import redirect, request
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from app import create_app, db
-from app.auth_utils import hash_password
+from app.auth_utils import generate_magic_login_token, hash_password
 from app.content_utils import parse_markdown_document, set_visibility_in_content
 from app.git_sync import sync_page_to_repo, update_mirror_page
-from app.models import Page, User, Wiki
+from app.models import MagicLoginToken, Page, User, Wiki, utcnow
 from app.reader_assistant import MAX_SEARCH, build_scope
 from app.wiki_ops import create_wiki_for_user, update_page_metadata
 
@@ -129,5 +131,23 @@ def setup():
     return app
 
 
+def owner_login(app):
+    with app.app_context():
+        user = User.query.filter_by(username="fieldnotes").one()
+        raw, digest = generate_magic_login_token()
+        expires = utcnow() + timedelta(seconds=app.config["MAGIC_LOGIN_TTL_SECONDS"])
+        db.session.add(MagicLoginToken(user_id=user.id, token_hash=digest,
+                                       redirect_path=PAGE_URL, expires_at=expires))
+        db.session.commit()
+        return f"http://127.0.0.1:8794/auth/magic/{raw}"
+
+
 if __name__ == "__main__":
-    setup().run(host="127.0.0.1", port=8794, threaded=True)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--owner-login", action="store_true")
+    args = parser.parse_args()
+    app = setup()
+    if args.owner_login:
+        print(owner_login(app))
+    else:
+        app.run(host="127.0.0.1", port=8794, threaded=True)

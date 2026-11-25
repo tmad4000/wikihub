@@ -12743,6 +12743,10 @@ def test_page_annotations_scope_anchoring_and_dedup(app, client, key):
         r = _annot_post(reader, *W, page.id, "x", "", rev, viewer_id=bad_vid)
         assert r.status_code == 400 and r.get_json()["error"] == "invalid_viewer_id", bad_vid
 
+    for payload in (["comment"], "comment", 7):
+        r = reader.post(_annot_url(*W, page.id), json=payload)
+        assert r.status_code == 400 and r.get_json()["error"] == "invalid_json"
+
     # Validation.
     assert _annot_post(reader, *W, page.id, "x", "", "not-the-revision").get_json()["error"] == "stale_revision"
     assert _annot_post(reader, *W, page.id, "x", "", "abc").get_json()["revision"] == rev
@@ -12773,6 +12777,16 @@ def test_page_annotations_scope_anchoring_and_dedup(app, client, key):
     assert [c["body"] for c in mine] == ["Nice tip", "Gamma note", "Whole page note", "Owner band note", "Owner public note"]
     assert [c["id"] for c in mine] == sorted(c["id"] for c in mine), "chronological"
 
+    from unittest.mock import patch
+    with patch("app.routes.annotations.THREAD_PAGE_SIZE", 2):
+        latest = _annot_get(anon, *W, page.id).get_json()
+        assert latest["comments"] == seen[-2:] and latest["before"]
+        older = anon.get(_annot_url(*W, page.id), query_string={"before": latest["before"]}).get_json()
+        assert older["comments"] == seen[:2] and older["before"] is None
+
+    assert _annot_post(reader, *W, page.id, "Spacing", "Alphapassage", rev).status_code == 409
+    assert _annot_post(reader, *W, page.id, "Words", "line to delete", rev).status_code == 201
+    assert _annot_post(reader, *W, page.id, "Duplicate later", "Gamma line", rev).status_code == 201
     # Private page: restricted for anon (401) and strangers (403); grantee reads and posts.
     assert _annot_get(anon, *W, secret.id).status_code == 401
     assert _annot_get(reader, *W, secret.id).status_code == 403
@@ -12788,10 +12802,12 @@ def test_page_annotations_scope_anchoring_and_dedup(app, client, key):
     # Gamma is deleted, and the repeated phrase becomes unique.
     edited = ("---\ntitle: Guide\nvisibility: public\n---\n\n# Guide\n\n"
               "<!-- private -->\nAlpha passage about **tomatoes** and sun.\n<!-- /private -->\n\n"
-              "Repeated phrase here.\n\nSecret band sentence ZETA.\n")
+              "Gamma line twice. Gamma line twice. linetodelete\n\nRepeated phrase here.\n\nSecret band sentence ZETA.\n")
     assert client.put("/api/v1/wikis/agent1/annot-wiki/pages/guide.md",
                       json={"content": edited}, headers=h).status_code == 200
     seen = {c["body"]: c for c in _annot_get(reader, *W, page.id).get_json()["comments"]}
+    assert seen["Words"]["detached"] is True
+    assert seen["Duplicate later"]["detached"] is True
     assert "Owner band note" not in seen, "owner-only stays owner-only after the band is removed"
     assert "Nice tip" not in seen and "Owner public note" not in seen, "comments on a passage now in a band are hidden"
     assert "Alpha passage" not in json.dumps(list(seen.values()))
@@ -12861,6 +12877,10 @@ def test_page_annotations_scope_anchoring_and_dedup(app, client, key):
     # The apex never 301s this JSON endpoint to a subdomain.
     from app.canonical_redirect import _is_skipped
     assert _is_skipped(_annot_url(*W, page.id))
+    for path in ("annotations", "annotations/guide"):
+        r = anon.get(f"/@agent1/annot-wiki/{path}", base_url="https://wikihub.md")
+        assert r.status_code == 301 and r.location.endswith(f"/annot-wiki/{path}")
+
 
 
 def test_page_annotations_migration_preserves_app_owner():
@@ -12919,6 +12939,20 @@ def _draft_post(browser, owner, slug, form, json_accept=True):
     return browser.post(f"/@{owner}/{slug}/new", data=form, headers=headers)
 
 
+def test_preview_owner_login(app):
+    import runpy
+    from pathlib import Path
+    demo = runpy.run_path(str(Path(__file__).resolve().parents[1] / "demos/reader-conversations/server.py"))
+    demo["seed"]()
+    url = urlparse(demo["owner_login"](app))
+    assert url.netloc == "127.0.0.1:8794"
+    browser = app.test_client()
+    assert browser.get(url.path).location == demo["PAGE_URL"]
+    with browser.session_transaction() as session:
+        assert int(session["_user_id"]) == User.query.filter_by(username="fieldnotes").one().id
+    assert app.test_client().get(url.path).location.endswith("/login")
+
+
 def test_assistant_draft_new_page_rules(app, client, key):
     """wikihub-3add: assistant drafts through the new-page form need sign-in,
     explicit approval and a simple path; they never overwrite, repeat safely,
@@ -12948,6 +12982,20 @@ def test_assistant_draft_new_page_rules(app, client, key):
         r = _draft_post(owner, "agent1", "draft-wiki", {**base, "path": bad})
         assert r.status_code == 400 and r.get_json()["error"] == "invalid_path", (bad, r.status_code)
     assert _page_row("agent1", "draft-wiki", "notes/idea.md") is None, "nothing written by rejected drafts"
+
+    from unittest.mock import patch
+    from app import git_sync
+    real_cas = git_sync._cas_update_main
+    def push_first(repo, commit, head):
+        with patch.object(git_sync, "_cas_update_main", real_cas):
+            git_sync._apply_repo_changes_once(repo, [{"action": "write", "path": "race.md", "content": "pushed"}],
+                                              "concurrent push", "pusher", "p@example.org")
+        return real_cas(repo, commit, head)
+    with patch.object(git_sync, "_cas_update_main", side_effect=push_first):
+        r = _draft_post(owner, "agent1", "draft-wiki", {**base, "path": "race.md"})
+    assert r.status_code == 409 and r.get_json()["error"] == "exists"
+    assert git_sync.read_file_from_repo("agent1", "draft-wiki", "race.md") == "pushed"
+    assert _page_row("agent1", "draft-wiki", "race.md") is None
 
     r = _draft_post(owner, "agent1", "draft-wiki", base)
     assert r.status_code == 201, r.get_data(as_text=True)
@@ -13026,6 +13074,7 @@ def run_all():
             ("reader assistant scopes to visitor and cites sources (wikihub-1bfx)", lambda: test_reader_assistant_scopes_to_visitor_and_cites_sources(app, client, key)),
             ("page annotations: scope, anchoring, dedup, limits, CSRF (wikihub-3add)", lambda: test_page_annotations_scope_anchoring_and_dedup(app, client, key)),
             ("page annotations migration keeps app owner (wikihub-3add)", lambda: test_page_annotations_migration_preserves_app_owner()),
+            ("preview owner one-time login", lambda: test_preview_owner_login(app)),
             ("assistant draft new-page rules (wikihub-3add)", lambda: test_assistant_draft_new_page_rules(app, client, key)),
             ("zip upload", lambda: test_zip_upload(client, key)),
             ("anonymous upload (wikihub-i2xm)", lambda: test_anonymous_upload(app)),

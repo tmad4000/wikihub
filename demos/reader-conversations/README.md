@@ -7,8 +7,10 @@ the dedicated local database with `createdb wikihub_reader_preview_3add`. Set
 random `SECRET_KEY`, and a dedicated, empty local `REPOS_DIR`. Supply the normal
 server-side `READER_ASSISTANT_API_KEY`. Run
 `python demos/reader-conversations/server.py` and open `/?variant=A` and
-`/?variant=B` in separate tabs. Use the normal WikiHub magic-link flow for
-the seeded owner `fieldnotes` to exercise writes. Both tabs use the same database
+`/?variant=B` in separate tabs. From a second shell with the same environment, run
+`python demos/reader-conversations/server.py --owner-login`. Open the printed
+one-time loopback URL in the comparison profile to sign in as `fieldnotes`,
+then reload both variant tabs. Both tabs use the same database
 and Git repositories. Restarting preserves approved changes.
 
 The two seeded wikis contain synthetic field notes. The server uses the real

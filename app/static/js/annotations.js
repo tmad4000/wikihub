@@ -11,35 +11,53 @@
     n.textContent = value;
     return n;
   }
-  // Match a unique occurrence in the current article, including inline formatting.
-  function locate(text) {
-    const walker = document.createTreeWalker(article, NodeFilter.SHOW_TEXT);
-    const nodes = [];
-    let raw = '', n;
-    while ((n = walker.nextNode())) {
-      nodes.push({n, start:raw.length});
-      raw += n.data;
+  const blocks = new Set('address article aside blockquote br dd details div dl dt figcaption figure footer h1 h2 h3 h4 h5 h6 header hr li main nav ol p pre section summary table tbody td tfoot th thead tr ul'.split(' '));
+  const space = /[\p{White_Space}\u001c-\u001f]/u;
+  let articleIndex;
+  function buildIndex() {
+    let text = '', pendingSpace = false;
+    const nodes = [], offsets = [];
+    function visit(n) {
+      if (n.nodeType === Node.TEXT_NODE) {
+        for (let i = 0; i < n.length; i++) {
+          if (space.test(n.data[i])) {
+            pendingSpace = true;
+            continue;
+          }
+          if (pendingSpace && text.length) {
+            text += ' ';
+            nodes.push(null);
+            offsets.push(0);
+          }
+          pendingSpace = false;
+          text += n.data[i];
+          nodes.push(n);
+          offsets.push(i);
+        }
+      } else if (n.nodeType === Node.ELEMENT_NODE) {
+        if (n.matches('script,style,template,noscript,.private-band-label')) return;
+        const block = blocks.has(n.localName);
+        if (block) pendingSpace = true;
+        n.childNodes.forEach(visit);
+        if (block) pendingSpace = true;
+      }
     }
-    // The server normalizes selection whitespace across Markdown block and
-    // inline boundaries. Keep DOM offsets so a matching quote still highlights.
-    const offsets = [];
-    let normalized = '';
-    for(let i=0; i<raw.length; i++) {
-      if (/\s/u.test(raw[i])) continue;
-      normalized += raw[i];
-      offsets.push(i);
-    }
-    const needle = text.replace(/\s/gu, '');
-    const match = normalized.indexOf(needle);
-    if (!needle || match < 0 || match !== normalized.lastIndexOf(needle)) return null;
-    const i = offsets[match], j = offsets[match + needle.length-1]+1;
-    const first = nodes.find(x => x.start + x.n.length > i);
-    const last = nodes.find(x => x.start + x.n.length >= j);
-    if (!first || !last) return null;
-    const r = new Range();
-    r.setStart(first.n, i-first.start);
-    r.setEnd(last.n, j-last.start);
-    return r;
+    visit(article);
+    return {text, nodes, offsets};
+  }
+  if (article) new MutationObserver(() => { articleIndex = null; })
+    .observe(article, {subtree:true, childList:true, characterData:true});
+  function locate(quote) {
+    if (!article) return null;
+    const {text, nodes, offsets} = articleIndex ??= buildIndex();
+    const needle = quote.replace(/[\p{White_Space}\u001c-\u001f]+/gu, ' ').replace(/^ | $/g, '');
+    const start = text.indexOf(needle);
+    if (!needle || start < 0 || start !== text.lastIndexOf(needle)) return null;
+    const end = start + needle.length - 1;
+    const range = new Range();
+    range.setStart(nodes[start], offsets[start]);
+    range.setEnd(nodes[end], offsets[end] + 1);
+    return range;
   }
   function showComment(c) {
     const item = document.createElement('li');
@@ -61,15 +79,31 @@
     item.append(node('p',c.body));
     return item;
   }
-  async function refresh() {
+  const older = get('older');
+  let before = null, loadSequence = 0;
+  async function refresh(loadOlder = false) {
+    const sequence = ++loadSequence;
+    older.disabled = true;
     try {
-      const res = await fetch(root.dataset.url,{cache:'no-store',headers:{Accept:'application/json','X-CSRFToken':get('token').value}});
+      const url = new URL(root.dataset.url, location.href);
+      if (loadOlder) url.searchParams.set('before', before);
+      const res = await fetch(url,{cache:'no-store',headers:{Accept:'application/json','X-CSRFToken':get('token').value}});
       if (!res.ok) throw new Error();
       const data = await res.json();
-      list.replaceChildren(...data.comments.map(showComment));
-      status.textContent = data.comments.length ? '' : 'No comments yet.';
-    } catch { status.textContent = 'Comments could not be loaded.'; }
+      if (sequence !== loadSequence) return;
+      const items = data.comments.map(showComment);
+      if (loadOlder) list.prepend(...items);
+      else list.replaceChildren(...items);
+      before = data.before;
+      older.hidden = !before;
+      status.textContent = list.childElementCount ? '' : 'No comments yet.';
+    } catch {
+      if (sequence === loadSequence) status.textContent = 'Comments could not be loaded.';
+    } finally {
+      if (sequence === loadSequence) older.disabled = false;
+    }
   }
+  older.onclick = () => refresh(true);
   refresh();
   if (!form) return;
   function capture() {

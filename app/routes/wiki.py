@@ -25,7 +25,7 @@ from app.content_utils import (
 from app.discovery import discoverable_page_for_wiki, visible_wikis_for_owner
 from app.git_backend import _repo_path
 from app.private_bands import CONFLICT_MESSAGE, PrivateBandConflict, create_conflict_proposal, merge_into_bands
-from app.git_sync import RefUpdateConflict, read_file_for_viewer, read_file_from_repo, read_file_bytes_from_repo, list_files_in_repo, regenerate_public_mirror, remove_page_from_repo, sync_page_to_repo, update_mirror_page
+from app.git_sync import RefUpdateConflict, RepoPathExists, read_file_for_viewer, read_file_from_repo, read_file_bytes_from_repo, list_files_in_repo, regenerate_public_mirror, remove_page_from_repo, sync_page_to_repo, update_mirror_page
 from app.page_utils import content_page_path_filter, is_content_page_path, is_wikihub_plumbing_path, normalize_repo_path
 from app.models import (
     Page,
@@ -2788,8 +2788,16 @@ def _create_assistant_draft(owner, wiki, is_owner, acl_rules):
         outcome = existing_outcome()
         return outcome if outcome is not None else fail(409, "exists", "A page already exists at that path.")
     refresh_wikilinks_for_page(page, content)
-    sync_page_to_repo(owner.username, wiki.slug, page_path, content, message=f"Create {page_path} (assistant draft)",
-                      author_name=username, author_email=f"{username}@wikihub")
+    try:
+        written = sync_page_to_repo(owner.username, wiki.slug, page_path, content,
+                                    message=f"Create {page_path} (assistant draft)", create_only=True,
+                                    author_name=username, author_email=f"{username}@wikihub")
+    except RepoPathExists:
+        db.session.rollback()
+        return fail(409, "exists", "A file already exists at that path.")
+    if not written:
+        db.session.rollback()
+        return fail(503, "repository_unavailable", "The page could not be saved.")
     update_mirror_page(owner.username, wiki.slug, page_path, acl_rules)
     db.session.commit()
     security_event("assistant_draft.create", "success", user_id=current_user.id,

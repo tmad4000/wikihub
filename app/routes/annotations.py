@@ -6,8 +6,11 @@ explicitly here. Responses are JSON and never cached. See app/annotations.py
 for the anchoring and privacy rules.
 """
 
+from datetime import datetime
+
 from flask import Blueprint, current_app, jsonify, request
 from flask_wtf.csrf import CSRFError, validate_csrf
+from sqlalchemy import tuple_
 from sqlalchemy.exc import IntegrityError
 
 from app import db, rate_limit
@@ -15,7 +18,6 @@ from app.annotations import (
     MAX_BODY_CHARS,
     MAX_QUOTE_CHARS,
     PageView,
-    clean_quote,
     count_occurrences,
     match_key,
     parse_request_id,
@@ -70,16 +72,34 @@ def _load(username, slug, page_id, viewer):
     return view, None
 
 
-def _visible_rows(view):
-    q = PageAnnotation.query.filter_by(wiki_id=view.wiki.id, page_path=view.page.path)
+THREAD_PAGE_SIZE = 50
+
+
+def _comment_page(view, before):
+    query = (db.session.query(PageAnnotation, User.username)
+             .join(User, PageAnnotation.author_id == User.id)
+             .filter(PageAnnotation.wiki_id == view.wiki.id,
+                     PageAnnotation.page_path == view.page.path,
+                     User.suspended_at.is_(None)))
     if not view.is_owner:
-        q = q.filter(PageAnnotation.owner_only.is_(False))
-    rows = q.order_by(PageAnnotation.created_at, PageAnnotation.id).all()
-    ids = {r.author_id for r in rows}
-    users = User.query.filter(User.id.in_(ids)).all() if ids else []
-    # Suspended authors' comments disappear with the rest of their content.
-    live = {u.id: u.username for u in users if u.suspended_at is None}
-    return [r for r in rows if r.author_id in live], live
+        query = query.filter(PageAnnotation.owner_only.is_(False),
+                             db.or_(PageAnnotation.page_id == view.page.id, PageAnnotation.page_id.is_(None)))
+    if before:
+        query = query.filter(tuple_(PageAnnotation.created_at, PageAnnotation.id) < before)
+    query = query.order_by(PageAnnotation.created_at.desc(), PageAnnotation.id.desc())
+    comments = []
+    cursor = None
+    for row, username in query.yield_per(THREAD_PAGE_SIZE):
+        comment = serialize(row, view, {row.author_id: username})
+        if comment is None:
+            continue
+        if len(comments) == THREAD_PAGE_SIZE:
+            oldest = comments[-1]
+            cursor = f"{oldest['created_at']},{oldest['id']}"
+            break
+        comments.append(comment)
+    comments.reverse()
+    return comments, cursor
 
 
 def _limited(user, view):
@@ -111,9 +131,17 @@ def list_annotations(username, slug, page_id):
     view, err = _load(username, slug, page_id, viewer)
     if err:
         return err
-    rows, names = _visible_rows(view)
-    comments = [c for c in (serialize(r, view, names) for r in rows) if c is not None]
-    return _json({"comments": comments, "revision": view.page.content_hash,
+    before = None
+    if "before" in request.args:
+        try:
+            timestamp, row_id = request.args["before"].split(",")
+            before = (datetime.fromisoformat(timestamp), int(row_id))
+            if before[0].tzinfo is None or not 0 < before[1] <= 2147483647:
+                raise ValueError
+        except ValueError:
+            return _err(400, "invalid_cursor", "Invalid comment cursor.")
+    comments, cursor = _comment_page(view, before)
+    return _json({"comments": comments, "before": cursor, "revision": view.page.content_hash,
                   "viewer_id": viewer.id if viewer else None})
 
 
@@ -125,7 +153,9 @@ def create_annotation(username, slug, page_id):
     viewer = get_current_user_from_request()
     if viewer is None:
         return _err(401, "authentication_required", "Sign in to comment.")
-    data = request.get_json(silent=True) or {}
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return _err(400, "invalid_json", "Send a JSON object.")
     # The tab must still belong to the identity it loaded as (sign-out or an
     # account switch in another tab must not post under the new identity).
     viewer_id = data.get("viewer_id")
@@ -145,7 +175,7 @@ def create_annotation(username, slug, page_id):
         quote = ""
     if not isinstance(quote, str):
         return _err(400, "invalid_quote", "quote must be a string.")
-    quote = clean_quote(quote)
+    quote = match_key(quote)
     if len(quote) > MAX_QUOTE_CHARS:
         return _err(400, "invalid_quote", f"Select at most {MAX_QUOTE_CHARS} characters.")
     request_id = parse_request_id(data.get("request_id"))
@@ -164,8 +194,7 @@ def create_annotation(username, slug, page_id):
     existing = PageAnnotation.query.filter_by(author_id=viewer.id, request_id=request_id).first()
     if existing is not None:
         if _same_submission(existing, view, body, quote):
-            _, names = _visible_rows(view)
-            names.setdefault(viewer.id, viewer.username)
+            names = {viewer.id: viewer.username}
             return _json({"comment": serialize(existing, view, names), "duplicate": True}, 200)
         return _err(409, "request_id_reused", "This request_id was already used for a different comment.")
 
@@ -209,8 +238,7 @@ def create_annotation(username, slug, page_id):
         db.session.rollback()
         existing = PageAnnotation.query.filter_by(author_id=viewer.id, request_id=request_id).first()
         if existing is not None and _same_submission(existing, view, body, quote):
-            _, names = _visible_rows(view)
-            names.setdefault(viewer.id, viewer.username)
+            names = {viewer.id: viewer.username}
             return _json({"comment": serialize(existing, view, names), "duplicate": True}, 200)
         return _err(409, "request_id_reused", "This request_id was already used for a different comment.")
     names = {viewer.id: viewer.username}

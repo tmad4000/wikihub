@@ -25,7 +25,7 @@ token returns `400 {"error":"csrf_failed"}` (GET) or Flask-WTF's 400 (POST).
  "revision": "<pages.content_hash>", "viewer_id": 42}
 ```
 
-- Chronological (`created_at`, then `id`).
+- The newest 50 visible comments appear in chronological order. Pass the returned `before` cursor on GET for the preceding page. A null cursor indicates the start of the thread.
 - `quote` is `""` for a whole-page comment.
 - `viewer_id` is the signed-in user's id, or `null` when signed out. Send it back
   on POST.
@@ -73,8 +73,8 @@ Retry dedup is checked before the revision and rate limits, so a retried POST al
 gets its original comment back. A concurrent double-submit is resolved through the
 `(author_id, request_id)` unique constraint.
 
-**Anchoring:** the quote is compared against the page's server-rendered text with all
-whitespace removed, so DOM selection whitespace and block boundaries don't matter.
+**Anchoring:** the quote is compared against the page's server-rendered text with
+whitespace runs and block boundaries collapsed to a single space.
 Text that only exists after client-side rendering (KaTeX math, sidepeek chrome) will
 not match. The UI should send the selection's plain text (`Selection.toString()`).
 

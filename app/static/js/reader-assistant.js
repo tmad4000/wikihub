@@ -27,17 +27,27 @@
   var sendBtn = panel.querySelector("[data-ra-send]");
   var comparison = panel.hasAttribute("data-comparison");
   var design, channel, searchScope = "wiki", passage = "", selected = "", baseKey = storeKey;
+  var fallback = new Map();
+  function stored(key) {
+    if (fallback.has(key)) return fallback.get(key);
+    try { return sessionStorage.getItem(key); }
+    catch { return null; }
+  }
+  function remember(key, value) {
+    fallback.set(key, value);
+    try { sessionStorage.setItem(key, value); } catch {}
+  }
   if (comparison) {
     var variant = new URLSearchParams(location.search).get("variant");
-    design = (variant || sessionStorage.getItem("reader-design")) === "B" ? "B" : "A";
-    sessionStorage.setItem("reader-design", design);
+    design = (variant || stored("reader-design")) === "B" ? "B" : "A";
+    remember("reader-design", design);
     channel = design === "B" ? "page" : "unified";
     searchScope = channel === "page" ? "page" : "wiki";
     storeKey = baseKey + ":" + design + ":" + channel + (channel === "page" ? ":" + pagePath : "");
   }
   var scopeKey = storePrefix + "comparison-scope:" + design;
   if (comparison) {
-    var savedScope = sessionStorage.getItem(scopeKey);
+    var savedScope = stored(scopeKey);
     if (design === "B" && savedScope === "library") {
       channel = searchScope = "library";
       storeKey = storePrefix + "B:library";
@@ -51,10 +61,10 @@
   var lastFocus = null;
 
   function load() {
-    try { return JSON.parse(sessionStorage.getItem(storeKey) || "[]") || []; } catch (e) { return []; }
+    try { return JSON.parse(stored(storeKey) || "[]") || []; } catch (e) { return []; }
   }
   function save() {
-    try { sessionStorage.setItem(storeKey, JSON.stringify(turns.slice(-20))); } catch (e) {}
+    try { remember(storeKey, JSON.stringify(turns.slice(-20))); } catch (e) {}
   }
   function triggers() { return document.querySelectorAll("[data-ra-open]"); }
 
@@ -65,12 +75,13 @@
     triggers().forEach(function (t) { t.setAttribute("aria-expanded", "true"); });
     if (!restoring) input.focus();
     list.scrollTop = list.scrollHeight;
-    try { sessionStorage.setItem(storeKey + ":open", "1"); } catch (e) {}
+    remember(storeKey + ":open", "1");
   }
   function close() {
     panel.classList.remove("open");
     panel.setAttribute("aria-hidden", "true");
     triggers().forEach(function (t) { t.setAttribute("aria-expanded", "false"); });
+    fallback.delete(storeKey + ":open");
     try { sessionStorage.removeItem(storeKey + ":open"); } catch (e) {}
     if (lastFocus && lastFocus.focus) lastFocus.focus();
   }
@@ -229,7 +240,7 @@
 
   function setPassage(value) {
     passage = value;
-    sessionStorage.setItem(storeKey + ":passage:" + baseKey + ":" + pagePath, value);
+    remember(storeKey + ":passage:" + baseKey + ":" + pagePath, value);
     showContext();
   }
 
@@ -241,10 +252,10 @@
       turns = load();
       list.replaceChildren();
       turns.forEach(renderTurn);
-      passage = sessionStorage.getItem(storeKey + ":passage:" + baseKey + ":" + pagePath) || "";
+      passage = stored(storeKey + ":passage:" + baseKey + ":" + pagePath) || "";
     }
     searchScope = scope;
-    sessionStorage.setItem(scopeKey, scope);
+    remember(scopeKey, scope);
     showContext();
   }
 
@@ -287,7 +298,7 @@
       }
     });
   }
-  passage = sessionStorage.getItem(storeKey + ":passage:" + baseKey + ":" + pagePath) || "";
+  passage = stored(storeKey + ":passage:" + baseKey + ":" + pagePath) || "";
   showContext();
   panel.querySelectorAll("[data-request-draft]").forEach(function (button) {
     button.onclick = function () {
@@ -338,6 +349,6 @@
   // Keep the conversation beside the source after following a citation --
   // on wide screens only, so a phone lands on the page it asked for.
   try {
-    if ((comparison && variant) || (sessionStorage.getItem(storeKey + ":open") === "1" && window.innerWidth > 900)) open(true);
+    if ((comparison && variant) || (stored(storeKey + ":open") === "1" && window.innerWidth > 900)) open(true);
   } catch (e) {}
 })();

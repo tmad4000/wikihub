@@ -8,7 +8,7 @@
   <button class="action-btn" type="button" data-compose>Comment on page</button>
   <button class="action-btn" type="button" data-selection hidden>Comment on selection</button>
   {% endif %}
-  <p data-status role="status"></p><ol data-comments></ol>
+  <p data-status role="status"></p><button type="button" class="action-btn" data-older hidden>Load older comments</button><ol data-comments></ol>
   {% if current_user.is_authenticated %}
   <form data-comment-form hidden>
     <strong data-heading></strong><p data-destination></p><blockquote data-quote hidden></blockquote>
