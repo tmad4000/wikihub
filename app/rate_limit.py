@@ -12,6 +12,9 @@ Limits used today (also published by GET /api/v1/me/capabilities):
   reader assistant (POST /api/v1/wikis/<o>/<w>/ask): READER_ASSISTANT_MAX_PER_IP_PER_HOUR (20)
                                      anonymous (per IPv6 /64), _PER_USER_PER_HOUR (60) signed in,
                                      _PER_WIKI_PER_DAY (300), _PER_DAY (2000) site-wide
+  reader annotations (POST /@u/w/-/pages/<id>/annotations): ANNOTATION_MAX_PER_USER_PER_MINUTE (6),
+                                     _PER_HOUR (60), _PER_DAY (300), ANNOTATION_MAX_PER_PAGE_PER_DAY (500)
+  assistant drafts (POST /@u/w/new, assistant_draft=1): ASSISTANT_DRAFT_MAX_PER_USER_PER_HOUR (30)
 """
 
 import random
@@ -31,6 +34,11 @@ LIMIT_DEFAULTS = {
     "READER_ASSISTANT_MAX_PER_USER_PER_HOUR": 60,
     "READER_ASSISTANT_MAX_PER_DAY": 2000,
     "READER_ASSISTANT_MAX_PER_WIKI_PER_DAY": 300,
+    "ANNOTATION_MAX_PER_USER_PER_MINUTE": 6,
+    "ANNOTATION_MAX_PER_USER_PER_HOUR": 60,
+    "ANNOTATION_MAX_PER_USER_PER_DAY": 300,
+    "ANNOTATION_MAX_PER_PAGE_PER_DAY": 500,
+    "ASSISTANT_DRAFT_MAX_PER_USER_PER_HOUR": 30,
 }
 
 

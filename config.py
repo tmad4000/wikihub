@@ -67,6 +67,12 @@ class Config:
     READER_ASSISTANT_MAX_PER_DAY = int(os.environ.get("READER_ASSISTANT_MAX_PER_DAY", "2000"))
     READER_ASSISTANT_MAX_PER_WIKI_PER_DAY = int(os.environ.get("READER_ASSISTANT_MAX_PER_WIKI_PER_DAY", "300"))
     READER_ASSISTANT_MAX_CONCURRENT = int(os.environ.get("READER_ASSISTANT_MAX_CONCURRENT", "2"))
+    # Reader annotations + assistant drafts (wikihub-3add); see app/rate_limit.py.
+    ANNOTATION_MAX_PER_USER_PER_MINUTE = int(os.environ.get("ANNOTATION_MAX_PER_USER_PER_MINUTE", "6"))
+    ANNOTATION_MAX_PER_USER_PER_HOUR = int(os.environ.get("ANNOTATION_MAX_PER_USER_PER_HOUR", "60"))
+    ANNOTATION_MAX_PER_USER_PER_DAY = int(os.environ.get("ANNOTATION_MAX_PER_USER_PER_DAY", "300"))
+    ANNOTATION_MAX_PER_PAGE_PER_DAY = int(os.environ.get("ANNOTATION_MAX_PER_PAGE_PER_DAY", "500"))
+    ASSISTANT_DRAFT_MAX_PER_USER_PER_HOUR = int(os.environ.get("ASSISTANT_DRAFT_MAX_PER_USER_PER_HOUR", "30"))
     READER_ASSISTANT_ALLOW_SHARED_KEY = os.environ.get("READER_ASSISTANT_ALLOW_SHARED_KEY", "false").lower() in ("1", "true", "yes")
     # wikihub-u9rc: PostHog analytics. Empty key = snippet skipped (dev default).
     POSTHOG_KEY = os.environ.get("POSTHOG_KEY", "")

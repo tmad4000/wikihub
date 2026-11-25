@@ -77,6 +77,7 @@ def reset_database():
         "external_identities",
         "rate_limit_buckets",
         "curation_judgements",
+        "page_annotations",
         "users",
     ]:
         try:
@@ -12649,6 +12650,297 @@ def test_reader_assistant_scopes_to_visitor_and_cites_sources(app, client, key):
             app.config[k] = v
 
 
+def _annot_url(owner, slug, page_id):
+    return f"/@{owner}/{slug}/-/pages/{page_id}/annotations"
+
+
+def _annot_get(browser, owner, slug, page_id, headers=None):
+    from flask import g as _g
+    _g.pop("_login_user", None)
+    return browser.get(_annot_url(owner, slug, page_id), headers=headers or {})
+
+
+def _annot_post(browser, owner, slug, page_id, body, quote, revision, request_id=None, headers=None):
+    import uuid as _uuid
+    from flask import g as _g
+    _g.pop("_login_user", None)
+    payload = {"body": body, "quote": quote, "revision": revision,
+               "request_id": request_id or str(_uuid.uuid4())}
+    return browser.post(_annot_url(owner, slug, page_id), json=payload, headers=headers or {})
+
+
+def _page_row(owner, slug, path):
+    from app.models import Page as _Page, User as _User, Wiki as _Wiki
+    db.session.expire_all()
+    o = _User.query.filter_by(username=owner).first()
+    w = _Wiki.query.filter_by(owner_id=o.id, slug=slug).first()
+    return _Page.query.filter_by(wiki_id=w.id, path=path).first()
+
+
+def test_page_annotations_scope_anchoring_and_dedup(app, client, key):
+    """wikihub-3add: reader comments are viewer-scoped (anon/stranger/grantee/
+    owner, private pages + private bands), anchored conservatively to the
+    rendered text, deduplicated by request_id, revision-checked, rate limited,
+    CSRF-protected, and owner-only passages stay protected across edits."""
+    import uuid as _uuid
+    from app.models import PageAnnotation
+
+    h = {"Authorization": f"Bearer {key}"}
+    assert client.post("/api/v1/wikis", json={"slug": "annot-wiki", "title": "Annot"}, headers=h).status_code == 201
+    guide = ("---\ntitle: Guide\nvisibility: public\n---\n\n# Guide\n\n"
+             "Alpha passage about **tomatoes** and sun.\n\nGamma line to delete later.\n\n"
+             "Repeated phrase here.\n\nRepeated phrase here.\n\n"
+             "<!-- private -->\nSecret band sentence ZETA.\n<!-- /private -->\n")
+    _put_page(client, key, "agent1", "annot-wiki", "guide.md", guide)
+    _put_page(client, key, "agent1", "annot-wiki", "secret.md",
+              "---\nvisibility: private\n---\n\n# Secret\n\nPrivate page text OMEGA.\n", visibility="private")
+    reader_key = client.post("/api/v1/accounts", json={"username": "annot-reader"}).get_json()["api_key"]
+    grantee_key = client.post("/api/v1/accounts", json={"username": "annot-grantee"}).get_json()["api_key"]
+    assert client.post("/api/v1/wikis/agent1/annot-wiki/pages/secret.md/share",
+                       json={"username": "annot-grantee", "role": "read"}, headers=h).status_code == 200
+    anon = app.test_client()
+    reader = _login_browser_with_key(app, reader_key)
+    grantee = _login_browser_with_key(app, grantee_key)
+    owner = _login_browser_with_key(app, key)
+    W = ("agent1", "annot-wiki")
+    page = _page_row(*W, "guide.md")
+    secret = _page_row(*W, "secret.md")
+    rev = page.content_hash
+
+    # Anonymous: may read the (empty) thread of a public page, may not post.
+    r = _annot_get(anon, *W, page.id)
+    assert r.status_code == 200 and r.get_json()["comments"] == [] and r.headers["Cache-Control"] == "no-store"
+    assert _annot_post(anon, *W, page.id, "hi", "", rev).status_code == 401
+
+    # A reader comments on a public passage (DOM-style whitespace is fine).
+    rid = str(_uuid.uuid4())
+    r = _annot_post(reader, *W, page.id, "Nice tip", "Alpha passage about tomatoes and\n sun.", rev, request_id=rid)
+    assert r.status_code == 201, r.get_data(as_text=True)
+    c1 = r.get_json()["comment"]
+    assert c1["author"] == "annot-reader" and c1["quote"] == "Alpha passage about tomatoes and sun."
+    assert c1["detached"] is False and c1["owner_only"] is False
+
+    # Retry with the same request_id: the original comment, not a duplicate.
+    r = _annot_post(reader, *W, page.id, "Nice tip", "Alpha passage about tomatoes and\n sun.", rev, request_id=rid)
+    assert r.status_code == 200 and r.get_json()["duplicate"] is True and r.get_json()["comment"]["id"] == c1["id"]
+    assert PageAnnotation.query.filter_by(request_id=rid).count() == 1
+    r = _annot_post(reader, *W, page.id, "Different text", "", rev, request_id=rid)
+    assert r.status_code == 409 and r.get_json()["error"] == "request_id_reused"
+
+    # Validation.
+    assert _annot_post(reader, *W, page.id, "x", "", "not-the-revision").get_json()["error"] == "stale_revision"
+    assert _annot_post(reader, *W, page.id, "x", "", "abc").get_json()["revision"] == rev
+    assert _annot_post(reader, *W, page.id, "x", "Not on this page", rev).get_json()["error"] == "selection_not_found"
+    assert _annot_post(reader, *W, page.id, "x", "Repeated phrase here.", rev).get_json()["error"] == "ambiguous_selection"
+    r = _annot_post(reader, *W, page.id, "x", "Secret band sentence ZETA.", rev)
+    assert r.status_code == 409 and r.get_json()["error"] == "selection_not_found", "non-owners cannot anchor to band text"
+    assert _annot_post(reader, *W, page.id, "   ", "", rev).get_json()["error"] == "invalid_body"
+    assert _annot_post(reader, *W, page.id, "x", "", rev, request_id="nope").get_json()["error"] == "invalid_request_id"
+    from flask import g as _g
+    _g.pop("_login_user", None)
+    assert reader.post(_annot_url(*W, page.id), data="body=x").status_code == 415
+    assert _annot_post(reader, *W, page.id, "Gamma note", "Gamma line to delete later.", rev).status_code == 201
+    assert _annot_post(reader, *W, page.id, "Whole page note", "", rev).status_code == 201
+
+    # The owner can anchor to a private band: stored owner-only.
+    r = _annot_post(owner, *W, page.id, "Owner band note", "Secret band sentence ZETA.", rev)
+    assert r.status_code == 201 and r.get_json()["comment"]["owner_only"] is True
+    r = _annot_post(owner, *W, page.id, "Owner public note", "Alpha passage about tomatoes", rev)
+    assert r.status_code == 201 and r.get_json()["comment"]["owner_only"] is False
+
+    # Viewer-scoped reads.
+    seen = _annot_get(reader, *W, page.id).get_json()["comments"]
+    assert [c["body"] for c in seen] == ["Nice tip", "Gamma note", "Whole page note", "Owner public note"], seen
+    assert "ZETA" not in json.dumps(seen) and "Owner band note" not in json.dumps(seen)
+    assert [c["body"] for c in _annot_get(anon, *W, page.id).get_json()["comments"]] == [c["body"] for c in seen]
+    mine = _annot_get(owner, *W, page.id).get_json()["comments"]
+    assert [c["body"] for c in mine] == ["Nice tip", "Gamma note", "Whole page note", "Owner band note", "Owner public note"]
+    assert [c["id"] for c in mine] == sorted(c["id"] for c in mine), "chronological"
+
+    # Private page: restricted for anon (401) and strangers (403); grantee reads and posts.
+    assert _annot_get(anon, *W, secret.id).status_code == 401
+    assert _annot_get(reader, *W, secret.id).status_code == 403
+    assert _annot_post(reader, *W, secret.id, "x", "", secret.content_hash).status_code == 403
+    r = _annot_post(grantee, *W, secret.id, "Grantee note", "Private page text OMEGA.", secret.content_hash)
+    assert r.status_code == 201 and r.get_json()["comment"]["owner_only"] is False
+    assert _annot_get(grantee, *W, secret.id).get_json()["comments"][0]["body"] == "Grantee note"
+    assert _annot_get(reader, *W, 999999).status_code == 404
+    assert client.post("/api/v1/wikis", json={"slug": "annot-other"}, headers=h).status_code == 201
+    assert _annot_get(owner, "agent1", "annot-other", page.id).status_code == 404, "page id must belong to the wiki"
+
+    # Owner edits: Alpha moves into a private band, ZETA's band is removed,
+    # Gamma is deleted, and the repeated phrase becomes unique.
+    edited = ("---\ntitle: Guide\nvisibility: public\n---\n\n# Guide\n\n"
+              "<!-- private -->\nAlpha passage about **tomatoes** and sun.\n<!-- /private -->\n\n"
+              "Repeated phrase here.\n\nSecret band sentence ZETA.\n")
+    assert client.put("/api/v1/wikis/agent1/annot-wiki/pages/guide.md",
+                      json={"content": edited}, headers=h).status_code == 200
+    seen = {c["body"]: c for c in _annot_get(reader, *W, page.id).get_json()["comments"]}
+    assert "Owner band note" not in seen, "owner-only stays owner-only after the band is removed"
+    assert seen["Nice tip"]["detached"] is True and seen["Nice tip"]["quote"] is None, "quote now private: withheld"
+    assert "Alpha passage" not in json.dumps(list(seen.values()))
+    assert seen["Gamma note"]["detached"] is True and seen["Gamma note"]["quote"] == "Gamma line to delete later."
+    assert seen["Whole page note"]["detached"] is False
+    mine = {c["body"]: c for c in _annot_get(owner, *W, page.id).get_json()["comments"]}
+    assert mine["Nice tip"]["detached"] is False and mine["Nice tip"]["quote"].startswith("Alpha passage")
+    assert mine["Owner band note"]["owner_only"] is True and mine["Owner band note"]["detached"] is False
+
+    # Rate limits (shared Postgres buckets); a retry is still answered.
+    page = _page_row(*W, "guide.md")
+    saved = {k: app.config.get(k) for k in ("SHARED_RATE_LIMITS_IN_TESTS", "ANNOTATION_MAX_PER_USER_PER_MINUTE")}
+    try:
+        app.config.update(SHARED_RATE_LIMITS_IN_TESTS=True, ANNOTATION_MAX_PER_USER_PER_MINUTE=1)
+        db.session.execute(text("DELETE FROM rate_limit_buckets WHERE key LIKE 'annot:%'"))
+        db.session.commit()
+        rid2 = str(_uuid.uuid4())
+        assert _annot_post(grantee, *W, page.id, "first", "", page.content_hash, request_id=rid2).status_code == 201
+        r = _annot_post(grantee, *W, page.id, "second", "", page.content_hash)
+        assert r.status_code == 429 and r.get_json()["error"] == "rate_limited" and r.headers.get("Retry-After")
+        assert _annot_post(grantee, *W, page.id, "first", "", page.content_hash, request_id=rid2).status_code == 200
+    finally:
+        app.config.update(saved)
+        db.session.execute(text("DELETE FROM rate_limit_buckets WHERE key LIKE 'annot:%'"))
+        db.session.commit()
+
+    # CSRF: both GET and POST need the session's token.
+    try:
+        app.config["WTF_CSRF_ENABLED"] = True
+        assert _annot_get(reader, *W, page.id).status_code == 400
+        # The runner shares one app context, and Flask-WTF caches the token in
+        # g; drop it so the page renders this reader's own session token.
+        _g.pop("csrf_token", None)
+        _g.pop("_login_user", None)
+        html = reader.get("/@agent1/annot-wiki/guide").get_data(as_text=True)
+        token = re.search(r'<meta name="csrf-token" content="([^"]+)"', html).group(1)
+        assert _annot_get(reader, *W, page.id, headers={"X-CSRFToken": token}).status_code == 200
+        assert _annot_post(reader, *W, page.id, "no token", "", page.content_hash).status_code == 400
+        r = _annot_post(reader, *W, page.id, "with token", "", page.content_hash, headers={"X-CSRFToken": token})
+        assert r.status_code == 201, r.get_data(as_text=True)[:200]
+    finally:
+        app.config["WTF_CSRF_ENABLED"] = False
+
+    # The apex never 301s this JSON endpoint to a subdomain.
+    from app.canonical_redirect import _is_skipped
+    assert _is_skipped(_annot_url(*W, page.id))
+
+
+def test_page_annotations_migration_preserves_app_owner():
+    """wikihub-3add: the page_annotations migration leaves the table and its
+    sequence owned by the app role (a postgres-owned table 500s every request)."""
+    import uuid
+
+    import psycopg2
+    from psycopg2 import sql
+    from sqlalchemy.engine import make_url
+
+    suffix = uuid.uuid4().hex[:12]
+    app_role = f"wikihub_app_{suffix}"
+    database_name = f"wikihub_migration_{suffix}"
+    source_url = make_url(os.environ.get("TEST_DATABASE_ADMIN_URL", os.environ["DATABASE_URL"])).set(drivername="postgresql")
+    admin_dsn = source_url.set(database="postgres").render_as_string(hide_password=False)
+    migration_dsn = source_url.set(database=database_name).render_as_string(hide_password=False)
+    migration_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                  "migrations", "2026-11-25_page_annotations.sql")
+    with open(migration_path, encoding="utf-8") as f:
+        migration_sql = f.read()
+    admin = psycopg2.connect(admin_dsn)
+    admin.autocommit = True
+    conn = None
+    try:
+        with admin.cursor() as cur:
+            cur.execute(sql.SQL("CREATE ROLE {}").format(sql.Identifier(app_role)))
+            cur.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database_name)))
+        conn = psycopg2.connect(migration_dsn)
+        with conn.cursor() as cur:
+            cur.execute("CREATE TABLE public.users (id SERIAL PRIMARY KEY)")
+            cur.execute("CREATE TABLE public.wikis (id SERIAL PRIMARY KEY)")
+            cur.execute(sql.SQL("ALTER TABLE public.wikis OWNER TO {}").format(sql.Identifier(app_role)))
+            cur.execute(migration_sql)
+            cur.execute(migration_sql)  # idempotent
+            cur.execute("SELECT relname, pg_get_userbyid(relowner) FROM pg_class "
+                        "WHERE relname IN ('page_annotations', 'page_annotations_id_seq')")
+            owners = dict(cur.fetchall())
+        conn.commit()
+        assert owners == {"page_annotations": app_role, "page_annotations_id_seq": app_role}, owners
+    finally:
+        if conn is not None:
+            conn.close()
+        with admin.cursor() as cur:
+            cur.execute(sql.SQL("DROP DATABASE IF EXISTS {}").format(sql.Identifier(database_name)))
+            cur.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(app_role)))
+        admin.close()
+
+
+def _draft_post(browser, owner, slug, form, json_accept=True):
+    from flask import g as _g
+    _g.pop("_login_user", None)
+    headers = {"Accept": "application/json"} if json_accept else {}
+    return browser.post(f"/@{owner}/{slug}/new", data=form, headers=headers)
+
+
+def test_assistant_draft_new_page_rules(app, client, key):
+    """wikihub-3add: assistant drafts through the new-page form need sign-in,
+    explicit approval and a simple path; they never overwrite, repeat safely,
+    are private for the owner, and a non-owner must have previewed the real
+    visibility. The normal new-page flow is unchanged."""
+    h = {"Authorization": f"Bearer {key}"}
+    assert client.post("/api/v1/wikis", json={"slug": "draft-wiki", "title": "Drafts"}, headers=h).status_code == 201
+    owner = _login_browser_with_key(app, key)
+    anon = app.test_client()
+    other_key = client.post("/api/v1/accounts", json={"username": "draft-other"}).get_json()["api_key"]
+    other = _login_browser_with_key(app, other_key)
+    base = {"assistant_draft": "1", "approved": "1", "path": "notes/idea",
+            "content": "---\ntitle: Idea\nvisibility: public\n---\n\n# Idea\n\nDrafted text.\n"}
+
+    assert _draft_post(anon, "agent1", "draft-wiki", base).status_code == 401
+    r = _draft_post(owner, "agent1", "draft-wiki", {**base, "approved": "0"})
+    assert r.status_code == 400 and r.get_json()["error"] == "approval_required"
+    for bad in (".wikihub/acl", "notes/.hidden", "../x", "a//b", "/abs", "a\\b", "x/./y", ".md", "", "notes/ trailing",
+                "a/../.wikihub/acl", "x" * 201, "bad\x00name", "café?.md"):
+        r = _draft_post(owner, "agent1", "draft-wiki", {**base, "path": bad})
+        assert r.status_code == 400 and r.get_json()["error"] == "invalid_path", (bad, r.status_code)
+    assert _page_row("agent1", "draft-wiki", "notes/idea.md") is None, "nothing written by rejected drafts"
+
+    r = _draft_post(owner, "agent1", "draft-wiki", base)
+    assert r.status_code == 201, r.get_data(as_text=True)
+    body = r.get_json()
+    assert body["path"] == "notes/idea.md" and body["visibility"] == "private" and body["created"] is True
+    page = _page_row("agent1", "draft-wiki", "notes/idea.md")
+    assert page.visibility == "private" and page.author == "agent1"
+    assert _get(anon, "/@agent1/draft-wiki/notes/idea").status_code in (401, 403), "owner drafts are private"
+
+    # Exact repeat (double submit / retry) answers with the same page.
+    r = _draft_post(owner, "agent1", "draft-wiki", base)
+    assert r.status_code == 200 and r.get_json()["created"] is False and r.get_json()["page_id"] == body["page_id"]
+    # Different content at the same path never overwrites.
+    r = _draft_post(owner, "agent1", "draft-wiki", {**base, "content": "# Other\n"})
+    assert r.status_code == 409 and r.get_json()["error"] == "exists"
+    assert "Drafted text." in client.get("/api/v1/wikis/agent1/draft-wiki/pages/notes/idea.md", headers=h).get_json()["content"]
+    # Plain form submit: redirect to the page.
+    r = _draft_post(owner, "agent1", "draft-wiki", {**base, "path": "plain"}, json_accept=False)
+    assert r.status_code == 303 and r.headers["Location"].endswith("/@agent1/draft-wiki/plain")
+
+    # Non-owner: authorization on the destination; a private wiki is not writable.
+    r = _draft_post(other, "agent1", "draft-wiki", {**base, "path": "contrib", "previewed_visibility": "private"})
+    assert r.status_code == 403 and r.get_json()["error"] == "forbidden"
+    # Public-edit wiki: allowed only when the previewed visibility is the real one.
+    assert client.post("/api/v1/wikis", json={"slug": "draft-open"}, headers=h).status_code == 201
+    r = client.put("/api/v1/wikis/agent1/draft-open/pages/.wikihub/acl", json={"content": "* public-edit\n"}, headers=h)
+    assert r.status_code in (200, 201), r.get_data(as_text=True)
+    r = _draft_post(other, "agent1", "draft-open", {**base, "path": "contrib"})
+    assert r.status_code == 409 and r.get_json()["error"] == "visibility_mismatch" and r.get_json()["visibility"] == "public-edit"
+    r = _draft_post(other, "agent1", "draft-open", {**base, "path": "contrib", "previewed_visibility": "private"})
+    assert r.status_code == 409 and r.get_json()["error"] == "visibility_mismatch"
+    assert _page_row("agent1", "draft-open", "contrib.md") is None
+    r = _draft_post(other, "agent1", "draft-open", {**base, "path": "contrib", "previewed_visibility": "public-edit"})
+    assert r.status_code == 201 and r.get_json()["visibility"] == "public-edit", r.get_data(as_text=True)
+    page = _page_row("agent1", "draft-open", "contrib.md")
+    assert page.visibility == "public-edit" and page.author == "draft-other"
+    # Another user's identical submission does not count as "their" repeat.
+    r = _draft_post(owner, "agent1", "draft-open", {**base, "path": "contrib"})
+    assert r.status_code == 409 and r.get_json()["error"] == "exists"
+
+
 def run_all():
     app = setup()
 
@@ -12684,6 +12976,9 @@ def run_all():
             ("activity feed filters private and shows social events", lambda: test_activity_feed_filters_private_and_shows_social_events(client, key)),
             ("curator sidebar only renders when usable", lambda: test_curator_sidebar_only_renders_when_usable(app, client, key)),
             ("reader assistant scopes to visitor and cites sources (wikihub-1bfx)", lambda: test_reader_assistant_scopes_to_visitor_and_cites_sources(app, client, key)),
+            ("page annotations: scope, anchoring, dedup, limits, CSRF (wikihub-3add)", lambda: test_page_annotations_scope_anchoring_and_dedup(app, client, key)),
+            ("page annotations migration keeps app owner (wikihub-3add)", lambda: test_page_annotations_migration_preserves_app_owner()),
+            ("assistant draft new-page rules (wikihub-3add)", lambda: test_assistant_draft_new_page_rules(app, client, key)),
             ("zip upload", lambda: test_zip_upload(client, key)),
             ("anonymous upload (wikihub-i2xm)", lambda: test_anonymous_upload(app)),
             ("agent surfaces", lambda: test_agent_surfaces(client)),

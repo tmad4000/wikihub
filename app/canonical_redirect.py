@@ -38,6 +38,7 @@ _SKIP_SUFFIXES = (
     "/reindex",
     "/preview",
     "/new", "/new-folder",
+    "/annotations",  # wikihub-3add JSON endpoint: same-host fetch, never 301
 )
 
 _EXACT_SKIP_RE = re.compile(r"^/@[^/]+/[^/]+/(?:activity|activity\.rss)$")
