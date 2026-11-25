@@ -23,17 +23,23 @@ token returns `400 {"error":"csrf_failed"}` (GET) or Flask-WTF's 400 (POST).
 ```json
 {"comments": [{"id": 1, "author": "alice", "body": "…", "quote": "…",
                "detached": false, "owner_only": false, "created_at": "2026-11-25T…"}],
- "revision": "<pages.content_hash>"}
+ "revision": "<pages.content_hash>", "viewer_id": 42}
 ```
 
 - Chronological (`created_at`, then `id`).
-- `quote` is `""` for a whole-page comment. It is `null` when the quoted passage
-  now exists only inside the owner's private section; the comment is shown
-  detached without its quote. That only happens for non-owners.
+- `quote` is `""` for a whole-page comment.
+- `viewer_id` is the signed-in user's id, or `null` when signed out. Send it back
+  on POST.
+- **Hidden from non-owners** (the owner sees these with `detached: true`):
+  - comments from an earlier incarnation of the page: the page was deleted and
+    recreated at the same path. A reset reindex does *not* count; comments
+    keep their page identity across it.
+  - anchored comments whose originally public passage now exists only inside
+    an owner-only private section. Both the quote and the comment are hidden.
 - `detached` is true when the quote no longer occurs exactly once in the text this
   viewer sees (removed, or now ambiguous). Never guessed.
 - `owner_only` comments are returned only to the wiki owner.
-- `created_at` and the top-level `revision` are additions to the agreed contract.
+- `created_at`, and the top-level `revision` and `viewer_id`, are additions to the agreed contract.
   The UI can use `revision` for the next POST.
 - Errors: `401 authentication_required` (anonymous on a restricted page),
   `403 forbidden` (signed in, no read access), `404 not_found` (no such page in this
@@ -42,13 +48,16 @@ token returns `400 {"error":"csrf_failed"}` (GET) or Flask-WTF's 400 (POST).
 **POST** (signed-in reader with read access), JSON:
 
 ```json
-{"body": "text", "quote": "selected text or empty", "request_id": "<uuid4>", "revision": "<content_hash>"}
+{"body": "text", "quote": "selected text or empty", "request_id": "<uuid4>",
+ "revision": "<content_hash>", "viewer_id": 42}
 ```
 
 | Result | Status | Body |
 |---|---|---|
 | created | 201 | `{"comment": {…}}` |
-| retry of the same `request_id` with the same body/quote/page | 200 | `{"comment": {…original…}, "duplicate": true}` |
+| retry of the same `request_id` with the same body/quote/page | 200 | `{"comment": {…original…}, "duplicate": true}`. `comment` is `null` if that comment is now hidden from this viewer |
+| `viewer_id` missing or not an integer | 400 | `invalid_viewer_id` |
+| `viewer_id` ≠ signed-in user (stale tab after sign-out or account switch) | 409 | `viewer_mismatch` (reload) |
 | same `request_id`, different content | 409 | `request_id_reused` |
 | `revision` ≠ current page hash | 409 | `stale_revision` + `revision` (current) |
 | quote not in the viewer's rendered text | 409 | `selection_not_found` |
@@ -78,7 +87,7 @@ not match. The UI should send the selection's plain text (`Selection.toString()`
   stored `owner_only=true`, and it never becomes visible to others, even if the
   section is later made public.
 - If an owner later moves an already-commented public passage into a private
-  section, non-owners get `quote: null` for it.
+  section, that comment is hidden from non-owners.
 - The comment **body** is reader-authored text and is visible to every reader of the
   page. The UI must render it as plain text, never as HTML.
 - Comments by suspended accounts are hidden.
@@ -87,7 +96,8 @@ not match. The UI should send the selection's plain text (`Selection.toString()`
 page ids change when a wiki is reindexed with reset. Consequences:
 - A comment follows its path. Renaming a page leaves its comments at the old path.
 - If a page is deleted and later recreated at the same path, the old comments
-  reappear (quoted ones usually as detached).
+  are hidden from non-owners and shown to the owner as detached. Detection uses
+  the stored page id, which a reset reindex carries over for the same path.
 - There is no delete or moderation endpoint yet (follow-up).
 
 **Rate limits** (Postgres buckets shared across workers; env-configurable):
@@ -103,6 +113,9 @@ This extends the existing new-page form POST. Without `assistant_draft=1` the
 behavior is unchanged. Form fields:
 
 - `assistant_draft=1`
+- `viewer_id`: the signed-in user's id, from the tab that previewed the draft.
+  Missing or non-numeric gives `400 invalid_viewer_id`; a different user gives
+  `409 viewer_mismatch`.
 - `approved=1`: explicit approval. Without it: `400 approval_required`.
 - `path`: a simple Markdown path. Allowed characters are letters, digits, space,
   `_ - . ( )` and `/` separators. Segments can't be empty, `.`, `..`, or start with

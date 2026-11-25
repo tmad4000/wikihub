@@ -289,7 +289,12 @@ def delete_wiki_repos(username, slug):
 def index_repo_pages(username, slug, wiki, reset=False):
     acl_rules = load_acl_rules(username, slug)
 
+    prior_ids = {}
     if reset:
+        # Remember which row each path had, so annotations (wikihub-3add) keep
+        # their page identity across the reset; a real delete + recreate is
+        # still told apart (its old id is not in this mapping).
+        prior_ids = dict(Page.query.with_entities(Page.path, Page.id).filter_by(wiki_id=wiki.id).all())
         Page.query.filter_by(wiki_id=wiki.id).delete()
         db.session.flush()
 
@@ -345,6 +350,9 @@ def index_repo_pages(username, slug, wiki, reset=False):
     # attached to their (wiki, path) — wikihub-f3b7
     from app.curation import rekey_page_judgements
     rekey_page_judgements(wiki.id)
+    if prior_ids:
+        from app.annotations import rekey_after_reset
+        rekey_after_reset(wiki.id, prior_ids)
 
     pages = Page.query.filter_by(wiki_id=wiki.id).all()
     content_by_path = {

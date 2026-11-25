@@ -112,7 +112,9 @@ def list_annotations(username, slug, page_id):
     if err:
         return err
     rows, names = _visible_rows(view)
-    return _json({"comments": [serialize(r, view, names) for r in rows], "revision": view.page.content_hash})
+    comments = [c for c in (serialize(r, view, names) for r in rows) if c is not None]
+    return _json({"comments": comments, "revision": view.page.content_hash,
+                  "viewer_id": viewer.id if viewer else None})
 
 
 @annotations_bp.route("/@<username>/<slug>/-/pages/<int:page_id>/annotations", methods=["POST"])
@@ -124,6 +126,13 @@ def create_annotation(username, slug, page_id):
     if viewer is None:
         return _err(401, "authentication_required", "Sign in to comment.")
     data = request.get_json(silent=True) or {}
+    # The tab must still belong to the identity it loaded as (sign-out or an
+    # account switch in another tab must not post under the new identity).
+    viewer_id = data.get("viewer_id")
+    if not isinstance(viewer_id, int) or isinstance(viewer_id, bool):
+        return _err(400, "invalid_viewer_id", "viewer_id (the signed-in user's id) is required.")
+    if viewer_id != viewer.id:
+        return _err(409, "viewer_mismatch", "You're signed in as a different account now. Reload the page.")
 
     body = data.get("body")
     if not isinstance(body, str) or not body.strip():

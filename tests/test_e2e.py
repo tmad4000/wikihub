@@ -12660,12 +12660,16 @@ def _annot_get(browser, owner, slug, page_id, headers=None):
     return browser.get(_annot_url(owner, slug, page_id), headers=headers or {})
 
 
-def _annot_post(browser, owner, slug, page_id, body, quote, revision, request_id=None, headers=None):
+_NO_VIEWER = object()
+
+
+def _annot_post(browser, owner, slug, page_id, body, quote, revision, request_id=None, headers=None, viewer_id=_NO_VIEWER):
     import uuid as _uuid
     from flask import g as _g
     _g.pop("_login_user", None)
     payload = {"body": body, "quote": quote, "revision": revision,
-               "request_id": request_id or str(_uuid.uuid4())}
+               "request_id": request_id or str(_uuid.uuid4()),
+               "viewer_id": getattr(browser, "wh_user_id", None) if viewer_id is _NO_VIEWER else viewer_id}
     return browser.post(_annot_url(owner, slug, page_id), json=payload, headers=headers or {})
 
 
@@ -12702,6 +12706,9 @@ def test_page_annotations_scope_anchoring_and_dedup(app, client, key):
     reader = _login_browser_with_key(app, reader_key)
     grantee = _login_browser_with_key(app, grantee_key)
     owner = _login_browser_with_key(app, key)
+    from app.models import User as _User
+    for browser, name in ((reader, "annot-reader"), (grantee, "annot-grantee"), (owner, "agent1")):
+        browser.wh_user_id = _User.query.filter_by(username=name).first().id
     W = ("agent1", "annot-wiki")
     page = _page_row(*W, "guide.md")
     secret = _page_row(*W, "secret.md")
@@ -12710,6 +12717,8 @@ def test_page_annotations_scope_anchoring_and_dedup(app, client, key):
     # Anonymous: may read the (empty) thread of a public page, may not post.
     r = _annot_get(anon, *W, page.id)
     assert r.status_code == 200 and r.get_json()["comments"] == [] and r.headers["Cache-Control"] == "no-store"
+    assert r.get_json()["viewer_id"] is None
+    assert _annot_get(reader, *W, page.id).get_json()["viewer_id"] == reader.wh_user_id
     assert _annot_post(anon, *W, page.id, "hi", "", rev).status_code == 401
 
     # A reader comments on a public passage (DOM-style whitespace is fine).
@@ -12726,6 +12735,13 @@ def test_page_annotations_scope_anchoring_and_dedup(app, client, key):
     assert PageAnnotation.query.filter_by(request_id=rid).count() == 1
     r = _annot_post(reader, *W, page.id, "Different text", "", rev, request_id=rid)
     assert r.status_code == 409 and r.get_json()["error"] == "request_id_reused"
+
+    # Stale tab: the viewer the page loaded as must still be the signed-in user.
+    r = _annot_post(reader, *W, page.id, "x", "", rev, viewer_id=grantee.wh_user_id)
+    assert r.status_code == 409 and r.get_json()["error"] == "viewer_mismatch"
+    for bad_vid in (None, str(reader.wh_user_id), True):
+        r = _annot_post(reader, *W, page.id, "x", "", rev, viewer_id=bad_vid)
+        assert r.status_code == 400 and r.get_json()["error"] == "invalid_viewer_id", bad_vid
 
     # Validation.
     assert _annot_post(reader, *W, page.id, "x", "", "not-the-revision").get_json()["error"] == "stale_revision"
@@ -12777,13 +12793,36 @@ def test_page_annotations_scope_anchoring_and_dedup(app, client, key):
                       json={"content": edited}, headers=h).status_code == 200
     seen = {c["body"]: c for c in _annot_get(reader, *W, page.id).get_json()["comments"]}
     assert "Owner band note" not in seen, "owner-only stays owner-only after the band is removed"
-    assert seen["Nice tip"]["detached"] is True and seen["Nice tip"]["quote"] is None, "quote now private: withheld"
+    assert "Nice tip" not in seen and "Owner public note" not in seen, "comments on a passage now in a band are hidden"
     assert "Alpha passage" not in json.dumps(list(seen.values()))
     assert seen["Gamma note"]["detached"] is True and seen["Gamma note"]["quote"] == "Gamma line to delete later."
     assert seen["Whole page note"]["detached"] is False
     mine = {c["body"]: c for c in _annot_get(owner, *W, page.id).get_json()["comments"]}
     assert mine["Nice tip"]["detached"] is False and mine["Nice tip"]["quote"].startswith("Alpha passage")
     assert mine["Owner band note"]["owner_only"] is True and mine["Owner band note"]["detached"] is False
+
+    # A reset reindex gives pages new ids; comments keep their page identity.
+    old_id = page.id
+    _g.pop("_login_user", None)
+    assert owner.post("/@agent1/annot-wiki/reindex").status_code == 200
+    page = _page_row(*W, "guide.md")
+    assert page.id != old_id, "reset reindex recreated the row"
+    seen = {c["body"]: c for c in _annot_get(reader, *W, page.id).get_json()["comments"]}
+    assert {"Whole page note", "Gamma note"} <= set(seen) and seen["Whole page note"]["detached"] is False
+    assert _annot_get(reader, *W, old_id).status_code == 404
+
+    # Delete and recreate the page at the same path: earlier comments belong
+    # to the old page -- hidden from readers, shown to the owner as detached.
+    assert client.delete("/api/v1/wikis/agent1/annot-wiki/pages/guide.md", headers=h).status_code in (200, 204)
+    _put_page(client, key, "agent1", "annot-wiki", "guide.md",
+              "---\nvisibility: public\n---\n\n# Guide v2\n\nGamma line to delete later.\n")
+    page = _page_row(*W, "guide.md")
+    assert _annot_get(reader, *W, page.id).get_json()["comments"] == [], "old incarnation hidden from readers"
+    mine = _annot_get(owner, *W, page.id).get_json()["comments"]
+    assert mine and all(c["detached"] for c in mine), mine
+    r = _annot_post(reader, *W, page.id, "New page note", "Gamma line to delete later.", page.content_hash)
+    assert r.status_code == 201 and r.get_json()["comment"]["detached"] is False
+    assert [c["body"] for c in _annot_get(reader, *W, page.id).get_json()["comments"]] == ["New page note"]
 
     # Rate limits (shared Postgres buckets); a retry is still answered.
     page = _page_row(*W, "guide.md")
@@ -12874,6 +12913,8 @@ def test_page_annotations_migration_preserves_app_owner():
 def _draft_post(browser, owner, slug, form, json_accept=True):
     from flask import g as _g
     _g.pop("_login_user", None)
+    if "viewer_id" not in form and getattr(browser, "wh_user_id", None) is not None:
+        form = {**form, "viewer_id": str(browser.wh_user_id)}
     headers = {"Accept": "application/json"} if json_accept else {}
     return browser.post(f"/@{owner}/{slug}/new", data=form, headers=headers)
 
@@ -12889,10 +12930,17 @@ def test_assistant_draft_new_page_rules(app, client, key):
     anon = app.test_client()
     other_key = client.post("/api/v1/accounts", json={"username": "draft-other"}).get_json()["api_key"]
     other = _login_browser_with_key(app, other_key)
+    from app.models import User as _User
+    owner.wh_user_id = _User.query.filter_by(username="agent1").first().id
+    other.wh_user_id = _User.query.filter_by(username="draft-other").first().id
     base = {"assistant_draft": "1", "approved": "1", "path": "notes/idea",
             "content": "---\ntitle: Idea\nvisibility: public\n---\n\n# Idea\n\nDrafted text.\n"}
 
     assert _draft_post(anon, "agent1", "draft-wiki", base).status_code == 401
+    r = _draft_post(owner, "agent1", "draft-wiki", {**base, "viewer_id": ""})
+    assert r.status_code == 400 and r.get_json()["error"] == "invalid_viewer_id"
+    r = _draft_post(owner, "agent1", "draft-wiki", {**base, "viewer_id": str(other.wh_user_id)})
+    assert r.status_code == 409 and r.get_json()["error"] == "viewer_mismatch", "stale tab after account switch"
     r = _draft_post(owner, "agent1", "draft-wiki", {**base, "approved": "0"})
     assert r.status_code == 400 and r.get_json()["error"] == "approval_required"
     for bad in (".wikihub/acl", "notes/.hidden", "../x", "a//b", "/abs", "a\\b", "x/./y", ".md", "", "notes/ trailing",
