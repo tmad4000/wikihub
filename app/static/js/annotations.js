@@ -145,22 +145,25 @@
     if (selected) get('selection').title = selected.slice(0,120);
   }
   document.addEventListener('selectionchange',capture);
-  function close() { form.hidden = true; if(page) page.hidden = true; }
+  let composition = 0;
+  function close() { composition++; form.hidden = true; if(page) page.hidden = true; }
   const submitComment = form.querySelector('[type=submit]');
   async function previewComment() {
     // Exact audience + canonical page from the server, before approval.
+    const current = composition;
     audience = null; submitComment.disabled = true;
     get('destination').textContent = 'Checking…';
     try {
       const res = await fetch(root.dataset.url, {method:'POST', headers:{'Content-Type':'application/json','X-CSRFToken':get('token').value},
         body: JSON.stringify({preview:true, quote, revision:root.dataset.revision, viewer_id:Number(root.dataset.viewer)})});
       const d = await res.json().catch(() => ({}));
+      if (current !== composition) return;
       if (!res.ok) throw new Error(d.message || 'This comment cannot be posted here.');
       audience = d.preview.audience;
       get('destination').textContent = d.preview.audience_label;
       get('page-ref').textContent = d.preview.page_path;
       submitComment.disabled = false;
-    } catch (err) { get('destination').textContent = err.message; }
+    } catch (err) { if(current === composition) get('destination').textContent = err.message; }
   }
   function showDraftSources() {
     const list = get('draft-sources');
@@ -246,7 +249,7 @@
     e.preventDefault();
     const submit=form.querySelector('[type=submit]');
     if(submit.disabled)return;
-    const body=get('body').value.trim();if(!body)return;
+    const body=get('body').value;if(!body.trim())return;
     if(body.length>4000){status.textContent='Shorten this comment to 4,000 characters before approving.';return;}
     if(!audience)return;
     if(issuedPayload && issuedPayload!==body) requestId=crypto.randomUUID();

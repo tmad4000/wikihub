@@ -328,7 +328,6 @@ def create_annotation(username, slug, page_id):
             return _err(400, "invalid_body", "Write a comment.")
         if _UNSTORABLE_TEXT.search(body):
             return _err(400, "invalid_body", "The comment contains an unsupported character.")
-        body = body.strip()
         if len(body) > MAX_BODY_CHARS:
             return _err(400, "invalid_body", f"Comments are limited to {MAX_BODY_CHARS} characters.")
     quote = data.get("quote", "")
@@ -386,7 +385,7 @@ def create_annotation(username, slug, page_id):
                 owner_only = context_matches(view.text_key("public"), quote, prefix, suffix) != 1
     except ContentUnavailable:
         return _unavailable()
-    audience = comment_audience(view.page, owner_only)
+    audience = comment_audience(view, owner_only)
     page_ref = f"@{view.owner.username}/{view.wiki.slug}/{view.page.path}"
 
     if preview:

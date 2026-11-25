@@ -47,16 +47,17 @@ AUDIENCE_LABELS = {
     "public": "Anyone who can read this public page",
     "link": "Anyone with the link to this unlisted page",
     "restricted": "The wiki owner and people with access to this private page",
-    "owner": "Only the wiki owner (the passage is in a private section)",
+    "owner": "Owner only (the passage is in a private section)",
 }
 
 
-def comment_audience(page, owner_only):
-    from app.acl import normalize_page_visibility
+def comment_audience(view, owner_only):
+    from app.acl import normalize_page_visibility, resolve_visibility
 
     if owner_only:
         return "owner"
-    vis = normalize_page_visibility(page.visibility) or "private"
+    effective = resolve_visibility(view.page.path, view.acl_rules, view.page.visibility)
+    vis = normalize_page_visibility(effective) or "private"
     if vis in ("public", "public-edit", "public-view"):
         return "public"
     if vis in ("unlisted", "unlisted-edit", "unlisted-view"):
@@ -412,7 +413,7 @@ def serialize(annotation, view, author_names, citations=None):
         "quote": quote,
         "detached": detached,
         "owner_only": bool(annotation.owner_only),
-        "audience": comment_audience(view.page, annotation.owner_only),
+        "audience": comment_audience(view, annotation.owner_only),
         "citations": citations if citations is not None else [],
         "created_at": annotation.created_at.isoformat() if annotation.created_at else None,
     }
