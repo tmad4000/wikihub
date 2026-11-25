@@ -15,13 +15,24 @@
   function locate(text) {
     const walker = document.createTreeWalker(article, NodeFilter.SHOW_TEXT);
     const nodes = [];
-    let s = '', n;
+    let raw = '', n;
     while ((n = walker.nextNode())) {
-      nodes.push({n, start:s.length});
-      s += n.data;
+      nodes.push({n, start:raw.length});
+      raw += n.data;
     }
-    const i = s.indexOf(text), j = i + text.length;
-    if (i < 0 || i !== s.lastIndexOf(text)) return null;
+    // The server normalizes selection whitespace across Markdown block and
+    // inline boundaries. Keep DOM offsets so a matching quote still highlights.
+    const offsets = [];
+    let normalized = '';
+    for(let i=0; i<raw.length; i++) {
+      if (/\s/u.test(raw[i])) continue;
+      normalized += raw[i];
+      offsets.push(i);
+    }
+    const needle = text.replace(/\s/gu, '');
+    const match = normalized.indexOf(needle);
+    if (!needle || match < 0 || match !== normalized.lastIndexOf(needle)) return null;
+    const i = offsets[match], j = offsets[match + needle.length-1]+1;
     const first = nodes.find(x => x.start + x.n.length > i);
     const last = nodes.find(x => x.start + x.n.length >= j);
     if (!first || !last) return null;

@@ -1,7 +1,6 @@
 # Reader annotations and assistant drafts (wikihub-3add)
 
-Backend for reader comments and for saving reader-assistant drafts. The UI lives
-separately (Astra, M5); this page is the contract and the release notes.
+The reader shows comments below the article. Select text to attach a passage, or use Comment on page. Ask can suggest a comment or page with citations. The reader previews the exact text, target and audience before the signed-in visitor approves the write.
 
 ## Annotations
 
@@ -169,7 +168,7 @@ Rules:
    - Reverting the code is safe; the table is simply unused.
    - To also remove the data: `DROP TABLE page_annotations;`. This is
      irreversible, so take a backup first.
-5. **Not included:** the UI, comment delete/moderation, and page-rename rekeying.
+5. **Not included:** comment delete/moderation, and page-rename rekeying.
 
 Regression tests:
 
