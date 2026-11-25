@@ -937,7 +937,6 @@ def agent_chat():
         for _iteration in range(max_iterations):
             try:
                 # Stream the response
-                full_text = ""
                 tool_uses = []
                 current_tool = None
 
@@ -966,7 +965,6 @@ def agent_chat():
 
                         elif event.type == "content_block_delta":
                             if event.delta.type == "text_delta":
-                                full_text += event.delta.text
                                 yield _sse_event({
                                     "type": "text",
                                     "content": event.delta.text,
@@ -999,20 +997,13 @@ def agent_chat():
                 yield _sse_event({"type": "error", "content": f"API error: {e.message}"})
                 break
 
-            # Build the assistant message content for history
-            assistant_content = []
-            if full_text:
-                assistant_content.append({"type": "text", "text": full_text})
-            for tu in tool_uses:
-                assistant_content.append({
-                    "type": "tool_use",
-                    "id": tu["id"],
-                    "name": tu["name"],
-                    "input": tu["parsed_input"],
+            # Replay the provider's ordered content, including signed thinking
+            # blocks required for follow-up tool turns. Only text is shown in chat.
+            if final_message.content:
+                messages.append({
+                    "role": "assistant",
+                    "content": [block.model_dump(exclude_unset=True) for block in final_message.content],
                 })
-
-            if assistant_content:
-                messages.append({"role": "assistant", "content": assistant_content})
 
             # If there are tool uses, execute them and continue
             if tool_uses and stop_reason == "tool_use":
