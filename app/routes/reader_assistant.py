@@ -137,6 +137,10 @@ def ask_wiki(owner, slug):
     page_path = data.get("page_path")
     current_page = scope.resolve(page_path) if isinstance(page_path, str) and page_path else None
 
+    scope_factory = current_app.config.get("READER_SCOPE_FACTORY")
+    if scope_factory:
+        scope = scope_factory(scope, current_page, data.get("scope", "wiki"))
+
     slots = _slots()
     if not slots.acquire(blocking=False):
         return _no_store(

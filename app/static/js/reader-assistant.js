@@ -25,14 +25,46 @@
   var input = document.getElementById("ra-input");
   var form = panel.querySelector("[data-ra-form]");
   var sendBtn = panel.querySelector("[data-ra-send]");
+  var comparison = panel.hasAttribute("data-comparison");
+  var design, channel, searchScope = "wiki", passage = "", selected = "", baseKey = storeKey;
+  var fallback = new Map();
+  function stored(key) {
+    if (fallback.has(key)) return fallback.get(key);
+    try { return sessionStorage.getItem(key); }
+    catch { return null; }
+  }
+  function remember(key, value) {
+    fallback.set(key, value);
+    try { sessionStorage.setItem(key, value); } catch {}
+  }
+  if (comparison) {
+    var variant = new URLSearchParams(location.search).get("variant");
+    design = (variant || stored("reader-design")) === "B" ? "B" : "A";
+    remember("reader-design", design);
+    channel = design === "B" ? "page" : "unified";
+    searchScope = channel === "page" ? "page" : "wiki";
+    storeKey = baseKey + ":" + design + ":" + channel + (channel === "page" ? ":" + pagePath : "");
+  }
+  var scopeKey = storePrefix + "comparison-scope:" + design;
+  if (comparison) {
+    var savedScope = stored(scopeKey);
+    if (design === "B" && savedScope === "library") {
+      channel = searchScope = "library";
+      storeKey = storePrefix + "B:library";
+    }
+    if (design === "A") {
+      searchScope = savedScope === "library" ? "library" : "wiki";
+      storeKey = storePrefix + "A:unified";
+    }
+  }
   var turns = load();
   var lastFocus = null;
 
   function load() {
-    try { return JSON.parse(sessionStorage.getItem(storeKey) || "[]") || []; } catch (e) { return []; }
+    try { return JSON.parse(stored(storeKey) || "[]") || []; } catch (e) { return []; }
   }
   function save() {
-    try { sessionStorage.setItem(storeKey, JSON.stringify(turns.slice(-20))); } catch (e) {}
+    try { remember(storeKey, JSON.stringify(turns.slice(-20))); } catch (e) {}
   }
   function triggers() { return document.querySelectorAll("[data-ra-open]"); }
 
@@ -43,12 +75,13 @@
     triggers().forEach(function (t) { t.setAttribute("aria-expanded", "true"); });
     if (!restoring) input.focus();
     list.scrollTop = list.scrollHeight;
-    try { sessionStorage.setItem(storeKey + ":open", "1"); } catch (e) {}
+    remember(storeKey + ":open", "1");
   }
   function close() {
     panel.classList.remove("open");
     panel.setAttribute("aria-hidden", "true");
     triggers().forEach(function (t) { t.setAttribute("aria-expanded", "false"); });
+    fallback.delete(storeKey + ":open");
     try { sessionStorage.removeItem(storeKey + ":open"); } catch (e) {}
     if (lastFocus && lastFocus.focus) lastFocus.focus();
   }
@@ -90,7 +123,7 @@
     if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
   }
 
-  function renderAnswer(text, citations) {
+  function renderAnswer(text, citations, anchor) {
     var wrap = el("div", "ra-a");
     var citeByN = {};
     (citations || []).forEach(function (c) { citeByN[c.n] = c; });
@@ -123,6 +156,30 @@
       });
       wrap.appendChild(src);
     }
+    var comments = document.getElementById("page-comments");
+    if (comments && comments.dataset.viewer) {
+      // Citations stay structured and same-site: comments store them (the
+      // server re-checks every target per viewer); page drafts get Markdown
+      // links to the same paths.
+      var cites = (citations || []).filter(function (c) { return safeHref(c.url); })
+        .map(function (c) { return { n: c.n, url: c.url, title: c.title }; });
+      var pageBody = text + (cites.length ? "\n\n## Sources\n\n" + cites.map(function (c) {
+        return c.n + ". [" + String(c.title).replace(/[\[\]]/g, "") + "](" + c.url.replace(/[()\s]/g, encodeURIComponent) + ")";
+      }).join("\n") : "");
+      function offer(label, type) {
+        var button = el("button", "action-btn", label);
+        button.type = "button";
+        button.setAttribute("data-review-" + type, "");
+        button.onclick = function () {
+          close();
+          comments.dispatchEvent(new CustomEvent("review-reader-draft", { detail: {
+            type: type, body: type === "page" ? pageBody : text, citations: type === "comment" ? cites : [], quote: anchor || "" } }));
+        };
+        wrap.appendChild(button);
+      }
+      offer("Draft a comment", "comment");
+      if (comments.querySelector("[data-page-form]")) offer(comments.querySelector("[data-page-form]").dataset.owner === "1" ? "Draft a private page" : "Draft a page", "page");
+    }
     return wrap;
   }
 
@@ -131,7 +188,7 @@
     if (empty) empty.remove();
     if (t.role === "user") list.appendChild(el("div", "ra-q", t.content));
     else if (t.error) list.appendChild(el("div", "ra-error", t.content));
-    else list.appendChild(renderAnswer(t.content, t.citations));
+    else list.appendChild(renderAnswer(t.content, t.citations, t.pagePath === baseKey + ":" + pagePath ? t.quote : ""));
     list.scrollTop = list.scrollHeight;
   }
 
@@ -142,9 +199,11 @@
     });
   }
 
-  function ask(question) {
+  function ask(question, draftType) {
     var prior = history();
-    var q = { role: "user", content: question };
+    var anchor = passage;
+    var fullQuestion = (anchor ? "Selected passage: “" + anchor + "”\n" : "") + question;
+    var q = { role: "user", content: fullQuestion };
     turns.push(q); save(); renderTurn(q);
     var thinking = el("div", "ra-thinking", "Reading the wiki…");
     list.appendChild(thinking); list.scrollTop = list.scrollHeight;
@@ -153,26 +212,117 @@
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json", "Accept": "application/json" },
-      body: JSON.stringify({ question: question, page_path: pagePath, history: prior }),
+      body: JSON.stringify({ question: fullQuestion, scope: searchScope, page_path: pagePath, history: prior }),
     })
       .then(function (r) { return r.json().catch(function () { return {}; }).then(function (b) { return { ok: r.ok, body: b }; }); })
       .then(function (res) {
         var t = res.ok
-          ? { role: "assistant", content: res.body.answer || "", citations: res.body.citations || [] }
+          ? { role: "assistant", content: res.body.answer || "", citations: res.body.citations || [], quote: anchor, pagePath: baseKey + ":" + pagePath }
           : { role: "assistant", error: true, content: res.body.message || "The assistant couldn't answer just now." };
         turns.push(t); save(); thinking.remove(); renderTurn(t);
+        if (draftType && res.ok) {
+          var draftButton = list.lastElementChild.querySelector(draftType === "comment" ? "[data-review-comment]" : "[data-review-page]");
+          if (draftButton) draftButton.click();
+        }
       })
       .catch(function () {
         var t = { role: "assistant", error: true, content: "Network error — please try again." };
         turns.push(t); save(); thinking.remove(); renderTurn(t);
       })
-      .then(function () { sendBtn.disabled = false; input.disabled = false; input.focus(); });
+      .then(function () { sendBtn.disabled = false; input.disabled = false; if (panel.classList.contains("open")) input.focus(); });
   }
 
+  var switches = panel.querySelector("[data-switches]");
+  var info = panel.querySelector("[data-context]");
+  var article = document.querySelector("article.article");
+
+  function control(label, action, active) {
+    var button = el("button", "action-btn", label);
+    button.type = "button";
+    button.onclick = action;
+    if (active !== undefined) button.setAttribute("aria-pressed", String(active));
+    return button;
+  }
+
+  function setPassage(value) {
+    passage = value;
+    remember(storeKey + ":passage:" + baseKey + ":" + pagePath, value);
+    showContext();
+  }
+
+  function switchScope(scope) {
+    if (sendBtn.disabled) return;
+    if (design === "B") {
+      channel = scope;
+      storeKey = channel === "page" ? baseKey + ":B:page:" + pagePath : storePrefix + "B:library";
+      turns = load();
+      list.replaceChildren();
+      turns.forEach(renderTurn);
+      passage = stored(storeKey + ":passage:" + baseKey + ":" + pagePath) || "";
+    }
+    searchScope = scope;
+    remember(scopeKey, scope);
+    showContext();
+  }
+
+  function showContext() {
+    if (comparison) {
+      var split = design === "B";
+      var localScope = split ? "page" : "wiki";
+      panel.querySelector(".ra-title").textContent = channel === "page" ? "Ask this page" : "Librarian";
+      switches.replaceChildren(
+        control(split ? "Page Ask" : "Current wiki", () => switchScope(localScope), searchScope === localScope),
+        control(split ? "Cross-wiki Librarian" : "Across wikis", () => switchScope("library"), searchScope === "library")
+      );
+      info.textContent = (searchScope === "library" ? "Field Library and Watershed Notes" :
+        searchScope === "page" ? "This page" : "Current wiki") +
+        (split ? " · Separate conversation" : " · Same conversation");
+    } else {
+      info.textContent = "";
+    }
+    if (passage) {
+      info.append(el("blockquote", null, passage), control("Remove passage", () => setPassage("")));
+    } else if (selected) {
+      info.append(control("Attach selected passage", () => setPassage(selected)));
+    }
+  }
+
+  if (article) {
+    var contextual = control("Ask about this passage", function () {
+      if (design === "B") switchScope("page");
+      setPassage(selected);
+      open(false);
+    });
+    contextual.hidden = true;
+    article.after(contextual);
+    document.addEventListener("selectionchange", function () {
+      var sel = getSelection();
+      if (sel.rangeCount && !sel.isCollapsed && article.contains(sel.getRangeAt(0).commonAncestorContainer)) {
+        selected = sel.toString().trim().slice(0, 600);
+        contextual.hidden = !selected;
+        showContext();
+      }
+    });
+  }
+  passage = stored(storeKey + ":passage:" + baseKey + ":" + pagePath) || "";
+  showContext();
+  panel.querySelectorAll("[data-request-draft]").forEach(function (button) {
+    button.onclick = function () {
+      if (sendBtn.disabled) return;
+      var kind = button.dataset.requestDraft;
+      ask(kind === "comment"
+        ? "Suggest a concise comment about the attached passage or current page. Give just the proposed text with citations."
+        : "Draft a short companion wiki page about the attached passage or current page. Give the proposed Markdown with citations.", kind);
+    };
+  });
   form.addEventListener("submit", function (e) {
     e.preventDefault();
     var question = input.value.trim();
     if (!question || sendBtn.disabled) return;
+    if ((passage ? passage.length + 21 : 0) + question.length > 2000) {
+      input.setCustomValidity("Shorten your question or remove the attached passage.");
+      input.reportValidity(); input.setCustomValidity(""); return;
+    }
     input.value = "";
     input.style.height = "";
     ask(question);
@@ -205,6 +355,6 @@
   // Keep the conversation beside the source after following a citation --
   // on wide screens only, so a phone lands on the page it asked for.
   try {
-    if (sessionStorage.getItem(storeKey + ":open") === "1" && window.innerWidth > 900) open(true);
+    if ((comparison && variant) || (stored(storeKey + ":open") === "1" && window.innerWidth > 900)) open(true);
   } catch (e) {}
 })();

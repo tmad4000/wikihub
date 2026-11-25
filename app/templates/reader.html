@@ -992,6 +992,7 @@ a:focus-visible + .peek-trigger, .peek-trigger:focus-visible { width: 16px; opac
     <article class="article">
       {{ rendered_html | safe }}
     </article>
+    {% if page and page.id %}{% include "_annotations.html" %}{% endif %}
 
     {% if backlinks %}
     <nav class="backlinks-block inline-backlinks">

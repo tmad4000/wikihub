@@ -571,3 +571,39 @@ class CurationJudgement(db.Model):
     )
 
     curator = db.relationship("User", foreign_keys=[curator_user_id])
+
+
+class PageAnnotation(db.Model):
+    """A reader comment on a page, optionally anchored to a quoted passage
+    (wikihub-3add). See app/annotations.py.
+
+    Keyed durably by (wiki_id, page_path): page ids change when a wiki is
+    reindexed with reset, so page_id here is informational only. Rows are
+    never re-scoped: owner_only is decided once, at creation, and never
+    cleared -- a comment on an owner-only (private band) passage stays
+    owner-only whatever later edits do to the page.
+    """
+    __tablename__ = "page_annotations"
+
+    id = db.Column(db.Integer, primary_key=True)
+    wiki_id = db.Column(db.Integer, db.ForeignKey("wikis.id", ondelete="CASCADE"), nullable=False)
+    page_path = db.Column(db.Text, nullable=False)
+    page_id = db.Column(db.Integer, nullable=True)  # page row id at creation (informational)
+    author_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    request_id = db.Column(db.String(36), nullable=False)  # client UUID, retry dedup
+    body = db.Column(db.Text, nullable=False)
+    quote = db.Column(db.Text, nullable=False, default="", server_default="")  # "" = whole page
+    owner_only = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
+    revision = db.Column(db.String(64), nullable=True)  # pages.content_hash the selection was made on
+    # Rendered-text context around the commented occurrence (identifies it
+    # among copies of the same words). Server-side only, never serialized.
+    anchor_prefix = db.Column(db.Text, nullable=True)
+    anchor_suffix = db.Column(db.Text, nullable=True)
+    # [{"n", "wiki_id", "path", "quote"}] -- resolved per viewer at read time.
+    citations = db.Column(db.JSON, nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow, server_default=db.func.now())
+
+    __table_args__ = (
+        db.UniqueConstraint("author_id", "request_id", name="uq_page_annotations_author_request"),
+        db.Index("ix_page_annotations_page", "wiki_id", "page_path", "created_at", "id"),
+    )

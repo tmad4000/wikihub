@@ -77,6 +77,7 @@ def reset_database():
         "external_identities",
         "rate_limit_buckets",
         "curation_judgements",
+        "page_annotations",
         "users",
     ]:
         try:
@@ -12649,6 +12650,876 @@ def test_reader_assistant_scopes_to_visitor_and_cites_sources(app, client, key):
             app.config[k] = v
 
 
+def _annot_url(owner, slug, page_id):
+    return f"/@{owner}/{slug}/-/pages/{page_id}/annotations"
+
+
+def _annot_get(browser, owner, slug, page_id, headers=None):
+    from flask import g as _g
+    _g.pop("_login_user", None)
+    return browser.get(_annot_url(owner, slug, page_id), headers=headers or {})
+
+
+_NO_VIEWER = object()
+
+
+def _annot_post(browser, owner, slug, page_id, body, quote, revision, request_id=None, headers=None, viewer_id=_NO_VIEWER,
+                audience=_NO_VIEWER, citations=None):
+    import uuid as _uuid
+    from flask import g as _g
+    vid = getattr(browser, "wh_user_id", None) if viewer_id is _NO_VIEWER else viewer_id
+    if audience is _NO_VIEWER:
+        # Like the UI: preview first, approve the audience the server reports.
+        _g.pop("_login_user", None)
+        pr = browser.post(_annot_url(owner, slug, page_id), headers=headers or {},
+                          json={"preview": True, "quote": quote, "revision": revision, "viewer_id": vid})
+        audience = (pr.get_json(silent=True) or {}).get("preview", {}).get("audience") if pr.status_code == 200 else None
+    _g.pop("_login_user", None)
+    payload = {"body": body, "quote": quote, "revision": revision,
+               "request_id": request_id or str(_uuid.uuid4()),
+               "viewer_id": vid, "audience": audience}
+    if citations is not None:
+        payload["citations"] = citations
+    return browser.post(_annot_url(owner, slug, page_id), json=payload, headers=headers or {})
+
+
+def _page_row(owner, slug, path):
+    from app.models import Page as _Page, User as _User, Wiki as _Wiki
+    db.session.expire_all()
+    o = _User.query.filter_by(username=owner).first()
+    w = _Wiki.query.filter_by(owner_id=o.id, slug=slug).first()
+    return _Page.query.filter_by(wiki_id=w.id, path=path).first()
+
+
+def test_page_annotations_scope_anchoring_and_dedup(app, client, key):
+    """wikihub-3add: reader comments are viewer-scoped (anon/stranger/grantee/
+    owner, private pages + private bands), anchored conservatively to the
+    rendered text, deduplicated by request_id, revision-checked, rate limited,
+    CSRF-protected, and owner-only passages stay protected across edits."""
+    import uuid as _uuid
+    from app.models import PageAnnotation
+
+    h = {"Authorization": f"Bearer {key}"}
+    assert client.post("/api/v1/wikis", json={"slug": "annot-wiki", "title": "Annot"}, headers=h).status_code == 201
+    guide = ("---\ntitle: Guide\nvisibility: public\n---\n\n# Guide\n\n"
+             "Alpha passage about **tomatoes** and sun.\n\nGamma line to delete later.\n\n"
+             "Repeated phrase here.\n\nRepeated phrase here.\n\n"
+             "<!-- private -->\nSecret band sentence ZETA.\n<!-- /private -->\n")
+    _put_page(client, key, "agent1", "annot-wiki", "guide.md", guide)
+    _put_page(client, key, "agent1", "annot-wiki", "secret.md",
+              "---\nvisibility: private\n---\n\n# Secret\n\nPrivate page text OMEGA.\n", visibility="private")
+    reader_key = client.post("/api/v1/accounts", json={"username": "annot-reader"}).get_json()["api_key"]
+    grantee_key = client.post("/api/v1/accounts", json={"username": "annot-grantee"}).get_json()["api_key"]
+    assert client.post("/api/v1/wikis/agent1/annot-wiki/pages/secret.md/share",
+                       json={"username": "annot-grantee", "role": "read"}, headers=h).status_code == 200
+    anon = app.test_client()
+    reader = _login_browser_with_key(app, reader_key)
+    grantee = _login_browser_with_key(app, grantee_key)
+    owner = _login_browser_with_key(app, key)
+    from app.models import User as _User
+    for browser, name in ((reader, "annot-reader"), (grantee, "annot-grantee"), (owner, "agent1")):
+        browser.wh_user_id = _User.query.filter_by(username=name).first().id
+    W = ("agent1", "annot-wiki")
+    page = _page_row(*W, "guide.md")
+    secret = _page_row(*W, "secret.md")
+    rev = page.content_hash
+
+    # Anonymous: may read the (empty) thread of a public page, may not post.
+    r = _annot_get(anon, *W, page.id)
+    assert r.status_code == 200 and r.get_json()["comments"] == [] and r.headers["Cache-Control"] == "no-store"
+    assert r.get_json()["viewer_id"] is None
+    assert _annot_get(reader, *W, page.id).get_json()["viewer_id"] == reader.wh_user_id
+    assert _annot_post(anon, *W, page.id, "hi", "", rev).status_code == 401
+
+    # A reader comments on a public passage (DOM-style whitespace is fine).
+    rid = str(_uuid.uuid4())
+    r = _annot_post(reader, *W, page.id, "Nice tip", "Alpha passage about tomatoes and\n sun.", rev, request_id=rid)
+    assert r.status_code == 201, r.get_data(as_text=True)
+    c1 = r.get_json()["comment"]
+    assert c1["author"] == "annot-reader" and c1["quote"] == "Alpha passage about tomatoes and sun."
+    assert c1["detached"] is False and c1["owner_only"] is False
+
+    # Retry with the same request_id: the original comment, not a duplicate.
+    r = _annot_post(reader, *W, page.id, "Nice tip", "Alpha passage about tomatoes and\n sun.", rev, request_id=rid)
+    assert r.status_code == 200 and r.get_json()["duplicate"] is True and r.get_json()["comment"]["id"] == c1["id"]
+    assert PageAnnotation.query.filter_by(request_id=rid).count() == 1
+    r = _annot_post(reader, *W, page.id, "Different text", "", rev, request_id=rid)
+    assert r.status_code == 409 and r.get_json()["error"] == "request_id_reused"
+
+    # Stale tab: the viewer the page loaded as must still be the signed-in user.
+    r = _annot_post(reader, *W, page.id, "x", "", rev, viewer_id=grantee.wh_user_id)
+    assert r.status_code == 409 and r.get_json()["error"] == "viewer_mismatch"
+    for bad_vid in (None, str(reader.wh_user_id), True):
+        r = _annot_post(reader, *W, page.id, "x", "", rev, viewer_id=bad_vid)
+        assert r.status_code == 400 and r.get_json()["error"] == "invalid_viewer_id", bad_vid
+
+    for payload in (["comment"], "comment", 7):
+        r = reader.post(_annot_url(*W, page.id), json=payload)
+        assert r.status_code == 400 and r.get_json()["error"] == "invalid_json"
+
+    # Validation.
+    assert _annot_post(reader, *W, page.id, "x", "", "not-the-revision").get_json()["error"] == "stale_revision"
+    assert _annot_post(reader, *W, page.id, "x", "", "abc").get_json()["revision"] == rev
+    assert _annot_post(reader, *W, page.id, "x", "Not on this page", rev).get_json()["error"] == "selection_not_found"
+    assert _annot_post(reader, *W, page.id, "x", "Repeated phrase here.", rev).get_json()["error"] == "ambiguous_selection"
+    r = _annot_post(reader, *W, page.id, "x", "Secret band sentence ZETA.", rev)
+    assert r.status_code == 409 and r.get_json()["error"] == "selection_not_found", "non-owners cannot anchor to band text"
+    assert _annot_post(reader, *W, page.id, "   ", "", rev).get_json()["error"] == "invalid_body"
+    assert _annot_post(reader, *W, page.id, "x", "", rev, request_id="nope").get_json()["error"] == "invalid_request_id"
+    from flask import g as _g
+    _g.pop("_login_user", None)
+    assert reader.post(_annot_url(*W, page.id), data="body=x").status_code == 415
+    assert _annot_post(reader, *W, page.id, "Gamma note", "Gamma line to delete later.", rev).status_code == 201
+    assert _annot_post(reader, *W, page.id, "Whole page note", "", rev).status_code == 201
+
+    # The owner can anchor to a private band: stored owner-only.
+    r = _annot_post(owner, *W, page.id, "Owner band note", "Secret band sentence ZETA.", rev)
+    assert r.status_code == 201 and r.get_json()["comment"]["owner_only"] is True
+    r = _annot_post(owner, *W, page.id, "Owner public note", "Alpha passage about tomatoes", rev)
+    assert r.status_code == 201 and r.get_json()["comment"]["owner_only"] is False
+
+    # Viewer-scoped reads.
+    seen = _annot_get(reader, *W, page.id).get_json()["comments"]
+    assert [c["body"] for c in seen] == ["Nice tip", "Gamma note", "Whole page note", "Owner public note"], seen
+    assert "ZETA" not in json.dumps(seen) and "Owner band note" not in json.dumps(seen)
+    assert [c["body"] for c in _annot_get(anon, *W, page.id).get_json()["comments"]] == [c["body"] for c in seen]
+    mine = _annot_get(owner, *W, page.id).get_json()["comments"]
+    assert [c["body"] for c in mine] == ["Nice tip", "Gamma note", "Whole page note", "Owner band note", "Owner public note"]
+    assert [c["id"] for c in mine] == sorted(c["id"] for c in mine), "chronological"
+
+    from unittest.mock import patch
+    with patch("app.routes.annotations.THREAD_PAGE_SIZE", 2):
+        latest = _annot_get(anon, *W, page.id).get_json()
+        assert latest["comments"] == seen[-2:] and latest["before"]
+        older = anon.get(_annot_url(*W, page.id), query_string={"before": latest["before"]}).get_json()
+        assert older["comments"] == seen[:2] and older["before"] is None
+
+    assert _annot_post(reader, *W, page.id, "Spacing", "Alphapassage", rev).status_code == 409
+    assert _annot_post(reader, *W, page.id, "Words", "line to delete", rev).status_code == 201
+    assert _annot_post(reader, *W, page.id, "Duplicate later", "Gamma line", rev).status_code == 201
+    # Private page: restricted for anon (401) and strangers (403); grantee reads and posts.
+    assert _annot_get(anon, *W, secret.id).status_code == 401
+    assert _annot_get(reader, *W, secret.id).status_code == 403
+    assert _annot_post(reader, *W, secret.id, "x", "", secret.content_hash).status_code == 403
+    r = _annot_post(grantee, *W, secret.id, "Grantee note", "Private page text OMEGA.", secret.content_hash)
+    assert r.status_code == 201 and r.get_json()["comment"]["owner_only"] is False
+    assert _annot_get(grantee, *W, secret.id).get_json()["comments"][0]["body"] == "Grantee note"
+    assert _annot_get(reader, *W, 999999).status_code == 404
+    assert client.post("/api/v1/wikis", json={"slug": "annot-other"}, headers=h).status_code == 201
+    assert _annot_get(owner, "agent1", "annot-other", page.id).status_code == 404, "page id must belong to the wiki"
+
+    # Owner edits: Alpha moves into a private band, ZETA's band is removed,
+    # Gamma is deleted, and the repeated phrase becomes unique.
+    edited = ("---\ntitle: Guide\nvisibility: public\n---\n\n# Guide\n\n"
+              "<!-- private -->\nAlpha passage about **tomatoes** and sun.\n<!-- /private -->\n\n"
+              "Gamma line twice. Gamma line twice. linetodelete\n\nRepeated phrase here.\n\nSecret band sentence ZETA.\n")
+    assert client.put("/api/v1/wikis/agent1/annot-wiki/pages/guide.md",
+                      json={"content": edited}, headers=h).status_code == 200
+    seen = {c["body"]: c for c in _annot_get(reader, *W, page.id).get_json()["comments"]}
+    assert seen["Words"]["detached"] is True
+    assert seen["Duplicate later"]["detached"] is True
+    assert "Owner band note" not in seen, "owner-only stays owner-only after the band is removed"
+    assert "Nice tip" not in seen and "Owner public note" not in seen, "comments on a passage now in a band are hidden"
+    assert "Alpha passage" not in json.dumps(list(seen.values()))
+    assert seen["Gamma note"]["detached"] is True and seen["Gamma note"]["quote"] == "Gamma line to delete later."
+    assert seen["Whole page note"]["detached"] is False
+    mine = {c["body"]: c for c in _annot_get(owner, *W, page.id).get_json()["comments"]}
+    assert mine["Nice tip"]["detached"] is False and mine["Nice tip"]["quote"].startswith("Alpha passage")
+    assert mine["Owner band note"]["owner_only"] is True and mine["Owner band note"]["detached"] is False
+
+    with patch("app.routes.annotations.THREAD_PAGE_SIZE", 1):
+        batch = _annot_get(reader, *W, page.id).get_json()
+        bodies = []
+        empty_continuation = False
+        for _ in range(12):
+            bodies.extend(c["body"] for c in batch["comments"])
+            if not batch["before"]:
+                break
+            empty_continuation |= not batch["comments"]
+            batch = reader.get(_annot_url(*W, page.id), query_string={"before": batch["before"]}).get_json()
+        assert empty_continuation and batch["before"] is None
+        assert bodies == list(reversed(seen))
+    assert reader.get(_annot_url(*W, page.id), query_string={"before": "invalid"}).status_code == 400
+
+    # A reset reindex gives pages new ids; comments keep their page identity.
+    old_id = page.id
+    _g.pop("_login_user", None)
+    _put_page(client, key, *W, "unannotated.md", "# No comments")
+    update_counts = []
+    def track_annotations(context):
+        if context.mapper.class_ is PageAnnotation:
+            update_counts.append(context.result.rowcount)
+    event.listen(db.session(), "after_bulk_update", track_annotations)
+    try:
+        _g.pop("_login_user", None)
+        assert owner.post("/@agent1/annot-wiki/reindex").status_code == 200
+    finally:
+        event.remove(db.session(), "after_bulk_update", track_annotations)
+    assert update_counts and all(n > 0 for n in update_counts)
+    page = _page_row(*W, "guide.md")
+    assert page.id != old_id, "reset reindex recreated the row"
+    seen = {c["body"]: c for c in _annot_get(reader, *W, page.id).get_json()["comments"]}
+    assert {"Whole page note", "Gamma note"} <= set(seen) and seen["Whole page note"]["detached"] is False
+    assert _annot_get(reader, *W, old_id).status_code == 404
+
+    # Delete and recreate the page at the same path: earlier comments belong
+    # to the old page -- hidden from readers, shown to the owner as detached.
+    assert client.delete("/api/v1/wikis/agent1/annot-wiki/pages/guide.md", headers=h).status_code in (200, 204)
+    _put_page(client, key, "agent1", "annot-wiki", "guide.md",
+              "---\nvisibility: public\n---\n\n# Guide v2\n\nGamma line to delete later.\n")
+    page = _page_row(*W, "guide.md")
+    assert _annot_get(reader, *W, page.id).get_json()["comments"] == [], "old incarnation hidden from readers"
+    retry = _annot_post(reader, *W, page.id, "Nice tip", "Alpha passage about tomatoes and sun.",
+                        page.content_hash, request_id=rid)
+    assert retry.status_code == 409 and retry.get_json()["error"] == "request_id_reused"
+    mine = _annot_get(owner, *W, page.id).get_json()["comments"]
+    assert mine and all(c["detached"] for c in mine), mine
+    r = _annot_post(reader, *W, page.id, "New page note", "Gamma line to delete later.", page.content_hash)
+    assert r.status_code == 201 and r.get_json()["comment"]["detached"] is False
+    assert [c["body"] for c in _annot_get(reader, *W, page.id).get_json()["comments"]] == ["New page note"]
+
+    # Rate limits (shared Postgres buckets); a retry is still answered.
+    page = _page_row(*W, "guide.md")
+    saved = {k: app.config.get(k) for k in ("SHARED_RATE_LIMITS_IN_TESTS", "ANNOTATION_MAX_PER_USER_PER_MINUTE")}
+    try:
+        app.config.update(SHARED_RATE_LIMITS_IN_TESTS=True, ANNOTATION_MAX_PER_USER_PER_MINUTE=1)
+        db.session.execute(text("DELETE FROM rate_limit_buckets WHERE key LIKE 'annot:%'"))
+        db.session.commit()
+        rid2 = str(_uuid.uuid4())
+        for body, quote, error in (("comment\x00text", "", "invalid_body"),
+                                   ("comment\ud800text", "", "invalid_body"),
+                                   ("comment", "a\x00b", "invalid_quote")):
+            payload = {"body": body, "quote": quote, "viewer_id": grantee.wh_user_id,
+                       "revision": page.content_hash, "request_id": rid2}
+            _g.pop("_login_user", None)
+            r = grantee.post(_annot_url(*W, page.id), data=json.dumps(payload), content_type="application/json")
+            assert r.status_code == 400 and r.get_json()["error"] == error
+        assert _annot_post(grantee, *W, page.id, "first", "", page.content_hash, request_id=rid2).status_code == 201
+        r = _annot_post(grantee, *W, page.id, "second", "", page.content_hash)
+        assert r.status_code == 429 and r.get_json()["error"] == "rate_limited" and r.headers.get("Retry-After")
+        assert _annot_post(grantee, *W, page.id, "first", "", page.content_hash, request_id=rid2).status_code == 200
+    finally:
+        app.config.update(saved)
+        db.session.execute(text("DELETE FROM rate_limit_buckets WHERE key LIKE 'annot:%'"))
+        db.session.commit()
+
+    # CSRF: both GET and POST need the session's token.
+    try:
+        app.config["WTF_CSRF_ENABLED"] = True
+        assert _annot_get(reader, *W, page.id).status_code == 400
+        # The runner shares one app context, and Flask-WTF caches the token in
+        # g; drop it so the page renders this reader's own session token.
+        _g.pop("csrf_token", None)
+        _g.pop("_login_user", None)
+        html = reader.get("/@agent1/annot-wiki/guide").get_data(as_text=True)
+        token = re.search(r'<meta name="csrf-token" content="([^"]+)"', html).group(1)
+        assert _annot_get(reader, *W, page.id, headers={"X-CSRFToken": token}).status_code == 200
+        assert _annot_post(reader, *W, page.id, "no token", "", page.content_hash).status_code == 400
+        r = _annot_post(reader, *W, page.id, "with token", "", page.content_hash, headers={"X-CSRFToken": token})
+        assert r.status_code == 201, r.get_data(as_text=True)[:200]
+    finally:
+        app.config["WTF_CSRF_ENABLED"] = False
+
+    # The apex never 301s this JSON endpoint to a subdomain.
+    from app.canonical_redirect import _is_skipped
+    assert _is_skipped(_annot_url(*W, page.id))
+    for path in ("annotations", "annotations/guide"):
+        r = anon.get(f"/@agent1/annot-wiki/{path}", base_url="https://wikihub.md")
+        assert r.status_code == 301 and r.location.endswith(f"/annot-wiki/{path}")
+
+
+
+def test_page_annotations_migration_preserves_app_owner():
+    """wikihub-3add: the page_annotations migration leaves the table and its
+    sequence owned by the app role (a postgres-owned table 500s every request)."""
+    import uuid
+
+    import psycopg2
+    from psycopg2 import sql
+    from sqlalchemy.engine import make_url
+
+    suffix = uuid.uuid4().hex[:12]
+    app_role = f"wikihub_app_{suffix}"
+    database_name = f"wikihub_migration_{suffix}"
+    source_url = make_url(os.environ.get("TEST_DATABASE_ADMIN_URL", os.environ["DATABASE_URL"])).set(drivername="postgresql")
+    admin_dsn = source_url.set(database="postgres").render_as_string(hide_password=False)
+    migration_dsn = source_url.set(database=database_name).render_as_string(hide_password=False)
+    migration_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                  "migrations", "2026-11-25_page_annotations.sql")
+    with open(migration_path, encoding="utf-8") as f:
+        migration_sql = f.read()
+    admin = psycopg2.connect(admin_dsn)
+    admin.autocommit = True
+    conn = None
+    try:
+        with admin.cursor() as cur:
+            cur.execute(sql.SQL("CREATE ROLE {}").format(sql.Identifier(app_role)))
+            cur.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database_name)))
+        conn = psycopg2.connect(migration_dsn)
+        with conn.cursor() as cur:
+            cur.execute("CREATE TABLE public.users (id SERIAL PRIMARY KEY)")
+            cur.execute("CREATE TABLE public.wikis (id SERIAL PRIMARY KEY)")
+            cur.execute(sql.SQL("ALTER TABLE public.wikis OWNER TO {}").format(sql.Identifier(app_role)))
+            cur.execute(migration_sql)
+            cur.execute(migration_sql)  # idempotent
+            cur.execute("SELECT relname, pg_get_userbyid(relowner) FROM pg_class "
+                        "WHERE relname IN ('page_annotations', 'page_annotations_id_seq')")
+            owners = dict(cur.fetchall())
+        conn.commit()
+        assert owners == {"page_annotations": app_role, "page_annotations_id_seq": app_role}, owners
+    finally:
+        if conn is not None:
+            conn.close()
+        with admin.cursor() as cur:
+            cur.execute(sql.SQL("DROP DATABASE IF EXISTS {}").format(sql.Identifier(database_name)))
+            cur.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(app_role)))
+        admin.close()
+
+
+def _draft_post(browser, owner, slug, form, json_accept=True):
+    from flask import g as _g
+    _g.pop("_login_user", None)
+    if "viewer_id" not in form and getattr(browser, "wh_user_id", None) is not None:
+        form = {**form, "viewer_id": str(browser.wh_user_id)}
+    if form.get("assistant_draft") == "1" and form.get("approved") == "1" and "previewed_content_hash" not in form:
+        # Like the UI: review the server's final page, then approve exactly that.
+        pv = browser.post(f"/@{owner}/{slug}/new", data={**form, "preview": "1", "approved": ""},
+                          headers={"Accept": "application/json"})
+        plan = (pv.get_json(silent=True) or {}).get("preview") if pv.status_code == 200 else None
+        if plan:
+            form = {"previewed_visibility": plan["visibility"], "previewed_path": plan["page_path"], **form, "previewed_content_hash": plan["content_hash"]}
+        _g.pop("_login_user", None)
+    headers = {"Accept": "application/json"} if json_accept else {}
+    return browser.post(f"/@{owner}/{slug}/new", data=form, headers=headers)
+
+
+def test_preview_owner_login(app):
+    import runpy
+    from pathlib import Path
+    demo = runpy.run_path(str(Path(__file__).resolve().parents[1] / "demos/reader-conversations/server.py"))
+    from tempfile import TemporaryDirectory
+    from unittest.mock import Mock, patch
+    with TemporaryDirectory() as temp:
+        root = Path(temp)
+        existing = root / "existing.git"
+        existing.mkdir()
+        with patch.dict(os.environ, {"DATABASE_URL": "postgresql:///wikihub_reader_preview_3add",
+                                     "BASE_URL": "http://127.0.0.1:8794", "REPOS_DIR": temp}):
+            factory = Mock(side_effect=AssertionError("App started using an unrelated repository directory"))
+            with patch.dict(demo["setup"].__globals__, {"create_app": factory}):
+                try:
+                    demo["setup"]()
+                except RuntimeError as err:
+                    assert "empty repository directory" in str(err)
+                else:
+                    raise AssertionError("Preview accepted an unrelated repository directory")
+        assert list(root.iterdir()) == [existing]
+        preview = root / "preview"
+        demo["prepare_preview_root"](preview)
+        saved = preview / "saved.md"
+        saved.write_text("Approved draft")
+        demo["prepare_preview_root"](preview)
+        assert saved.read_text() == "Approved draft"
+    demo["seed"]()
+    url = urlparse(demo["owner_login"](app))
+    assert url.netloc == "127.0.0.1:8794"
+    browser = app.test_client()
+    assert browser.get(url.path).location == demo["PAGE_URL"]
+    with browser.session_transaction() as session:
+        assert int(session["_user_id"]) == User.query.filter_by(username="fieldnotes").one().id
+    assert app.test_client().get(url.path).location.endswith("/login")
+
+
+def test_assistant_draft_new_page_rules(app, client, key):
+    """wikihub-3add: assistant drafts through the new-page form need sign-in,
+    explicit approval and a simple path; they never overwrite, repeat safely,
+    are private for the owner, and a non-owner must have previewed the real
+    visibility. The normal new-page flow is unchanged."""
+    h = {"Authorization": f"Bearer {key}"}
+    assert client.post("/api/v1/wikis", json={"slug": "draft-wiki", "title": "Drafts"}, headers=h).status_code == 201
+    owner = _login_browser_with_key(app, key)
+    anon = app.test_client()
+    other_key = client.post("/api/v1/accounts", json={"username": "draft-other"}).get_json()["api_key"]
+    other = _login_browser_with_key(app, other_key)
+    from app.models import User as _User
+    owner.wh_user_id = _User.query.filter_by(username="agent1").first().id
+    other.wh_user_id = _User.query.filter_by(username="draft-other").first().id
+    base = {"assistant_draft": "1", "approved": "1", "path": "notes/idea",
+            "content": "---\ntitle: Idea\nvisibility: public\n---\n\n# Idea\n\nDrafted text.\n"}
+
+    assert _draft_post(anon, "agent1", "draft-wiki", base).status_code == 401
+    for malformed_id in ("", "²", "9" * 5000, "01"):
+        r = _draft_post(owner, "agent1", "draft-wiki", {**base, "viewer_id": malformed_id})
+        assert r.status_code == 400 and r.get_json()["error"] == "invalid_viewer_id"
+    r = _draft_post(owner, "agent1", "draft-wiki", {**base, "viewer_id": str(other.wh_user_id)})
+    assert r.status_code == 409 and r.get_json()["error"] == "viewer_mismatch", "stale tab after account switch"
+    r = _draft_post(owner, "agent1", "draft-wiki", {**base, "approved": "0"})
+    assert r.status_code == 400 and r.get_json()["error"] == "approval_required"
+    for bad in (".wikihub/acl", "notes/.hidden", "../x", "a//b", "/abs", "a\\b", "x/./y", ".md", "", "notes/ trailing",
+                "a/../.wikihub/acl", "x" * 201, "bad\x00name", "café?.md"):
+        r = _draft_post(owner, "agent1", "draft-wiki", {**base, "path": bad})
+        assert r.status_code == 400 and r.get_json()["error"] == "invalid_path", (bad, r.status_code)
+    assert _page_row("agent1", "draft-wiki", "notes/idea.md") is None, "nothing written by rejected drafts"
+
+    from unittest.mock import patch
+    from app import git_sync
+    real_cas = git_sync._cas_update_main
+    def push_first(repo, commit, head):
+        with patch.object(git_sync, "_cas_update_main", real_cas):
+            git_sync._apply_repo_changes_once(repo, [{"action": "write", "path": "race.md", "content": "pushed"}],
+                                              "concurrent push", "pusher", "p@example.org")
+        return real_cas(repo, commit, head)
+    with patch.object(git_sync, "_cas_update_main", side_effect=push_first):
+        r = _draft_post(owner, "agent1", "draft-wiki", {**base, "path": "race.md"})
+    assert r.status_code == 409 and r.get_json()["error"] == "exists"
+    assert git_sync.read_file_from_repo("agent1", "draft-wiki", "race.md") == "pushed"
+    assert _page_row("agent1", "draft-wiki", "race.md") is None
+
+    r = _draft_post(owner, "agent1", "draft-wiki", base)
+    assert r.status_code == 201, r.get_data(as_text=True)
+    body = r.get_json()
+    assert body["path"] == "notes/idea.md" and body["visibility"] == "private" and body["created"] is True
+    page = _page_row("agent1", "draft-wiki", "notes/idea.md")
+    assert page.visibility == "private" and page.author == "agent1"
+    assert _get(anon, "/@agent1/draft-wiki/notes/idea").status_code in (401, 403), "owner drafts are private"
+
+    # Exact repeat (double submit / retry) answers with the same page.
+    r = _draft_post(owner, "agent1", "draft-wiki", base)
+    assert r.status_code == 200 and r.get_json()["created"] is False and r.get_json()["page_id"] == body["page_id"]
+    # Different content at the same path never overwrites.
+    r = _draft_post(owner, "agent1", "draft-wiki", {**base, "content": "# Other\n"})
+    assert r.status_code == 409 and r.get_json()["error"] == "exists"
+    assert "Drafted text." in client.get("/api/v1/wikis/agent1/draft-wiki/pages/notes/idea.md", headers=h).get_json()["content"]
+    # Plain form submit: redirect to the page.
+    r = _draft_post(owner, "agent1", "draft-wiki", {**base, "path": "plain"}, json_accept=False)
+    assert r.status_code == 303 and r.headers["Location"].endswith("/@agent1/draft-wiki/plain")
+
+    # Non-owner: authorization on the destination; a private wiki is not writable.
+    r = _draft_post(other, "agent1", "draft-wiki", {**base, "path": "contrib", "previewed_visibility": "private"})
+    assert r.status_code == 403 and r.get_json()["error"] == "forbidden"
+    # Public-edit wiki: allowed only when the previewed visibility is the real one.
+    assert client.post("/api/v1/wikis", json={"slug": "draft-open"}, headers=h).status_code == 201
+    r = client.put("/api/v1/wikis/agent1/draft-open/pages/.wikihub/acl", json={"content": "* public-edit\n"}, headers=h)
+    assert r.status_code in (200, 201), r.get_data(as_text=True)
+    r = _draft_post(other, "agent1", "draft-open", {**base, "path": "contrib", "previewed_visibility": ""})
+    assert r.status_code == 409 and r.get_json()["error"] == "preview_changed" and r.get_json()["visibility"] == "public-edit"
+    r = _draft_post(other, "agent1", "draft-open", {**base, "path": "contrib", "previewed_visibility": "private"})
+    assert r.status_code == 409 and r.get_json()["error"] == "preview_changed"
+    assert _page_row("agent1", "draft-open", "contrib.md") is None
+    r = _draft_post(other, "agent1", "draft-open", {**base, "path": "contrib", "previewed_visibility": "public-edit"})
+    assert r.status_code == 201 and r.get_json()["visibility"] == "public-edit", r.get_data(as_text=True)
+    page = _page_row("agent1", "draft-open", "contrib.md")
+    assert page.visibility == "public-edit" and page.author == "draft-other"
+    # Another user's identical submission does not count as "their" repeat.
+    r = _draft_post(owner, "agent1", "draft-open", {**base, "path": "contrib"})
+    assert r.status_code == 409 and r.get_json()["error"] == "exists"
+
+
+def test_annotation_review_followups(app, client, key):
+    """wikihub-3add review: annotations fail closed on unreadable content,
+    keep the commented occurrence apart from copies inside private sections,
+    show and re-check the exact audience, keep citations navigable and
+    viewer-safe, and charge page budgets only for stored comments (per full
+    path, so long paths never share a budget)."""
+    from unittest.mock import patch
+    from flask import g as _g
+    from app.models import User as _User
+
+    h = {"Authorization": f"Bearer {key}"}
+    assert client.post("/api/v1/wikis", json={"slug": "rev-wiki", "title": "Review"}, headers=h).status_code == 201
+    r = client.put("/api/v1/wikis/agent1/rev-wiki/pages/.wikihub/acl", json={"content": "* public\n"}, headers=h)
+    assert r.status_code in (200, 201)
+    W = ("agent1", "rev-wiki")
+    _put_page(client, key, *W, "doc.md", "# Doc\n\nOpening line.\n\nShared words here.\n\nClosing line.\n", visibility=None)
+    _put_page(client, key, *W, "cited.md", "# Cited\n\nPublic cited sentence.\n\n<!-- private -->\nBand cited sentence.\n<!-- /private -->\n", visibility=None)
+    _put_page(client, key, *W, "hidden.md", "---\nvisibility: private\n---\n\n# Hidden\n\nHidden page words.\n", visibility="private")
+    reader_key = client.post("/api/v1/accounts", json={"username": "rev-reader"}).get_json()["api_key"]
+    reader = _login_browser_with_key(app, reader_key)
+    owner = _login_browser_with_key(app, key)
+    reader.wh_user_id = _User.query.filter_by(username="rev-reader").first().id
+    owner.wh_user_id = _User.query.filter_by(username="agent1").first().id
+    anon = app.test_client()
+    page = _page_row(*W, "doc.md")
+
+    # Exact audience + canonical page path before approval; re-checked at commit.
+    _g.pop("_login_user", None)
+    pv = reader.post(_annot_url(*W, page.id), json={"preview": True, "quote": "Shared words here.",
+                                                    "revision": page.content_hash, "viewer_id": reader.wh_user_id})
+    assert pv.status_code == 200, pv.get_data(as_text=True)
+    prev = pv.get_json()["preview"]
+    assert prev["audience"] == "public" and prev["page_path"] == "@agent1/rev-wiki/doc.md" and prev["audience_label"]
+    assert PageAnnotation_count(page) == 0, "preview writes nothing"
+    r = _annot_post(reader, *W, page.id, "x", "Shared words here.", page.content_hash, audience=None)
+    assert r.status_code == 409 and r.get_json()["error"] == "audience_changed"
+    r = client.put("/api/v1/wikis/agent1/rev-wiki/pages/.wikihub/acl", json={"content": "* unlisted\n"}, headers=h)
+    assert r.status_code in (200, 201)
+    page = _page_row(*W, "doc.md")
+    r = _annot_post(reader, *W, page.id, "x", "Shared words here.", page.content_hash, audience="public")
+    assert r.status_code == 409 and r.get_json()["error"] == "audience_changed" and r.get_json()["audience"] == "link", \
+        "audience widened/narrowed since review: never posted silently"
+    r = client.put("/api/v1/wikis/agent1/rev-wiki/pages/.wikihub/acl", json={"content": "* public\n"}, headers=h)
+    assert r.status_code in (200, 201)
+    page = _page_row(*W, "doc.md")
+    hidden = _page_row(*W, "hidden.md")
+    _g.pop("_login_user", None)
+    pv = owner.post(_annot_url(*W, _page_row(*W, "cited.md").id), json={"preview": True, "quote": "Band cited sentence.",
+                    "revision": _page_row(*W, "cited.md").content_hash, "viewer_id": owner.wh_user_id})
+    assert pv.get_json()["preview"]["audience"] == "owner"
+
+    # Anchors: the commented occurrence is identified by its context.
+    r = _annot_post(reader, *W, page.id, "About shared words", "Shared words here.", page.content_hash)
+    assert r.status_code == 201, r.get_data(as_text=True)
+    assert r.get_json()["comment"]["audience"] == "public"
+    # Owner copies the words into a private band elsewhere: nothing changes for
+    # readers (no side channel), the comment stays attached.
+    _put_page(client, key, *W, "doc.md", "# Doc\n\nOpening line.\n\nShared words here.\n\nClosing line.\n\n"
+              "<!-- private -->\nNote: Shared words here.\n<!-- /private -->\n", visibility=None)
+    page = _page_row(*W, "doc.md")
+    seen = _annot_get(reader, *W, page.id).get_json()["comments"]
+    assert [c["detached"] for c in seen] == [False], seen
+    # Owner moves the commented sentence into a band and adds an identical
+    # public sentence elsewhere: plain counting would re-attach the comment to
+    # the new copy; the context shows the commented one is private now.
+    _put_page(client, key, *W, "doc.md", "# Doc\n\nOpening line.\n\n<!-- private -->\nShared words here.\n<!-- /private -->\n\n"
+              "Closing line.\n\nLater: Shared words here.\n", visibility=None)
+    page = _page_row(*W, "doc.md")
+    assert _annot_get(reader, *W, page.id).get_json()["comments"] == [], "commented occurrence is private now"
+    assert _annot_get(anon, *W, page.id).get_json()["comments"] == []
+    mine = _annot_get(owner, *W, page.id).get_json()["comments"]
+    assert [c["body"] for c in mine] == ["About shared words"], "the owner still sees it"
+
+    # Fail closed when content cannot be read (never treated as an empty page).
+    with patch("app.annotations.read_file_from_repo", return_value=None):
+        for browser in (anon, reader, owner):
+            r = _annot_get(browser, *W, page.id)
+            assert r.status_code == 503 and r.get_json()["error"] == "content_unavailable", r.status_code
+        r = _annot_post(owner, *W, page.id, "x", "Opening line.", page.content_hash, audience="public")
+        assert r.status_code == 503
+    with patch("app.annotations.content_for_viewer", side_effect=ValueError("strip failed")):
+        assert _annot_get(reader, *W, page.id).status_code == 503
+
+    # Citations: structured, same-site, author-readable; resolved per viewer.
+    cited = _page_row(*W, "cited.md")
+    bad = [[{"n": 1, "url": "https://evil.example/x"}], [{"n": 1, "url": "javascript:alert(1)"}],
+           [{"n": 1, "url": "/@agent1/rev-wiki/hidden"}], [{"n": 1, "url": "/@agent1/rev-wiki/nope"}],
+           [{"n": 0, "url": "/@agent1/rev-wiki/cited"}], [{"n": 1, "url": "/@agent1/rev-wiki/cited"}] * 2]
+    for cites in bad:
+        r = _annot_post(reader, *W, page.id, "See [1]", "", page.content_hash, citations=cites)
+        assert r.status_code == 400 and r.get_json()["error"] == "invalid_citations", cites
+    owner_cites = [{"n": 1, "url": "/@agent1/rev-wiki/cited#:~:text=Band%20cited%20sentence."},
+                   {"n": 2, "url": "/@agent1/rev-wiki/hidden"},
+                   {"n": 3, "url": "/@agent1/rev-wiki/cited#:~:text=Public%20cited%20sentence."}]
+    r = _annot_post(owner, *W, page.id, "Sources [1] [2] [3]", "", page.content_hash, citations=owner_cites)
+    assert r.status_code == 201, r.get_data(as_text=True)
+    mine = {c["body"]: c for c in _annot_get(owner, *W, page.id).get_json()["comments"]}["Sources [1] [2] [3]"]
+    assert [c["n"] for c in mine["citations"]] == [1, 2, 3]
+    assert mine["citations"][0]["url"].startswith("/@agent1/rev-wiki/cited#:~:text=Band")
+    theirs = {c["body"]: c for c in _annot_get(reader, *W, page.id).get_json()["comments"]}["Sources [1] [2] [3]"]
+    assert [c["n"] for c in theirs["citations"]] == [1, 3], "unreadable citation target omitted"
+    assert theirs["citations"][0] == {"n": 1, "title": "cited", "url": "/@agent1/rev-wiki/cited", "quote": None}, \
+        "a quote from a private section is never shown to readers"
+    assert theirs["citations"][1]["quote"] == "Public cited sentence." and "#:~:text=Public" in theirs["citations"][1]["url"]
+    assert "Band cited" not in json.dumps(theirs) and "Hidden" not in json.dumps(theirs)
+    assert _get(reader, theirs["citations"][1]["url"].split("#")[0]).status_code == 200, "navigable"
+
+    # Budgets: rejected/invalid writes and retries are free; long paths don't share.
+    long_a = "a" * 150 + "/same-prefix-" + "x" * 30 + "-one.md"
+    long_b = "a" * 150 + "/same-prefix-" + "x" * 30 + "-two.md"
+    for path in (long_a, long_b):
+        _put_page(client, key, *W, path, "# Long\n\nLong page words.\n", visibility=None)
+    saved = {k: app.config.get(k) for k in ("SHARED_RATE_LIMITS_IN_TESTS", "ANNOTATION_MAX_PER_PAGE_PER_DAY")}
+    try:
+        app.config.update(SHARED_RATE_LIMITS_IN_TESTS=True, ANNOTATION_MAX_PER_PAGE_PER_DAY=1)
+        db.session.execute(text("DELETE FROM rate_limit_buckets WHERE key LIKE 'annot:%'"))
+        db.session.commit()
+        pa, pb = _page_row(*W, long_a), _page_row(*W, long_b)
+        for attempt in (("x", "Not on the page", pa.content_hash), ("x", "", "stale"), ("x", "Long page words.", pa.content_hash)):
+            r = _annot_post(reader, *W, pa.id, attempt[0], attempt[1], attempt[2], audience="link" if attempt[1] else "public")
+            assert r.status_code in (400, 409), r.status_code
+        r = _annot_post(reader, *W, pa.id, "first on A", "", pa.content_hash)
+        assert r.status_code == 201, "rejected attempts did not use the page budget"
+        assert _annot_post(reader, *W, pa.id, "second on A", "", pa.content_hash).status_code == 429
+        assert _annot_post(reader, *W, pb.id, "first on B", "", pb.content_hash).status_code == 201, \
+            "a long path sharing a 180-char prefix has its own budget"
+    finally:
+        app.config.update(saved)
+        db.session.execute(text("DELETE FROM rate_limit_buckets WHERE key LIKE 'annot:%'"))
+        db.session.commit()
+
+
+def PageAnnotation_count(page):
+    from app.models import PageAnnotation
+    db.session.expire_all()
+    return PageAnnotation.query.filter_by(wiki_id=page.wiki_id, page_path=page.path).count()
+
+
+def test_annotation_columns_upgrade_existing_table(app):
+    """wikihub-3add: a database created before the anchor/citation columns
+    (e.g. the M5 preview database) is upgraded in place at startup."""
+    from app.annotations import ensure_annotation_columns
+    cols = ("anchor_prefix", "anchor_suffix", "citations")
+    for col in cols:
+        db.session.execute(text(f"ALTER TABLE page_annotations DROP COLUMN IF EXISTS {col}"))
+    db.session.commit()
+    ensure_annotation_columns(db)
+    ensure_annotation_columns(db)  # idempotent
+    db.session.commit()
+    present = {r[0] for r in db.session.execute(text(
+        "SELECT column_name FROM information_schema.columns WHERE table_name = 'page_annotations'"))}
+    assert set(cols) <= present, present
+
+
+def test_assistant_draft_review_followups(app, client, key):
+    """wikihub-3add review: the draft preview shows the canonical path, audience
+    and exact final Markdown; the commit re-checks them and the ACL; paths must
+    round-trip through the reader's URL routing; a Git write that completed
+    before a failed DB commit is recovered on retry; and collisions or
+    rejected drafts don't use the draft budget."""
+    from unittest.mock import patch
+    from flask import g as _g
+    from app.models import User as _User
+    from app import git_sync
+
+    h = {"Authorization": f"Bearer {key}"}
+    assert client.post("/api/v1/wikis", json={"slug": "draft-rev"}, headers=h).status_code == 201
+    owner = _login_browser_with_key(app, key)
+    owner.wh_user_id = _User.query.filter_by(username="agent1").first().id
+    other_key = client.post("/api/v1/accounts", json={"username": "draft-rev-other"}).get_json()["api_key"]
+    other = _login_browser_with_key(app, other_key)
+    other.wh_user_id = _User.query.filter_by(username="draft-rev-other").first().id
+    D = ("agent1", "draft-rev")
+    base = {"assistant_draft": "1", "approved": "1", "path": "Reading notes",
+            "content": "---\nvisibility: public\n---\n\n# Reading notes\n\nSee [the guide](/@agent1/draft-rev/guide).\n"}
+
+    def preview(browser, form, slug="draft-rev"):
+        _g.pop("_login_user", None)
+        return browser.post(f"/@agent1/{slug}/new", data={**form, "preview": "1", "viewer_id": str(browser.wh_user_id)},
+                            headers={"Accept": "application/json"})
+
+    r = preview(owner, base)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    plan = r.get_json()["preview"]
+    assert plan["path"] == "Reading notes.md" and plan["page_path"] == "@agent1/draft-rev/Reading notes.md"
+    assert plan["url"] == "/@agent1/draft-rev/Reading_notes" and plan["visibility"] == "private"
+    assert "visibility: private" in plan["content"] and "visibility: public" not in plan["content"], \
+        "the reviewed Markdown is exactly what will be saved"
+    assert _page_row(*D, "Reading notes.md") is None, "preview writes nothing"
+    # Approving something other than the reviewed final page is refused.
+    r = _draft_post(owner, *D, {**base, "previewed_visibility": "private", "previewed_content_hash": "0" * 64})
+    assert r.status_code == 409 and r.get_json()["error"] == "preview_changed"
+    assert r.get_json()["preview"]["content_hash"] == plan["content_hash"]
+    assert preview(owner, {**base, "path": "Report (final).md"}).status_code == 200
+    retargeted = {**base, "path": "Other notes.md", "previewed_visibility": plan["visibility"],
+                  "previewed_path": plan["page_path"], "previewed_content_hash": plan["content_hash"]}
+    assert _draft_post(owner, *D, retargeted).status_code == 409
+    assert _page_row(*D, "Other notes.md") is None
+    r = _draft_post(owner, *D, base)
+    assert r.status_code == 201 and r.get_json()["page_path"] == "@agent1/draft-rev/Reading notes.md"
+    assert _get(owner, plan["url"]).status_code == 200, "the canonical URL opens the page"
+
+    # Round trip: reserved route words, mixed separators, folder names ending
+    # in .md, and space/underscore twins are refused before anything is written.
+    for bad in ("history", "graph", "activity.md", "notes/edit", "notes/history.md", "my notes_draft",
+                "notes.md/inner", "Reading_notes"):
+        r = preview(owner, {**base, "path": bad})
+        assert r.status_code == 400 and r.get_json()["error"] == "invalid_path", (bad, r.get_json())
+    _put_page(client, key, *D, "big_plan.md", "# Big plan\n")
+    r = preview(owner, {**base, "path": "big plan"})
+    assert r.status_code == 400 and "address" in r.get_json()["message"]
+    _g.pop("_login_user", None)
+    r = owner.get("/@agent1/draft-rev/new", query_string={"assistant_target": "history"})
+    assert r.status_code == 400
+
+    # Commit re-checks the ACL and the audience for non-owners.
+    r = client.put("/api/v1/wikis/agent1/draft-rev/pages/.wikihub/acl", json={"content": "* public-edit\n"}, headers=h)
+    assert r.status_code in (200, 201)
+    form = {**base, "path": "contrib"}
+    plan = preview(other, form).get_json()["preview"]
+    assert plan["visibility"] == "public-edit" and "visibility: public-edit" in plan["content"]
+    approved = {**form, "viewer_id": str(other.wh_user_id), "previewed_path": plan["page_path"], "previewed_visibility": plan["visibility"],
+                "previewed_content_hash": plan["content_hash"]}
+    r = client.put("/api/v1/wikis/agent1/draft-rev/pages/.wikihub/acl", json={"content": "* unlisted-edit\n"}, headers=h)
+    assert r.status_code in (200, 201)
+    r = _draft_post(other, *D, approved)
+    assert r.status_code == 409 and r.get_json()["error"] == "preview_changed" and r.get_json()["visibility"] == "unlisted-edit"
+    r = client.put("/api/v1/wikis/agent1/draft-rev/pages/.wikihub/acl", json={"content": "* public\n"}, headers=h)
+    assert r.status_code in (200, 201)
+    r = _draft_post(other, *D, approved)
+    assert r.status_code == 403 and r.get_json()["error"] == "forbidden", "write access re-checked at commit"
+    assert _page_row(*D, "contrib.md") is None
+
+    # Git write done, DB commit lost: the identical retry recovers the page.
+    form = {**base, "path": "recovered"}
+    with patch("app.routes.wiki.update_mirror_page", side_effect=RuntimeError("crash after git write")):
+        try:
+            _draft_post(owner, *D, form)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("expected the simulated crash")
+    db.session.rollback()
+    assert git_sync.read_file_from_repo("agent1", "draft-rev", "recovered.md") is not None
+    assert _page_row(*D, "recovered.md") is None
+    r = _draft_post(owner, *D, form)
+    assert r.status_code == 200 and r.get_json()["recovered"] is True and r.get_json()["created"] is False, r.get_data(as_text=True)
+    assert _page_row(*D, "recovered.md").author == "agent1"
+    r = _draft_post(owner, *D, form)
+    assert r.status_code == 200 and r.get_json()["created"] is False
+    # Someone else's file at the path is never adopted.
+    git_sync.sync_page_to_repo("agent1", "draft-rev", "foreign.md", "# Foreign\n", message="push", author_name="x")
+    r = _draft_post(owner, *D, {**base, "path": "foreign"})
+    assert r.status_code == 409 and r.get_json()["error"] == "exists"
+
+    # Draft budget: collisions and rejected drafts are free.
+    saved = {k: app.config.get(k) for k in ("SHARED_RATE_LIMITS_IN_TESTS", "ASSISTANT_DRAFT_MAX_PER_USER_PER_HOUR")}
+    try:
+        app.config.update(SHARED_RATE_LIMITS_IN_TESTS=True, ASSISTANT_DRAFT_MAX_PER_USER_PER_HOUR=1)
+        db.session.execute(text("DELETE FROM rate_limit_buckets WHERE key LIKE 'assistant_draft:%'"))
+        db.session.commit()
+        for _ in range(3):
+            assert _draft_post(owner, *D, {**base, "path": "foreign"}).status_code == 409
+            assert _draft_post(owner, *D, {**base, "path": "history"}).status_code == 400
+        assert _draft_post(owner, *D, {**base, "path": "budget one"}).status_code == 201
+        r = _draft_post(owner, *D, {**base, "path": "budget two"})
+        assert r.status_code == 429 and r.get_json()["error"] == "rate_limited"
+        assert _draft_post(owner, *D, {**base, "path": "budget one"}).status_code == 200, "a repeat is still answered"
+    finally:
+        app.config.update(saved)
+        db.session.execute(text("DELETE FROM rate_limit_buckets WHERE key LIKE 'assistant_draft:%'"))
+        db.session.commit()
+
+
+def test_annotation_independent_review_fixes(app, client, key):
+    """wikihub-3add independent review of 53018b0:
+    startup DDL never holds page_annotations locks; user+page budgets are
+    reserved atomically with the write (rejections/rollbacks free); retries
+    are bound to their citations; decoded citation paths/quotes are
+    validated; non-Markdown indexed files resolve as reader targets; and a
+    public passage next to a private section is not marked owner-only."""
+    from unittest.mock import patch
+    from flask import g as _g
+    from sqlalchemy import event as _event
+    from sqlalchemy.exc import IntegrityError
+    from app.annotations import ensure_annotation_columns
+    from app.models import PageAnnotation, User as _User
+    from app import git_sync
+
+    # 1. Startup DDL: no ALTER (no ACCESS EXCLUSIVE lock) when nothing is
+    # missing; when something is, it is committed before returning.
+    altered = []
+    def capture(conn, cursor, statement, *a):
+        if statement.lstrip().upper().startswith("ALTER TABLE PAGE_ANNOTATIONS"):
+            altered.append(statement)
+    _event.listen(db.engine, "before_cursor_execute", capture)
+    try:
+        assert ensure_annotation_columns(db) == [] and altered == [], altered
+        db.session.execute(text("ALTER TABLE page_annotations DROP COLUMN IF EXISTS citations"))
+        db.session.commit()
+        altered.clear()
+        assert ensure_annotation_columns(db) == ["citations"] and len(altered) == 1, altered
+    finally:
+        _event.remove(db.engine, "before_cursor_execute", capture)
+    held = db.session.execute(text(
+        "SELECT count(*) FROM pg_locks l JOIN pg_class c ON c.oid = l.relation "
+        "WHERE c.relname = 'page_annotations' AND l.pid = pg_backend_pid()")).scalar()
+    db.session.commit()
+    assert held == 0, "no page_annotations lock survives the upgrade"
+
+    h = {"Authorization": f"Bearer {key}"}
+    assert client.post("/api/v1/wikis", json={"slug": "rev2", "title": "Rev2"}, headers=h).status_code == 201
+    assert client.put("/api/v1/wikis/agent1/rev2/pages/.wikihub/acl", json={"content": "* public\n"}, headers=h).status_code in (200, 201)
+    W = ("agent1", "rev2")
+    _put_page(client, key, *W, "doc.md", "# Doc\n\nPublic intro sentence.\n\n<!-- private -->\nBand line here.\n<!-- /private -->\n\n"
+              "Public outro sentence.\n", visibility=None)
+    _put_page(client, key, *W, "cited.md", "# Cited\n\nPublic cited sentence.\n", visibility=None)
+    git_sync.sync_page_to_repo("agent1", "rev2", "data_file.csv", "a,b\n1,2\n", message="add data")
+    owner = _login_browser_with_key(app, key)
+    owner.wh_user_id = _User.query.filter_by(username="agent1").first().id
+    _g.pop("_login_user", None)
+    assert owner.post("/@agent1/rev2/reindex").status_code == 200, "index the CSV as a page row"
+    reader_key = client.post("/api/v1/accounts", json={"username": "rev2-reader"}).get_json()["api_key"]
+    reader = _login_browser_with_key(app, reader_key)
+    reader.wh_user_id = _User.query.filter_by(username="rev2-reader").first().id
+    page = _page_row(*W, "doc.md")
+    assert _page_row(*W, "data_file.csv") is not None
+
+    # 6. Classify the selected passage itself.
+    def preview(browser, quote):
+        _g.pop("_login_user", None)
+        return browser.post(_annot_url(*W, page.id), json={"preview": True, "quote": quote,
+                            "revision": page.content_hash, "viewer_id": browser.wh_user_id})
+    assert preview(owner, "Public intro sentence.").get_json()["preview"]["owner_only"] is False, \
+        "a public passage right before a private section is public"
+    assert preview(owner, "Public outro sentence.").get_json()["preview"]["owner_only"] is False
+    assert preview(owner, "Band line here.").get_json()["preview"]["owner_only"] is True
+    assert preview(owner, "intro sentence. Band line").get_json()["preview"]["owner_only"] is True, "spanning = private"
+    r = _annot_post(owner, *W, page.id, "Owner on public intro", "Public intro sentence.", page.content_hash)
+    assert r.status_code == 201 and r.get_json()["comment"]["audience"] == "public"
+    seen = _annot_get(reader, *W, page.id).get_json()["comments"]
+    assert [(c["body"], c["detached"]) for c in seen] == [("Owner on public intro", False)]
+    with patch("app.annotations.read_file_from_repo", return_value=None):
+        assert preview(owner, "Public intro sentence.").status_code == 503, "still fails closed"
+
+    # 4/5. Citation targets: decoded paths/quotes validated; reader resolver.
+    bad_urls = [
+        "/@agent1/rev2/a%2F..%2Fcited", "/@agent1/rev2/%2E%2E/cited", "/@agent1/rev2/.wikihub%2Facl",
+        "/@agent1/rev2/cited%00", "/@agent1/rev2/cited%5C..", "/@agent1/rev2/cited/", "/@agent1/rev2/history",
+        "/@agent1/rev2/-/pages/1/annotations", "/@agent1/rev2/cited#:~:text=Public,cited",
+        "/@agent1/rev2/cited#:~:text=%0APublic", "/@agent1/rev2/cited#:~:text=%FF",
+        "/@agent1/rev2/cited#:~:text=" + "x" * 1001, "/@agent1/rev2/cited#:~:text=Public cited",
+        "/@agent1/rev2/cited#:~:text=", "/@agent1/rev2/data_file.csv#:~:text=a",
+        "/@agent1/rev2/nope.csv", "//evil.example/@agent1/rev2/cited",
+    ]
+    for url in bad_urls:
+        r = _annot_post(reader, *W, page.id, "See [1]", "", page.content_hash, citations=[{"n": 1, "url": url}])
+        assert r.status_code == 400 and r.get_json()["error"] == "invalid_citations", (url, r.status_code)
+    good = [{"n": 1, "url": "/@agent1/rev2/cited#:~:text=Public%20cited%20sentence."},
+            {"n": 2, "url": "/@agent1/rev2/data_file.csv"}]
+    import uuid as _uuid
+    rid = str(_uuid.uuid4())
+    r = _annot_post(reader, *W, page.id, "Sources [1] [2]", "", page.content_hash, citations=good, request_id=rid)
+    assert r.status_code == 201, r.get_data(as_text=True)
+    cites = r.get_json()["comment"]["citations"]
+    assert [c["url"] for c in cites] == ["/@agent1/rev2/cited#:~:text=Public%20cited%20sentence.", "/@agent1/rev2/data_file.csv"]
+    assert _get(reader, "/@agent1/rev2/data_file.csv").status_code == 200, "non-Markdown citation is navigable"
+
+    # 3. Retries are bound to their citations.
+    for other in ([], [good[0]], [{"n": 1, "url": good[1]["url"]}, {"n": 2, "url": good[0]["url"]}]):
+        r = _annot_post(reader, *W, page.id, "Sources [1] [2]", "", page.content_hash, citations=other, request_id=rid)
+        assert r.status_code == 409 and r.get_json()["error"] == "request_id_reused", other
+    r = _annot_post(reader, *W, page.id, "Sources [1] [2]", "", page.content_hash, citations=list(reversed(good)), request_id=rid)
+    assert r.status_code == 200 and r.get_json()["duplicate"] is True, "same citations in another order = same retry"
+
+    # 2. Budgets reserved atomically with the write.
+    def buckets():
+        db.session.commit()
+        return dict(db.session.execute(text("SELECT key, count FROM rate_limit_buckets WHERE key LIKE 'annot:p:%' OR key LIKE 'annot:u:%'")).all())
+    saved = {k: app.config.get(k) for k in ("SHARED_RATE_LIMITS_IN_TESTS", "ANNOTATION_MAX_PER_PAGE_PER_DAY")}
+    try:
+        app.config.update(SHARED_RATE_LIMITS_IN_TESTS=True, ANNOTATION_MAX_PER_PAGE_PER_DAY=1)
+        db.session.execute(text("DELETE FROM rate_limit_buckets WHERE key LIKE 'annot:%'"))
+        db.session.commit()
+        real_commit = db.session.commit
+        def lost_commit():
+            if any(isinstance(o, PageAnnotation) for o in db.session.new):
+                raise IntegrityError("simulated", {}, Exception("lost"))
+            return real_commit()
+        with patch.object(db.session, "commit", side_effect=lost_commit):
+            r = _annot_post(reader, *W, page.id, "rolled back", "", page.content_hash)
+        assert r.status_code == 409, r.status_code
+        assert buckets() == {}, "a rolled-back write reserves nothing"
+        assert _annot_post(reader, *W, page.id, "kept", "", page.content_hash).status_code == 201
+        after_ok = buckets()
+        assert sorted(after_ok.values()) == [1, 1, 1, 1], after_ok
+        r = _annot_post(reader, *W, page.id, "over budget", "", page.content_hash)
+        assert r.status_code == 429
+        assert buckets() == after_ok, "a refused write leaves every budget unchanged"
+    finally:
+        app.config.update(saved)
+        db.session.execute(text("DELETE FROM rate_limit_buckets WHERE key LIKE 'annot:%'"))
+        db.session.commit()
+
+
 def run_all():
     app = setup()
 
@@ -12684,6 +13555,14 @@ def run_all():
             ("activity feed filters private and shows social events", lambda: test_activity_feed_filters_private_and_shows_social_events(client, key)),
             ("curator sidebar only renders when usable", lambda: test_curator_sidebar_only_renders_when_usable(app, client, key)),
             ("reader assistant scopes to visitor and cites sources (wikihub-1bfx)", lambda: test_reader_assistant_scopes_to_visitor_and_cites_sources(app, client, key)),
+            ("page annotations: scope, anchoring, dedup, limits, CSRF (wikihub-3add)", lambda: test_page_annotations_scope_anchoring_and_dedup(app, client, key)),
+            ("page annotations migration keeps app owner (wikihub-3add)", lambda: test_page_annotations_migration_preserves_app_owner()),
+            ("preview owner one-time login", lambda: test_preview_owner_login(app)),
+            ("assistant draft new-page rules (wikihub-3add)", lambda: test_assistant_draft_new_page_rules(app, client, key)),
+            ("annotation review follow-ups: fail closed, anchors, audience, citations, budgets (wikihub-3add)", lambda: test_annotation_review_followups(app, client, key)),
+            ("annotation columns upgrade an existing table (wikihub-3add)", lambda: test_annotation_columns_upgrade_existing_table(app)),
+            ("assistant draft review follow-ups: preview, round trip, recovery, budget (wikihub-3add)", lambda: test_assistant_draft_review_followups(app, client, key)),
+            ("annotation independent review fixes: DDL locks, atomic budgets, citations, passage class (wikihub-3add)", lambda: test_annotation_independent_review_fixes(app, client, key)),
             ("zip upload", lambda: test_zip_upload(client, key)),
             ("anonymous upload (wikihub-i2xm)", lambda: test_anonymous_upload(app)),
             ("agent surfaces", lambda: test_agent_surfaces(client)),
@@ -13510,12 +14389,13 @@ def _get(browser, url, **kwargs):
 
 def _put_page(client, key, owner, slug, path, content, visibility="public"):
     h = {"Authorization": f"Bearer {key}"}
+    vis = {} if visibility is None else {"visibility": visibility}  # None: inherit from the ACL
     r = client.post(f"/api/v1/wikis/{owner}/{slug}/pages", json={
-        "path": path, "content": content, "visibility": visibility,
+        "path": path, "content": content, **vis,
     }, headers=h)
     if r.status_code == 409:  # new wikis ship a default index.md etc.
         r = client.put(f"/api/v1/wikis/{owner}/{slug}/pages/{path}", json={
-            "content": content, "visibility": visibility,
+            "content": content, **vis,
         }, headers=h)
         assert r.status_code == 200, f"replace {path}: {r.status_code} {r.get_data(as_text=True)[:200]}"
         return

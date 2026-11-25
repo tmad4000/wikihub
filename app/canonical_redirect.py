@@ -40,7 +40,7 @@ _SKIP_SUFFIXES = (
     "/new", "/new-folder",
 )
 
-_EXACT_SKIP_RE = re.compile(r"^/@[^/]+/[^/]+/(?:activity|activity\.rss)$")
+_EXACT_SKIP_RE = re.compile(r"^/@[^/]+/[^/]+/(?:activity|activity\.rss|-/pages/[0-9]+/annotations)$")
 
 
 def _is_skipped(path: str) -> bool:
