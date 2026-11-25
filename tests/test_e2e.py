@@ -13384,6 +13384,137 @@ def test_assistant_draft_review_followups(app, client, key):
         db.session.commit()
 
 
+def test_annotation_independent_review_fixes(app, client, key):
+    """wikihub-3add independent review of 53018b0:
+    startup DDL never holds page_annotations locks; user+page budgets are
+    reserved atomically with the write (rejections/rollbacks free); retries
+    are bound to their citations; decoded citation paths/quotes are
+    validated; non-Markdown indexed files resolve as reader targets; and a
+    public passage next to a private section is not marked owner-only."""
+    from unittest.mock import patch
+    from flask import g as _g
+    from sqlalchemy import event as _event
+    from sqlalchemy.exc import IntegrityError
+    from app.annotations import ensure_annotation_columns
+    from app.models import PageAnnotation, User as _User
+    from app import git_sync
+
+    # 1. Startup DDL: no ALTER (no ACCESS EXCLUSIVE lock) when nothing is
+    # missing; when something is, it is committed before returning.
+    altered = []
+    def capture(conn, cursor, statement, *a):
+        if statement.lstrip().upper().startswith("ALTER TABLE PAGE_ANNOTATIONS"):
+            altered.append(statement)
+    _event.listen(db.engine, "before_cursor_execute", capture)
+    try:
+        assert ensure_annotation_columns(db) == [] and altered == [], altered
+        db.session.execute(text("ALTER TABLE page_annotations DROP COLUMN IF EXISTS citations"))
+        db.session.commit()
+        altered.clear()
+        assert ensure_annotation_columns(db) == ["citations"] and len(altered) == 1, altered
+    finally:
+        _event.remove(db.engine, "before_cursor_execute", capture)
+    held = db.session.execute(text(
+        "SELECT count(*) FROM pg_locks l JOIN pg_class c ON c.oid = l.relation "
+        "WHERE c.relname = 'page_annotations' AND l.pid = pg_backend_pid()")).scalar()
+    db.session.commit()
+    assert held == 0, "no page_annotations lock survives the upgrade"
+
+    h = {"Authorization": f"Bearer {key}"}
+    assert client.post("/api/v1/wikis", json={"slug": "rev2", "title": "Rev2"}, headers=h).status_code == 201
+    assert client.put("/api/v1/wikis/agent1/rev2/pages/.wikihub/acl", json={"content": "* public\n"}, headers=h).status_code in (200, 201)
+    W = ("agent1", "rev2")
+    _put_page(client, key, *W, "doc.md", "# Doc\n\nPublic intro sentence.\n\n<!-- private -->\nBand line here.\n<!-- /private -->\n\n"
+              "Public outro sentence.\n", visibility=None)
+    _put_page(client, key, *W, "cited.md", "# Cited\n\nPublic cited sentence.\n", visibility=None)
+    git_sync.sync_page_to_repo("agent1", "rev2", "data_file.csv", "a,b\n1,2\n", message="add data")
+    owner = _login_browser_with_key(app, key)
+    owner.wh_user_id = _User.query.filter_by(username="agent1").first().id
+    _g.pop("_login_user", None)
+    assert owner.post("/@agent1/rev2/reindex").status_code == 200, "index the CSV as a page row"
+    reader_key = client.post("/api/v1/accounts", json={"username": "rev2-reader"}).get_json()["api_key"]
+    reader = _login_browser_with_key(app, reader_key)
+    reader.wh_user_id = _User.query.filter_by(username="rev2-reader").first().id
+    page = _page_row(*W, "doc.md")
+    assert _page_row(*W, "data_file.csv") is not None
+
+    # 6. Classify the selected passage itself.
+    def preview(browser, quote):
+        _g.pop("_login_user", None)
+        return browser.post(_annot_url(*W, page.id), json={"preview": True, "quote": quote,
+                            "revision": page.content_hash, "viewer_id": browser.wh_user_id})
+    assert preview(owner, "Public intro sentence.").get_json()["preview"]["owner_only"] is False, \
+        "a public passage right before a private section is public"
+    assert preview(owner, "Public outro sentence.").get_json()["preview"]["owner_only"] is False
+    assert preview(owner, "Band line here.").get_json()["preview"]["owner_only"] is True
+    assert preview(owner, "intro sentence. Band line").get_json()["preview"]["owner_only"] is True, "spanning = private"
+    r = _annot_post(owner, *W, page.id, "Owner on public intro", "Public intro sentence.", page.content_hash)
+    assert r.status_code == 201 and r.get_json()["comment"]["audience"] == "public"
+    seen = _annot_get(reader, *W, page.id).get_json()["comments"]
+    assert [(c["body"], c["detached"]) for c in seen] == [("Owner on public intro", False)]
+    with patch("app.annotations.read_file_from_repo", return_value=None):
+        assert preview(owner, "Public intro sentence.").status_code == 503, "still fails closed"
+
+    # 4/5. Citation targets: decoded paths/quotes validated; reader resolver.
+    bad_urls = [
+        "/@agent1/rev2/a%2F..%2Fcited", "/@agent1/rev2/%2E%2E/cited", "/@agent1/rev2/.wikihub%2Facl",
+        "/@agent1/rev2/cited%00", "/@agent1/rev2/cited%5C..", "/@agent1/rev2/cited/", "/@agent1/rev2/history",
+        "/@agent1/rev2/-/pages/1/annotations", "/@agent1/rev2/cited#:~:text=Public,cited",
+        "/@agent1/rev2/cited#:~:text=%0APublic", "/@agent1/rev2/cited#:~:text=%FF",
+        "/@agent1/rev2/cited#:~:text=" + "x" * 1001, "/@agent1/rev2/cited#:~:text=Public cited",
+        "/@agent1/rev2/cited#:~:text=", "/@agent1/rev2/data_file.csv#:~:text=a",
+        "/@agent1/rev2/nope.csv", "//evil.example/@agent1/rev2/cited",
+    ]
+    for url in bad_urls:
+        r = _annot_post(reader, *W, page.id, "See [1]", "", page.content_hash, citations=[{"n": 1, "url": url}])
+        assert r.status_code == 400 and r.get_json()["error"] == "invalid_citations", (url, r.status_code)
+    good = [{"n": 1, "url": "/@agent1/rev2/cited#:~:text=Public%20cited%20sentence."},
+            {"n": 2, "url": "/@agent1/rev2/data_file.csv"}]
+    import uuid as _uuid
+    rid = str(_uuid.uuid4())
+    r = _annot_post(reader, *W, page.id, "Sources [1] [2]", "", page.content_hash, citations=good, request_id=rid)
+    assert r.status_code == 201, r.get_data(as_text=True)
+    cites = r.get_json()["comment"]["citations"]
+    assert [c["url"] for c in cites] == ["/@agent1/rev2/cited#:~:text=Public%20cited%20sentence.", "/@agent1/rev2/data_file.csv"]
+    assert _get(reader, "/@agent1/rev2/data_file.csv").status_code == 200, "non-Markdown citation is navigable"
+
+    # 3. Retries are bound to their citations.
+    for other in ([], [good[0]], [{"n": 1, "url": good[1]["url"]}, {"n": 2, "url": good[0]["url"]}]):
+        r = _annot_post(reader, *W, page.id, "Sources [1] [2]", "", page.content_hash, citations=other, request_id=rid)
+        assert r.status_code == 409 and r.get_json()["error"] == "request_id_reused", other
+    r = _annot_post(reader, *W, page.id, "Sources [1] [2]", "", page.content_hash, citations=list(reversed(good)), request_id=rid)
+    assert r.status_code == 200 and r.get_json()["duplicate"] is True, "same citations in another order = same retry"
+
+    # 2. Budgets reserved atomically with the write.
+    def buckets():
+        db.session.commit()
+        return dict(db.session.execute(text("SELECT key, count FROM rate_limit_buckets WHERE key LIKE 'annot:p:%' OR key LIKE 'annot:u:%'")).all())
+    saved = {k: app.config.get(k) for k in ("SHARED_RATE_LIMITS_IN_TESTS", "ANNOTATION_MAX_PER_PAGE_PER_DAY")}
+    try:
+        app.config.update(SHARED_RATE_LIMITS_IN_TESTS=True, ANNOTATION_MAX_PER_PAGE_PER_DAY=1)
+        db.session.execute(text("DELETE FROM rate_limit_buckets WHERE key LIKE 'annot:%'"))
+        db.session.commit()
+        real_commit = db.session.commit
+        def lost_commit():
+            if any(isinstance(o, PageAnnotation) for o in db.session.new):
+                raise IntegrityError("simulated", {}, Exception("lost"))
+            return real_commit()
+        with patch.object(db.session, "commit", side_effect=lost_commit):
+            r = _annot_post(reader, *W, page.id, "rolled back", "", page.content_hash)
+        assert r.status_code == 409, r.status_code
+        assert buckets() == {}, "a rolled-back write reserves nothing"
+        assert _annot_post(reader, *W, page.id, "kept", "", page.content_hash).status_code == 201
+        after_ok = buckets()
+        assert sorted(after_ok.values()) == [1, 1, 1, 1], after_ok
+        r = _annot_post(reader, *W, page.id, "over budget", "", page.content_hash)
+        assert r.status_code == 429
+        assert buckets() == after_ok, "a refused write leaves every budget unchanged"
+    finally:
+        app.config.update(saved)
+        db.session.execute(text("DELETE FROM rate_limit_buckets WHERE key LIKE 'annot:%'"))
+        db.session.commit()
+
+
 def run_all():
     app = setup()
 
@@ -13426,6 +13557,7 @@ def run_all():
             ("annotation review follow-ups: fail closed, anchors, audience, citations, budgets (wikihub-3add)", lambda: test_annotation_review_followups(app, client, key)),
             ("annotation columns upgrade an existing table (wikihub-3add)", lambda: test_annotation_columns_upgrade_existing_table(app)),
             ("assistant draft review follow-ups: preview, round trip, recovery, budget (wikihub-3add)", lambda: test_assistant_draft_review_followups(app, client, key)),
+            ("annotation independent review fixes: DDL locks, atomic budgets, citations, passage class (wikihub-3add)", lambda: test_annotation_independent_review_fixes(app, client, key)),
             ("zip upload", lambda: test_zip_upload(client, key)),
             ("anonymous upload (wikihub-i2xm)", lambda: test_anonymous_upload(app)),
             ("agent surfaces", lambda: test_agent_surfaces(client)),

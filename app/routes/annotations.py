@@ -28,7 +28,6 @@ from app.annotations import (
     PageView,
     anchor_context,
     comment_audience,
-    context_matches,
     count_occurrences,
     match_key,
     parse_request_id,
@@ -162,50 +161,97 @@ def _rate_limited(retry_after, desc):
 
 # --- citations -------------------------------------------------------------
 
-_CITATION_URL = re.compile(r"^/@([a-z0-9_-]{1,64})/([A-Za-z0-9_.-]{1,128})/([^#?\x00-\x1f]{1,600})(#:~:text=[^\s]{1,800})?$")
+_CITATION_URL = re.compile(r"^/@([a-z0-9_-]{1,64})/([A-Za-z0-9_.-]{1,128})/([^#?\s]{1,600})(?:#:~:text=([^\s#]{1,2400}))?$")
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+
+
+class _BadCitation(ValueError):
+    pass
+
+
+def _decode_strict(value):
+    from urllib.parse import unquote
+
+    decoded = unquote(value, errors="strict")
+    if _CONTROL.search(decoded) or _UNSTORABLE_TEXT.search(decoded):
+        raise _BadCitation()
+    return decoded
 
 
 def _citation_target(url):
-    """'/@owner/slug/page[#:~:text=...]' -> (owner User, Wiki, Page, quote)
-    or None. Only same-site wiki page paths are accepted."""
-    from urllib.parse import unquote
+    """'/@owner/slug/page[#:~:text=...]' -> (owner User, Wiki, Page, quote).
 
-    from app.url_utils import page_path_from_url_path
+    Raises _BadCitation unless the URL is a same-site reader URL whose
+    DECODED path is a plain repo path (no '..', '.', backslash, control
+    characters, plumbing, or non-reader routes such as /-/...), that routes to
+    the reader for this owner/wiki, and resolves -- with the reader's own
+    resolver -- to an indexed page (Markdown or another file type). A
+    text fragment must be exactly the canonical form WikiHub itself emits for
+    a non-empty quote of at most MAX_QUOTE_CHARS, and is only allowed on
+    Markdown pages. Access is checked by the caller."""
+    from flask import current_app
+    from werkzeug.exceptions import HTTPException
+
+    from app.annotations import is_markdown_path, resolve_reader_page
+    from app.page_utils import is_wikihub_plumbing_path, normalize_repo_path
+    from app.reader_assistant import _text_fragment
 
     if not isinstance(url, str):
-        return None
+        raise _BadCitation()
     m = _CITATION_URL.match(url)
     if not m:
-        return None
-    username, slug, rest, fragment = m.groups()
+        raise _BadCitation()
+    username, slug, raw_rest, raw_fragment = m.groups()
+    try:
+        rest = _decode_strict(raw_rest)
+        quote = _decode_strict(raw_fragment) if raw_fragment is not None else None
+    except (UnicodeDecodeError, _BadCitation):
+        raise _BadCitation()
+    if ("\\" in rest or rest.endswith("/") or rest.startswith("/")
+            or normalize_repo_path(rest) != rest or is_wikihub_plumbing_path(rest)
+            or any(seg.startswith(".") for seg in rest.split("/"))):
+        raise _BadCitation()
+    try:
+        # Werkzeug matches decoded paths (like WSGI PATH_INFO).
+        endpoint, args = current_app.url_map.bind("localhost").match(f"/@{username}/{slug}/{rest}", method="GET")
+    except HTTPException:
+        raise _BadCitation()
+    if endpoint != "wiki.wiki_page" or args.get("username") != username or args.get("slug") != slug:
+        raise _BadCitation()
     owner = User.query.filter_by(username=username).first()
     if owner is None or owner.suspended_at is not None:
-        return None
+        raise _BadCitation()
     wiki = Wiki.query.filter_by(owner_id=owner.id, slug=slug).first()
     if wiki is None:
-        return None
-    rest = unquote(rest).rstrip("/")
-    if not rest or rest.startswith("-/"):
-        return None
-    candidates = [rest if rest.endswith(".md") else rest + ".md"]
-    spaced = page_path_from_url_path(rest)
-    candidates.append(spaced if spaced.endswith(".md") else spaced + ".md")
-    page = None
-    for candidate in candidates:
-        page = Page.query.filter_by(wiki_id=wiki.id, path=candidate).first()
-        if page is not None:
-            break
+        raise _BadCitation()
+    page = resolve_reader_page(wiki, args["page_path"])
     if page is None:
-        return None
-    quote = None
-    if fragment:
-        quote = match_key(unquote(fragment[len("#:~:text="):]))[:MAX_QUOTE_CHARS] or None
+        raise _BadCitation()
+    if quote is not None:
+        if (not quote or quote != match_key(quote) or len(quote) > MAX_QUOTE_CHARS
+                or "#:~:text=" + raw_fragment != _text_fragment(quote)
+                or not is_markdown_path(page.path)):
+            raise _BadCitation()
     return owner, wiki, page, quote
+
+
+def _citation_identity(raw):
+    """What a retry must repeat exactly: the submitted (n, url) pairs, in
+    order of n. None when the shape is invalid (the parse will reject it)."""
+    if raw in (None, []):
+        return ()
+    if not isinstance(raw, list) or not all(isinstance(item, dict) for item in raw):
+        return None
+    pairs = [(item.get("n"), item.get("url")) for item in raw]
+    if not all(isinstance(n, int) and not isinstance(n, bool) and isinstance(u, str) for n, u in pairs):
+        return None
+    return tuple(sorted(pairs))
 
 
 def _parse_citations(raw, viewer):
     """Validate submitted citations against what the AUTHOR can read.
-    Returns (stored list, None) or (None, error response)."""
+    Returns (stored list, None) or (None, error response). Each stored item
+    keeps its submitted URL as "src" so retries can be compared exactly."""
     if raw in (None, []):
         return [], None
     if not isinstance(raw, list) or len(raw) > MAX_CITATIONS:
@@ -217,21 +263,23 @@ def _parse_citations(raw, viewer):
         n, url = item.get("n"), item.get("url")
         if not isinstance(n, int) or isinstance(n, bool) or not 1 <= n <= 99 or n in seen:
             return None, _err(400, "invalid_citations", "Citation numbers must be unique integers 1-99.")
-        target = _citation_target(url)
-        if target is None:
+        try:
+            owner, wiki, page, quote = _citation_target(url)
+        except _BadCitation:
             return None, _err(400, "invalid_citations", f"Citation [{n}] is not a page you can read.")
-        owner, wiki, page, quote = target
         if not PageView(owner, wiki, page, viewer, load_acl_rules(owner.username, wiki.slug)).can_read():
             return None, _err(400, "invalid_citations", f"Citation [{n}] is not a page you can read.")
         seen.add(n)
-        stored.append({"n": n, "wiki_id": wiki.id, "path": page.path, "quote": quote})
-    return stored, None
+        stored.append({"n": n, "wiki_id": wiki.id, "path": page.path, "quote": quote, "src": url})
+    return sorted(stored, key=lambda c: c["n"]), None
 
 
 def _resolve_citations(stored, viewer, cache):
     """Per-viewer, navigable citations: only targets THIS viewer can read
-    are returned; a quote (and its text-fragment link) only if the words are
-    in this viewer's own view of the target page."""
+    (reader rules, Markdown or other indexed files) are returned; a quote
+    (and its text-fragment link) only for Markdown targets and only if the
+    words are in this viewer's own view of the page."""
+    from app.annotations import is_markdown_path
     from app.reader_assistant import _text_fragment
     from app.url_utils import url_path_from_page_path
 
@@ -252,6 +300,8 @@ def _resolve_citations(stored, viewer, cache):
             continue
         url = f"/@{target.owner.username}/{target.wiki.slug}/{url_path_from_page_path(target.page.path, strip_md=True)}"
         quote = item.get("quote")
+        if quote and not is_markdown_path(target.page.path):
+            quote = None
         if quote:
             try:
                 if count_occurrences(target.text_key("viewer"), match_key(quote), limit=1) < 1:
@@ -263,9 +313,21 @@ def _resolve_citations(stored, viewer, cache):
     return out
 
 
-def _same_submission(row, view, body, quote):
-    return (row.wiki_id == view.wiki.id and row.page_path == view.page.path and row.page_id == view.page.id
-            and row.body == body and (row.quote or "") == quote)
+def _same_submission(row, view, body, quote, citation_identity, viewer=None, raw_citations=None):
+    """Is this request a retry of `row`? Page, body, quote AND citations must
+    all match (a retry cannot attach different sources)."""
+    if not (row.wiki_id == view.wiki.id and row.page_path == view.page.path and row.page_id == view.page.id
+            and row.body == body and (row.quote or "") == quote):
+        return False
+    stored = row.citations or []
+    if all("src" in c for c in stored):
+        return citation_identity == tuple(sorted((c["n"], c["src"]) for c in stored))
+    # Rows stored before "src" existed: compare resolved targets instead.
+    parsed, err = _parse_citations(raw_citations, viewer)
+    if err is not None:
+        return False
+    key = lambda items: sorted((c["n"], c["wiki_id"], c["path"], c.get("quote")) for c in items)  # noqa: E731
+    return key(parsed) == key(stored)
 
 
 @annotations_bp.route("/@<username>/<slug>/-/pages/<int:page_id>/annotations", methods=["GET"])
@@ -363,7 +425,7 @@ def create_annotation(username, slug, page_id):
         # even if the page changed since or the visitor is now rate limited.
         existing = PageAnnotation.query.filter_by(author_id=viewer.id, request_id=request_id).first()
         if existing is not None:
-            return _duplicate(existing, view, viewer, body, quote)
+            return _duplicate(existing, view, viewer, body, quote, data.get("citations"))
 
     if revision != view.page.content_hash:
         return _err(409, "stale_revision", "The page changed since you loaded it. Reload and try again.",
@@ -381,9 +443,15 @@ def create_annotation(username, slug, page_id):
                 return _err(409, "ambiguous_selection", "That passage appears more than once. Select a longer passage.")
             prefix, suffix = anchor_context(text_key, quote)
             if view.is_owner:
-                # Owner-only unless this exact occurrence (same context) is
-                # also uniquely in the public text. Any doubt -> owner-only.
-                owner_only = context_matches(view.text_key("public"), quote, prefix, suffix) != 1
+                # Classify the selected passage itself: owner-only iff any of
+                # ITS characters lie inside a private section of the owner's
+                # rendered page. Adjacent private text does not make a public
+                # passage private; an unreadable page still fails closed.
+                full_text, band_mask = view.full_band_mask()
+                at = full_text.find(quote)
+                if at < 0 or len(band_mask) != len(full_text):
+                    raise ContentUnavailable(view.page.path)
+                owner_only = any(band_mask[at:at + len(quote)])
     except ContentUnavailable:
         return _unavailable()
     audience = comment_audience(view.page, owner_only)
@@ -402,9 +470,13 @@ def create_annotation(username, slug, page_id):
     if err:
         return err
 
+    # Reserve the user+page budgets in the SAME transaction as the insert:
+    # committed together, or rolled back together (rejected/failed writes
+    # use nothing; concurrent writers serialize on the bucket rows).
     budgets = _budget_rules(viewer, view)
-    allowed, retry_after, desc = rate_limit.peek_all(budgets)
+    allowed, retry_after, desc = rate_limit.reserve_all(budgets)
     if not allowed:
+        db.session.rollback()
         return _rate_limited(retry_after, desc)
 
     row = PageAnnotation(
@@ -429,9 +501,8 @@ def create_annotation(username, slug, page_id):
         db.session.rollback()
         existing = PageAnnotation.query.filter_by(author_id=viewer.id, request_id=request_id).first()
         if existing is not None:
-            return _duplicate(existing, view, viewer, body, quote)
+            return _duplicate(existing, view, viewer, body, quote, data.get("citations"))
         return _err(409, "request_id_reused", "This request_id was already used for a different comment.")
-    rate_limit.charge_all(budgets)
     names = {viewer.id: viewer.username}
     try:
         comment = serialize(row, view, names, _resolve_citations(row.citations, viewer, {}))
@@ -440,8 +511,9 @@ def create_annotation(username, slug, page_id):
     return _json({"comment": comment}, 201)
 
 
-def _duplicate(existing, view, viewer, body, quote):
-    if not _same_submission(existing, view, body, quote):
+def _duplicate(existing, view, viewer, body, quote, raw_citations):
+    if not _same_submission(existing, view, body, quote, _citation_identity(raw_citations),
+                            viewer=viewer, raw_citations=raw_citations):
         return _err(409, "request_id_reused", "This request_id was already used for a different comment.")
     try:
         comment = serialize(existing, view, {viewer.id: viewer.username},

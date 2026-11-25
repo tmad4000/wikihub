@@ -66,14 +66,33 @@ def comment_audience(page, owner_only):
 
 def ensure_annotation_columns(db):
     """Idempotent in-place upgrade for databases created before these
-    columns existed (e.g. a preview database). create_all() does not alter
-    existing tables. Caller commits."""
-    for ddl in (
-        "ALTER TABLE page_annotations ADD COLUMN IF NOT EXISTS anchor_prefix TEXT NULL",
-        "ALTER TABLE page_annotations ADD COLUMN IF NOT EXISTS anchor_suffix TEXT NULL",
-        "ALTER TABLE page_annotations ADD COLUMN IF NOT EXISTS citations JSON NULL",
-    ):
-        db.session.execute(db.text(ddl))
+    columns existed (e.g. a preview database); create_all() does not alter
+    existing tables. Returns the columns added.
+
+    ALTER TABLE takes an ACCESS EXCLUSIVE lock even when IF NOT EXISTS makes
+    it a no-op, and gunicorn workers boot while siblings serve requests. So:
+    read the catalog first (and end that transaction), ALTER only what is
+    missing, and commit each statement -- no lock on page_annotations is
+    ever held while the caller goes on to lock other tables (wikis, ...)."""
+    wanted = (
+        ("anchor_prefix", "ALTER TABLE page_annotations ADD COLUMN IF NOT EXISTS anchor_prefix TEXT NULL"),
+        ("anchor_suffix", "ALTER TABLE page_annotations ADD COLUMN IF NOT EXISTS anchor_suffix TEXT NULL"),
+        ("citations", "ALTER TABLE page_annotations ADD COLUMN IF NOT EXISTS citations JSON NULL"),
+    )
+    existing = {
+        name for (name,) in db.session.execute(db.text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = current_schema() AND table_name = 'page_annotations'"
+        ))
+    }
+    db.session.commit()
+    added = []
+    for column, ddl in wanted:
+        if column not in existing:
+            db.session.execute(db.text(ddl))
+            db.session.commit()
+            added.append(column)
+    return added
 
 _BLOCK_TAGS = {
     "address", "article", "aside", "blockquote", "br", "dd", "details", "div", "dl", "dt",
@@ -255,6 +274,36 @@ class PageView:
                 key = self._render_key(self._authoritative(), owner_view=True)
             self._texts[which] = key
         return self._texts[which]
+
+
+MARKDOWN_EXTS = {".md", ".markdown", ".mdown", ".mkd"}
+
+
+def is_markdown_path(path):
+    import os
+    return os.path.splitext(path or "")[1].lower() in MARKDOWN_EXTS or "." not in os.path.basename(path or "")
+
+
+def resolve_reader_page(wiki, raw_page_path):
+    """The indexed Page a reader URL path opens, using the reader's own rules
+    (app.routes.wiki.wiki_page): non-Markdown files match their exact path
+    first, then the underscore-to-space form; Markdown pages go through the
+    reader's _resolve_markdown_page. Access is NOT checked here."""
+    import os
+
+    from app.models import Page
+    from app.routes.wiki import _resolve_markdown_page
+    from app.url_utils import page_path_from_url_path
+
+    ext = os.path.splitext(raw_page_path)[1].lower()
+    if ext and ext not in MARKDOWN_EXTS:
+        page = Page.query.filter_by(wiki_id=wiki.id, path=raw_page_path).first()
+        spaced = page_path_from_url_path(raw_page_path)
+        if page is None and spaced != raw_page_path:
+            page = Page.query.filter_by(wiki_id=wiki.id, path=spaced).first()
+        return page
+    page, _ = _resolve_markdown_page(wiki, raw_page_path)
+    return page
 
 
 def parse_request_id(value):
