@@ -28,8 +28,8 @@
     <button class="action-btn" type="button" data-cancel>Cancel</button>
   </form>
   {% endif %}
-  <input type="hidden" data-token value="{{ csrf_token() }}">
   {% endif %}
+  <input type="hidden" data-token value="{{ csrf_token() }}">
 </section>
 <link rel="stylesheet" href="{{ url_for('static',filename='annotations.css') }}">
 <script defer src="{{ url_for('static',filename='js/annotations.js') }}"></script>

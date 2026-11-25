@@ -41,9 +41,13 @@
 .ra-form textarea:focus { outline: none; border-color: var(--border-accent, var(--accent)); }
 .ra-form button { background: var(--accent); color: var(--bg-base); border: 0; border-radius: 6px; padding: 0 14px; font-weight: 600; cursor: pointer; }
 .ra-form button:disabled { opacity: 0.5; cursor: not-allowed; }
+[data-switches] { display:flex; gap:.4rem; margin:.65rem 0 }
+[data-switches] [aria-pressed=true] { color:var(--accent); border-color:currentColor }
+[data-context] blockquote { border-left:2px solid var(--accent); padding-left:.5rem; margin:.5rem 0 }
 </style>
 <aside class="ra-panel" id="reader-assistant" aria-label="Ask this wiki" aria-hidden="true"
   data-ask-url="/api/v1/wikis/{{ owner.username | urlencode }}/{{ wiki.slug | urlencode }}/ask"
+  {% if config.READER_SCOPE_FACTORY %}data-comparison="true"{% endif %}
   data-page-path="{{ page.path }}"
   data-store-prefix="wikihub-ask:{{ current_user.id if current_user.is_authenticated else 'anon' }}:"
   data-store-key="wikihub-ask:{{ current_user.id if current_user.is_authenticated else 'anon' }}:{{ owner.username }}/{{ wiki.slug }}">
@@ -53,12 +57,16 @@
       <button type="button" class="ra-icon-btn" data-ra-clear title="Clear conversation">Clear</button>
       <button type="button" class="ra-icon-btn" data-ra-close aria-label="Close" title="Close (Esc)">&times;</button>
     </div>
+    {% if config.READER_SCOPE_FACTORY %}
+    <div class="ra-scope" data-switches></div>
+    {% endif %}
+    <div class="ra-scope" data-context></div>
     <div class="ra-scope">
-      Answers use only pages {% if current_user.is_authenticated %}you (@{{ current_user.username }}){% else %}signed-out visitors{% endif %} can read in {{ wiki.title or wiki.slug }}, with links to each source. Signed-in readers can review a draft before posting.
+      Answers use only pages {% if current_user.is_authenticated %}you (@{{ current_user.username }}){% else %}signed-out visitors{% endif %} can read{% if not config.READER_SCOPE_FACTORY %} in {{ wiki.title or wiki.slug }}{% endif %}, with links to each source. Signed-in readers can review a draft before posting.
     </div>
   </div>
   <div class="ra-messages" id="ra-messages" aria-live="polite">
-    <div class="ra-empty" data-ra-empty>Ask about this page or anything else in this wiki — for example, “What is this page about?”</div>
+    <div class="ra-empty" data-ra-empty>{% if config.READER_SCOPE_FACTORY %}Try “Suggest a short comment about checking the diversion ditch after a storm.”{% else %}Ask about this page or request a draft comment or page.{% endif %}</div>
   </div>
   <form class="ra-form" data-ra-form>
     <textarea id="ra-input" rows="1" maxlength="2000" placeholder="Ask a question…" aria-label="Your question"></textarea>

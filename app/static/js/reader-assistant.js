@@ -25,6 +25,16 @@
   var input = document.getElementById("ra-input");
   var form = panel.querySelector("[data-ra-form]");
   var sendBtn = panel.querySelector("[data-ra-send]");
+  var comparison = panel.hasAttribute("data-comparison");
+  var design, channel, searchScope = "wiki", passage = "", selected = "", baseKey = storeKey;
+  if (comparison) {
+    var variant = new URLSearchParams(location.search).get("variant");
+    design = (variant || sessionStorage.getItem("reader-design")) === "B" ? "B" : "A";
+    sessionStorage.setItem("reader-design", design);
+    channel = design === "B" ? "page" : "unified";
+    searchScope = channel === "page" ? "page" : "wiki";
+    storeKey = baseKey + ":" + design + ":" + channel + (channel === "page" ? ":" + pagePath : "");
+  }
   var turns = load();
   var lastFocus = null;
 
@@ -90,7 +100,7 @@
     if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
   }
 
-  function renderAnswer(text, citations) {
+  function renderAnswer(text, citations, anchor) {
     var wrap = el("div", "ra-a");
     var citeByN = {};
     (citations || []).forEach(function (c) { citeByN[c.n] = c; });
@@ -133,7 +143,7 @@
         button.type = "button";
         button.onclick = function () {
           close();
-          comments.dispatchEvent(new CustomEvent("review-reader-draft", { detail: { type: type, body: body } }));
+          comments.dispatchEvent(new CustomEvent("review-reader-draft", { detail: { type: type, body: body, quote: anchor || "" } }));
         };
         wrap.appendChild(button);
       }
@@ -148,7 +158,7 @@
     if (empty) empty.remove();
     if (t.role === "user") list.appendChild(el("div", "ra-q", t.content));
     else if (t.error) list.appendChild(el("div", "ra-error", t.content));
-    else list.appendChild(renderAnswer(t.content, t.citations));
+    else list.appendChild(renderAnswer(t.content, t.citations, t.pagePath === pagePath ? t.quote : ""));
     list.scrollTop = list.scrollHeight;
   }
 
@@ -161,7 +171,9 @@
 
   function ask(question) {
     var prior = history();
-    var q = { role: "user", content: question };
+    var anchor = passage;
+    var fullQuestion = (anchor ? "Selected passage: “" + anchor + "”\n" : "") + question;
+    var q = { role: "user", content: fullQuestion };
     turns.push(q); save(); renderTurn(q);
     var thinking = el("div", "ra-thinking", "Reading the wiki…");
     list.appendChild(thinking); list.scrollTop = list.scrollHeight;
@@ -170,12 +182,12 @@
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json", "Accept": "application/json" },
-      body: JSON.stringify({ question: question, page_path: pagePath, history: prior }),
+      body: JSON.stringify({ question: fullQuestion, scope: searchScope, page_path: pagePath, history: prior }),
     })
       .then(function (r) { return r.json().catch(function () { return {}; }).then(function (b) { return { ok: r.ok, body: b }; }); })
       .then(function (res) {
         var t = res.ok
-          ? { role: "assistant", content: res.body.answer || "", citations: res.body.citations || [] }
+          ? { role: "assistant", content: res.body.answer || "", citations: res.body.citations || [], quote: anchor, pagePath: pagePath }
           : { role: "assistant", error: true, content: res.body.message || "The assistant couldn't answer just now." };
         turns.push(t); save(); thinking.remove(); renderTurn(t);
       })
@@ -186,6 +198,79 @@
       .then(function () { sendBtn.disabled = false; input.disabled = false; input.focus(); });
   }
 
+  var switches = panel.querySelector("[data-switches]");
+  var info = panel.querySelector("[data-context]");
+  var article = document.querySelector("article.article");
+
+  function control(label, action, active) {
+    var button = el("button", "action-btn", label);
+    button.type = "button";
+    button.onclick = action;
+    if (active !== undefined) button.setAttribute("aria-pressed", String(active));
+    return button;
+  }
+
+  function setPassage(value) {
+    passage = value;
+    sessionStorage.setItem(storeKey + ":passage:" + pagePath, value);
+    showContext();
+  }
+
+  function switchScope(scope) {
+    if (sendBtn.disabled) return;
+    if (design === "B") {
+      channel = scope;
+      storeKey = baseKey + ":B:" + channel + (channel === "page" ? ":" + pagePath : "");
+      turns = load();
+      list.replaceChildren();
+      turns.forEach(renderTurn);
+      passage = sessionStorage.getItem(storeKey + ":passage:" + pagePath) || "";
+    }
+    searchScope = scope;
+    showContext();
+  }
+
+  function showContext() {
+    if (comparison) {
+      var split = design === "B";
+      var localScope = split ? "page" : "wiki";
+      panel.querySelector(".ra-title").textContent = channel === "page" ? "Ask this page" : "Librarian";
+      switches.replaceChildren(
+        control(split ? "Page Ask" : "Current wiki", () => switchScope(localScope), searchScope === localScope),
+        control(split ? "Cross-wiki Librarian" : "Across wikis", () => switchScope("library"), searchScope === "library")
+      );
+      info.textContent = (searchScope === "library" ? "Field Library and Watershed Notes" :
+        searchScope === "page" ? "This page" : "Current wiki") +
+        (split ? " · Separate conversation" : " · Same conversation");
+    } else {
+      info.textContent = "";
+    }
+    if (passage) {
+      info.append(el("blockquote", null, passage), control("Remove passage", () => setPassage("")));
+    } else if (selected) {
+      info.append(control("Attach selected passage", () => setPassage(selected)));
+    }
+  }
+
+  if (article) {
+    var contextual = control("Ask about this passage", function () {
+      if (design === "B") switchScope("page");
+      setPassage(selected);
+      open(false);
+    });
+    contextual.hidden = true;
+    article.after(contextual);
+    document.addEventListener("selectionchange", function () {
+      var sel = getSelection();
+      if (sel.rangeCount && !sel.isCollapsed && article.contains(sel.getRangeAt(0).commonAncestorContainer)) {
+        selected = sel.toString().trim().slice(0, 600);
+        contextual.hidden = !selected;
+        showContext();
+      }
+    });
+  }
+  passage = sessionStorage.getItem(storeKey + ":passage:" + pagePath) || "";
+  showContext();
   form.addEventListener("submit", function (e) {
     e.preventDefault();
     var question = input.value.trim();
@@ -222,6 +307,6 @@
   // Keep the conversation beside the source after following a citation --
   // on wide screens only, so a phone lands on the page it asked for.
   try {
-    if (sessionStorage.getItem(storeKey + ":open") === "1" && window.innerWidth > 900) open(true);
+    if ((comparison && variant) || (sessionStorage.getItem(storeKey + ":open") === "1" && window.innerWidth > 900)) open(true);
   } catch (e) {}
 })();

@@ -52,7 +52,7 @@
   }
   async function refresh() {
     try {
-      const res = await fetch(root.dataset.url,{cache:'no-store',headers:{Accept:'application/json'}});
+      const res = await fetch(root.dataset.url,{cache:'no-store',headers:{Accept:'application/json','X-CSRFToken':get('token').value}});
       if (!res.ok) throw new Error();
       const data = await res.json();
       list.replaceChildren(...data.comments.map(showComment));
@@ -83,7 +83,7 @@
   get('selection').onclick=()=>compose(selected,'');
   root.querySelectorAll('[data-cancel]').forEach(b=>b.onclick=close);
   root.addEventListener('review-reader-draft',e=>{
-    if(e.detail.type==='comment') compose('',e.detail.body);
+    if(e.detail.type==='comment') compose(e.detail.quote || '',e.detail.body);
     else if(page) {
       close();page.elements.content.value=e.detail.body;page.elements.path.value='';
       page.elements.request_id.value=crypto.randomUUID();page.hidden=false;
@@ -95,6 +95,7 @@
     const submit=form.querySelector('[type=submit]');
     if(submit.disabled)return;
     const body=get('body').value.trim();if(!body)return;
+    if(body.length>2000){status.textContent='Shorten this comment to 2,000 characters before approving.';return;}
     if(issuedPayload && issuedPayload!==body) requestId=crypto.randomUUID();
     issuedPayload=body;submit.disabled=true;
     try {
