@@ -95,6 +95,11 @@ def create_app(config_class="config.Config"):
     from app.routes.agent_chat import agent_chat_bp
     app.register_blueprint(agent_chat_bp, url_prefix="/api/v1")
 
+    # Reader annotations (wikihub-3add): CSRF-protected browser endpoints, so
+    # deliberately NOT csrf.exempt like the API blueprints below.
+    from app.routes.annotations import annotations_bp
+    app.register_blueprint(annotations_bp)
+
     from app.routes.reader_assistant import reader_assistant_bp
     app.register_blueprint(reader_assistant_bp, url_prefix="/api/v1")
 
