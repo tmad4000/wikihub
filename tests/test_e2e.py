@@ -12876,6 +12876,14 @@ def test_page_annotations_scope_anchoring_and_dedup(app, client, key):
         db.session.execute(text("DELETE FROM rate_limit_buckets WHERE key LIKE 'annot:%'"))
         db.session.commit()
         rid2 = str(_uuid.uuid4())
+        for body, quote, error in (("comment\x00text", "", "invalid_body"),
+                                   ("comment\ud800text", "", "invalid_body"),
+                                   ("comment", "a\x00b", "invalid_quote")):
+            payload = {"body": body, "quote": quote, "viewer_id": grantee.wh_user_id,
+                       "revision": page.content_hash, "request_id": rid2}
+            _g.pop("_login_user", None)
+            r = grantee.post(_annot_url(*W, page.id), data=json.dumps(payload), content_type="application/json")
+            assert r.status_code == 400 and r.get_json()["error"] == error
         assert _annot_post(grantee, *W, page.id, "first", "", page.content_hash, request_id=rid2).status_code == 201
         r = _annot_post(grantee, *W, page.id, "second", "", page.content_hash)
         assert r.status_code == 429 and r.get_json()["error"] == "rate_limited" and r.headers.get("Retry-After")
@@ -12971,6 +12979,29 @@ def test_preview_owner_login(app):
     import runpy
     from pathlib import Path
     demo = runpy.run_path(str(Path(__file__).resolve().parents[1] / "demos/reader-conversations/server.py"))
+    from tempfile import TemporaryDirectory
+    from unittest.mock import Mock, patch
+    with TemporaryDirectory() as temp:
+        root = Path(temp)
+        existing = root / "existing.git"
+        existing.mkdir()
+        with patch.dict(os.environ, {"DATABASE_URL": "postgresql:///wikihub_reader_preview_3add",
+                                     "BASE_URL": "http://127.0.0.1:8794", "REPOS_DIR": temp}):
+            factory = Mock(side_effect=AssertionError("App started using an unrelated repository directory"))
+            with patch.dict(demo["setup"].__globals__, {"create_app": factory}):
+                try:
+                    demo["setup"]()
+                except RuntimeError as err:
+                    assert "empty repository directory" in str(err)
+                else:
+                    raise AssertionError("Preview accepted an unrelated repository directory")
+        assert list(root.iterdir()) == [existing]
+        preview = root / "preview"
+        demo["prepare_preview_root"](preview)
+        saved = preview / "saved.md"
+        saved.write_text("Approved draft")
+        demo["prepare_preview_root"](preview)
+        assert saved.read_text() == "Approved draft"
     demo["seed"]()
     url = urlparse(demo["owner_login"](app))
     assert url.netloc == "127.0.0.1:8794"

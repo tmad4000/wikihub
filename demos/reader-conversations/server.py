@@ -110,12 +110,29 @@ def seed():
         db.session.commit()
 
 
+def prepare_preview_root(root):
+    root.mkdir(parents=True, exist_ok=True)
+    marker = root / ".wikihub-reader-preview-3add"
+    if marker.is_dir() and not marker.is_symlink():
+        return
+    if any(root.iterdir()):
+        raise RuntimeError("Use an empty repository directory or this preview's existing directory")
+    marker.mkdir(mode=0o700, exist_ok=True)
+
+
 def setup():
     if os.environ.get("DATABASE_URL") != "postgresql:///wikihub_reader_preview_3add":
         raise RuntimeError("Use the dedicated local comparison database")
     if not os.environ.get("REPOS_DIR") or os.environ.get("BASE_URL") != "http://127.0.0.1:8794":
         raise RuntimeError("Configure the local preview repository directory and loopback URL")
-    app = create_app()
+    from config import Config
+
+    class PreviewConfig(Config):
+        REPOS_DIR = str(Path(os.environ["REPOS_DIR"]).resolve())
+        SQLALCHEMY_DATABASE_URI = os.environ["DATABASE_URL"]
+
+    prepare_preview_root(Path(PreviewConfig.REPOS_DIR))
+    app = create_app(PreviewConfig)
     app.config.update(
         SESSION_COOKIE_NAME="wikihub_reader_preview",
         READER_SCOPE_FACTORY=lambda s, p, m: Library(s, p, m) if m in ("library", "page") else s,

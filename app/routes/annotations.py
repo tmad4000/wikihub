@@ -8,6 +8,7 @@ for the anchoring and privacy rules.
 
 import base64
 import hashlib
+import re
 from datetime import datetime
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -77,6 +78,7 @@ def _load(username, slug, page_id, viewer):
 
 
 THREAD_PAGE_SIZE = 50
+_UNSTORABLE_TEXT = re.compile(r"[\x00\ud800-\udfff]")
 
 
 def _cursor_cipher(view):
@@ -186,6 +188,8 @@ def create_annotation(username, slug, page_id):
     body = data.get("body")
     if not isinstance(body, str) or not body.strip():
         return _err(400, "invalid_body", "Write a comment.")
+    if _UNSTORABLE_TEXT.search(body):
+        return _err(400, "invalid_body", "The comment contains an unsupported character.")
     body = body.strip()
     if len(body) > MAX_BODY_CHARS:
         return _err(400, "invalid_body", f"Comments are limited to {MAX_BODY_CHARS} characters.")
@@ -194,6 +198,8 @@ def create_annotation(username, slug, page_id):
         quote = ""
     if not isinstance(quote, str):
         return _err(400, "invalid_quote", "quote must be a string.")
+    if _UNSTORABLE_TEXT.search(quote):
+        return _err(400, "invalid_quote", "The passage contains an unsupported character.")
     quote = match_key(quote)
     if len(quote) > MAX_QUOTE_CHARS:
         return _err(400, "invalid_quote", f"Select at most {MAX_QUOTE_CHARS} characters.")
