@@ -31,7 +31,7 @@
       <p>Exact Markdown that will be saved:</p>
       <pre data-final-markdown></pre>
     </div>
-    <input type="hidden" name="previewed_visibility" value=""><input type="hidden" name="previewed_content_hash" value=""><input type="hidden" name="assistant_draft" value="1">
+    <input type="hidden" name="previewed_path" value=""><input type="hidden" name="previewed_visibility" value=""><input type="hidden" name="previewed_content_hash" value=""><input type="hidden" name="assistant_draft" value="1">
     <input type="hidden" name="viewer_id" value="{{ current_user.id }}"><input type="hidden" name="approved" value="1">
     <input type="hidden" name="request_id"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <button class="action-btn" type="submit" disabled>{{ "Approve and create private page" if current_user.id == wiki.owner_id else "Approve and create page" }}</button>

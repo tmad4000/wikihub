@@ -122,7 +122,7 @@ behavior is unchanged. Form fields:
   spaces. No backslash, no absolute path, at most 200 characters. `.md` is
   appended if missing. Otherwise: `400 invalid_path`.
 - `content`: non-empty Markdown up to `MAX_PAGE_SIZE`.
-- `previewed_visibility` and `previewed_content_hash`: **required for everyone**,
+- `previewed_path` (fully qualified `page_path`), `previewed_visibility` and `previewed_content_hash`: **required for everyone**,
   taken from the preview below. Both are recomputed at commit, together with
   the ACL. Any difference returns `409 preview_changed` with `visibility` and a
   fresh `preview`, and nothing is written.

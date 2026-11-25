@@ -12987,7 +12987,7 @@ def _draft_post(browser, owner, slug, form, json_accept=True):
                           headers={"Accept": "application/json"})
         plan = (pv.get_json(silent=True) or {}).get("preview") if pv.status_code == 200 else None
         if plan:
-            form = {"previewed_visibility": plan["visibility"], **form, "previewed_content_hash": plan["content_hash"]}
+            form = {"previewed_visibility": plan["visibility"], "previewed_path": plan["page_path"], **form, "previewed_content_hash": plan["content_hash"]}
         _g.pop("_login_user", None)
     headers = {"Accept": "application/json"} if json_accept else {}
     return browser.post(f"/@{owner}/{slug}/new", data=form, headers=headers)
@@ -13308,6 +13308,11 @@ def test_assistant_draft_review_followups(app, client, key):
     r = _draft_post(owner, *D, {**base, "previewed_visibility": "private", "previewed_content_hash": "0" * 64})
     assert r.status_code == 409 and r.get_json()["error"] == "preview_changed"
     assert r.get_json()["preview"]["content_hash"] == plan["content_hash"]
+    assert preview(owner, {**base, "path": "Report (final).md"}).status_code == 200
+    retargeted = {**base, "path": "Other notes.md", "previewed_visibility": plan["visibility"],
+                  "previewed_path": plan["page_path"], "previewed_content_hash": plan["content_hash"]}
+    assert _draft_post(owner, *D, retargeted).status_code == 409
+    assert _page_row(*D, "Other notes.md") is None
     r = _draft_post(owner, *D, base)
     assert r.status_code == 201 and r.get_json()["page_path"] == "@agent1/draft-rev/Reading notes.md"
     assert _get(owner, plan["url"]).status_code == 200, "the canonical URL opens the page"
@@ -13331,7 +13336,7 @@ def test_assistant_draft_review_followups(app, client, key):
     form = {**base, "path": "contrib"}
     plan = preview(other, form).get_json()["preview"]
     assert plan["visibility"] == "public-edit" and "visibility: public-edit" in plan["content"]
-    approved = {**form, "viewer_id": str(other.wh_user_id), "previewed_visibility": plan["visibility"],
+    approved = {**form, "viewer_id": str(other.wh_user_id), "previewed_path": plan["page_path"], "previewed_visibility": plan["visibility"],
                 "previewed_content_hash": plan["content_hash"]}
     r = client.put("/api/v1/wikis/agent1/draft-rev/pages/.wikihub/acl", json={"content": "* unlisted-edit\n"}, headers=h)
     assert r.status_code in (200, 201)

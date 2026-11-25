@@ -167,7 +167,20 @@
   }
   function showDraftSources() {
     const list = get('draft-sources');
-    list.replaceChildren(...citations.map(c => { const li = node('li', c.title || c.url); li.value = c.n; return li; }));
+    list.replaceChildren(...citations.map(c => {
+      const li = node('li', c.title || c.url);
+      li.value = c.n;
+      const remove = node('button', 'Remove source ' + c.n);
+      remove.type = 'button';
+      remove.className = 'action-btn';
+      remove.onclick = () => {
+        citations = citations.filter(other => other.n !== c.n);
+        requestId = crypto.randomUUID();
+        showDraftSources();
+      };
+      li.append(remove);
+      return li;
+    }));
     list.hidden = !citations.length;
   }
   function compose(anchor,body,cites) {
@@ -194,7 +207,10 @@
   if (page) {
     const pathInput = page.elements.path, contentInput = page.elements.content;
     const approve = page.querySelector('[type=submit]');
+    let previewVersion = 0;
     const reset = () => {
+      previewVersion++;
+      page.elements.previewed_path.value = '';
       approve.disabled = true;
       page.elements.previewed_visibility.value = '';
       page.elements.previewed_content_hash.value = '';
@@ -202,6 +218,7 @@
     };
     pathInput.oninput = reset; contentInput.oninput = reset;
     function showPreview(p) {
+      page.elements.previewed_path.value = p.page_path;
       pathInput.value = p.path;
       page.elements.previewed_visibility.value = p.visibility;
       page.elements.previewed_content_hash.value = p.content_hash;
@@ -213,15 +230,17 @@
     }
     get('check-target').onclick = async () => {
       reset();
+      const version = previewVersion;
       const data = new FormData(page);
       data.set('preview', '1'); data.delete('approved');
       try {
         const res = await fetch(page.action, {method:'POST', headers:{Accept:'application/json'}, body:data});
         const result = await res.json().catch(() => ({}));
+        if (version !== previewVersion || page.hidden) return;
         if (!res.ok) throw new Error(result.message || 'Cannot use this destination.');
         showPreview(result.preview);
         status.textContent = '';
-      } catch (err) { status.textContent = err.message; }
+      } catch (err) { if (version === previewVersion) status.textContent = err.message; }
     };
     page.onsubmit = async e => {
       e.preventDefault();

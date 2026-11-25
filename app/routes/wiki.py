@@ -2684,6 +2684,7 @@ def _draft_path_problem(owner, wiki, path):
     URL must route back to the reader for exactly this path, and must not
     collide with an existing page that the same URL would resolve to.
     Returns an error message or None."""
+    from urllib.parse import unquote
     from werkzeug.exceptions import HTTPException
 
     segments = path.split("/")
@@ -2694,9 +2695,13 @@ def _draft_path_problem(owner, wiki, path):
         return "Folder names can't end in .md."
     if " " in path and "_" in path:
         return "Use either spaces or underscores in a page path, not both."
+    if path in {"index.md", "README.md"} and wiki.slug == owner.username:
+        return "This address opens the personal profile. Choose a page name."
+    if path == "README.md" and read_file_from_repo(owner.username, wiki.slug, "index.md", public=False) is not None:
+        return "This address opens the existing wiki index. Choose a page name."
     url = _page_url(owner.username, wiki.slug, path)
     try:
-        endpoint, args = current_app.url_map.bind("localhost").match(url, method="GET")
+        endpoint, args = current_app.url_map.bind("localhost").match(unquote(url), method="GET")
     except HTTPException:
         return "That page path can't be opened as a URL."
     if endpoint != "wiki.wiki_page" or args.get("username") != owner.username or args.get("slug") != wiki.slug:
@@ -2833,7 +2838,8 @@ def _create_assistant_draft(owner, wiki, is_owner, acl_rules):
         return fail(400, "approval_required", "Review the draft and approve it before saving.")
     previewed_visibility = normalize_page_visibility(request.form.get("previewed_visibility") or "")
     if (previewed_visibility != plan["visibility"]
-            or request.form.get("previewed_content_hash") != plan["content_hash"]):
+            or request.form.get("previewed_content_hash") != plan["content_hash"]
+            or request.form.get("previewed_path") != plan["page_path"]):
         return fail(409, "preview_changed",
                     "The page that would be created differs from the one you reviewed. Review it again.",
                     visibility=plan["visibility"], preview=public_plan(plan))
