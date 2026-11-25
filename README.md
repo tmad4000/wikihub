@@ -10,6 +10,7 @@ GitHub for LLM wikis. A hosting platform for markdown knowledge bases with per-f
 - Social: fork, star, explore, activity feeds, profiles
 - Rendering: KaTeX math, syntax highlighting, wikilinks, footnotes, Obsidian embeds, wiki-relative links
 - Reader side peek: same-wiki page links open in a right-side preview panel on desktop
+- Sign in to comment on a page or select a passage to discuss. With Ask enabled, you can edit a cited answer into a comment or new page, review its destination and audience, and approve it under your account. [Reader annotations and assistant drafts](docs/annotations.md)
 - Editing: the page editor and suggest-edit open in a **Visual** editor (tables, task lists, `[[wikilinks]]`, math, `/` block menu) with a **Markdown** tab for raw source. A page the Visual editor would reformat opens in Markdown with a notice; your last tab choice is remembered per browser, and `?mode=markdown` or `?mode=visual` on an edit URL forces a mode
 - Custom domains: verify ownership with DNS and map an external hostname to a wiki
 - Data tables: sortable, filterable CSV/TSV pages with optional public Google Sheets refresh

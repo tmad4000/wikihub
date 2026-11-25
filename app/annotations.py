@@ -198,9 +198,9 @@ def serialize(annotation, view, author_names):
     """Viewer-scoped JSON for one comment, or None if this viewer must not
     see it at all.
 
-    Hidden from non-owners (shown to the owner as detached):
+    Hidden from non-owners:
     - comments made on an earlier incarnation of the page (deleted and
-      recreated at the same path; page id differs);
+      recreated at the same path; shown to the owner as detached);
     - anchored comments whose originally public passage now exists only
       inside an owner-only private band -- the quote and the comment
       would reveal or discuss band text."""

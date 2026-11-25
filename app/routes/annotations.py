@@ -217,8 +217,8 @@ def create_annotation(username, slug, page_id):
         if request_id is None:
             return _err(400, "invalid_request_id", "request_id must be a UUID.")
 
-        # Retry dedup first: a retried request returns the original comment even
-        # if the page changed since or the visitor is now rate limited.
+        # Retry dedup first: check before revision and rate limits, then filter the
+        # original comment against the viewer’s current access.
         existing = PageAnnotation.query.filter_by(author_id=viewer.id, request_id=request_id).first()
         if existing is not None:
             if _same_submission(existing, view, body, quote):

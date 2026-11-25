@@ -2677,20 +2677,7 @@ def _assistant_draft_path(raw):
 
 
 def _create_assistant_draft(owner, wiki, is_owner, acl_rules):
-    """POST /@owner/wiki/new with assistant_draft=1 (wikihub-3add): create a
-    page the reader assistant drafted, after the signed-in visitor approved it.
-
-    - signed in, viewer_id equal to the signed-in user (stale-tab guard),
-      explicit approved=1, simple Markdown path (no dot paths);
-    - authorization is checked on the actual destination path;
-    - never overwrites: an existing page/file is 409, except an exact repeat
-      of this visitor's own submission (same author + same content), which is
-      answered as success (idempotent; also resolves a concurrent double-submit);
-    - the owner's drafts are always created private; a non-owner's draft is
-      created only if the visibility they previewed equals what the page
-      will really get (else 409 visibility_mismatch, nothing written).
-    JSON responses when the client sends Accept: application/json; otherwise
-    a redirect to the page (success) or a plain HTTP error."""
+    """Create the signed-in reader's approved page. See docs/annotations.md."""
     import hashlib
 
     from app.auth_utils import security_event

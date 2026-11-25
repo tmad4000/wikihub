@@ -10,7 +10,7 @@ Host forms, all served by the same route (the subdomain middleware rewrites them
 apex `wikihub.md/@<user>/<slug>/-/pages/<id>/annotations`, user subdomain
 `<user>.wikihub.md/<slug>/-/pages/<id>/annotations`, wiki subdomain or custom domain
 `<host>/-/pages/<id>/annotations`. Use the form for the host the reader is on, because
-session cookies are per host. The apex never 301s this path.
+session cookies default to the current host. The apex never 301s this path.
 
 **CSRF:** both methods need the session token in `X-CSRFToken` (the `<meta
 name="csrf-token">` value). The base template's fetch wrapper adds it to non-GET
@@ -22,14 +22,14 @@ token returns `400 {"error":"csrf_failed"}` (GET) or Flask-WTF's 400 (POST).
 ```json
 {"comments": [{"id": 1, "author": "alice", "body": "…", "quote": "…",
                "detached": false, "owner_only": false, "created_at": "2026-11-25T…"}],
- "revision": "<pages.content_hash>", "viewer_id": 42}
+ "before": null, "revision": "<pages.content_hash>", "viewer_id": 42}
 ```
 
-- Each request checks up to 50 candidate comments and returns the visible ones in chronological order. A batch can be empty and still have a continuation cursor. Pass the returned `before` cursor on GET for the preceding page. A null cursor indicates the start of the thread.
+- Each request checks up to 50 candidate comments and returns the visible ones in chronological order. A batch can be empty and still have a continuation cursor. Pass the opaque `before` cursor on GET as the same viewer on the same page to fetch the preceding batch. An invalid cursor returns `400 invalid_cursor`. A null cursor indicates the start of the thread.
 - `quote` is `""` for a whole-page comment.
 - `viewer_id` is the signed-in user's id, or `null` when signed out. Send it back
   on POST.
-- **Hidden from non-owners** (the owner sees these with `detached: true`):
+- **Hidden from non-owners**:
   - comments from an earlier incarnation of the page: the page was deleted and
     recreated at the same path. A reset reindex does *not* count; comments
     keep their page identity across it.
@@ -38,8 +38,7 @@ token returns `400 {"error":"csrf_failed"}` (GET) or Flask-WTF's 400 (POST).
 - `detached` is true when the quote no longer occurs exactly once in the text this
   viewer sees (removed, or now ambiguous). Never guessed.
 - `owner_only` comments are returned only to the wiki owner.
-- `created_at`, and the top-level `revision` and `viewer_id`, are additions to the agreed contract.
-  The UI can use `revision` for the next POST.
+- Send the returned `revision` when previewing or posting a comment.
 - Errors: `401 authentication_required` (anonymous on a restricted page),
   `403 forbidden` (signed in, no read access), `404 not_found` (no such page in this
   wiki).
@@ -75,8 +74,8 @@ Show this audience before approval and send it with the approved comment.
 | anonymous | 401 | `authentication_required` |
 | rate limited | 429 | `rate_limited` + `retry_after` (header `Retry-After`) |
 
-Retry dedup is checked before the revision and rate limits, so a retried POST always
-gets its original comment back. A concurrent double-submit is resolved through the
+After access checks, the server checks for a duplicate before comparing revisions
+or applying rate limits. It filters the original comment for the current viewer. Concurrent submissions share the
 `(author_id, request_id)` unique constraint.
 
 **Anchoring:** the quote is compared against the page's server-rendered text with
@@ -93,8 +92,7 @@ not match. The UI should send the selection's plain text (`Selection.toString()`
   section is later made public.
 - If an owner later moves an already-commented public passage into a private
   section, that comment is hidden from non-owners.
-- The comment **body** is reader-authored text and is visible to every reader of the
-  page. The UI must render it as plain text, never as HTML.
+- The body and quote share the comment’s audience. Render the body as plain text.
 - Comments by suspended accounts are hidden.
 
 **Durability:** rows are keyed by `(wiki_id, page_path)`, not by page id, because
@@ -105,29 +103,30 @@ page ids change when a wiki is reindexed with reset. Consequences:
   the stored page id, which a reset reindex carries over for the same path.
 - There is no delete or moderation endpoint yet (follow-up).
 
-**Rate limits** (Postgres buckets shared across workers; env-configurable):
-
-- `ANNOTATION_MAX_PER_USER_PER_MINUTE`: 6
-- `ANNOTATION_MAX_PER_USER_PER_HOUR`: 60
-- `ANNOTATION_MAX_PER_USER_PER_DAY`: 300
-- `ANNOTATION_MAX_PER_PAGE_PER_DAY`: 500
+Comment submissions use per-user minute, hour and day limits plus a daily
+per-page limit. Draft creation uses a per-user hourly limit. The environment
+settings and their defaults are in [config.py](../config.py).
 
 ## Assistant drafts: `POST /@<username>/<slug>/new` with `assistant_draft=1`
 
-This extends the existing new-page form POST. Without `assistant_draft=1` the
-behavior is unchanged. Form fields:
+Before approval, a signed-in contributor checks the destination with
+`GET /@<username>/<slug>/new?assistant_target=<path>`. A successful check
+returns the canonical `path` and `visibility`. Changing the filename requires
+another check. Owners see a private audience for every new draft.
+
+The signed-in reader submits the following fields on the new-page form:
 
 - `assistant_draft=1`
 - `viewer_id`: the signed-in user's id, from the tab that previewed the draft.
   Missing or non-numeric gives `400 invalid_viewer_id`; a different user gives
   `409 viewer_mismatch`.
 - `approved=1`: explicit approval. Without it: `400 approval_required`.
-- `path`: a simple Markdown path. Allowed characters are letters, digits, space,
-  `_ - . ( )` and `/` separators. Segments can't be empty, `.`, `..`, or start with
-  a dot (this blocks `.wikihub` and `.git`), and can't have leading or trailing
-  spaces. No backslash, no absolute path, at most 200 characters. `.md` is
-  appended if missing. Otherwise: `400 invalid_path`.
-- `content`: non-empty Markdown up to `MAX_PAGE_SIZE`.
+- `path`: a simple Markdown path. Each segment starts with an ASCII letter, digit
+  or underscore. Subsequent characters can also be spaces, hyphens, periods or
+  parentheses. Use a relative path with slash-separated segments and no trailing
+  spaces in a segment. The input limit is 200 characters after trimming. The
+  server appends `.md` if missing. Invalid paths return `400 invalid_path`.
+- `content`: Markdown with at least one non-whitespace character, up to `MAX_PAGE_SIZE` UTF-8 bytes.
 - `previewed_visibility`: **required for non-owners.** It must equal the
   visibility the page will actually get, which comes from the ACL/inherited
   default. Otherwise: `409 visibility_mismatch` with `visibility`, and nothing
@@ -147,8 +146,8 @@ Rules:
 - **Repeats:** an exact repeat by the same user returns success with
   `created: false`, covering both a double submit and a race lost on the unique
   constraint. A different user's identical text still gets `exists`.
-- **Rate limit:** `ASSISTANT_DRAFT_MAX_PER_USER_PER_HOUR` (default 30) gives
-  `429 rate_limited`. A repeat doesn't count against it.
+- **Rate limit:** exceeding the hourly limit returns
+  `429 rate_limited`. A matching existing page returns before the rate check.
 - **Responses:** with `Accept: application/json`, success is `201` (or `200` for a
   repeat) with `{"path", "page_id", "url", "visibility", "created"}`, and errors
   are `{"error", "message", …}`. Without it, success is a `303` redirect to the
