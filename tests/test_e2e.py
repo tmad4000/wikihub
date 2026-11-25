@@ -1059,6 +1059,44 @@ def test_activity_feed_filters_private_and_shows_social_events(client, api_key):
     owner_browser.get("/auth/logout")
 
 
+def test_curator_provider_replays_signed_tool_turn(client, api_key):
+    """Exercise the signed-in SSE route and its second provider request."""
+    from types import SimpleNamespace as Event
+    from unittest.mock import MagicMock, patch
+    from anthropic.types import ThinkingBlock, ToolUseBlock
+
+    thinking = ThinkingBlock(type="thinking", thinking="Look up the page", signature="test-signature")
+    tool = ToolUseBlock(type="tool_use", id="call1", name="list_files", input={})
+    streamed = MagicMock()
+    streamed.__iter__.return_value = iter([
+        Event(type="content_block_start", content_block=tool),
+        Event(type="content_block_stop"),
+    ])
+    streamed.get_final_message.return_value = Event(content=[thinking, tool], stop_reason="tool_use")
+    finished = MagicMock()
+    finished.get_final_message.return_value = Event(content=[], stop_reason="end_turn")
+
+    with patch.dict(os.environ, {"CURATOR_API_KEY": "test-curator", "ANTHROPIC_API_KEY": "test-global"}), \
+         patch("app.routes.agent_chat.anthropic.Anthropic") as provider:
+        os.environ.pop("CURATOR_MODEL", None)
+        provider.return_value.messages.stream.side_effect = [
+            contextlib.nullcontext(streamed), contextlib.nullcontext(finished),
+        ]
+        response = client.post("/api/v1/agent/chat", json={"message": "List files"},
+                               headers={"Authorization": "Bearer " + api_key})
+        assert response.status_code == 200
+        body = response.get_data(as_text=True)
+        assert '"type": "done"' in body and '"type": "error"' not in body
+        assert "test-signature" not in body
+        provider.assert_called_once_with(api_key="test-curator")
+        first, replay = provider.return_value.messages.stream.call_args_list
+        assert first.kwargs["model"] == "claude-sonnet-5-5"
+        assert replay.kwargs["messages"][-2] == {
+            "role": "assistant", "content": [thinking.model_dump(), tool.model_dump(exclude_none=True)],
+        }
+        assert replay.kwargs["messages"][-1]["content"][0]["tool_use_id"] == "call1"
+
+
 def test_curator_sidebar_only_renders_when_usable(app, client, api_key):
     """Curator launcher should not appear for anon/disabled contexts."""
     h = {"Authorization": f"Bearer {api_key}"}
@@ -13553,6 +13591,7 @@ def run_all():
             ("search respects ACL shares", lambda: test_search_respects_acl_shares(client, key)),
             ("social (star + fork)", lambda: test_social(client, key)),
             ("activity feed filters private and shows social events", lambda: test_activity_feed_filters_private_and_shows_social_events(client, key)),
+            ("curator provider replays signed tool turns", lambda: test_curator_provider_replays_signed_tool_turn(client, key)),
             ("curator sidebar only renders when usable", lambda: test_curator_sidebar_only_renders_when_usable(app, client, key)),
             ("reader assistant scopes to visitor and cites sources (wikihub-1bfx)", lambda: test_reader_assistant_scopes_to_visitor_and_cites_sources(app, client, key)),
             ("page annotations: scope, anchoring, dedup, limits, CSRF (wikihub-3add)", lambda: test_page_annotations_scope_anchoring_and_dedup(app, client, key)),
