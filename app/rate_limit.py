@@ -104,6 +104,35 @@ def peek_all(rules):
     return allowed, retry, desc
 
 
+def reserve_all(rules):
+    """Count one event against every rule INSIDE the caller's transaction
+    (no commit). The caller commits these counts together with the write
+    they guard, or rolls back -- then nothing was used. Concurrent writers
+    on the same bucket serialize on its row, so a limit cannot be overshot.
+    Returns (allowed, max_retry_after, desc); when not allowed the caller
+    must roll back."""
+    if not enabled():
+        return True, 0, None
+    allowed, retry, desc = True, 0, None
+    for key, limit, window in rules:
+        if limit is None:
+            continue
+        window_start, retry_after = _window(window)
+        count = db.session.execute(
+            text(
+                "INSERT INTO rate_limit_buckets (key, window_start, count) VALUES (:k, :w, 1) "
+                "ON CONFLICT (key, window_start) DO UPDATE SET count = rate_limit_buckets.count + 1 "
+                "RETURNING count"
+            ),
+            {"k": key[:200], "w": window_start},
+        ).scalar()
+        if count > limit:
+            allowed = False
+            if retry_after > retry:
+                retry, desc = retry_after, f"{limit} per {window}s"
+    return allowed, retry, desc
+
+
 def charge_all(rules):
     """Count one successful event against every rule (see peek_all)."""
     for key, limit, window in rules:

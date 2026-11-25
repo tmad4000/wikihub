@@ -277,10 +277,13 @@ def create_app(config_class="config.Config"):
         db.session.execute(db.text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
         db.session.commit()
         db.create_all()
+        db.session.commit()
         # wikihub-3add: columns added after page_annotations first shipped
-        # (preview databases already have the table).
+        # (preview databases already have the table). Commits its own DDL, so
+        # no page_annotations lock is held into the wikis ALTERs below.
         from app.annotations import ensure_annotation_columns
         ensure_annotation_columns(db)
+        db.session.commit()
         # idempotent in-place migrations (SQLAlchemy create_all does not alter existing tables)
         db.session.execute(db.text(
             "ALTER TABLE wikis ADD COLUMN IF NOT EXISTS subdomain VARCHAR(63) UNIQUE"
