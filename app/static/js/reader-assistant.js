@@ -123,6 +123,23 @@
       });
       wrap.appendChild(src);
     }
+    var comments = document.getElementById("page-comments");
+    if (comments && comments.dataset.viewer) {
+      var lines = (citations || []).filter(function (c) { return safeHref(c.url); })
+        .map(function (c) { return "[" + c.n + "] " + new URL(c.url, location.origin).href; });
+      var body = text + (lines.length ? "\n\nSources\n" + lines.join("\n") : "");
+      function offer(label, type) {
+        var button = el("button", "action-btn", label);
+        button.type = "button";
+        button.onclick = function () {
+          close();
+          comments.dispatchEvent(new CustomEvent("review-reader-draft", { detail: { type: type, body: body } }));
+        };
+        wrap.appendChild(button);
+      }
+      offer("Draft a comment", "comment");
+      if (comments.querySelector("[data-page-form]")) offer("Draft a private page", "page");
+    }
     return wrap;
   }
 

@@ -54,7 +54,7 @@
       <button type="button" class="ra-icon-btn" data-ra-close aria-label="Close" title="Close (Esc)">&times;</button>
     </div>
     <div class="ra-scope">
-      Answers use only pages {% if current_user.is_authenticated %}you (@{{ current_user.username }}){% else %}signed-out visitors{% endif %} can read in {{ wiki.title or wiki.slug }}, with links to each source. It can't edit the wiki.
+      Answers use only pages {% if current_user.is_authenticated %}you (@{{ current_user.username }}){% else %}signed-out visitors{% endif %} can read in {{ wiki.title or wiki.slug }}, with links to each source. Signed-in readers can review a draft before posting.
     </div>
   </div>
   <div class="ra-messages" id="ra-messages" aria-live="polite">
