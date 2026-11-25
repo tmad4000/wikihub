@@ -48,6 +48,8 @@ class Config:
     # fall back to ADMIN_TOKEN for back-compat.
     HOOK_TOKEN = os.environ.get("HOOK_TOKEN", "")
     # Curator agent (inline AI sidebar on wiki reader pages). wikihub-2jn.2
+    # Set CURATOR_API_KEY for server-funded signed-in chat and CURATOR_MODEL
+    # to override its default model. Personal API keys take precedence.
     # Default ON so the feature is live as soon as the endpoint is deployed.
     # Set CURATOR_ENABLED=false to hide the panel and return 503 from /api/v1/agent/chat.
     CURATOR_ENABLED = os.environ.get("CURATOR_ENABLED", "true").lower() in ("1", "true", "yes")

@@ -895,11 +895,15 @@ def agent_chat():
         session["messages"] = session["messages"][-MAX_HISTORY:]
 
     # Get model from env
-    model = os.environ.get("CURATOR_MODEL", "claude-sonnet-4-20250514")
+    model = os.environ.get("CURATOR_MODEL", "claude-sonnet-5-5")
 
-    # Check for auth: per-user API key, Claude subscription, or server env var
+    # Prefer the user's key, then server keys, then the legacy subscription login.
     from app.routes.main import get_user_llm_key
-    api_key = get_user_llm_key(user) or os.environ.get("ANTHROPIC_API_KEY")
+    api_key = (
+        get_user_llm_key(user)
+        or os.environ.get("CURATOR_API_KEY")
+        or os.environ.get("ANTHROPIC_API_KEY")
+    )
 
     # Check for Claude subscription credentials if no API key
     # 1. Per-user Claude config
