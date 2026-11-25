@@ -177,6 +177,7 @@ try {
   await owner.waitForFunction(() => !document.querySelector('[data-comment-form] [type=submit]').disabled);
   const destination = await owner.textContent('[data-destination]');
   if (!destination.includes('Owner only')) throw new Error('Private passage review showed ' + destination);
+  await shot(owner, 'owner-only-passage-review');
   await approveComment.click();
   await owner.locator('[data-comments] li').filter({hasText:'Private reminder'}).waitFor();
   check('private passage audience agrees before and after approval',
@@ -204,6 +205,7 @@ try {
     return res.json();
   });
   if (thread.comments.length) throw new Error('Audience change posted without renewed approval');
+  await shot(owner, 'changed-audience-review');
   await approveComment.click();
   await owner.locator('[data-comments] li').filter({hasText:'Reviewed note'}).waitFor();
 

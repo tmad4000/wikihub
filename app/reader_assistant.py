@@ -19,9 +19,8 @@ point at a page the visitor cannot read. A quoted passage is kept only if it
 occurs verbatim in content the visitor was actually given; the link then
 carries a text fragment so the browser scrolls to it.
 
-The model credential is the server's own (``READER_ASSISTANT_API_KEY`` or
-``ANTHROPIC_API_KEY``); visitors never need a personal agent or key. Writing
-is a separate, deliberate follow-up (wikihub-pl9u).
+The server supplies the model credential (see .env.example). Drafts are
+returned to the reader for approval. See docs/annotations.md for writes.
 """
 
 from __future__ import annotations
