@@ -20,16 +20,22 @@ from sqlalchemy.exc import IntegrityError
 
 from app import db, rate_limit
 from app.annotations import (
+    AUDIENCE_LABELS,
     MAX_BODY_CHARS,
+    MAX_CITATIONS,
     MAX_QUOTE_CHARS,
+    ContentUnavailable,
     PageView,
+    anchor_context,
+    comment_audience,
+    context_matches,
     count_occurrences,
     match_key,
     parse_request_id,
     serialize,
 )
 from app.auth_utils import get_current_user_from_request, security_event
-from app.models import Page, PageAnnotation, User
+from app.models import Page, PageAnnotation, User, Wiki
 from app.wiki_ops import load_acl_rules
 
 annotations_bp = Blueprint("annotations", __name__)
@@ -106,8 +112,9 @@ def _comment_page(view, before):
     comments = []
     cursor = None
     rows = query.limit(THREAD_PAGE_SIZE + 1).all()
+    targets = {}
     for row, username in rows[:THREAD_PAGE_SIZE]:
-        comment = serialize(row, view, {row.author_id: username})
+        comment = serialize(row, view, {row.author_id: username}, _resolve_citations(row.citations, view.viewer, targets))
         if comment is not None:
             comments.append(comment)
     if len(rows) > THREAD_PAGE_SIZE:
@@ -118,21 +125,142 @@ def _comment_page(view, before):
     return comments, cursor
 
 
-def _limited(user, view):
-    rules = [
+def _unavailable():
+    return _err(503, "content_unavailable", "This page's content can't be read right now. Try again shortly.")
+
+
+def _path_digest(path):
+    return hashlib.sha256(path.encode("utf-8")).hexdigest()[:32]
+
+
+def _attempt_rules(user):
+    # Cheap abuse throttle charged on every write attempt (valid or not).
+    return [(f"annot:try:u:{user.id}:m", rate_limit.limit_value("ANNOTATION_MAX_ATTEMPTS_PER_USER_PER_MINUTE"), 60)]
+
+
+def _budget_rules(user, view):
+    # Comment budgets: checked before the write, charged only after a
+    # comment was actually stored (rejected, invalid or duplicate requests
+    # never use them). Page buckets are keyed by a digest of the full path,
+    # so long paths cannot collide.
+    page_key = f"annot:p:{view.wiki.id}:{_path_digest(view.page.path)}:d"
+    return [
         (f"annot:u:{user.id}:m", rate_limit.limit_value("ANNOTATION_MAX_PER_USER_PER_MINUTE"), 60),
         (f"annot:u:{user.id}:h", rate_limit.limit_value("ANNOTATION_MAX_PER_USER_PER_HOUR"), 3600),
         (f"annot:u:{user.id}:d", rate_limit.limit_value("ANNOTATION_MAX_PER_USER_PER_DAY"), 86400),
-        (f"annot:w:{view.wiki.id}:{view.page.path}"[:180] + ":d", rate_limit.limit_value("ANNOTATION_MAX_PER_PAGE_PER_DAY"), 86400),
+        (page_key, rate_limit.limit_value("ANNOTATION_MAX_PER_PAGE_PER_DAY"), 86400),
     ]
-    allowed, retry_after, desc = rate_limit.check_all(rules)
-    if allowed:
-        return None
+
+
+def _rate_limited(retry_after, desc):
     security_event("rate_limit", "denied", scope="annotations", limit=desc)
     return _json(
         {"error": "rate_limited", "message": f"Too many comments right now. Try again in {retry_after}s.", "retry_after": retry_after},
         429, {"Retry-After": str(retry_after)},
     )
+
+
+# --- citations -------------------------------------------------------------
+
+_CITATION_URL = re.compile(r"^/@([a-z0-9_-]{1,64})/([A-Za-z0-9_.-]{1,128})/([^#?\x00-\x1f]{1,600})(#:~:text=[^\s]{1,800})?$")
+
+
+def _citation_target(url):
+    """'/@owner/slug/page[#:~:text=...]' -> (owner User, Wiki, Page, quote)
+    or None. Only same-site wiki page paths are accepted."""
+    from urllib.parse import unquote
+
+    from app.url_utils import page_path_from_url_path
+
+    if not isinstance(url, str):
+        return None
+    m = _CITATION_URL.match(url)
+    if not m:
+        return None
+    username, slug, rest, fragment = m.groups()
+    owner = User.query.filter_by(username=username).first()
+    if owner is None or owner.suspended_at is not None:
+        return None
+    wiki = Wiki.query.filter_by(owner_id=owner.id, slug=slug).first()
+    if wiki is None:
+        return None
+    rest = unquote(rest).rstrip("/")
+    if not rest or rest.startswith("-/"):
+        return None
+    candidates = [rest if rest.endswith(".md") else rest + ".md"]
+    spaced = page_path_from_url_path(rest)
+    candidates.append(spaced if spaced.endswith(".md") else spaced + ".md")
+    page = None
+    for candidate in candidates:
+        page = Page.query.filter_by(wiki_id=wiki.id, path=candidate).first()
+        if page is not None:
+            break
+    if page is None:
+        return None
+    quote = None
+    if fragment:
+        quote = match_key(unquote(fragment[len("#:~:text="):]))[:MAX_QUOTE_CHARS] or None
+    return owner, wiki, page, quote
+
+
+def _parse_citations(raw, viewer):
+    """Validate submitted citations against what the AUTHOR can read.
+    Returns (stored list, None) or (None, error response)."""
+    if raw in (None, []):
+        return [], None
+    if not isinstance(raw, list) or len(raw) > MAX_CITATIONS:
+        return None, _err(400, "invalid_citations", f"Send at most {MAX_CITATIONS} citations.")
+    stored, seen = [], set()
+    for item in raw:
+        if not isinstance(item, dict):
+            return None, _err(400, "invalid_citations", "Each citation needs n and url.")
+        n, url = item.get("n"), item.get("url")
+        if not isinstance(n, int) or isinstance(n, bool) or not 1 <= n <= 99 or n in seen:
+            return None, _err(400, "invalid_citations", "Citation numbers must be unique integers 1-99.")
+        target = _citation_target(url)
+        if target is None:
+            return None, _err(400, "invalid_citations", f"Citation [{n}] is not a page you can read.")
+        owner, wiki, page, quote = target
+        if not PageView(owner, wiki, page, viewer, load_acl_rules(owner.username, wiki.slug)).can_read():
+            return None, _err(400, "invalid_citations", f"Citation [{n}] is not a page you can read.")
+        seen.add(n)
+        stored.append({"n": n, "wiki_id": wiki.id, "path": page.path, "quote": quote})
+    return stored, None
+
+
+def _resolve_citations(stored, viewer, cache):
+    """Per-viewer, navigable citations: only targets THIS viewer can read
+    are returned; a quote (and its text-fragment link) only if the words are
+    in this viewer's own view of the target page."""
+    from app.reader_assistant import _text_fragment
+    from app.url_utils import url_path_from_page_path
+
+    out = []
+    for item in stored or []:
+        key = (item.get("wiki_id"), item.get("path"))
+        if key not in cache:
+            cache[key] = None
+            wiki = db.session.get(Wiki, key[0]) if key[0] else None
+            page = Page.query.filter_by(wiki_id=wiki.id, path=key[1]).first() if wiki else None
+            owner = db.session.get(User, wiki.owner_id) if wiki else None
+            if page is not None and owner is not None and owner.suspended_at is None:
+                target = PageView(owner, wiki, page, viewer, load_acl_rules(owner.username, wiki.slug))
+                if target.can_read():
+                    cache[key] = target
+        target = cache[key]
+        if target is None:
+            continue
+        url = f"/@{target.owner.username}/{target.wiki.slug}/{url_path_from_page_path(target.page.path, strip_md=True)}"
+        quote = item.get("quote")
+        if quote:
+            try:
+                if count_occurrences(target.text_key("viewer"), match_key(quote), limit=1) < 1:
+                    quote = None
+            except ContentUnavailable:
+                quote = None
+        out.append({"n": item["n"], "title": target.page.title or target.page.path,
+                    "url": url + (_text_fragment(quote) if quote else ""), "quote": quote or None})
+    return out
 
 
 def _same_submission(row, view, body, quote):
@@ -161,13 +289,21 @@ def list_annotations(username, slug, page_id):
                 raise ValueError
         except (InvalidToken, ValueError):
             return _err(400, "invalid_cursor", "Invalid comment cursor.")
-    comments, cursor = _comment_page(view, before)
+    try:
+        comments, cursor = _comment_page(view, before)
+    except ContentUnavailable:
+        return _unavailable()
     return _json({"comments": comments, "before": cursor, "revision": view.page.content_hash,
                   "viewer_id": viewer.id if viewer else None})
 
 
 @annotations_bp.route("/@<username>/<slug>/-/pages/<int:page_id>/annotations", methods=["POST"])
 def create_annotation(username, slug, page_id):
+    """Create a comment, or with {"preview": true} return what would be
+    created (audience, canonical page path, anchoring) without writing.
+
+    The commit must carry the audience the visitor approved; it is
+    recomputed here and a change is a 409, never a silent widening."""
     # CSRF for POST is enforced by the app-wide CSRFProtect before we run.
     if not request.is_json:
         return _err(415, "unsupported_media_type", "Send JSON.")
@@ -184,15 +320,17 @@ def create_annotation(username, slug, page_id):
         return _err(400, "invalid_viewer_id", "viewer_id (the signed-in user's id) is required.")
     if viewer_id != viewer.id:
         return _err(409, "viewer_mismatch", "You're signed in as a different account now. Reload the page.")
+    preview = data.get("preview") is True
 
     body = data.get("body")
-    if not isinstance(body, str) or not body.strip():
-        return _err(400, "invalid_body", "Write a comment.")
-    if _UNSTORABLE_TEXT.search(body):
-        return _err(400, "invalid_body", "The comment contains an unsupported character.")
-    body = body.strip()
-    if len(body) > MAX_BODY_CHARS:
-        return _err(400, "invalid_body", f"Comments are limited to {MAX_BODY_CHARS} characters.")
+    if not preview:
+        if not isinstance(body, str) or not body.strip():
+            return _err(400, "invalid_body", "Write a comment.")
+        if _UNSTORABLE_TEXT.search(body):
+            return _err(400, "invalid_body", "The comment contains an unsupported character.")
+        body = body.strip()
+        if len(body) > MAX_BODY_CHARS:
+            return _err(400, "invalid_body", f"Comments are limited to {MAX_BODY_CHARS} characters.")
     quote = data.get("quote", "")
     if quote is None:
         quote = ""
@@ -203,9 +341,11 @@ def create_annotation(username, slug, page_id):
     quote = match_key(quote)
     if len(quote) > MAX_QUOTE_CHARS:
         return _err(400, "invalid_quote", f"Select at most {MAX_QUOTE_CHARS} characters.")
-    request_id = parse_request_id(data.get("request_id"))
-    if request_id is None:
-        return _err(400, "invalid_request_id", "request_id must be a UUID.")
+    request_id = None
+    if not preview:
+        request_id = parse_request_id(data.get("request_id"))
+        if request_id is None:
+            return _err(400, "invalid_request_id", "request_id must be a UUID.")
     revision = data.get("revision")
     if not isinstance(revision, str) or not revision:
         return _err(400, "invalid_revision", "revision is required.")
@@ -214,35 +354,58 @@ def create_annotation(username, slug, page_id):
     if err:
         return err
 
-    # Retry dedup first: a retried request returns the original comment even
-    # if the page changed since or the visitor is now rate limited.
-    existing = PageAnnotation.query.filter_by(author_id=viewer.id, request_id=request_id).first()
-    if existing is not None:
-        if _same_submission(existing, view, body, quote):
-            names = {viewer.id: viewer.username}
-            return _json({"comment": serialize(existing, view, names), "duplicate": True}, 200)
-        return _err(409, "request_id_reused", "This request_id was already used for a different comment.")
+    allowed, retry_after, desc = rate_limit.check_all(_attempt_rules(viewer))
+    if not allowed:
+        return _rate_limited(retry_after, desc)
+
+    if not preview:
+        # Retry dedup first: a retried request returns the original comment
+        # even if the page changed since or the visitor is now rate limited.
+        existing = PageAnnotation.query.filter_by(author_id=viewer.id, request_id=request_id).first()
+        if existing is not None:
+            return _duplicate(existing, view, viewer, body, quote)
 
     if revision != view.page.content_hash:
         return _err(409, "stale_revision", "The page changed since you loaded it. Reload and try again.",
                     revision=view.page.content_hash)
 
-    limited = _limited(viewer, view)
-    if limited is not None:
-        return limited
-
     owner_only = False
-    if quote:
-        key = match_key(quote)
-        found = count_occurrences(view.text_key("viewer"), key)
-        if found == 0:
-            return _err(409, "selection_not_found", "That passage isn't in this page's text. Reload and select again.")
-        if found > 1:
-            return _err(409, "ambiguous_selection", "That passage appears more than once. Select a longer passage.")
-        if view.is_owner:
-            # Unique in the owner's view; owner-only unless the same passage is
-            # also uniquely public. Conservative: any doubt -> owner-only.
-            owner_only = count_occurrences(view.text_key("public"), key) != 1
+    prefix = suffix = None
+    try:
+        if quote:
+            text_key = view.text_key("viewer")
+            found = count_occurrences(text_key, quote, limit=2)
+            if found == 0:
+                return _err(409, "selection_not_found", "That passage isn't in this page's text. Reload and select again.")
+            if found > 1:
+                return _err(409, "ambiguous_selection", "That passage appears more than once. Select a longer passage.")
+            prefix, suffix = anchor_context(text_key, quote)
+            if view.is_owner:
+                # Owner-only unless this exact occurrence (same context) is
+                # also uniquely in the public text. Any doubt -> owner-only.
+                owner_only = context_matches(view.text_key("public"), quote, prefix, suffix) != 1
+    except ContentUnavailable:
+        return _unavailable()
+    audience = comment_audience(view.page, owner_only)
+    page_ref = f"@{view.owner.username}/{view.wiki.slug}/{view.page.path}"
+
+    if preview:
+        return _json({"preview": {
+            "audience": audience, "audience_label": AUDIENCE_LABELS[audience], "owner_only": owner_only,
+            "page_path": page_ref, "page_id": view.page.id, "quote": quote, "revision": view.page.content_hash,
+        }})
+
+    if data.get("audience") != audience:
+        return _err(409, "audience_changed", "Who can read this comment has changed. Review it again before posting.",
+                    audience=audience, audience_label=AUDIENCE_LABELS[audience], page_path=page_ref)
+    citations, err = _parse_citations(data.get("citations"), viewer)
+    if err:
+        return err
+
+    budgets = _budget_rules(viewer, view)
+    allowed, retry_after, desc = rate_limit.peek_all(budgets)
+    if not allowed:
+        return _rate_limited(retry_after, desc)
 
     row = PageAnnotation(
         wiki_id=view.wiki.id,
@@ -254,6 +417,9 @@ def create_annotation(username, slug, page_id):
         quote=quote,
         owner_only=owner_only,
         revision=view.page.content_hash,
+        anchor_prefix=prefix,
+        anchor_suffix=suffix,
+        citations=citations,
     )
     db.session.add(row)
     try:
@@ -262,9 +428,24 @@ def create_annotation(username, slug, page_id):
         # A concurrent retry with the same request_id won the race.
         db.session.rollback()
         existing = PageAnnotation.query.filter_by(author_id=viewer.id, request_id=request_id).first()
-        if existing is not None and _same_submission(existing, view, body, quote):
-            names = {viewer.id: viewer.username}
-            return _json({"comment": serialize(existing, view, names), "duplicate": True}, 200)
+        if existing is not None:
+            return _duplicate(existing, view, viewer, body, quote)
         return _err(409, "request_id_reused", "This request_id was already used for a different comment.")
+    rate_limit.charge_all(budgets)
     names = {viewer.id: viewer.username}
-    return _json({"comment": serialize(row, view, names)}, 201)
+    try:
+        comment = serialize(row, view, names, _resolve_citations(row.citations, viewer, {}))
+    except ContentUnavailable:
+        return _unavailable()
+    return _json({"comment": comment}, 201)
+
+
+def _duplicate(existing, view, viewer, body, quote):
+    if not _same_submission(existing, view, body, quote):
+        return _err(409, "request_id_reused", "This request_id was already used for a different comment.")
+    try:
+        comment = serialize(existing, view, {viewer.id: viewer.username},
+                            _resolve_citations(existing.citations, viewer, {}))
+    except ContentUnavailable:
+        return _unavailable()
+    return _json({"comment": comment, "duplicate": True}, 200)

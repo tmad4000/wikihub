@@ -2676,28 +2676,119 @@ def _assistant_draft_path(raw):
     return path
 
 
-def _create_assistant_draft(owner, wiki, is_owner, acl_rules):
-    """POST /@owner/wiki/new with assistant_draft=1 (wikihub-3add): create a
-    page the reader assistant drafted, after the signed-in visitor approved it.
+_DRAFT_RESERVED_SEGMENTS = {"edit", "history"}
 
-    - signed in, viewer_id equal to the signed-in user (stale-tab guard),
-      explicit approved=1, simple Markdown path (no dot paths);
-    - authorization is checked on the actual destination path;
-    - never overwrites: an existing page/file is 409, except an exact repeat
-      of this visitor's own submission (same author + same content), which is
-      answered as success (idempotent; also resolves a concurrent double-submit);
-    - the owner's drafts are always created private; a non-owner's draft is
-      created only if the visibility they previewed equals what the page
-      will really get (else 409 visibility_mismatch, nothing written).
-    JSON responses when the client sends Accept: application/json; otherwise
-    a redirect to the page (success) or a plain HTTP error."""
+
+def _draft_path_problem(owner, wiki, path):
+    """Round-trip check for a new page path (wikihub-3add): the page's own
+    URL must route back to the reader for exactly this path, and must not
+    collide with an existing page that the same URL would resolve to.
+    Returns an error message or None."""
+    from werkzeug.exceptions import HTTPException
+
+    segments = path.split("/")
+    stems = [seg[:-3] if i == len(segments) - 1 else seg for i, seg in enumerate(segments)]
+    if stems[0].lower() in _SIDEBAR_NON_CONTENT_ROOTS or any(stem.lower() in _DRAFT_RESERVED_SEGMENTS for stem in stems):
+        return "That name is reserved for wiki pages like history or edit. Choose another."
+    if any(seg.lower().endswith(".md") for seg in segments[:-1]):
+        return "Folder names can't end in .md."
+    if " " in path and "_" in path:
+        return "Use either spaces or underscores in a page path, not both."
+    url = _page_url(owner.username, wiki.slug, path)
+    try:
+        endpoint, args = current_app.url_map.bind("localhost").match(url, method="GET")
+    except HTTPException:
+        return "That page path can't be opened as a URL."
+    if endpoint != "wiki.wiki_page" or args.get("username") != owner.username or args.get("slug") != wiki.slug:
+        return "That page path can't be opened as a URL."
+    raw = args["page_path"]
+    resolved = (raw if raw.endswith(".md") else raw + ".md")
+    if resolved != path:
+        # The reader tries the raw URL path first, then underscores as spaces.
+        spaced = page_path_from_url_path(raw)
+        spaced = spaced if spaced.endswith(".md") else spaced + ".md"
+        if spaced != path:
+            return "That page path can't be opened as a URL."
+        if Page.query.filter_by(wiki_id=wiki.id, path=resolved).first() is not None:
+            return "Another page already uses that address."
+    elif "_" in path:
+        twin = path.replace("_", " ")
+        if Page.query.filter_by(wiki_id=wiki.id, path=twin).first() is not None:
+            return "Another page already uses that address."
+    return None
+
+
+def _draft_plan(owner, wiki, is_owner, acl_rules):
+    """Everything the visitor must see before approving an assistant draft,
+    computed exactly as the commit will compute it. Returns (plan, error)
+    where error is (status, code, message)."""
     import hashlib
 
+    raw_path = request.values.get("path")
+    page_path = _assistant_draft_path(raw_path)
+    if page_path is None:
+        return None, (400, "invalid_path", "Use a simple page path like notes/topic.md (letters, numbers, spaces, - _ . ( ); no leading dots).")
+    problem = _draft_path_problem(owner, wiki, page_path)
+    if problem:
+        return None, (400, "invalid_path", problem)
+    username = current_user.username
+    if not is_owner and not can_write(page_path, acl_rules, username):
+        return None, (403, "forbidden", "You can't create a page at that path.")
+    content = request.values.get("content", "")
+    if not isinstance(content, str) or not content.strip():
+        return None, (400, "invalid_content", "The draft is empty.")
+    if len(content.encode("utf-8")) > current_app.config.get("MAX_PAGE_SIZE", 2 * 1024 * 1024):
+        return None, (413, "too_large", "The draft is too large.")
+    if is_owner:
+        content = set_visibility_in_content(content, "private")
+    else:
+        content = _non_owner_visibility_content(page_path, content, acl_rules)
+    frontmatter, _ = parse_markdown_document(content)
+    visibility = "private" if is_owner else _stored_page_visibility(
+        frontmatter.get("visibility"), resolve_visibility(page_path, acl_rules))
+    return {
+        "path": page_path,
+        "page_path": f"@{owner.username}/{wiki.slug}/{page_path}",
+        "url": _page_url(owner.username, wiki.slug, page_path),
+        "visibility": visibility,
+        "audience_label": _DRAFT_AUDIENCE.get(visibility, visibility),
+        "content": content,
+        "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        "frontmatter": frontmatter,
+    }, None
+
+
+_DRAFT_AUDIENCE = {
+    "private": "Private: only the wiki owner and people given access",
+    "public": "Public: anyone can read it",
+    "public-edit": "Public: anyone can read and edit it",
+    "unlisted": "Unlisted: anyone with the link can read it",
+    "unlisted-edit": "Unlisted: anyone with the link can read and edit it",
+}
+
+
+def _create_assistant_draft(owner, wiki, is_owner, acl_rules):
+    """POST /@owner/wiki/new with assistant_draft=1 (wikihub-3add).
+
+    preview=1 returns the plan without writing: canonical page path, URL,
+    audience (visibility + label), and the FINAL Markdown that would be
+    written (after visibility rules), with its content_hash.
+
+    The commit needs approved=1 plus previewed_visibility and
+    previewed_content_hash from that preview; both, and the ACL, are
+    recomputed here and any difference is 409 preview_changed (nothing is
+    written). Never overwrites: an existing page or file is 409 exists,
+    except this visitor's own identical earlier submission, which is
+    answered as success -- including one whose Git write completed but
+    whose database commit did not (the page row is recovered).
+    The page budget is checked first and charged only after a page was
+    actually created."""
     from app.auth_utils import security_event
     from app import rate_limit
+    from app.git_sync import last_commit_for_path
     from sqlalchemy.exc import IntegrityError
 
-    wants_json = "application/json" in request.headers.get("Accept", "")
+    wants_json = "application/json" in request.headers.get("Accept", "") or request.form.get("preview") == "1"
 
     def fail(status, code, message, **extra):
         if wants_json:
@@ -2707,11 +2798,15 @@ def _create_assistant_draft(owner, wiki, is_owner, acl_rules):
             return resp
         abort(status)
 
-    def done(page, created):
+    def public_plan(plan):
+        return {k: v for k, v in plan.items() if k != "frontmatter"}
+
+    def done(page, created, recovered=False):
         url = _page_url(owner.username, wiki.slug, page.path)
         if wants_json:
-            resp = jsonify({"path": page.path, "page_id": page.id, "url": url,
-                            "visibility": page.visibility, "created": created})
+            resp = jsonify({"path": page.path, "page_id": page.id, "url": url, "visibility": page.visibility,
+                            "page_path": f"@{owner.username}/{wiki.slug}/{page.path}",
+                            "created": created, "recovered": recovered})
             resp.status_code = 201 if created else 200
             resp.headers["Cache-Control"] = "no-store"
             return resp
@@ -2725,34 +2820,27 @@ def _create_assistant_draft(owner, wiki, is_owner, acl_rules):
         return fail(400, "invalid_viewer_id", "viewer_id (the signed-in user's id) is required.")
     if viewer_id != str(current_user.id):
         return fail(409, "viewer_mismatch", "You're signed in as a different account now. Reload and review the draft again.")
+
+    plan, error = _draft_plan(owner, wiki, is_owner, acl_rules)
+    if error:
+        return fail(*error)
+    if request.form.get("preview") == "1":
+        resp = jsonify({"preview": public_plan(plan)})
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+
     if request.form.get("approved") != "1":
         return fail(400, "approval_required", "Review the draft and approve it before saving.")
-    page_path = _assistant_draft_path(request.form.get("path"))
-    if page_path is None:
-        return fail(400, "invalid_path", "Use a simple page path like notes/topic.md (letters, numbers, spaces, - _ . ( ); no leading dots).")
-    content = request.form.get("content", "")
-    if not isinstance(content, str) or not content.strip():
-        return fail(400, "invalid_content", "The draft is empty.")
-    if len(content.encode("utf-8")) > current_app.config.get("MAX_PAGE_SIZE", 2 * 1024 * 1024):
-        return fail(413, "too_large", "The draft is too large.")
-    username = current_user.username
-    if not is_owner and not can_write(page_path, acl_rules, username):
-        return fail(403, "forbidden", "You can't create a page at that path.")
+    previewed_visibility = normalize_page_visibility(request.form.get("previewed_visibility") or "")
+    if (previewed_visibility != plan["visibility"]
+            or request.form.get("previewed_content_hash") != plan["content_hash"]):
+        return fail(409, "preview_changed",
+                    "The page that would be created differs from the one you reviewed. Review it again.",
+                    visibility=plan["visibility"], preview=public_plan(plan))
 
-    if is_owner:
-        content = set_visibility_in_content(content, "private")
-    else:
-        content = _non_owner_visibility_content(page_path, content, acl_rules)
-    frontmatter, _ = parse_markdown_document(content)
-    page_visibility = "private" if is_owner else _stored_page_visibility(
-        frontmatter.get("visibility"), resolve_visibility(page_path, acl_rules))
-    if not is_owner:
-        previewed = normalize_page_visibility(request.form.get("previewed_visibility") or "")
-        if not previewed or previewed != page_visibility:
-            return fail(409, "visibility_mismatch",
-                        "This page would be created with a different visibility than the one you previewed.",
-                        visibility=page_visibility)
-    content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    page_path, content, content_hash = plan["path"], plan["content"], plan["content_hash"]
+    username = current_user.username
+    commit_subject = f"Create {page_path} (assistant draft)"
 
     def existing_outcome():
         page = Page.query.filter_by(wiki_id=wiki.id, path=page_path).first()
@@ -2760,26 +2848,51 @@ def _create_assistant_draft(owner, wiki, is_owner, acl_rules):
             if page.author == username and page.content_hash == content_hash:
                 return done(page, created=False)  # exact repeat of this submission
             return fail(409, "exists", "A page already exists at that path.")
-        if read_file_from_repo(owner.username, wiki.slug, page_path, public=False) is not None:
-            return fail(409, "exists", "A file already exists at that path.")
-        return None
+        current = read_file_from_repo(owner.username, wiki.slug, page_path, public=False)
+        if current is None:
+            return None
+        last = last_commit_for_path(owner.username, wiki.slug, page_path)
+        if (current == content and last is not None
+                and last == (username, f"{username}@wikihub", commit_subject)):
+            return recover()
+        return fail(409, "exists", "A file already exists at that path.")
+
+    def recover():
+        # Our own earlier submission reached Git but not the database:
+        # index it now instead of refusing the visitor's retry.
+        page = Page(wiki_id=wiki.id, path=page_path, visibility=plan["visibility"], author=username)
+        db.session.add(page)
+        update_page_metadata(page, content, plan["frontmatter"])
+        try:
+            db.session.flush()
+        except IntegrityError:
+            db.session.rollback()
+            page = Page.query.filter_by(wiki_id=wiki.id, path=page_path).first()
+            if page is not None and page.author == username and page.content_hash == content_hash:
+                return done(page, created=False, recovered=True)
+            return fail(409, "exists", "A page already exists at that path.")
+        refresh_wikilinks_for_page(page, content)
+        update_mirror_page(owner.username, wiki.slug, page_path, acl_rules)
+        db.session.commit()
+        security_event("assistant_draft.recover", "success", user_id=current_user.id,
+                       wiki=f"{owner.username}/{wiki.slug}", path=page_path)
+        return done(page, created=False, recovered=True)
 
     outcome = existing_outcome()
     if outcome is not None:
         return outcome
 
-    allowed, retry_after, desc = rate_limit.check_all([
-        (f"assistant_draft:u:{current_user.id}:h", rate_limit.limit_value("ASSISTANT_DRAFT_MAX_PER_USER_PER_HOUR"), 3600),
-    ])
+    budget = [(f"assistant_draft:u:{current_user.id}:h", rate_limit.limit_value("ASSISTANT_DRAFT_MAX_PER_USER_PER_HOUR"), 3600)]
+    allowed, retry_after, desc = rate_limit.peek_all(budget)
     if not allowed:
         security_event("rate_limit", "denied", scope="assistant_draft", limit=desc)
         return fail(429, "rate_limited", f"Too many drafts right now. Try again in {retry_after}s.", retry_after=retry_after)
 
     page = Page(wiki_id=wiki.id, path=page_path)
     db.session.add(page)
-    page.visibility = page_visibility
+    page.visibility = plan["visibility"]
     page.author = username
-    update_page_metadata(page, content, frontmatter)
+    update_page_metadata(page, content, plan["frontmatter"])
     try:
         db.session.flush()
     except IntegrityError:
@@ -2790,18 +2903,21 @@ def _create_assistant_draft(owner, wiki, is_owner, acl_rules):
     refresh_wikilinks_for_page(page, content)
     try:
         written = sync_page_to_repo(owner.username, wiki.slug, page_path, content,
-                                    message=f"Create {page_path} (assistant draft)", create_only=True,
+                                    message=commit_subject, create_only=True,
                                     author_name=username, author_email=f"{username}@wikihub")
     except RepoPathExists:
+        # Someone (possibly our own earlier attempt) wrote the path first.
         db.session.rollback()
-        return fail(409, "exists", "A file already exists at that path.")
+        outcome = existing_outcome()
+        return outcome if outcome is not None else fail(409, "exists", "A file already exists at that path.")
     if not written:
         db.session.rollback()
         return fail(503, "repository_unavailable", "The page could not be saved.")
     update_mirror_page(owner.username, wiki.slug, page_path, acl_rules)
     db.session.commit()
+    rate_limit.charge_all(budget)
     security_event("assistant_draft.create", "success", user_id=current_user.id,
-                   wiki=f"{owner.username}/{wiki.slug}", path=page_path, visibility=page_visibility)
+                   wiki=f"{owner.username}/{wiki.slug}", path=page_path, visibility=plan["visibility"])
     return done(page, created=True)
 
 
@@ -2813,15 +2929,20 @@ def new_page(username, slug):
     username_for_acl = current_user.username if current_user.is_authenticated else None
 
     if request.method == "GET" and "assistant_target" in request.args:
+        # Destination check for the draft review UI; the full preview (final
+        # Markdown + hash) is POST assistant_draft=1&preview=1.
         if not current_user.is_authenticated:
             abort(401)
         path = _assistant_draft_path(request.args["assistant_target"])
-        if not path:
-            return jsonify(message="Choose a simple Markdown page path."), 400
+        problem = "Choose a simple Markdown page path." if not path else _draft_path_problem(owner, wiki, path)
+        if problem:
+            return jsonify(message=problem), 400
         if not is_owner and not can_write(path, acl_rules, current_user.username):
             return jsonify(message="You do not have permission to create a page here."), 403
         audience = "private" if is_owner else _stored_page_visibility(resolve_visibility(path, acl_rules))
-        response = jsonify(path=path, visibility=audience)
+        response = jsonify(path=path, visibility=audience, page_path=f"@{owner.username}/{wiki.slug}/{path}",
+                           url=_page_url(owner.username, wiki.slug, path),
+                           audience_label=_DRAFT_AUDIENCE.get(audience, audience))
         response.headers["Cache-Control"] = "no-store"
         return response
 

@@ -38,6 +38,7 @@ LIMIT_DEFAULTS = {
     "ANNOTATION_MAX_PER_USER_PER_HOUR": 60,
     "ANNOTATION_MAX_PER_USER_PER_DAY": 300,
     "ANNOTATION_MAX_PER_PAGE_PER_DAY": 500,
+    "ANNOTATION_MAX_ATTEMPTS_PER_USER_PER_MINUTE": 30,
     "ASSISTANT_DRAFT_MAX_PER_USER_PER_HOUR": 30,
 }
 
@@ -82,6 +83,41 @@ def hit(key, limit, window_seconds):
     if count > limit:
         return False, start_epoch + window_seconds - epoch
     return True, 0
+
+
+def _window(window_seconds):
+    now = datetime.now(timezone.utc)
+    epoch = int(now.timestamp())
+    start_epoch = epoch - (epoch % window_seconds)
+    return datetime.fromtimestamp(start_epoch, tz=timezone.utc), start_epoch + window_seconds - epoch
+
+
+def peek_all(rules):
+    """Would one more event exceed any rule? Counts nothing. Pair with
+    charge_all() after the action succeeded, so rejected or failed attempts
+    never use up a budget. Returns (allowed, max_retry_after, desc)."""
+    if not enabled():
+        return True, 0, None
+    allowed, retry, desc = True, 0, None
+    for key, limit, window in rules:
+        if limit is None:
+            continue
+        window_start, retry_after = _window(window)
+        count = db.session.execute(
+            text("SELECT count FROM rate_limit_buckets WHERE key = :k AND window_start = :w"),
+            {"k": key[:200], "w": window_start},
+        ).scalar() or 0
+        if count >= limit:
+            allowed = False
+            if retry_after > retry:
+                retry, desc = retry_after, f"{limit} per {window}s"
+    return allowed, retry, desc
+
+
+def charge_all(rules):
+    """Count one successful event against every rule (see peek_all)."""
+    for key, limit, window in rules:
+        hit(key, limit, window)
 
 
 def check_all(rules):

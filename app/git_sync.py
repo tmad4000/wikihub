@@ -475,6 +475,20 @@ def read_file_from_repo(username, slug, file_path, public=False):
         return None
 
 
+def last_commit_for_path(username, slug, file_path):
+    """(author_name, author_email, subject) of the newest commit touching
+    file_path in the authoritative repo, or None."""
+    repo = _repo_path(username, slug, public=False)
+    if not os.path.isdir(repo):
+        return None
+    try:
+        out = _git(repo, "log", "-1", "--format=%an%x1f%ae%x1f%s", "HEAD", "--", file_path)
+    except subprocess.CalledProcessError:
+        return None
+    parts = out.strip().split("\x1f")
+    return tuple(parts) if len(parts) == 3 else None
+
+
 def read_file_for_viewer(username, slug, file_path, *, viewer_is_owner, public=False):
     """read_file_from_repo + content_for_viewer: the only safe way to hand
     repo markdown to a (possibly) non-owner. Band-stripped unless the viewer

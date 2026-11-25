@@ -32,6 +32,48 @@ from app.renderer import render_page
 
 MAX_BODY_CHARS = 4000
 MAX_QUOTE_CHARS = 1000
+MAX_CITATIONS = 10
+CONTEXT_CHARS = 32  # rendered-text context stored on each side of a quote
+
+
+class ContentUnavailable(RuntimeError):
+    """The page's content could not be read. Callers fail closed (503):
+    never treat an unreadable repository as an empty page."""
+
+
+# Who can read a comment posted on this page (shown before approval and
+# rechecked at commit).
+AUDIENCE_LABELS = {
+    "public": "Anyone who can read this public page",
+    "link": "Anyone with the link to this unlisted page",
+    "restricted": "The wiki owner and people with access to this private page",
+    "owner": "Only the wiki owner (the passage is in a private section)",
+}
+
+
+def comment_audience(page, owner_only):
+    from app.acl import normalize_page_visibility
+
+    if owner_only:
+        return "owner"
+    vis = normalize_page_visibility(page.visibility) or "private"
+    if vis in ("public", "public-edit", "public-view"):
+        return "public"
+    if vis in ("unlisted", "unlisted-edit", "unlisted-view"):
+        return "link"
+    return "restricted"
+
+
+def ensure_annotation_columns(db):
+    """Idempotent in-place upgrade for databases created before these
+    columns existed (e.g. a preview database). create_all() does not alter
+    existing tables. Caller commits."""
+    for ddl in (
+        "ALTER TABLE page_annotations ADD COLUMN IF NOT EXISTS anchor_prefix TEXT NULL",
+        "ALTER TABLE page_annotations ADD COLUMN IF NOT EXISTS anchor_suffix TEXT NULL",
+        "ALTER TABLE page_annotations ADD COLUMN IF NOT EXISTS citations JSON NULL",
+    ):
+        db.session.execute(db.text(ddl))
 
 _BLOCK_TAGS = {
     "address", "article", "aside", "blockquote", "br", "dd", "details", "div", "dl", "dt",
@@ -45,18 +87,28 @@ _VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link"
 
 
 class _TextExtractor(HTMLParser):
+    """Visible text of rendered page HTML, plus which of it is inside an
+    owner-view private section (<section class="private-band">)."""
+
     def __init__(self):
         super().__init__(convert_charrefs=True)
-        self.parts = []
+        self.parts = []  # (text, in_private_band)
         self._skip_stack = []  # tag names of open skipped elements
+        self._sections = []  # one bool per open <section>: is it a private band?
+
+    def _in_band(self):
+        return any(self._sections)
 
     def handle_starttag(self, tag, attrs):
         classes = set((dict(attrs).get("class") or "").split())
         if self._skip_stack or tag in _SKIP_TAGS or classes & _SKIP_CLASSES:
             if tag not in _VOID_TAGS:
                 self._skip_stack.append(tag)
-        elif tag in _BLOCK_TAGS:
-            self.parts.append(" ")
+            return
+        if tag == "section":
+            self._sections.append("private-band" in classes)
+        if tag in _BLOCK_TAGS:
+            self.parts.append((" ", self._in_band()))
 
     def handle_endtag(self, tag):
         if self._skip_stack:
@@ -64,27 +116,49 @@ class _TextExtractor(HTMLParser):
                 if self._skip_stack[i] == tag:
                     del self._skip_stack[i:]
                     break
-        elif tag in _BLOCK_TAGS:
-            self.parts.append(" ")
+            return
+        if tag in _BLOCK_TAGS:
+            self.parts.append((" ", self._in_band()))
+        if tag == "section" and self._sections:
+            self._sections.pop()
 
     def handle_data(self, data):
         if not self._skip_stack:
-            self.parts.append(data)
+            self.parts.append((data, self._in_band()))
 
 
-def html_text(html):
+def html_text_and_mask(html):
+    """(text, mask): whitespace collapsed exactly like html_text(); mask[i]
+    is True where text[i] comes from inside a private band."""
     parser = _TextExtractor()
     parser.feed(html or "")
     parser.close()
-    return " ".join("".join(parser.parts).split())
+    out, mask, pending = [], [], False
+    for chunk, in_band in parser.parts:
+        for ch in chunk:
+            if ch.isspace():
+                pending = True
+                continue
+            if pending and out:
+                out.append(" ")
+                mask.append(False)
+            pending = False
+            out.append(ch)
+            mask.append(in_band)
+    return "".join(out), mask
+
+
+def html_text(html):
+    return html_text_and_mask(html)[0]
 
 
 def match_key(text):
     return " ".join((text or "").split())
 
 
-def count_occurrences(haystack_key, needle_key):
-    """Overlapping occurrence count (an overlap is still an ambiguity)."""
+def count_occurrences(haystack_key, needle_key, limit=None):
+    """Overlapping occurrence count (an overlap is still an ambiguity).
+    limit: stop counting once this many are found."""
     if not needle_key:
         return 0
     count, start = 0, 0
@@ -93,8 +167,8 @@ def count_occurrences(haystack_key, needle_key):
         if at < 0:
             return count
         count += 1
-        if count > 1:
-            return count  # callers only distinguish 0 / 1 / many
+        if limit is not None and count >= limit:
+            return count
         start = at + 1
 
 
@@ -122,7 +196,12 @@ class PageView:
 
     def _authoritative(self):
         if self._raw is None:
-            self._raw = read_file_from_repo(self.owner.username, self.wiki.slug, self.page.path, public=False) or ""
+            raw = read_file_from_repo(self.owner.username, self.wiki.slug, self.page.path, public=False)
+            if raw is None:
+                # Indexed page but unreadable content: fail closed. Treating it
+                # as "" would make band-anchored comments look public.
+                raise ContentUnavailable(self.page.path)
+            self._raw = raw
         return self._raw
 
     def _viewer_markdown(self):
@@ -136,14 +215,29 @@ class PageView:
             content = read_file_from_repo(self.owner.username, self.wiki.slug, self.page.path, public=True)
         if content is None:
             content = self._authoritative()
-        return content_for_viewer(content, viewer_is_owner=False) or ""
+        try:
+            stripped = content_for_viewer(content, viewer_is_owner=False)
+        except Exception as exc:  # band stripping failed: never show raw
+            raise ContentUnavailable(self.page.path) from exc
+        if stripped is None:
+            raise ContentUnavailable(self.page.path)
+        return stripped
 
-    def _render_key(self, markdown, owner_view):
+    def _render_key(self, markdown, owner_view, with_mask=False):
         html = render_page(
             markdown, self.owner.username, self.wiki.slug,
             current_page_path=self.page.path, mark_private_bands=owner_view,
         )
-        return match_key(html_text(html))
+        text, mask = html_text_and_mask(html)
+        return (text, mask) if with_mask else text
+
+    def full_band_mask(self):
+        """Owner-view text and its private-band mask (server-side only)."""
+        if "full_mask" not in self._texts:
+            text, mask = self._render_key(self._authoritative(), owner_view=True, with_mask=True)
+            self._texts["full"] = text
+            self._texts["full_mask"] = mask
+        return self._texts["full"], self._texts["full_mask"]
 
     def text_key(self, which="viewer"):
         """'viewer': what this viewer sees. 'public': band-stripped owner text.
@@ -152,7 +246,11 @@ class PageView:
             if which == "viewer":
                 key = self._render_key(self._viewer_markdown(), owner_view=self.is_owner)
             elif which == "public":
-                key = self._render_key(content_for_viewer(self._authoritative(), viewer_is_owner=False) or "", owner_view=False)
+                try:
+                    public = content_for_viewer(self._authoritative(), viewer_is_owner=False)
+                except Exception as exc:
+                    raise ContentUnavailable(self.page.path) from exc
+                key = self._render_key(public or "", owner_view=False)
             else:
                 key = self._render_key(self._authoritative(), owner_view=True)
             self._texts[which] = key
@@ -194,16 +292,107 @@ def rekey_after_reset(wiki_id, prior_ids):
     return moved
 
 
-def serialize(annotation, view, author_names):
+def anchor_context(text_key, quote_key):
+    """(prefix, suffix) around the first occurrence of quote_key."""
+    at = text_key.find(quote_key)
+    if at < 0:
+        return None, None
+    end = at + len(quote_key)
+    return text_key[max(0, at - CONTEXT_CHARS):at], text_key[end:end + CONTEXT_CHARS]
+
+
+def context_matches(text_key, quote_key, prefix, suffix):
+    """How many occurrences of quote_key sit between exactly this prefix and
+    suffix (the context recorded when the comment was made)."""
+    count, start = 0, 0
+    while quote_key:
+        at = text_key.find(quote_key, start)
+        if at < 0:
+            break
+        end = at + len(quote_key)
+        if (at >= len(prefix) and text_key[at - len(prefix):at] == prefix
+                and text_key[end:end + len(suffix)] == suffix):
+            count += 1
+        start = at + 1
+    return count
+
+
+def _common_suffix_len(a, b):
+    n = 0
+    while n < len(a) and n < len(b) and a[-1 - n] == b[-1 - n]:
+        n += 1
+    return n
+
+
+def _common_prefix_len(a, b):
+    n = 0
+    while n < len(a) and n < len(b) and a[n] == b[n]:
+        n += 1
+    return n
+
+
+def best_context(text_key, quote_key, prefix, suffix):
+    """(best score, start offsets of the occurrences that share it) for
+    occurrences of quote_key, scored by how much of the recorded
+    prefix/suffix still surrounds them. (-1, []) when the words are absent."""
+    best, positions, start = -1, [], 0
+    while quote_key:
+        at = text_key.find(quote_key, start)
+        if at < 0:
+            break
+        end = at + len(quote_key)
+        score = (_common_suffix_len(text_key[max(0, at - len(prefix)):at], prefix)
+                 + _common_prefix_len(text_key[end:end + len(suffix)], suffix))
+        if score > best:
+            best, positions = score, [at]
+        elif score == best:
+            positions.append(at)
+        start = at + 1
+    return best, positions
+
+
+def _anchor_state(annotation, view, q):
+    """'attached' | 'detached' | 'hidden' for this viewer.
+
+    The commented occurrence is the one whose surroundings best match the
+    context recorded at creation, so a copy of the same words elsewhere
+    (public or in a private band) never stands in for it. For non-owners:
+    if the best match exists only in the owner's full text -- the commented
+    passage is inside a private section now -- the comment is hidden; ties
+    that only the full text has are treated the same way (any doubt hides).
+    Attachment itself needs the words exactly once in the viewer's text, as
+    the reader highlights only unambiguous passages."""
+    viewer_text = view.text_key("viewer")
+    visible = count_occurrences(viewer_text, q)
+    if view.is_owner:
+        return "attached" if visible == 1 else "detached"
+    prefix, suffix = annotation.anchor_prefix, annotation.anchor_suffix
+    full_text, band_mask = view.full_band_mask()
+    if prefix is None or suffix is None:  # comments made before context was stored
+        full = count_occurrences(full_text, q)
+        if full > visible or (visible == 0 and full >= 1):
+            return "hidden"
+        return "attached" if visible == 1 else "detached"
+    _, best_positions = best_context(full_text, q, prefix, suffix)
+    if any(any(band_mask[at:at + len(q)]) for at in best_positions):
+        # The best match for the commented occurrence (or a tie with it)
+        # lies inside a private section now.
+        return "hidden"
+    if visible == 0 and best_positions:
+        return "hidden"  # the words remain only where this viewer can't see
+    return "attached" if visible == 1 else "detached"
+
+
+def serialize(annotation, view, author_names, citations=None):
     """Viewer-scoped JSON for one comment, or None if this viewer must not
     see it at all.
 
     Hidden from non-owners (shown to the owner as detached):
     - comments made on an earlier incarnation of the page (deleted and
       recreated at the same path; page id differs);
-    - anchored comments whose originally public passage now exists only
-      inside an owner-only private band -- the quote and the comment
-      would reveal or discuss band text."""
+    - anchored comments whose commented passage now exists only inside an
+      owner-only private section (see _anchor_state).
+    Raises ContentUnavailable when the page content cannot be read."""
     quote = annotation.quote or ""
     detached = False
     other_incarnation = annotation.page_id is not None and annotation.page_id != view.page.id
@@ -212,11 +401,10 @@ def serialize(annotation, view, author_names):
             return None
         detached = True
     if quote and not detached:
-        q = match_key(quote)
-        visible_matches = count_occurrences(view.text_key("viewer"), q)
-        detached = visible_matches != 1
-        if visible_matches == 0 and not view.is_owner and count_occurrences(view.text_key("full"), q) >= 1:
+        state = _anchor_state(annotation, view, match_key(quote))
+        if state == "hidden":
             return None
+        detached = state == "detached"
     return {
         "id": annotation.id,
         "author": author_names.get(annotation.author_id),
@@ -224,5 +412,7 @@ def serialize(annotation, view, author_names):
         "quote": quote,
         "detached": detached,
         "owner_only": bool(annotation.owner_only),
+        "audience": comment_audience(view.page, annotation.owner_only),
+        "citations": citations if citations is not None else [],
         "created_at": annotation.created_at.isoformat() if annotation.created_at else None,
     }

@@ -158,16 +158,22 @@
     }
     var comments = document.getElementById("page-comments");
     if (comments && comments.dataset.viewer) {
-      var lines = (citations || []).filter(function (c) { return safeHref(c.url); })
-        .map(function (c) { return "[" + c.n + "] " + new URL(c.url, location.origin).href; });
-      var body = text + (lines.length ? "\n\nSources\n" + lines.join("\n") : "");
+      // Citations stay structured and same-site: comments store them (the
+      // server re-checks every target per viewer); page drafts get Markdown
+      // links to the same paths.
+      var cites = (citations || []).filter(function (c) { return safeHref(c.url); })
+        .map(function (c) { return { n: c.n, url: c.url, title: c.title }; });
+      var pageBody = text + (cites.length ? "\n\n## Sources\n\n" + cites.map(function (c) {
+        return c.n + ". [" + String(c.title).replace(/[\[\]]/g, "") + "](" + c.url.replace(/[()\s]/g, encodeURIComponent) + ")";
+      }).join("\n") : "");
       function offer(label, type) {
         var button = el("button", "action-btn", label);
         button.type = "button";
         button.setAttribute("data-review-" + type, "");
         button.onclick = function () {
           close();
-          comments.dispatchEvent(new CustomEvent("review-reader-draft", { detail: { type: type, body: body, quote: anchor || "" } }));
+          comments.dispatchEvent(new CustomEvent("review-reader-draft", { detail: {
+            type: type, body: type === "page" ? pageBody : text, citations: type === "comment" ? cites : [], quote: anchor || "" } }));
         };
         wrap.appendChild(button);
       }

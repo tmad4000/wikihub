@@ -5,7 +5,7 @@
   const get = name => root.querySelector('[data-' + name + ']');
   const form = get('comment-form'), page = get('page-form'), status = get('status');
   const list = get('comments'), target = root.dataset.target;
-  let selected = '', quote = '', requestId, issuedPayload = '';
+  let selected = '', quote = '', requestId, issuedPayload = '', audience = null, citations = [];
   function node(tag, value) {
     const n = document.createElement(tag);
     n.textContent = value;
@@ -76,8 +76,38 @@
         item.append(jump);
       } else item.append(node('small','Passage changed or appears more than once.'));
     }
-    item.append(node('p',c.body));
+    item.append(bodyWithCitations(c.body, c.citations || []));
     return item;
+  }
+  // Server-resolved citations: only pages this viewer can read, same-site
+  // paths only. [n] markers in the body become links; built with DOM APIs.
+  function safePath(url) {
+    return typeof url === 'string' && url.startsWith('/@') && !url.includes('\\') ? url : null;
+  }
+  function bodyWithCitations(body, cites) {
+    const p = document.createElement('p');
+    const byN = new Map(cites.filter(c => safePath(c.url)).map(c => [c.n, c]));
+    let last = 0;
+    for (const m of body.matchAll(/\[(\d{1,2})\]/g)) {
+      const c = byN.get(Number(m[1]));
+      if (!c) continue;
+      p.append(body.slice(last, m.index));
+      const a = node('a', m[0]); a.href = safePath(c.url); a.className = 'comment-ref';
+      a.title = c.title + (c.quote ? ' — “' + c.quote + '”' : '');
+      p.append(a); last = m.index + m[0].length;
+    }
+    p.append(body.slice(last));
+    if (!byN.size) return p;
+    const wrap = document.createElement('div');
+    const list = document.createElement('ol'); list.className = 'comment-sources';
+    for (const c of [...byN.values()].sort((a, b) => a.n - b.n)) {
+      const li = document.createElement('li'); li.value = c.n;
+      const a = node('a', c.title); a.href = safePath(c.url); li.append(a);
+      if (c.quote) li.append(' ', node('q', c.quote));
+      list.append(li);
+    }
+    wrap.append(p, list);
+    return wrap;
   }
   const older = get('older');
   let before = null, loadSequence = 0;
@@ -116,19 +146,41 @@
   }
   document.addEventListener('selectionchange',capture);
   function close() { form.hidden = true; if(page) page.hidden = true; }
-  function compose(anchor,body) {
+  const submitComment = form.querySelector('[type=submit]');
+  async function previewComment() {
+    // Exact audience + canonical page from the server, before approval.
+    audience = null; submitComment.disabled = true;
+    get('destination').textContent = 'Checking…';
+    try {
+      const res = await fetch(root.dataset.url, {method:'POST', headers:{'Content-Type':'application/json','X-CSRFToken':get('token').value},
+        body: JSON.stringify({preview:true, quote, revision:root.dataset.revision, viewer_id:Number(root.dataset.viewer)})});
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.message || 'This comment cannot be posted here.');
+      audience = d.preview.audience;
+      get('destination').textContent = d.preview.audience_label;
+      get('page-ref').textContent = d.preview.page_path;
+      submitComment.disabled = false;
+    } catch (err) { get('destination').textContent = err.message; }
+  }
+  function showDraftSources() {
+    const list = get('draft-sources');
+    list.replaceChildren(...citations.map(c => { const li = node('li', c.title || c.url); li.value = c.n; return li; }));
+    list.hidden = !citations.length;
+  }
+  function compose(anchor,body,cites) {
     close(); quote=anchor; issuedPayload=''; requestId=crypto.randomUUID();
+    citations = (cites || []).filter(c => safePath(c.url)).map(c => ({n:c.n, url:c.url, title:c.title}));
     get('heading').textContent=body ? 'Review suggested comment' : 'New comment';
-    get('destination').textContent=target+' · Visible to readers with access to this content';
     get('quote').textContent=quote;get('quote').hidden=!quote;
-    get('body').value=body;form.hidden=false;
+    get('body').value=body;form.hidden=false;showDraftSources();
     form.scrollIntoView({block:'center'});get('body').focus();
+    previewComment();
   }
   get('compose').onclick=()=>compose('','');
   get('selection').onclick=()=>compose(selected,'');
   root.querySelectorAll('[data-cancel]').forEach(b=>b.onclick=close);
   root.addEventListener('review-reader-draft',e=>{
-    if(e.detail.type==='comment') compose(e.detail.quote || '',e.detail.body);
+    if(e.detail.type==='comment') compose(e.detail.quote || '',e.detail.body,e.detail.citations);
     else if(page) {
       close();page.elements.content.value=e.detail.body;page.elements.path.value='';
       page.elements.path.dispatchEvent(new Event('input'));
@@ -137,31 +189,37 @@
     }
   });
   if (page) {
-    const pathInput = page.elements.path;
+    const pathInput = page.elements.path, contentInput = page.elements.content;
     const approve = page.querySelector('[type=submit]');
-    const check = get('check-target');
-    if (check) {
-      pathInput.oninput = () => {
-        approve.disabled = true;
-        page.elements.previewed_visibility.value = '';
-        get('audience').textContent = 'Choose a filename to check visibility';
-      };
-      check.onclick = async () => {
-        const path = pathInput.value.trim();
-        const url = new URL(page.action);
-        url.searchParams.set('assistant_target', path);
-        try {
-          const res = await fetch(url.toString(), {cache:'no-store'});
-          const result = await res.json();
-          if (path !== pathInput.value.trim()) return;
-          if (!res.ok) throw new Error(result.message || 'Cannot use this destination.');
-          pathInput.value = result.path;
-          page.elements.previewed_visibility.value = result.visibility;
-          get('audience').textContent = result.visibility;
-          approve.disabled = false;
-        } catch (err) { status.textContent = err.message; }
-      };
+    const reset = () => {
+      approve.disabled = true;
+      page.elements.previewed_visibility.value = '';
+      page.elements.previewed_content_hash.value = '';
+      get('final-review').hidden = true;
+    };
+    pathInput.oninput = reset; contentInput.oninput = reset;
+    function showPreview(p) {
+      pathInput.value = p.path;
+      page.elements.previewed_visibility.value = p.visibility;
+      page.elements.previewed_content_hash.value = p.content_hash;
+      get('final-path').textContent = p.page_path;
+      get('audience').textContent = p.audience_label;
+      get('final-markdown').textContent = p.content;  // exactly what will be saved
+      get('final-review').hidden = false;
+      approve.disabled = false;
     }
+    get('check-target').onclick = async () => {
+      reset();
+      const data = new FormData(page);
+      data.set('preview', '1'); data.delete('approved');
+      try {
+        const res = await fetch(page.action, {method:'POST', headers:{Accept:'application/json'}, body:data});
+        const result = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(result.message || 'Cannot use this destination.');
+        showPreview(result.preview);
+        status.textContent = '';
+      } catch (err) { status.textContent = err.message; }
+    };
     page.onsubmit = async e => {
       e.preventDefault();
       if (approve.disabled) return;
@@ -169,12 +227,18 @@
       try {
         const res = await fetch(page.action, {method:'POST', headers:{Accept:'application/json'},
           body:new FormData(page)});
-        const result = await res.json();
+        const result = await res.json().catch(() => ({}));
+        if (res.status === 409 && result.error === 'preview_changed' && result.preview) {
+          showPreview(result.preview);
+          approve.disabled = false;
+          throw new Error('The page changed from what you reviewed (shown above). Approve again to save it.');
+        }
         if (!res.ok) throw new Error(result.message || 'Could not create the page.');
         location.assign(result.url);
       } catch (err) {
         status.textContent = err.message;
-        approve.disabled = false;
+        if (!page.elements.previewed_content_hash.value) approve.disabled = true;
+        else approve.disabled = false;
       }
     };
   }
@@ -184,13 +248,22 @@
     if(submit.disabled)return;
     const body=get('body').value.trim();if(!body)return;
     if(body.length>4000){status.textContent='Shorten this comment to 4,000 characters before approving.';return;}
+    if(!audience)return;
     if(issuedPayload && issuedPayload!==body) requestId=crypto.randomUUID();
     issuedPayload=body;submit.disabled=true;
+    let keepDisabled=false;
     try {
-      const res=await fetch(root.dataset.url,{method:'POST',headers:{'Content-Type':'application/json','X-CSRFToken':get('token').value},body:JSON.stringify({body,quote,request_id:requestId,revision:root.dataset.revision,viewer_id:root.dataset.viewer})});
-      if(!res.ok){const d=await res.json().catch(()=>({}));throw new Error(d.message||'Posting failed ('+res.status+').');}
+      const res=await fetch(root.dataset.url,{method:'POST',headers:{'Content-Type':'application/json','X-CSRFToken':get('token').value},
+        body:JSON.stringify({body,quote,request_id:requestId,revision:root.dataset.revision,viewer_id:Number(root.dataset.viewer),
+          audience,citations:citations.map(c=>({n:c.n,url:c.url}))})});
+      const d=await res.json().catch(()=>({}));
+      if(res.status===409&&d.error==='audience_changed'){
+        audience=d.audience;get('destination').textContent=d.audience_label;requestId=crypto.randomUUID();issuedPayload='';
+        throw new Error('Who can read this comment changed (shown above). Approve again to post.');
+      }
+      if(!res.ok){if(d.error==='viewer_mismatch'||d.error==='stale_revision')keepDisabled=true;throw new Error(d.message||'Posting failed ('+res.status+').');}
       close();await refresh();
     } catch(err){status.textContent=err.message;}
-    finally{submit.disabled=false;}
+    finally{submit.disabled=keepDisabled;}
   };
 })();

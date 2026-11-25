@@ -595,6 +595,12 @@ class PageAnnotation(db.Model):
     quote = db.Column(db.Text, nullable=False, default="", server_default="")  # "" = whole page
     owner_only = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
     revision = db.Column(db.String(64), nullable=True)  # pages.content_hash the selection was made on
+    # Rendered-text context around the commented occurrence (identifies it
+    # among copies of the same words). Server-side only, never serialized.
+    anchor_prefix = db.Column(db.Text, nullable=True)
+    anchor_suffix = db.Column(db.Text, nullable=True)
+    # [{"n", "wiki_id", "path", "quote"}] -- resolved per viewer at read time.
+    citations = db.Column(db.JSON, nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow, server_default=db.func.now())
 
     __table_args__ = (

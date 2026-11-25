@@ -11,20 +11,30 @@
   <p data-status role="status"></p><button type="button" class="action-btn" data-older hidden>Load older comments</button><ol data-comments></ol>
   {% if current_user.is_authenticated %}
   <form data-comment-form hidden>
-    <strong data-heading></strong><p data-destination></p><blockquote data-quote hidden></blockquote>
+    <strong data-heading></strong>
+    <p>On <code data-page-ref>@{{ owner.username }}/{{ wiki.slug }}/{{ page.path }}</code></p>
+    <p>Visible to: <span data-destination>Checking…</span></p>
+    <blockquote data-quote hidden></blockquote>
     <label>Comment<textarea data-body required maxlength="4000" rows="4"></textarea></label>
-    <button class="action-btn" type="submit">Approve and post comment</button>
+    <ol class="comment-sources" data-draft-sources hidden></ol>
+    <button class="action-btn" type="submit" disabled>Approve and post comment</button>
     <button class="action-btn" type="button" data-cancel>Cancel</button>
   </form>
   <form data-page-form data-owner="{{ 1 if current_user.id == wiki.owner_id else 0 }}" hidden method="post" action="{{ url_for('wiki.new_page',username=owner.username,slug=wiki.slug) }}">
-    <strong>Review new page</strong><p>In @{{ owner.username }}/{{ wiki.slug }} · <span data-audience>{{ "Private" if current_user.id == wiki.owner_id else "Choose a filename to check visibility" }}</span></p>
+    <strong>Review new page</strong>
     <label>New page filename<input name="path" required maxlength="200" placeholder="Reading notes.md"></label>
     <label>Page Markdown<textarea name="content" required rows="8"></textarea></label>
-    <input type="hidden" name="previewed_visibility" value="{{ 'private' if current_user.id == wiki.owner_id else '' }}"><input type="hidden" name="assistant_draft" value="1">
+    <button class="action-btn" type="button" data-check-target>Review final page</button>
+    <div data-final-review hidden>
+      <p>Creates <code data-final-path></code></p>
+      <p>Visible to: <span data-audience></span></p>
+      <p>Exact Markdown that will be saved:</p>
+      <pre data-final-markdown></pre>
+    </div>
+    <input type="hidden" name="previewed_visibility" value=""><input type="hidden" name="previewed_content_hash" value=""><input type="hidden" name="assistant_draft" value="1">
     <input type="hidden" name="viewer_id" value="{{ current_user.id }}"><input type="hidden" name="approved" value="1">
     <input type="hidden" name="request_id"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    {% if current_user.id != wiki.owner_id %}<button class="action-btn" type="button" data-check-target>Check destination</button>{% endif %}
-    <button class="action-btn" type="submit" {% if current_user.id != wiki.owner_id %}disabled{% endif %}>{{ "Approve and create private page" if current_user.id == wiki.owner_id else "Approve and create page" }}</button>
+    <button class="action-btn" type="submit" disabled>{{ "Approve and create private page" if current_user.id == wiki.owner_id else "Approve and create page" }}</button>
     <button class="action-btn" type="button" data-cancel>Cancel</button>
   </form>
   {% endif %}

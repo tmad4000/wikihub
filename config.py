@@ -72,6 +72,7 @@ class Config:
     ANNOTATION_MAX_PER_USER_PER_HOUR = int(os.environ.get("ANNOTATION_MAX_PER_USER_PER_HOUR", "60"))
     ANNOTATION_MAX_PER_USER_PER_DAY = int(os.environ.get("ANNOTATION_MAX_PER_USER_PER_DAY", "300"))
     ANNOTATION_MAX_PER_PAGE_PER_DAY = int(os.environ.get("ANNOTATION_MAX_PER_PAGE_PER_DAY", "500"))
+    ANNOTATION_MAX_ATTEMPTS_PER_USER_PER_MINUTE = int(os.environ.get("ANNOTATION_MAX_ATTEMPTS_PER_USER_PER_MINUTE", "30"))
     ASSISTANT_DRAFT_MAX_PER_USER_PER_HOUR = int(os.environ.get("ASSISTANT_DRAFT_MAX_PER_USER_PER_HOUR", "30"))
     READER_ASSISTANT_ALLOW_SHARED_KEY = os.environ.get("READER_ASSISTANT_ALLOW_SHARED_KEY", "false").lower() in ("1", "true", "yes")
     # wikihub-u9rc: PostHog analytics. Empty key = snippet skipped (dev default).

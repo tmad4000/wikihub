@@ -122,10 +122,10 @@ behavior is unchanged. Form fields:
   spaces. No backslash, no absolute path, at most 200 characters. `.md` is
   appended if missing. Otherwise: `400 invalid_path`.
 - `content`: non-empty Markdown up to `MAX_PAGE_SIZE`.
-- `previewed_visibility`: **required for non-owners.** It must equal the
-  visibility the page will actually get, which comes from the ACL/inherited
-  default. Otherwise: `409 visibility_mismatch` with `visibility`, and nothing
-  is written.
+- `previewed_visibility` and `previewed_content_hash`: **required for everyone**,
+  taken from the preview below. Both are recomputed at commit, together with
+  the ACL. Any difference returns `409 preview_changed` with `visibility` and a
+  fresh `preview`, and nothing is written.
 - CSRF token as for any form POST (`csrf_token` field or `X-CSRFToken` header).
 
 Rules:
@@ -148,6 +148,100 @@ Rules:
   are `{"error", "message", …}`. Without it, success is a `303` redirect to the
   page and errors are plain HTTP errors.
 - **Audit:** a `security_event` `assistant_draft.create` is logged.
+
+## Review follow-ups (feat/annotations-review-3add)
+
+These supersede anything above that disagrees.
+
+**Fail closed.** If an indexed page's content can't be read, or band stripping
+fails, GET and POST return `503 {"error":"content_unavailable"}`. An unreadable
+repository is never treated as an empty page, which would make band-anchored
+comments look public.
+
+**Anchoring across private sections.**
+- Each comment stores up to 32 characters of rendered-text context on each
+  side of its quote (`anchor_prefix`/`anchor_suffix`, never returned).
+- For non-owners, the commented occurrence is whichever copy of the words best
+  matches that context in the owner's full text. If that occurrence, or a tie
+  with it, lies inside a private section, the comment is **hidden**. If the
+  words now exist only where the viewer can't see them, it is also hidden.
+- A copy of the same words added inside a band elsewhere changes nothing for
+  readers, so there is no side channel.
+- `detached` still means "not exactly once in this viewer's text".
+- Comments made before context was stored use the conservative rule: hidden
+  if any copy of the words is private.
+
+**Audience: shown before approval, rechecked at commit.**
+
+`POST …/annotations` with `{"preview": true, "quote", "revision", "viewer_id"}`
+writes nothing and returns:
+
+```json
+{"preview": {"audience": "public|link|restricted|owner",
+             "audience_label": "Anyone who can read this public page",
+             "owner_only": false, "page_path": "@owner/wiki/path.md",
+             "page_id": 1, "quote": "…", "revision": "<hash>"}}
+```
+
+- The real POST must include `"audience": "<value from the preview>"`. It is
+  recomputed at commit, and a difference is
+  `409 audience_changed` + `audience`, `audience_label`, `page_path`.
+- Each GET comment also carries `audience`.
+
+**Citations stay navigable and safe.**
+- POST may include `"citations": [{"n": 1, "url": "/@owner/wiki/page#:~:text=…"}]`,
+  at most 10. Only same-site wiki page paths are accepted, and the author must
+  be able to read each target. Otherwise: `400 invalid_citations`.
+- Each GET comment returns `citations: [{n, title, url, quote}]`, resolved
+  **for the current viewer**: targets they can't read are omitted.
+- A quote (and its `#:~:text=` link) is kept only if the words are in the
+  viewer's own view of the target. A quote from a private section never
+  reaches readers.
+- The UI turns `[n]` in the body into links and lists the sources, using DOM
+  APIs only.
+
+**Budgets.**
+- `ANNOTATION_MAX_ATTEMPTS_PER_USER_PER_MINUTE` (30) throttles every write
+  attempt.
+- The comment budgets (per user per minute/hour/day, and per page per day) are
+  checked before writing and charged only after a comment is stored. Rejected,
+  invalid, duplicate and preview requests are free.
+- Page buckets are keyed by a SHA-256 of the full path, so long paths never
+  share a budget.
+- The draft budget works the same way: checked first, charged only when a page
+  is created. Collisions and rejections are free.
+
+**Assistant drafts: preview, round trip, recovery.**
+- `assistant_draft=1&preview=1`, with the same fields minus `approved`, writes
+  nothing and returns `{"preview": {path, page_path, url, visibility,
+  audience_label, content, content_hash}}`. `content` is the **exact Markdown
+  that will be saved**, after the visibility rules: owner drafts are rewritten
+  to `visibility: private`.
+- **Round trip:** the page's URL must route back to the reader for exactly this
+  path. `400 invalid_path` is returned for:
+  - reserved first segments (`history`, `graph`, `activity`, `edit`, `tag`, …)
+    and any `edit`/`history` segment;
+  - folder names ending in `.md`;
+  - mixing spaces and underscores;
+  - a space/underscore twin of an existing page, since both would share one
+    address.
+
+  The `GET ?assistant_target=` check applies the same rules.
+- **Recovery:** if a previous submission's Git commit landed but its DB
+  commit didn't, an identical retry by the same user indexes the page and
+  answers `200 {"created": false, "recovered": true}`. A recovery requires all
+  of: same content, same author, and the assistant-draft commit subject. A
+  file written by anyone else is still `409 exists`.
+- Success responses also include `page_path`.
+
+**DB.**
+- New nullable columns: `page_annotations.anchor_prefix`, `anchor_suffix`
+  (TEXT) and `citations` (JSON).
+- They are added in place at startup (`ensure_annotation_columns`), so
+  existing databases such as the M5 preview DB upgrade on restart. The
+  migration file adds them too.
+- Verified against a preview DB created by the reviewed snapshot (`734ce05`)
+  through `demos/reader-conversations/server.py`.
 
 ## Release notes
 

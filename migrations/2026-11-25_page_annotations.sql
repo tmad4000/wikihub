@@ -33,6 +33,11 @@ CREATE TABLE IF NOT EXISTS page_annotations (
     CONSTRAINT uq_page_annotations_author_request UNIQUE (author_id, request_id)
 );
 
+-- Added in review (wikihub-3add): anchor context and structured citations.
+ALTER TABLE page_annotations ADD COLUMN IF NOT EXISTS anchor_prefix TEXT NULL;
+ALTER TABLE page_annotations ADD COLUMN IF NOT EXISTS anchor_suffix TEXT NULL;
+ALTER TABLE page_annotations ADD COLUMN IF NOT EXISTS citations JSON NULL;
+
 CREATE INDEX IF NOT EXISTS ix_page_annotations_page
     ON page_annotations (wiki_id, page_path, created_at, id);
 
