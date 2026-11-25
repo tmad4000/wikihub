@@ -1002,7 +1002,7 @@ def agent_chat():
             if final_message.content:
                 messages.append({
                     "role": "assistant",
-                    "content": [block.model_dump(exclude_unset=True) for block in final_message.content],
+                    "content": [block.model_dump(exclude_none=True) for block in final_message.content],
                 })
 
             # If there are tool uses, execute them and continue
